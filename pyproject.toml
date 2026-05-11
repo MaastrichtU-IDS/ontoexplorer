@@ -27,6 +27,8 @@ dependencies = [
     "python-multipart",
     "structlog>=24.0",
     "prometheus-client",
+    "lark>=1.2",
+    "redis>=6.0",
 ]
 
 [dependency-groups]
@@ -39,7 +41,6 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
     "fakeredis>=2.35.1",
-    "redis>=6.4.0",
 ]
 
 [tool.hatch.build.targets.wheel]
