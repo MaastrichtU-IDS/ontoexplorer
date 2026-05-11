@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 import redis
 
+from ontoexplorer.clients.oxigraph import graph_iri, sparql_query
 from ontoexplorer.config import get_settings
 
 _SEARCH_TTL = 30 * 24 * 3600  # 30 days, same as ELK classification TTL
@@ -104,3 +105,116 @@ def entity_lookup(
             break
 
     return results
+
+
+def build_index(version_id: str, ontology_id: str) -> IndexStats:
+    """Extract all entities and labels from Oxigraph and write the Redis entity index."""
+    from datetime import datetime, timezone
+
+    r = _get_redis()
+    named_graph = graph_iri(ontology_id, version_id)
+
+    # Collect entity IRIs with their types
+    entities: dict[str, str] = {}  # iri -> "class" | "property"
+    for entity_type, owl_type in [
+        ("class",    "http://www.w3.org/2002/07/owl#Class"),
+        ("property", "http://www.w3.org/2002/07/owl#ObjectProperty"),
+        ("property", "http://www.w3.org/2002/07/owl#DatatypeProperty"),
+        ("property", "http://www.w3.org/2002/07/owl#AnnotationProperty"),
+    ]:
+        q = f"""
+            SELECT DISTINCT ?entity WHERE {{
+                GRAPH <{named_graph}> {{
+                    ?entity a <{owl_type}> .
+                    FILTER(isIRI(?entity))
+                }}
+            }}
+        """
+        for sol in sparql_query(q):
+            iri = sol["entity"].value
+            if iri not in entities:
+                entities[iri] = entity_type
+
+    # Collect labels per entity
+    labels_by_iri: dict[str, list[str]] = {iri: [] for iri in entities}
+    pred_filter = " ".join(f"<{p}>" for p in _LABEL_PREDICATES)
+    q = f"""
+        SELECT ?entity ?label WHERE {{
+            GRAPH <{named_graph}> {{
+                VALUES ?pred {{ {pred_filter} }}
+                ?entity ?pred ?label .
+                FILTER(isIRI(?entity) && isLiteral(?label))
+            }}
+        }}
+    """
+    for sol in sparql_query(q):
+        iri = sol["entity"].value
+        if iri in labels_by_iri:
+            labels_by_iri[iri].append(sol["label"].value)
+
+    # Write to Redis via pipeline
+    prefix_key = _prefix_key(version_id)
+    r.delete(prefix_key)
+
+    pipe = r.pipeline(transaction=False)
+    class_count = property_count = 0
+
+    for iri, entity_type in entities.items():
+        labels = labels_by_iri.get(iri, [])
+        short = _short_iri(iri)
+        primary_label = labels[0] if labels else short
+        all_labels = labels + ([short] if short not in labels else [])
+
+        pipe.hset(_iri_key(version_id, iri), mapping={
+            "label": primary_label,
+            "type":  entity_type,
+            "iri":   iri,
+            "short": short,
+            "synonyms": "|".join(labels[1:]) if len(labels) > 1 else "",
+        })
+        pipe.expire(_iri_key(version_id, iri), _SEARCH_TTL)
+        pipe.sadd(_type_key(version_id, entity_type), iri)
+
+        for label_text in all_labels:
+            norm = normalise_label(label_text)
+            if norm:
+                pipe.zadd(prefix_key, {f"{norm}|{entity_type}|{iri}": 0})
+
+        if entity_type == "class":
+            class_count += 1
+        else:
+            property_count += 1
+
+    pipe.expire(prefix_key, _SEARCH_TTL)
+    pipe.expire(_type_key(version_id, "class"),    _SEARCH_TTL)
+    pipe.expire(_type_key(version_id, "property"), _SEARCH_TTL)
+    pipe.setex(_meta_key(version_id), _SEARCH_TTL, json.dumps({
+        "indexed_at":      datetime.now(timezone.utc).isoformat(),
+        "class_count":     class_count,
+        "property_count":  property_count,
+        "individual_count": 0,
+    }))
+    pipe.execute()
+
+    return IndexStats(
+        version_id=version_id,
+        class_count=class_count,
+        property_count=property_count,
+        individual_count=0,
+    )
+
+
+def invalidate_index(version_id: str) -> None:
+    """Delete all search index keys for a version."""
+    r = _get_redis()
+    cursor = 0
+    to_delete: list[str] = []
+    while True:
+        cursor, keys = r.scan(cursor, match=f"search:*:{version_id}:*", count=100)
+        to_delete.extend(keys)
+        if cursor == 0:
+            break
+    to_delete.append(_meta_key(version_id))
+    keys_present = [k for k in to_delete if r.exists(k)]
+    if keys_present:
+        r.delete(*keys_present)

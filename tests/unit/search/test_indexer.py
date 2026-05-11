@@ -6,8 +6,11 @@ from unittest.mock import patch
 from ontoexplorer.modules.search.indexer import (
     normalise_label,
     entity_lookup,
+    build_index,
+    invalidate_index,
     _prefix_key,
     _iri_key,
+    _meta_key,
 )
 
 
@@ -92,3 +95,77 @@ def test_entity_lookup_empty_prefix():
     with patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r):
         results = entity_lookup("v1", "", None, limit=10)
     assert results == []
+
+
+def _make_sparql_rows(rows):
+    """Mock pyoxigraph QuerySolutions — each row is a dict of {name: value_str}."""
+    class FakeNode:
+        def __init__(self, v): self.value = v
+    class FakeRow:
+        def __init__(self, d): self._d = d
+        def __getitem__(self, k): return FakeNode(self._d[k])
+        def __iter__(self): return iter(self._d)
+    return [FakeRow(r) for r in rows]
+
+
+def test_build_index_populates_prefix_set():
+    r = _make_redis()
+
+    entity_rows = _make_sparql_rows([
+        {"entity": "http://ex.org/CellDeath"},
+        {"entity": "http://ex.org/Nucleus"},
+    ])
+    label_rows = _make_sparql_rows([
+        {"entity": "http://ex.org/CellDeath", "label": "cell death"},
+        {"entity": "http://ex.org/Nucleus", "label": "nucleus"},
+    ])
+
+    call_count = 0
+    def fake_sparql(q):
+        nonlocal call_count
+        call_count += 1
+        if "owl#Class" in q:
+            return entity_rows
+        if "label" in q.lower():
+            return label_rows
+        return []
+
+    with patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.indexer.sparql_query", side_effect=fake_sparql), \
+         patch("ontoexplorer.modules.search.indexer.graph_iri", return_value="urn:test"):
+        stats = build_index("v1", "o1")
+
+    assert stats.class_count == 2
+    members = r.zrangebylex(_prefix_key("v1"), "[cell", "[cell\xff")
+    assert any("celldeath" in m or "cell death" in m for m in members)
+
+
+def test_build_index_writes_entity_hash():
+    r = _make_redis()
+    entity_rows = _make_sparql_rows([{"entity": "http://ex.org/Cell"}])
+    label_rows = _make_sparql_rows([{"entity": "http://ex.org/Cell", "label": "cell"}])
+
+    with patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.indexer.sparql_query",
+               side_effect=lambda q: entity_rows if "owl#Class" in q else label_rows if "label" in q.lower() else []), \
+         patch("ontoexplorer.modules.search.indexer.graph_iri", return_value="urn:test"):
+        build_index("v1", "o1")
+
+    detail = r.hgetall(_iri_key("v1", "http://ex.org/Cell"))
+    assert detail["iri"] == "http://ex.org/Cell"
+    assert detail["type"] == "class"
+
+
+def test_invalidate_index_removes_all_keys():
+    r = _make_redis()
+    vid = "v99"
+    r.zadd(_prefix_key(vid), {"cell|class|http://ex.org/C": 0})
+    r.hset(_iri_key(vid, "http://ex.org/C"), mapping={"label": "cell"})
+    r.set(_meta_key(vid), "{}")
+
+    with patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r):
+        invalidate_index(vid)
+
+    assert r.zcard(_prefix_key(vid)) == 0
+    assert r.hgetall(_iri_key(vid, "http://ex.org/C")) == {}
+    assert r.get(_meta_key(vid)) is None
