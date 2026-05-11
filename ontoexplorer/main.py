@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import structlog
 
 from ontoexplorer.api.api_keys import router as api_keys_router
+from ontoexplorer.api.global_search import router as global_search_router
 from ontoexplorer.api.auth import router as auth_router
 from ontoexplorer.api.health import router as health_router
 from ontoexplorer.api.jobs import router as jobs_router
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
     app.include_router(webhooks_router)
     app.include_router(api_keys_router)
     app.include_router(stats_router)
+    app.include_router(global_search_router)
 
     log.info("OntoExplorer API ready", version="0.1.0")
     return app

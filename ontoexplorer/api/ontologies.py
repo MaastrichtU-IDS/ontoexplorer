@@ -131,29 +131,66 @@ async def download_version(ontology_id: str, version_id: str, db: AsyncSession =
 async def list_terms(
     ontology_id: str,
     version_id: str,
+    parent: str | None = Query(None, description="'root' for top-level classes, or an IRI for direct subclasses"),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
     await _get_version_or_404(db, ontology_id, version_id)
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
-    import pyoxigraph
 
     store = get_store()
-    named_graph = pyoxigraph.NamedNode(graph_iri(ontology_id, version_id))
+    g = graph_iri(ontology_id, version_id)
 
-    query = f"""
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
-        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-        SELECT ?class ?label WHERE {{
-            GRAPH <{graph_iri(ontology_id, version_id)}> {{
-                ?class a owl:Class .
-                OPTIONAL {{ ?class rdfs:label ?label }}
+    if parent is None or parent == "root":
+        # Root classes: owl:Class that are not subClassOf any other owl:Class in this ontology
+        query = f"""
+            PREFIX owl: <http://www.w3.org/2002/07/owl#>
+            PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+            SELECT ?class ?label WHERE {{
+                GRAPH <{g}> {{
+                    ?class a owl:Class .
+                    OPTIONAL {{ ?class rdfs:label ?label }}
+                    FILTER NOT EXISTS {{
+                        ?class rdfs:subClassOf ?p .
+                        FILTER(isIRI(?p) && str(?p) != "http://www.w3.org/2002/07/owl#Thing")
+                        GRAPH <{g}> {{ ?p a owl:Class }}
+                    }}
+                }}
             }}
-        }}
-        ORDER BY ?class
-        LIMIT {limit} OFFSET {offset}
-    """
+            ORDER BY ?class
+            LIMIT {limit} OFFSET {offset}
+        """
+    elif parent.startswith("http"):
+        # Direct subclasses of the given parent IRI
+        query = f"""
+            PREFIX owl: <http://www.w3.org/2002/07/owl#>
+            PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+            SELECT ?class ?label WHERE {{
+                GRAPH <{g}> {{
+                    ?class a owl:Class .
+                    ?class rdfs:subClassOf <{parent}> .
+                    OPTIONAL {{ ?class rdfs:label ?label }}
+                }}
+            }}
+            ORDER BY ?class
+            LIMIT {limit} OFFSET {offset}
+        """
+    else:
+        # Fallback: all classes
+        query = f"""
+            PREFIX owl: <http://www.w3.org/2002/07/owl#>
+            PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+            SELECT ?class ?label WHERE {{
+                GRAPH <{g}> {{
+                    ?class a owl:Class .
+                    OPTIONAL {{ ?class rdfs:label ?label }}
+                }}
+            }}
+            ORDER BY ?class
+            LIMIT {limit} OFFSET {offset}
+        """
+
     results = store.query(query)
     terms = []
     for row in results:
@@ -161,7 +198,7 @@ async def list_terms(
             "iri": str(row["class"]),
             "label": str(row["label"]) if row.get("label") else None,
         })
-    return {"terms": terms, "offset": offset, "limit": limit}
+    return {"terms": terms, "offset": offset, "limit": limit, "parent": parent}
 
 
 @router.get("/{ontology_id}/{version_id}/terms/{term_iri:path}", summary="Term detail")

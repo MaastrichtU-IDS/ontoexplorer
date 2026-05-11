@@ -2,15 +2,32 @@
  * Typed API client with automatic JWT refresh on 401.
  */
 
-import { getAccessToken, refreshAccessToken } from './auth'
+import { getAccessToken, refreshAccessToken, clearAccessToken } from './auth'
 
 const BASE = '/api/v1'
+
+// ── Error with status ─────────────────────────────────────────────────────────
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public body: unknown,
+  ) {
+    super(message)
+  }
+}
+
+// ── HTTP helpers ──────────────────────────────────────────────────────────────
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getAccessToken()
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>),
+  }
+  // Don't set Content-Type for FormData (let browser set boundary)
+  if (!(options.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json'
   }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
@@ -21,19 +38,36 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     if (newToken) {
       headers['Authorization'] = `Bearer ${newToken}`
       resp = await fetch(`${BASE}${path}`, { ...options, headers })
+    } else {
+      clearAccessToken()
+      window.location.href = '/login'
+      throw new ApiError('Session expired', 401, null)
     }
   }
 
   if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ detail: resp.statusText }))
-    throw new Error(err.detail ?? 'Request failed')
+    const body = await resp.json().catch(() => ({ detail: resp.statusText }))
+    throw new ApiError(
+      (body as Record<string, string>).detail ?? 'Request failed',
+      resp.status,
+      body,
+    )
   }
 
   if (resp.status === 204) return undefined as T
   return resp.json()
 }
 
-// ── Types ──────────────────────────────────────────────────────────────────────
+async function authFetch<T>(path: string): Promise<T> {
+  const token = getAccessToken()
+  const headers: Record<string, string> = {}
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const resp = await fetch(path, { headers })
+  if (!resp.ok) throw new ApiError('Not authenticated', resp.status, null)
+  return resp.json()
+}
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface UserProfile {
   id: string
@@ -59,6 +93,42 @@ export interface OntologyVersion {
   created_at: string
 }
 
+export interface Term {
+  iri: string
+  label: string | null
+}
+
+export interface RawTermDetail {
+  iri: string
+  properties: Record<string, string[]>
+}
+
+export interface ParsedTerm {
+  iri: string
+  label: string
+  definition: string | null
+  entityType: 'class' | 'property' | 'individual'
+  synonyms: { exact: string[]; related: string[]; broad: string[]; narrow: string[] }
+  superclasses: string[]
+}
+
+export interface SearchResult {
+  iri: string
+  label: string
+  short: string
+  match_type: 'entity' | 'elk' | 'sparql'
+  version_id?: string
+  ontology_id?: string
+}
+
+export interface AutocompleteCompletion {
+  text: string
+  type: string
+  iri: string | null
+  short: string | null
+  insert: string
+}
+
 export interface Job {
   id: string
   version_id: string
@@ -76,7 +146,7 @@ export interface ApiKey {
   scopes: string[]
   created_at: string
   last_used_at: string | null
-  key?: string  // only present on creation
+  key?: string
 }
 
 export interface Webhook {
@@ -97,11 +167,57 @@ export interface WebhookDelivery {
   last_attempt_at: string | null
 }
 
-// ── API methods ────────────────────────────────────────────────────────────────
+// ── Predicate constants ───────────────────────────────────────────────────────
+
+const P = {
+  label:       'http://www.w3.org/2000/01/rdf-schema#label',
+  comment:     'http://www.w3.org/2000/01/rdf-schema#comment',
+  definition:  'http://purl.obolibrary.org/obo/IAO_0000115',
+  subClassOf:  'http://www.w3.org/2000/01/rdf-schema#subClassOf',
+  type:        'http://www.w3.org/1999/02/22-rdf-syntax-ns#type',
+  exactSyn:    'http://www.geneontology.org/formats/oboInOwl#hasExactSynonym',
+  relatedSyn:  'http://www.geneontology.org/formats/oboInOwl#hasRelatedSynonym',
+  broadSyn:    'http://www.geneontology.org/formats/oboInOwl#hasBroadSynonym',
+  narrowSyn:   'http://www.geneontology.org/formats/oboInOwl#hasNarrowSynonym',
+  owlClass:    'http://www.w3.org/2002/07/owl#Class',
+  owlObjProp:  'http://www.w3.org/2002/07/owl#ObjectProperty',
+  owlDataProp: 'http://www.w3.org/2002/07/owl#DatatypeProperty',
+  owlAnnProp:  'http://www.w3.org/2002/07/owl#AnnotationProperty',
+  owlIndividual: 'http://www.w3.org/2002/07/owl#NamedIndividual',
+}
+
+export function parseTerm(raw: RawTermDetail): ParsedTerm {
+  const p = raw.properties
+  const label = p[P.label]?.[0] ?? raw.iri.split(/[#/]/).pop() ?? raw.iri
+  const definition = p[P.definition]?.[0] ?? p[P.comment]?.[0] ?? null
+  const types = p[P.type] ?? []
+  let entityType: ParsedTerm['entityType'] = 'class'
+  if (types.some(t => t === P.owlObjProp || t === P.owlDataProp || t === P.owlAnnProp)) {
+    entityType = 'property'
+  } else if (types.includes(P.owlIndividual)) {
+    entityType = 'individual'
+  }
+  const superclasses = (p[P.subClassOf] ?? []).filter(v => v.startsWith('http'))
+  return {
+    iri: raw.iri,
+    label,
+    definition,
+    entityType,
+    synonyms: {
+      exact:   p[P.exactSyn]   ?? [],
+      related: p[P.relatedSyn] ?? [],
+      broad:   p[P.broadSyn]   ?? [],
+      narrow:  p[P.narrowSyn]  ?? [],
+    },
+    superclasses,
+  }
+}
+
+// ── API surface ───────────────────────────────────────────────────────────────
 
 export const api = {
   auth: {
-    me: () => request<UserProfile>('/../../auth/me'),
+    me: () => authFetch<UserProfile>('/auth/me'),
   },
 
   ontologies: {
@@ -112,6 +228,25 @@ export const api = {
     get: (id: string) => request<Ontology>(`/ontologies/${id}`),
     versions: (id: string) =>
       request<{ versions: OntologyVersion[] }>(`/ontologies/${id}/versions`),
+    terms: (oid: string, vid: string, parent?: string | null) => {
+      const params = new URLSearchParams({ limit: '200' })
+      params.set('parent', parent ?? 'root')
+      return request<{ terms: Term[]; offset: number; limit: number; parent: string | null }>(
+        `/ontologies/${oid}/${vid}/terms?${params}`
+      )
+    },
+    termDetail: (oid: string, vid: string, iri: string) =>
+      request<RawTermDetail>(
+        `/ontologies/${oid}/${vid}/terms/${encodeURIComponent(iri)}`
+      ),
+    search: (oid: string, vid: string, q: string, mode = 'auto') =>
+      request<{ mode: string; results: SearchResult[]; count: number; truncated: boolean }>(
+        `/ontologies/${oid}/${vid}/search?q=${encodeURIComponent(q)}&mode=${mode}`
+      ),
+    autocomplete: (oid: string, vid: string, q: string, cursor = -1) =>
+      request<{ completions: AutocompleteCompletion[]; context: string }>(
+        `/ontologies/${oid}/${vid}/autocomplete?q=${encodeURIComponent(q)}&cursor=${cursor}`
+      ),
     submitByIri: (iri: string) =>
       request<{ task_id: string; status: string }>('/ontologies', {
         method: 'POST',
@@ -122,6 +257,22 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ url }),
       }),
+    submitFile: (file: File) => {
+      const fd = new FormData()
+      fd.append('file', file)
+      return request<{ task_id: string; status: string }>('/ontologies', {
+        method: 'POST',
+        body: fd,
+      })
+    },
+  },
+
+  globalSearch: {
+    search: (q: string, limit = 20) => {
+      const params = new URLSearchParams({ q, limit: String(limit) })
+      return fetch(`/api/v1/search?${params}`)
+        .then(r => r.json()) as Promise<{ results: SearchResult[]; count: number; truncated: boolean }>
+    },
   },
 
   jobs: {
@@ -148,25 +299,28 @@ export const api = {
   webhooks: {
     list: () => request<{ webhooks: Webhook[] }>('/webhooks'),
     get: (id: string) => request<Webhook>(`/webhooks/${id}`),
-    deliveries: (id: string) => request<{ deliveries: WebhookDelivery[] }>(`/webhooks/${id}/deliveries`),
+    deliveries: (id: string) =>
+      request<{ deliveries: WebhookDelivery[] }>(`/webhooks/${id}/deliveries`),
     create: (url: string, events: string[], secret?: string) =>
       request<Webhook>('/webhooks', {
         method: 'POST',
         body: JSON.stringify({ url, events, secret }),
       }),
     delete: (id: string) => request<void>(`/webhooks/${id}`, { method: 'DELETE' }),
-    test: (id: string) => request<{ delivery_id: string; status: string }>(`/webhooks/${id}/test`, { method: 'POST' }),
+    test: (id: string) =>
+      request<{ delivery_id: string; status: string }>(`/webhooks/${id}/test`, { method: 'POST' }),
   },
 
   stats: {
-    get: () => request<{
-      total_ontologies: number
-      total_versions: number
-      storage_bytes: number
-      total_queries: number
-      uploads_per_month: Array<{ month: string; count: number }>
-      queries_per_month: Array<{ month: string; count: number }>
-      job_durations: Array<{ month: string; avg_seconds: number }>
-    }>('/stats'),
+    get: () =>
+      request<{
+        total_ontologies: number
+        total_versions: number
+        storage_bytes: number
+        total_queries: number
+        uploads_per_month: Array<{ month: string; count: number }>
+        queries_per_month: Array<{ month: string; count: number }>
+        job_durations: Array<{ month: string; avg_seconds: number }>
+      }>('/stats'),
   },
 }

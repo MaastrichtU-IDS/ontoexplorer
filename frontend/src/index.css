@@ -1,5 +1,53 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: system-ui, -apple-system, sans-serif; background: #f8fafc; color: #1e293b; }
-a { color: #2563eb; text-decoration: none; }
+
+:root {
+  --bg: #0f172a;
+  --bg-secondary: #1e293b;
+  --bg-hover: #334155;
+  --border: #334155;
+  --text: #e2e8f0;
+  --text-muted: #94a3b8;
+  --text-dim: #64748b;
+  --accent: #22c55e;
+  --accent-blue: #67e8f9;
+  --accent-purple: #a78bfa;
+  --nav-height: 48px;
+  --radius: 6px;
+  --radius-sm: 4px;
+  --font-size-sm: 12px;
+  --font-size-base: 14px;
+}
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', monospace;
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+}
+
+a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
-button { cursor: pointer; }
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+
+input, textarea, select {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  padding: 6px 10px;
+  outline: none;
+}
+
+input:focus, textarea:focus, select:focus {
+  border-color: var(--accent);
+}
