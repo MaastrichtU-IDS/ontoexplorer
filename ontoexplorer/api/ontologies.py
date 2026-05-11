@@ -154,7 +154,7 @@ async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = De
     def _count(sparql: str) -> int:
         rows = list(store.query(sparql))
         if rows:
-            v = rows[0].get("n")
+            v = rows[0]["n"]
             return int(v.value) if v is not None else 0
         return 0
 
