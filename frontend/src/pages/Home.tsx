@@ -1,9 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueries } from '@tanstack/react-query'
 import { useOntologies } from '../hooks/useOntologies'
-import { useVersions } from '../hooks/useVersions'
-import { useGlobalSearch, useSearch } from '../hooks/useSearch'
+import { useGlobalSearch } from '../hooks/useSearch'
 import { slugFromIri, SearchResult, api } from '../lib/api'
 import SearchBar from '../components/SearchBar'
 
@@ -126,16 +125,48 @@ function KeywordSearch({ onNavigate }: { onNavigate: (path: string) => void }) {
 
 // ── Query tab (MOS) ───────────────────────────────────────────────────────────
 
+function useAllLatestVersions(ontologyIds: string[]) {
+  return useQueries({
+    queries: ontologyIds.map(oid => ({
+      queryKey: ['versions', oid],
+      queryFn: () => api.ontologies.versions(oid),
+      staleTime: 30_000,
+      enabled: !!oid,
+    })),
+  })
+}
+
+function useMOSFanout(pairs: { oid: string; vid: string }[], query: string) {
+  return useQueries({
+    queries: pairs.map(({ oid, vid }) => ({
+      queryKey: ['mos-search', oid, vid, query],
+      queryFn: () => api.ontologies.search(oid, vid, query),
+      staleTime: 10_000,
+      enabled: query.length >= 2,
+      retry: false,
+    })),
+  })
+}
+
 function MOSQuery({ onNavigate }: { onNavigate: (path: string) => void }) {
   const { ontologies } = useOntologies()
-  const [selectedOid, setSelectedOid] = useState<string>(ontologies[0]?.id ?? '')
-  const { data: versionsData } = useVersions(selectedOid || undefined)
-  const vid = versionsData?.versions[0]?.id ?? null
+  const [acOid, setAcOid] = useState<string>('')
   const [mosQuery, setMosQuery] = useState('')
-  const { data } = useSearch(selectedOid || null, vid, mosQuery)
-  const results = data?.results ?? []
 
-  const activeOid = selectedOid || ontologies[0]?.id || null
+  // Latest version for each ontology (for fan-out)
+  const versionQueries = useAllLatestVersions(ontologies.map(o => o.id))
+  const pairs: { oid: string; vid: string }[] = ontologies.flatMap((o, i) => {
+    const vid = versionQueries[i]?.data?.versions[0]?.id
+    return vid ? [{ oid: o.id, vid }] : []
+  })
+
+  // Autocomplete context: use selected or first available
+  const acOntology = ontologies.find(o => o.id === acOid) ?? ontologies[0]
+  const acPair = pairs.find(p => p.oid === acOntology?.id)
+
+  // Fan-out MOS search across all ontologies
+  const searchResults = useMOSFanout(pairs, mosQuery)
+  const allResults: SearchResult[] = searchResults.flatMap(r => r.data?.results ?? [])
 
   function handleSelect(r: SearchResult) {
     const ont = ontologies.find(o => o.id === r.ontology_id)
@@ -145,39 +176,41 @@ function MOSQuery({ onNavigate }: { onNavigate: (path: string) => void }) {
 
   return (
     <>
-      <div style={{ marginBottom: 8 }}>
+      <SearchBar
+        ontologyId={acPair?.oid ?? null}
+        versionId={acPair?.vid ?? null}
+        onSearch={setMosQuery}
+        placeholder="MOS expression, e.g. 'cell' and 'nucleus'"
+      />
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+        <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>
+          Autocomplete context:
+        </span>
         <select
-          value={selectedOid}
-          onChange={e => setSelectedOid(e.target.value)}
+          value={acOid || acOntology?.id || ''}
+          onChange={e => setAcOid(e.target.value)}
           style={{
-            width: '100%', padding: '8px 12px', fontSize: 14,
+            fontSize: 11, padding: '2px 6px',
             background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-            borderRadius: 'var(--radius)', color: 'var(--text)',
+            borderRadius: 'var(--radius-sm)', color: 'var(--text)',
           }}
         >
           {ontologies.map(o => (
-            <option key={o.id} value={o.id}>{slugFromIri(o.iri).toUpperCase()} — {o.iri}</option>
+            <option key={o.id} value={o.id}>{slugFromIri(o.iri).toUpperCase()}</option>
           ))}
         </select>
+        <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>
+          · use <code>and</code>, <code>or</code>, <code>not</code>, <code>some</code>, <code>only</code> · results span all ontologies
+        </span>
       </div>
 
-      <SearchBar
-        ontologyId={activeOid}
-        versionId={vid}
-        onSearch={setMosQuery}
-        placeholder="Enter MOS expression, e.g. 'cell' and 'nucleus'"
-      />
-
-      <p style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: 6, marginBottom: 8 }}>
-        Manchester OWL Syntax — use class names, <code>and</code>, <code>or</code>, <code>not</code>, <code>some</code>, <code>only</code>
-      </p>
-
-      {mosQuery && results.length === 0 && (
+      {mosQuery && allResults.length === 0 && (
         <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', textAlign: 'center', marginTop: '2rem' }}>
           No results for "{mosQuery}"
         </p>
       )}
-      <ResultList results={results} onSelect={handleSelect} />
+      <ResultList results={allResults} onSelect={handleSelect} />
     </>
   )
 }
