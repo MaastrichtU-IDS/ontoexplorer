@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { useClassTreeNodes } from '../hooks/useClassTree'
+import { useInferredTreeNodes } from '../hooks/useInferredTree'
 import { Term } from '../lib/api'
+
+type Mode = 'asserted' | 'inferred'
 
 interface NodeProps {
   ontologyId: string
@@ -10,19 +13,27 @@ interface NodeProps {
   selectedIri: string | null
   onSelect: (iri: string) => void
   entityType: 'class' | 'property'
+  mode: Mode
 }
 
-function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, entityType }: NodeProps) {
+function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, entityType, mode }: NodeProps) {
   const [expanded, setExpanded] = useState(false)
 
-  const { data: childData, isLoading } = useClassTreeNodes(
-    expanded ? ontologyId : null,
-    expanded ? versionId : null,
-    expanded ? term.iri : null,
+  const asserted = useClassTreeNodes(
+    mode === 'asserted' && expanded ? ontologyId : null,
+    mode === 'asserted' && expanded ? versionId : null,
+    mode === 'asserted' && expanded ? term.iri : null,
     entityType,
   )
+  const inferred = useInferredTreeNodes(
+    mode === 'inferred' && expanded ? ontologyId : null,
+    mode === 'inferred' && expanded ? versionId : null,
+    mode === 'inferred' && expanded ? term.iri : null,
+  )
 
-  const children = childData?.terms ?? []
+  const { data: childData, isLoading } = mode === 'asserted' ? asserted : inferred
+  const children: Term[] = (childData as any)?.terms ?? []
+
   const isSelected = selectedIri === term.iri
   const label = term.label ?? term.iri.split(/[#/]/).pop() ?? term.iri
 
@@ -68,6 +79,7 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, e
               selectedIri={selectedIri}
               onSelect={onSelect}
               entityType={entityType}
+              mode={mode}
             />
           ))}
         </ul>
@@ -82,14 +94,27 @@ interface Props {
   selectedIri: string | null
   onSelect: (iri: string) => void
   entityType?: 'class' | 'property'
+  mode?: Mode
 }
 
-export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect, entityType = 'class' }: Props) {
-  const { data, isLoading } = useClassTreeNodes(ontologyId, versionId, null, entityType)
-  const roots = data?.terms ?? []
+export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect, entityType = 'class', mode = 'asserted' }: Props) {
+  const asserted = useClassTreeNodes(mode === 'asserted' ? ontologyId : null, mode === 'asserted' ? versionId : null, null, entityType)
+  const inferred = useInferredTreeNodes(mode === 'inferred' ? ontologyId : null, mode === 'inferred' ? versionId : null, null)
+
+  const { data, isLoading } = mode === 'asserted' ? asserted : inferred
+  const roots: Term[] = (data as any)?.terms ?? []
+  const reasoningAvailable = mode === 'inferred' ? (data as any)?.reasoning_available !== false : true
 
   if (isLoading) {
     return <div style={{ padding: '0.5rem 1rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</div>
+  }
+
+  if (mode === 'inferred' && !isLoading && !reasoningAvailable) {
+    return (
+      <div style={{ padding: '0.5rem 1rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', fontStyle: 'italic' }}>
+        Reasoning not yet complete for this version.
+      </div>
+    )
   }
 
   if (roots.length === 0) {
@@ -110,6 +135,7 @@ export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect
           selectedIri={selectedIri}
           onSelect={onSelect}
           entityType={entityType}
+          mode={mode}
         />
       ))}
     </ul>

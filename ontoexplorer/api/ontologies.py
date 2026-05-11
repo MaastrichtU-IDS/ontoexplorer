@@ -613,6 +613,71 @@ async def get_subclasses(
         raise HTTPException(503, "Reasoning service unavailable")
 
 
+_OWL_THING    = "http://www.w3.org/2002/07/owl#Thing"
+_OWL_NOTHING  = "http://www.w3.org/2002/07/owl#Nothing"
+
+
+@router.get("/{ontology_id}/{version_id}/inferred-children",
+            summary="Direct inferred children of a class (label-resolved)")
+async def inferred_children(
+    ontology_id: str,
+    version_id: str,
+    cls: str = Query(_OWL_THING, description="Parent class IRI; defaults to owl:Thing for root"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return direct inferred subclasses from ELK with labels resolved from the Redis index.
+
+    Uses the full cached classification result so a single ELK call covers all nodes.
+    Root request (cls=owl:Thing) returns classes with no direct inferred superclass.
+    """
+    await _get_version_or_404(db, ontology_id, version_id)
+    from ontoexplorer.clients.reasoning import get_classification
+    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
+
+    try:
+        classification = await get_classification(version_id)
+    except Exception:
+        return {"terms": [], "reasoning_available": False}
+
+    # ELK splits its hierarchy across two keys:
+    #   direct_superclasses — pre-computed direct parents for most classes
+    #   superclasses        — partial transitive closure; catches classes ELK's
+    #                         direct-parent computation missed (e.g. CCO_0000015)
+    # We combine both: prefer direct_superclasses, fall back to deriving from superclasses.
+    elk_direct: dict[str, list[str]] = classification.get("direct_superclasses", {})
+    elk_all:    dict[str, list[str]] = classification.get("superclasses", {})
+    _excluded = {_OWL_THING, _OWL_NOTHING}
+
+    def _direct_parents(c: str) -> list[str]:
+        if c in elk_direct:
+            return elk_direct[c]
+        # Derive from superclasses: keep most-specific (drop p if any sibling q has p in elk_all[q])
+        raw = [p for p in elk_all.get(c, []) if p not in _excluded]
+        return [p for p in raw
+                if not any(p in elk_all.get(q, []) for q in raw if q != p)]
+
+    all_classes = set(elk_direct.keys()) | set(elk_all.keys())
+
+    if cls == _OWL_THING:
+        child_iris = sorted(c for c in all_classes if not _direct_parents(c))
+    else:
+        child_iris = sorted(c for c in all_classes if cls in _direct_parents(c))
+
+    r = _get_redis()
+
+    def _label(iri: str) -> str:
+        detail = r.hgetall(_iri_key(version_id, iri))
+        if detail and detail.get("label"):
+            return detail["label"]
+        fragment = iri.rstrip("/")
+        return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
+
+    return {
+        "terms": [{"iri": iri, "label": _label(iri)} for iri in child_iris],
+        "reasoning_available": True,
+    }
+
+
 @router.get("/{ontology_id}/{version_id}/consistency", summary="Consistency check for a version")
 async def get_consistency(
     ontology_id: str,

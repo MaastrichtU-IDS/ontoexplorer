@@ -142,6 +142,8 @@ function CollapsibleSection({ label, defaultOpen = true, children }: {
   )
 }
 
+type HierarchyMode = 'asserted' | 'inferred'
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function OntologyPage() {
@@ -161,6 +163,7 @@ export default function OntologyPage() {
   const oid = ontology?.id
 
   const selectedTermIri = searchParams.get('term')
+  const [classMode, setClassMode] = useState<HierarchyMode>('asserted')
 
   const [paneWidth, setPaneWidth] = useState<number>(() => {
     const stored = localStorage.getItem('onto-pane-width')
@@ -236,15 +239,40 @@ export default function OntologyPage() {
         {/* Scrollable hierarchy area */}
         {oid && activeVid ? (
           <div style={{ flex: 1, overflow: 'auto' }}>
-            <CollapsibleSection label="Classes" defaultOpen={true}>
+            {/* Classes section with asserted/inferred toggle */}
+            <div style={{ borderBottom: '1px solid var(--border)' }}>
+              <div style={{
+                padding: '5px 10px', display: 'flex', alignItems: 'center', gap: 8,
+              }}>
+                <span style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, flex: 1 }}>
+                  Classes
+                </span>
+                <div style={{ display: 'flex', borderRadius: 4, overflow: 'hidden', border: '1px solid var(--border)' }}>
+                  {(['asserted', 'inferred'] as HierarchyMode[]).map(m => (
+                    <button
+                      key={m}
+                      onClick={() => setClassMode(m)}
+                      style={{
+                        padding: '2px 8px', fontSize: 10, border: 'none', cursor: 'pointer',
+                        background: classMode === m ? 'var(--accent)' : 'transparent',
+                        color: classMode === m ? '#000' : 'var(--text-dim)',
+                        textTransform: 'capitalize',
+                      }}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <ClassTree
                 ontologyId={oid}
                 versionId={activeVid}
                 selectedIri={selectedTermIri}
                 onSelect={selectTerm}
                 entityType="class"
+                mode={classMode}
               />
-            </CollapsibleSection>
+            </div>
             <CollapsibleSection label="Properties" defaultOpen={false}>
               <ClassTree
                 ontologyId={oid}
