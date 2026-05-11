@@ -194,10 +194,11 @@ async def list_terms(
     results = store.query(query)
     terms = []
     for row in results:
-        terms.append({
-            "iri": str(row["class"]),
-            "label": str(row["label"]) if row.get("label") else None,
-        })
+        try:
+            label = row["label"].value
+        except KeyError:
+            label = None
+        terms.append({"iri": row["class"].value, "label": label})
     return {"terms": terms, "offset": offset, "limit": limit, "parent": parent}
 
 
@@ -229,8 +230,8 @@ async def get_term(
 
     properties: dict[str, list] = {}
     for row in results:
-        pred = str(row["pred"])
-        obj = str(row["obj"])
+        pred = row["pred"].value
+        obj = row["obj"].value
         properties.setdefault(pred, []).append(obj)
 
     return {"iri": term_iri, "properties": properties}
@@ -274,7 +275,7 @@ async def list_inferred(
     except Exception:
         results = []
 
-    axioms = [{"subClass": str(r["sub"]), "superClass": str(r["sup"])} for r in results]
+    axioms = [{"subClass": r["sub"].value, "superClass": r["sup"].value} for r in results]
     return {
         "version_id": version_id,
         "ontology_id": ontology_id,
