@@ -206,3 +206,116 @@ def parse(text: str) -> ASTNode:
         raise ParseError(str(exc)) from exc
     except Exception as exc:
         raise ParseError(str(exc)) from exc
+
+
+# ── Partial parse for autocomplete ────────────────────────────────────────────
+
+@dataclass
+class PartialParseResult:
+    token_type: str   # "OPEN_QUOTE" | "EXPECT_ENTITY" | "EXPECT_KEYWORD" | "EXPECT_INT"
+    partial: str      # partial text being typed at cursor
+
+
+_KEYWORD_RESTRICTION = {"some", "only", "value", "Self", "min", "max", "exactly"}
+_KEYWORD_BOOLEAN = {"and", "or"}
+_CURIE_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_\-]*:[A-Za-z0-9_\-\.]+")
+_FULL_IRI_RE = re.compile(r"<[^>]*>")
+_INT_RE = re.compile(r"[0-9]+")
+
+
+def _tokenize_prefix(text: str) -> list[tuple[str, str]]:
+    """Tokenize completed text into (type, value) pairs. Skips open quotes."""
+    tokens: list[tuple[str, str]] = []
+    i = 0
+    while i < len(text):
+        if text[i].isspace():
+            i += 1
+            continue
+        if text[i] == "'":
+            end = text.find("'", i + 1)
+            if end == -1:
+                break  # open quote — stop tokenising
+            tokens.append(("QUOTED_LABEL", text[i:end + 1]))
+            i = end + 1
+            continue
+        if text[i] == "<":
+            end = text.find(">", i + 1)
+            if end == -1:
+                break
+            tokens.append(("FULL_IRI", text[i:end + 1]))
+            i = end + 1
+            continue
+        if text[i] == "(":
+            tokens.append(("OPEN_PAREN", "("))
+            i += 1
+            continue
+        if text[i] == ")":
+            tokens.append(("CLOSE_PAREN", ")"))
+            i += 1
+            continue
+        # Try keywords and identifiers
+        rest = text[i:]
+        word_m = re.match(r"[A-Za-z_][A-Za-z0-9_:\-\.]*", rest)
+        if word_m:
+            word = word_m.group(0)
+            if word in _KEYWORD_RESTRICTION:
+                tokens.append(("KW_RESTRICTION", word))
+            elif word in _KEYWORD_BOOLEAN:
+                tokens.append(("KW_BOOLEAN", word))
+            elif word == "not":
+                tokens.append(("KW_NOT", word))
+            elif _CURIE_RE.fullmatch(word):
+                tokens.append(("CURIE", word))
+            else:
+                tokens.append(("WORD", word))
+            i += len(word)
+            continue
+        int_m = re.match(r"[0-9]+", rest)
+        if int_m:
+            tokens.append(("INT", int_m.group(0)))
+            i += len(int_m.group(0))
+            continue
+        i += 1
+    return tokens
+
+
+def partial_parse(text: str, cursor: int) -> PartialParseResult:
+    """Return the expected token type and partial text at cursor for autocomplete."""
+    prefix = text[:cursor]
+
+    # Detect open single quote
+    in_quote = False
+    quote_start = -1
+    for idx, ch in enumerate(prefix):
+        if ch == "'":
+            if not in_quote:
+                in_quote = True
+                quote_start = idx
+            else:
+                in_quote = False
+                quote_start = -1
+
+    if in_quote:
+        return PartialParseResult(token_type="OPEN_QUOTE", partial=prefix[quote_start + 1:])
+
+    tokens = _tokenize_prefix(prefix)
+
+    if not tokens:
+        return PartialParseResult(token_type="EXPECT_ENTITY", partial="")
+
+    last_type, last_val = tokens[-1]
+
+    # After a complete entity reference → expect restriction or boolean keyword
+    if last_type in ("QUOTED_LABEL", "CURIE", "FULL_IRI"):
+        return PartialParseResult(token_type="EXPECT_KEYWORD", partial="")
+
+    # After min/max/exactly → expect integer
+    if last_type == "KW_RESTRICTION" and last_val in ("min", "max", "exactly"):
+        return PartialParseResult(token_type="EXPECT_INT", partial="")
+
+    # After integer → expect entity (filler class)
+    if last_type == "INT":
+        return PartialParseResult(token_type="EXPECT_ENTITY", partial="")
+
+    # After restriction keyword (some/only/value) or boolean (and/or) or not / ( → expect entity
+    return PartialParseResult(token_type="EXPECT_ENTITY", partial="")

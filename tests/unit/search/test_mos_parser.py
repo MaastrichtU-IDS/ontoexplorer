@@ -111,3 +111,60 @@ def test_parse_error_raises():
 def test_parse_error_unclosed_quote():
     with pytest.raises(ParseError):
         parse("'cell death")
+
+
+from ontoexplorer.modules.search.mos_parser import partial_parse, PartialParseResult
+
+
+def test_partial_parse_open_quote_at_start():
+    result = partial_parse("'cell d", 7)
+    assert result.token_type == "OPEN_QUOTE"
+    assert result.partial == "cell d"
+
+
+def test_partial_parse_open_quote_mid_expression():
+    result = partial_parse("'Cell' and 'nuc", 15)
+    assert result.token_type == "OPEN_QUOTE"
+    assert result.partial == "nuc"
+
+
+def test_partial_parse_closed_quote_expect_keyword():
+    result = partial_parse("'Cell'", 6)
+    assert result.token_type == "EXPECT_KEYWORD"
+    assert result.partial == ""
+
+
+def test_partial_parse_after_some_expect_entity():
+    result = partial_parse("'hasPart' some ", 15)
+    assert result.token_type == "EXPECT_ENTITY"
+    assert result.partial == ""
+
+
+def test_partial_parse_after_min_expect_int():
+    result = partial_parse("'hasPart' min ", 14)
+    assert result.token_type == "EXPECT_INT"
+    assert result.partial == ""
+
+
+def test_partial_parse_after_int_expect_entity():
+    result = partial_parse("'hasPart' min 2 ", 16)
+    assert result.token_type == "EXPECT_ENTITY"
+    assert result.partial == ""
+
+
+def test_partial_parse_after_not_expect_entity():
+    result = partial_parse("not ", 4)
+    assert result.token_type == "EXPECT_ENTITY"
+    assert result.partial == ""
+
+
+def test_partial_parse_empty_input():
+    result = partial_parse("", 0)
+    assert result.token_type == "EXPECT_ENTITY"
+    assert result.partial == ""
+
+
+def test_partial_parse_after_and_expect_entity():
+    result = partial_parse("'Cell' and ", 11)
+    assert result.token_type == "EXPECT_ENTITY"
+    assert result.partial == ""
