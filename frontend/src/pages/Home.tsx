@@ -1,107 +1,91 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import SearchBar from '../components/SearchBar'
-import OntologyPicker from '../components/OntologyPicker'
+import { useOntologies } from '../hooks/useOntologies'
 import { useGlobalSearch } from '../hooks/useSearch'
-import { useOntologySearch } from '../hooks/useOntologySearch'
+import { slugFromIri } from '../lib/api'
 
 export default function Home() {
-  const [selectedOids, setSelectedOids] = useState<string[]>([])
+  const [query, setQuery] = useState('')
   const [submittedQuery, setSubmittedQuery] = useState('')
   const navigate = useNavigate()
 
   const { data: searchData } = useGlobalSearch(submittedQuery)
-  const { data: ontologyData } = useOntologySearch('')
-  const ontologies = ontologyData?.ontologies ?? []
+  const { ontologies } = useOntologies()
+
+  function handleSearch(e: React.FormEvent) {
+    e.preventDefault()
+    setSubmittedQuery(query.trim())
+  }
+
+  function handleResultClick(ontologyId: string | undefined, versionId: string | undefined, iri: string) {
+    if (!ontologyId || !versionId) return
+    const ont = ontologies.find(o => o.id === ontologyId)
+    if (!ont) return
+    navigate(`/ontologies/${slugFromIri(ont.iri)}/${versionId}?term=${encodeURIComponent(iri)}`)
+  }
 
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: '3rem 1.5rem' }}>
-      <h1 style={{ color: 'var(--text)', fontSize: 24, fontWeight: 700, marginBottom: '0.5rem', textAlign: 'center' }}>
+    <div style={{ maxWidth: 700, margin: '0 auto', padding: '6rem 1.5rem 3rem' }}>
+      <h1 style={{ color: 'var(--text)', fontSize: 28, fontWeight: 700, marginBottom: '0.5rem', textAlign: 'center' }}>
         OntoExplorer
       </h1>
-      <p style={{ color: 'var(--text-muted)', textAlign: 'center', marginBottom: '2rem' }}>
-        FAIR ontology repository — search terms, ontologies, and MOS expressions
+      <p style={{ color: 'var(--text-muted)', textAlign: 'center', marginBottom: '2.5rem' }}>
+        FAIR ontology repository — search terms across all ontologies
       </p>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: '1.5rem', alignItems: 'flex-start' }}>
-        <OntologyPicker
-          value={selectedOids}
-          onChange={setSelectedOids}
-          placeholder="Filter by ontology…"
+      <form onSubmit={handleSearch} style={{ display: 'flex', gap: 8 }}>
+        <input
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Search classes, properties, individuals…"
+          style={{
+            flex: 1, padding: '10px 14px', fontSize: 15,
+            background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)', color: 'var(--text)', outline: 'none',
+          }}
+          onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+          onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')}
         />
-        <div style={{ flex: 1 }}>
-          <SearchBar
-            ontologyId={selectedOids[0] ?? ontologies[0]?.id ?? null}
-            versionId={null}
-            onSearch={setSubmittedQuery}
-          />
-        </div>
-      </div>
+        <button
+          type="submit"
+          style={{
+            padding: '10px 20px', background: 'var(--accent)', color: '#000',
+            border: 'none', borderRadius: 'var(--radius)', fontWeight: 600,
+            fontSize: 14, cursor: 'pointer',
+          }}
+        >
+          Search
+        </button>
+      </form>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-        {/* Terms panel */}
-        <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius)', padding: '1rem' }}>
-          <h2 style={{ color: 'var(--accent-purple)', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1, marginBottom: '0.75rem' }}>
-            Terms
-          </h2>
-          {!submittedQuery ? (
-            <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
-              Search to find terms across all ontologies
+      {submittedQuery && (
+        <div style={{ marginTop: '1.5rem' }}>
+          {(searchData?.results ?? []).length === 0 ? (
+            <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', textAlign: 'center', marginTop: '2rem' }}>
+              No results for "{submittedQuery}"
             </p>
-          ) : (searchData?.results ?? []).length === 0 ? (
-            <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>No terms found</p>
           ) : (
-            <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <ul style={{ listStyle: 'none' }}>
               {(searchData?.results ?? []).map(r => (
                 <li
                   key={r.iri}
-                  onClick={() =>
-                    r.ontology_id && r.version_id &&
-                    navigate(`/browse/${r.ontology_id}/${r.version_id}?term=${encodeURIComponent(r.iri)}`)
-                  }
+                  onClick={() => handleResultClick(r.ontology_id, r.version_id, r.iri)}
                   style={{
-                    padding: '6px 8px', borderRadius: 'var(--radius-sm)',
-                    cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'baseline',
+                    padding: '8px 10px', borderRadius: 'var(--radius-sm)',
+                    cursor: 'pointer', display: 'flex', gap: 10, alignItems: 'baseline',
+                    borderBottom: '1px solid var(--border)',
                   }}
                   onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
                   onMouseLeave={e => (e.currentTarget.style.background = '')}
                 >
-                  <span style={{ color: 'var(--accent)', fontWeight: 500 }}>{r.label}</span>
+                  <span style={{ color: 'var(--accent)', fontWeight: 500, flexShrink: 0 }}>{r.label}</span>
                   <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{r.short}</span>
                 </li>
               ))}
             </ul>
           )}
         </div>
-
-        {/* Ontologies panel */}
-        <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius)', padding: '1rem' }}>
-          <h2 style={{ color: 'var(--accent-blue)', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1, marginBottom: '0.75rem' }}>
-            Ontologies
-          </h2>
-          {ontologies.length === 0 ? (
-            <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>No ontologies</p>
-          ) : (
-            <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {ontologies.slice(0, 10).map(o => (
-                <li
-                  key={o.id}
-                  onClick={() => navigate(`/browse/${o.id}/latest`)}
-                  style={{
-                    padding: '6px 8px', borderRadius: 'var(--radius-sm)',
-                    cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'center',
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
-                  onMouseLeave={e => (e.currentTarget.style.background = '')}
-                >
-                  <span style={{ color: 'var(--accent)', fontWeight: 500 }}>{o.id}</span>
-                  <span style={{ color: 'var(--text-dim)', fontSize: 11, wordBreak: 'break-all' }}>{o.iri}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
+      )}
     </div>
   )
 }
