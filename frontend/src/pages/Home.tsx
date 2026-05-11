@@ -5,6 +5,7 @@ import { useOntologies } from '../hooks/useOntologies'
 import { useGlobalSearch } from '../hooks/useSearch'
 import { slugFromIri, SearchResult, api } from '../lib/api'
 import SearchBar from '../components/SearchBar'
+import OntologyPicker from '../components/OntologyPicker'
 
 const EXAMPLES = ['cell death', 'apoptosis', 'protein binding', 'nucleus', 'membrane']
 
@@ -150,22 +151,26 @@ function useMOSFanout(pairs: { oid: string; vid: string }[], query: string) {
 
 function MOSQuery({ onNavigate }: { onNavigate: (path: string) => void }) {
   const { ontologies } = useOntologies()
-  const [acOid, setAcOid] = useState<string>('')
+  const [selectedOids, setSelectedOids] = useState<string[]>([])
   const [mosQuery, setMosQuery] = useState('')
 
-  // Latest version for each ontology (for fan-out)
+  // Latest version for every ontology
   const versionQueries = useAllLatestVersions(ontologies.map(o => o.id))
-  const pairs: { oid: string; vid: string }[] = ontologies.flatMap((o, i) => {
+  const allPairs: { oid: string; vid: string }[] = ontologies.flatMap((o, i) => {
     const vid = versionQueries[i]?.data?.versions[0]?.id
     return vid ? [{ oid: o.id, vid }] : []
   })
 
-  // Autocomplete context: use selected or first available
-  const acOntology = ontologies.find(o => o.id === acOid) ?? ontologies[0]
-  const acPair = pairs.find(p => p.oid === acOntology?.id)
+  // Scope: selected ontologies, or all if none selected
+  const scopePairs = selectedOids.length > 0
+    ? allPairs.filter(p => selectedOids.includes(p.oid))
+    : allPairs
 
-  // Fan-out MOS search across all ontologies
-  const searchResults = useMOSFanout(pairs, mosQuery)
+  // Autocomplete context: first selected, or first available
+  const acPair = scopePairs[0] ?? allPairs[0]
+
+  // Fan-out MOS search across scoped ontologies
+  const searchResults = useMOSFanout(scopePairs, mosQuery)
   const allResults: SearchResult[] = searchResults.flatMap(r => r.data?.results ?? [])
 
   function handleSelect(r: SearchResult) {
@@ -176,6 +181,14 @@ function MOSQuery({ onNavigate }: { onNavigate: (path: string) => void }) {
 
   return (
     <>
+      <div style={{ marginBottom: 8 }}>
+        <OntologyPicker
+          value={selectedOids}
+          onChange={setSelectedOids}
+          placeholder="Filter ontologies… (leave empty to search all)"
+        />
+      </div>
+
       <SearchBar
         ontologyId={acPair?.oid ?? null}
         versionId={acPair?.vid ?? null}
@@ -183,27 +196,10 @@ function MOSQuery({ onNavigate }: { onNavigate: (path: string) => void }) {
         placeholder="MOS expression, e.g. 'cell' and 'nucleus'"
       />
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, marginBottom: 8, flexWrap: 'wrap' }}>
-        <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>
-          Autocomplete context:
-        </span>
-        <select
-          value={acOid || acOntology?.id || ''}
-          onChange={e => setAcOid(e.target.value)}
-          style={{
-            fontSize: 11, padding: '2px 6px',
-            background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-            borderRadius: 'var(--radius-sm)', color: 'var(--text)',
-          }}
-        >
-          {ontologies.map(o => (
-            <option key={o.id} value={o.id}>{slugFromIri(o.iri).toUpperCase()}</option>
-          ))}
-        </select>
-        <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>
-          · use <code>and</code>, <code>or</code>, <code>not</code>, <code>some</code>, <code>only</code> · results span all ontologies
-        </span>
-      </div>
+      <p style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: 6, marginBottom: 8 }}>
+        Use <code>and</code>, <code>or</code>, <code>not</code>, <code>some</code>, <code>only</code> ·
+        {' '}{selectedOids.length > 0 ? `searching ${selectedOids.length} selected ontolog${selectedOids.length > 1 ? 'ies' : 'y'}` : 'searching all ontologies'}
+      </p>
 
       {mosQuery && allResults.length === 0 && (
         <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', textAlign: 'center', marginTop: '2rem' }}>

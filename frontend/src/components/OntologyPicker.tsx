@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useOntologySearch } from '../hooks/useOntologySearch'
-import type { Ontology } from '../lib/api'
+import { slugFromIri, type Ontology } from '../lib/api'
 
 interface Props {
   value: string[]
@@ -9,21 +9,25 @@ interface Props {
 }
 
 function shortLabel(o: Ontology): string {
-  // Prefer the last path segment of the IRI as a readable label
-  return o.iri.split(/[/#]/).filter(Boolean).pop() ?? o.id
+  return slugFromIri(o.iri).toUpperCase()
 }
 
 export default function OntologyPicker({ value, onChange, placeholder = 'Search ontologies…' }: Props) {
   const [inputValue, setInputValue] = useState('')
   const [open, setOpen] = useState(false)
+  // Keep a label cache so chips stay readable after the dropdown closes
+  const [labelCache, setLabelCache] = useState<Record<string, string>>({})
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
   const { data, isLoading } = useOntologySearch(inputValue)
   const results = data?.ontologies ?? []
 
-  function select(id: string) {
-    if (!value.includes(id)) onChange([...value, id])
+  function select(o: Ontology) {
+    if (!value.includes(o.id)) {
+      onChange([...value, o.id])
+      setLabelCache(c => ({ ...c, [o.id]: shortLabel(o) }))
+    }
     setInputValue('')
     inputRef.current?.focus()
   }
@@ -63,7 +67,7 @@ export default function OntologyPicker({ value, onChange, placeholder = 'Search 
               borderRadius: 3, padding: '1px 6px', fontSize: 'var(--font-size-sm)',
             }}
           >
-            {id}
+            {labelCache[id] ?? id}
             <button
               onMouseDown={e => { e.preventDefault(); deselect(id) }}
               style={{ color: 'var(--text-dim)', fontSize: 12, lineHeight: 1, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
@@ -108,7 +112,7 @@ export default function OntologyPicker({ value, onChange, placeholder = 'Search 
             return (
               <div
                 key={o.id}
-                onMouseDown={e => { e.preventDefault(); selected ? deselect(o.id) : select(o.id) }}
+                onMouseDown={e => { e.preventDefault(); selected ? deselect(o.id) : select(o) }}
                 style={{
                   padding: '6px 12px', cursor: 'pointer',
                   background: selected ? 'var(--bg-hover)' : 'transparent',
