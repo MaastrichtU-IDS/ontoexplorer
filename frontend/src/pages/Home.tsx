@@ -154,7 +154,7 @@ function MOSQuery({ onNavigate }: { onNavigate: (path: string) => void }) {
   const [selectedOids, setSelectedOids] = useState<string[]>([])
   const [mosQuery, setMosQuery] = useState('')
 
-  // Latest version for every ontology
+  // Latest version for every ontology (for fan-out search)
   const versionQueries = useAllLatestVersions(ontologies.map(o => o.id))
   const allPairs: { oid: string; vid: string }[] = ontologies.flatMap((o, i) => {
     const vid = versionQueries[i]?.data?.versions[0]?.id
@@ -166,8 +166,9 @@ function MOSQuery({ onNavigate }: { onNavigate: (path: string) => void }) {
     ? allPairs.filter(p => selectedOids.includes(p.oid))
     : allPairs
 
-  // Autocomplete context: first selected, or first available
-  const acPair = scopePairs[0] ?? allPairs[0]
+  // Autocomplete context: use ontologyId only (autocompleteLatest endpoint),
+  // so it works immediately without waiting for version queries to resolve.
+  const acOid = (selectedOids.length > 0 ? selectedOids[0] : ontologies[0]?.id) ?? null
 
   // Fan-out MOS search across scoped ontologies
   const searchResults = useMOSFanout(scopePairs, mosQuery)
@@ -190,15 +191,17 @@ function MOSQuery({ onNavigate }: { onNavigate: (path: string) => void }) {
       </div>
 
       <SearchBar
-        ontologyId={acPair?.oid ?? null}
-        versionId={acPair?.vid ?? null}
+        ontologyId={acOid}
+        versionId={null}
         onSearch={setMosQuery}
         placeholder="MOS expression, e.g. 'cell' and 'nucleus'"
       />
 
       <p style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: 6, marginBottom: 8 }}>
-        Use <code>and</code>, <code>or</code>, <code>not</code>, <code>some</code>, <code>only</code> ·
-        {' '}{selectedOids.length > 0 ? `searching ${selectedOids.length} selected ontolog${selectedOids.length > 1 ? 'ies' : 'y'}` : 'searching all ontologies'}
+        Use <code>and</code>, <code>or</code>, <code>not</code>, <code>some</code>, <code>only</code> · quote names with spaces: <code>'has part'</code> ·{' '}
+        {selectedOids.length > 0
+          ? `searching ${selectedOids.length} selected ontolog${selectedOids.length > 1 ? 'ies' : 'y'}`
+          : 'searching all ontologies'}
       </p>
 
       {mosQuery && allResults.length === 0 && (
