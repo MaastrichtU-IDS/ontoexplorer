@@ -13,6 +13,8 @@ VALID_EVENTS = frozenset({
     "reasoning.completed",
     "reasoning.failed",
     "indexing.completed",
+    "justification.completed",
+    "justification.failed",
 })
 
 

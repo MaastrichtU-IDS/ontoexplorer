@@ -57,10 +57,10 @@ async def user_and_key(db_session) -> tuple[User, str]:
     import hashlib
     import uuid
 
-    raw_key = "oe_test_key_abc123"
+    raw_key = f"oe_test_key_{uuid.uuid4().hex}"
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
 
-    user = User(id=str(uuid.uuid4()), email="test@example.com", display_name="Test User")
+    user = User(id=str(uuid.uuid4()), email=f"test-{uuid.uuid4()}@example.com", display_name="Test User")
     api_key = ApiKey(
         id=str(uuid.uuid4()),
         user_id=user.id,

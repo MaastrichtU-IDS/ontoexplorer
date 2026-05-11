@@ -8,6 +8,13 @@ from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ontoexplorer.clients.reasoning import (
+    ClassNotFoundError,
+    ReasoningNotReadyError,
+    consistency as elk_consistency,
+    subclasses as elk_subclasses,
+    superclasses as elk_superclasses,
+)
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Ontology, OntologyVersion, User
 from ontoexplorer.modules.auth.dependencies import get_current_user, require_auth
@@ -241,6 +248,111 @@ async def list_inferred(
     }
 
 
+# ── Reasoning query endpoints ──────────────────────────────────────────────────
+
+@router.get("/{ontology_id}/{version_id}/superclasses", summary="Inferred superclasses of a class")
+async def get_superclasses(
+    ontology_id: str,
+    version_id: str,
+    cls: str = Query(..., description="Class IRI to look up"),
+    direct: bool = Query(False, description="Return only directly asserted superclasses"),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_version_or_404(db, ontology_id, version_id)
+    try:
+        return await elk_superclasses(version_id, cls, direct=direct)
+    except ReasoningNotReadyError:
+        raise HTTPException(409, "Reasoning not yet completed — trigger via POST .../reason")
+    except ClassNotFoundError:
+        raise HTTPException(404, f"Class {cls!r} not found in classification index")
+    except Exception:
+        raise HTTPException(503, "Reasoning service unavailable")
+
+
+@router.get("/{ontology_id}/{version_id}/subclasses", summary="Inferred subclasses of a class")
+async def get_subclasses(
+    ontology_id: str,
+    version_id: str,
+    cls: str = Query(..., description="Class IRI to look up"),
+    direct: bool = Query(False, description="Return only directly asserted subclasses"),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_version_or_404(db, ontology_id, version_id)
+    try:
+        return await elk_subclasses(version_id, cls, direct=direct)
+    except ReasoningNotReadyError:
+        raise HTTPException(409, "Reasoning not yet completed — trigger via POST .../reason")
+    except ClassNotFoundError:
+        raise HTTPException(404, f"Class {cls!r} not found in classification index")
+    except Exception:
+        raise HTTPException(503, "Reasoning service unavailable")
+
+
+@router.get("/{ontology_id}/{version_id}/consistency", summary="Consistency check for a version")
+async def get_consistency(
+    ontology_id: str,
+    version_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_version_or_404(db, ontology_id, version_id)
+    try:
+        return await elk_consistency(version_id)
+    except ReasoningNotReadyError:
+        raise HTTPException(409, "Reasoning not yet completed — trigger via POST .../reason")
+    except Exception:
+        raise HTTPException(503, "Reasoning service unavailable")
+
+
+class JustificationRequest(BaseModel):
+    sub: str
+    sup: str | None = None
+    type: str | None = None         # "unsatisfiable" when sup is omitted
+    max_justifications: int = 1     # 0 = find all
+
+
+@router.post("/{ontology_id}/{version_id}/justification", summary="Request async justification computation")
+async def request_justification(
+    ontology_id: str,
+    version_id: str,
+    body: JustificationRequest,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_version_or_404(db, ontology_id, version_id)
+    from ontoexplorer.modules.jobs.tasks import compute_justification
+    task = compute_justification.delay(
+        version_id=version_id,
+        ontology_id=ontology_id,
+        sub=body.sub,
+        sup=body.sup,
+        max_justifications=body.max_justifications,
+    )
+    return {"job_id": task.id, "status": "queued", "sub": body.sub, "sup": body.sup}
+
+
+@router.get("/{ontology_id}/{version_id}/justification/{job_id}", summary="Retrieve justification result")
+async def get_justification_result(
+    ontology_id: str,
+    version_id: str,
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    from ontoexplorer.modules.jobs.tracker import get_job
+    job = await get_job(db, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.status in ("pending", "running"):
+        return {"job_id": job_id, "status": job.status}
+    if job.status == "failed":
+        raise HTTPException(500, f"Justification job failed: {job.error}")
+    # Job done — result is stored in ELK Redis; retrieve via Celery result backend
+    from ontoexplorer.modules.jobs.tasks import celery_app
+    result = celery_app.AsyncResult(job_id)
+    if result.ready():
+        return result.get()
+    raise HTTPException(202, "Job complete but result not yet available — retry shortly")
+
+
 # ── Deprecate ──────────────────────────────────────────────────────────────────
 
 @router.delete("/{ontology_id}/{version_id}", summary="Deprecate a version (soft delete)")
@@ -260,6 +372,14 @@ async def deprecate_version(
         .values(status="deprecated")
     )
     await db.commit()
+
+    # Invalidate ELK classification cache for this version
+    try:
+        from ontoexplorer.clients.reasoning import invalidate_cache
+        await invalidate_cache(version_id)
+    except Exception:
+        pass  # Non-fatal — TTL will expire anyway
+
     return {"detail": f"Version {version_id} deprecated"}
 
 

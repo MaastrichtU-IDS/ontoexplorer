@@ -61,6 +61,13 @@ services:
     build: docker/elk-service
     ports:
       - "8001:8001"
+    environment:
+      REDIS_URL: redis://redis:6379/2
+      CLASSIFICATION_TTL_SECONDS: "2592000"
+      JUSTIFICATION_TTL_SECONDS: "604800"
+      JUSTIFICATION_TIME_LIMIT_SECONDS: "300"
+    depends_on:
+      - redis
 
   prometheus:
     image: prom/prometheus

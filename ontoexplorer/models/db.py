@@ -6,12 +6,13 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ontoexplorer.database import Base
@@ -124,7 +125,7 @@ class Webhook(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     url: Mapped[str] = mapped_column(String)
-    events: Mapped[list[str]] = mapped_column(ARRAY(String))  # ["ontology.ingested", ...]
+    events: Mapped[list[str]] = mapped_column(JSON)  # ["ontology.ingested", ...]
     secret: Mapped[str | None] = mapped_column(String, nullable=True)  # HMAC signing secret
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -155,7 +156,7 @@ class ApiKey(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     key_hash: Mapped[str] = mapped_column(String, unique=True)  # SHA-256 of the raw key
     name: Mapped[str] = mapped_column(String)
-    scopes: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

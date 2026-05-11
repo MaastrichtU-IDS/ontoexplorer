@@ -11,10 +11,10 @@ WORKDIR /app
 RUN pip install --no-cache-dir \
     "fastapi==0.111.*" \
     "uvicorn[standard]" \
-    "py_horned_owl" \
-    "rdflib"
+    "rdflib" \
+    "redis>=5.0"
 
-COPY main.py .
+COPY main.py classifier.py cache.py justification.py ./
 
 EXPOSE 8001
 

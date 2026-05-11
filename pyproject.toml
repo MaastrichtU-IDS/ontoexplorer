@@ -38,6 +38,8 @@ dev = [
     "httpx",
     "ruff>=0.4",
     "mypy>=1.10",
+    "fakeredis>=2.35.1",
+    "redis>=6.4.0",
 ]
 
 [tool.hatch.build.targets.wheel]

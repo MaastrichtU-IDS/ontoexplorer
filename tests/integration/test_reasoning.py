@@ -20,8 +20,7 @@ def _load_turtle(ttl: str):
 
 def test_classify_simple_transitivity():
     """A ⊑ B, B ⊑ C → infer A ⊑ C."""
-    from main import classify  # type: ignore[import]
-    from rdflib.namespace import RDFS
+    from classifier import classify  # type: ignore[import]
 
     ttl = """
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -32,24 +31,19 @@ def test_classify_simple_transitivity():
     ex:C a owl:Class .
     """
     g = _load_turtle(ttl)
-    inferred = classify(g)
+    result = classify(g, "v1")
 
-    from rdflib import URIRef
-    a = URIRef("http://example.org/A")
-    b = URIRef("http://example.org/B")
-    c = URIRef("http://example.org/C")
+    a = "http://example.org/A"
+    b = "http://example.org/B"
+    c = "http://example.org/C"
 
-    # A ⊑ C must be inferred
-    assert (a, RDFS.subClassOf, c) in inferred
-    # A ⊑ B already asserted — should NOT be in inferred set
-    assert (a, RDFS.subClassOf, b) not in inferred
+    assert c in result.superclasses[a]
+    assert b not in result.superclasses[a]  # asserted, not inferred
 
 
 def test_classify_reflexive_not_in_result():
     """Reflexive subClassOf (A ⊑ A) should not appear in the inferred set."""
-    from main import classify  # type: ignore[import]
-    from rdflib import URIRef
-    from rdflib.namespace import RDFS
+    from classifier import classify  # type: ignore[import]
 
     ttl = """
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -57,16 +51,14 @@ def test_classify_reflexive_not_in_result():
     ex:A a owl:Class .
     """
     g = _load_turtle(ttl)
-    inferred = classify(g)
-    a = URIRef("http://example.org/A")
-    assert (a, RDFS.subClassOf, a) not in inferred
+    result = classify(g, "v1")
+    a = "http://example.org/A"
+    assert a not in result.superclasses.get(a, [])
 
 
 def test_classify_equivalent_class():
     """A ≡ B → infer A ⊑ B and B ⊑ A."""
-    from main import classify  # type: ignore[import]
-    from rdflib import URIRef
-    from rdflib.namespace import OWL, RDFS
+    from classifier import classify  # type: ignore[import]
 
     ttl = """
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -76,20 +68,18 @@ def test_classify_equivalent_class():
     ex:A owl:equivalentClass ex:B .
     """
     g = _load_turtle(ttl)
-    inferred = classify(g)
-    a = URIRef("http://example.org/A")
-    b = URIRef("http://example.org/B")
-    # The equivalentClass was asserted, so the subClassOf edges derived
-    # from it should appear as inferred subClassOf triples
-    # (or equivalentClass symmetry is inferred)
-    assert (a, RDFS.subClassOf, b) in inferred or (b, RDFS.subClassOf, a) in inferred
+    result = classify(g, "v1")
+    a = "http://example.org/A"
+    b = "http://example.org/B"
+    # equivalentClass-derived subClassOf edges land in direct_superclasses (asserted)
+    all_a = result.superclasses.get(a, []) + result.direct_superclasses.get(a, [])
+    all_b = result.superclasses.get(b, []) + result.direct_superclasses.get(b, [])
+    assert b in all_a or a in all_b
 
 
 def test_classify_owl_thing_superclass():
     """Every named class is a subclass of owl:Thing."""
-    from main import classify  # type: ignore[import]
-    from rdflib import URIRef
-    from rdflib.namespace import OWL, RDFS
+    from classifier import classify  # type: ignore[import]
 
     ttl = """
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -97,16 +87,14 @@ def test_classify_owl_thing_superclass():
     ex:A a owl:Class .
     """
     g = _load_turtle(ttl)
-    inferred = classify(g)
-    a = URIRef("http://example.org/A")
-    assert (a, RDFS.subClassOf, OWL.Thing) in inferred
+    result = classify(g, "v1")
+    a = "http://example.org/A"
+    assert "http://www.w3.org/2002/07/owl#Thing" in result.superclasses[a]
 
 
 def test_classify_chain():
     """Four-level chain A⊑B⊑C⊑D produces A⊑C, A⊑D, B⊑D."""
-    from main import classify  # type: ignore[import]
-    from rdflib import URIRef
-    from rdflib.namespace import RDFS
+    from classifier import classify  # type: ignore[import]
 
     ttl = """
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -118,9 +106,56 @@ def test_classify_chain():
     ex:D a owl:Class .
     """
     g = _load_turtle(ttl)
-    inferred = classify(g)
+    result = classify(g, "v1")
 
-    A, B, C, D = [URIRef(f"http://example.org/{x}") for x in "ABCD"]
-    assert (A, RDFS.subClassOf, C) in inferred
-    assert (A, RDFS.subClassOf, D) in inferred
-    assert (B, RDFS.subClassOf, D) in inferred
+    A, B, C, D = [f"http://example.org/{x}" for x in "ABCD"]
+    assert C in result.superclasses[A]
+    assert D in result.superclasses[A]
+    assert D in result.superclasses[B]
+
+
+def test_cr3_conjunction_via_service():
+    """CR3: A ⊑ intersectionOf(B, C) → infer A ⊑ B and A ⊑ C."""
+    import io
+    import rdflib
+    sys.path.insert(0, _ELK_DIR)
+    from classifier import classify  # type: ignore[import]
+
+    ttl = """
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix ex: <http://example.org/> .
+    ex:A a owl:Class .
+    ex:B a owl:Class .
+    ex:C a owl:Class .
+    ex:BC a owl:Class ; owl:intersectionOf ( ex:B ex:C ) .
+    ex:A rdfs:subClassOf ex:BC .
+    """
+    g = rdflib.Graph()
+    g.parse(io.StringIO(ttl), format="turtle")
+    result = classify(g, "v-cr3")
+    a = "http://example.org/A"
+    assert "http://example.org/B" in result.superclasses.get(a, [])
+    assert "http://example.org/C" in result.superclasses.get(a, [])
+
+
+def test_cr6_unsatisfiable_via_service():
+    """CR6: disjointWith creates unsatisfiable class."""
+    import io
+    import rdflib
+    sys.path.insert(0, _ELK_DIR)
+    from classifier import classify  # type: ignore[import]
+
+    ttl = """
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix ex: <http://example.org/> .
+    ex:A a owl:Class ; rdfs:subClassOf ex:B ; rdfs:subClassOf ex:C .
+    ex:B a owl:Class .
+    ex:C a owl:Class .
+    ex:B owl:disjointWith ex:C .
+    """
+    g = rdflib.Graph()
+    g.parse(io.StringIO(ttl), format="turtle")
+    result = classify(g, "v-cr6")
+    assert "http://example.org/A" in result.unsatisfiable

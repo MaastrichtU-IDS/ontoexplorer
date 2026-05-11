@@ -1,198 +1,209 @@
-"""
-ELK OWL-EL Reasoning Service.
-
-Accepts OWL ontology triples (N-Triples or Turtle) and returns materialised
-subClassOf / equivalentClass inferences as N-Triples.
-
-The reasoner implements the OWL-EL classification algorithm (CR rules):
-  - Reflexive subClassOf (every class is subclass of itself)
-  - Top propagation (every class is subclass of owl:Thing)
-  - Direct assertion propagation
-  - Transitivity (CR2)
-  - Conjunction left (CR3): A ⊑ B ⊓ C → A ⊑ B, A ⊑ C
-  - Existential right (CR4): A ⊑ ∃r.B → propagate over r-successors
-  - Role chain and hierarchy support (CR5/CR6)
-
-Limitations: does not handle nominals, concrete domains, or full OWL 2 DL.
-"""
-
+"""ELK OWL-EL Reasoning Service — FastAPI application."""
 from __future__ import annotations
 
 import io
 import logging
-from collections import defaultdict
-from typing import NamedTuple
+import os
+import uuid
+from typing import Any
 
 import rdflib
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
-from rdflib.namespace import OWL, RDF, RDFS
+
+from cache import (
+    invalidate_version,
+    load_classification,
+    load_justification,
+    store_classification,
+    store_justification,
+)
+from classifier import classify
+from justification import compute_justifications
 
 log = logging.getLogger("elk-service")
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="ELK Reasoning Service", version="1.0.0")
+_JUSTIFICATION_TIME_LIMIT = int(os.getenv("JUSTIFICATION_TIME_LIMIT_SECONDS", "300"))
+
+app = FastAPI(title="ELK Reasoning Service", version="2.0.0")
 
 
-# ── Data model ────────────────────────────────────────────────────────────────
+# ── Request / Response models ─────────────────────────────────────────────────
 
-class ReasonRequest(BaseModel):
-    ntriples: str          # ontology serialised as N-Triples
-    version_id: str | None = None
+class ClassifyRequest(BaseModel):
+    ntriples: str
+    version_id: str
 
 
-class ReasonResponse(BaseModel):
-    version_id: str | None
-    inferred_ntriples: str  # N-Triples of inferred axioms only
-    axiom_count: int
-    duration_ms: float
+class JustificationRequest(BaseModel):
+    sub: str
+    sup: str | None = None
+    type: str | None = None          # "unsatisfiable" when sup is omitted
+    max_justifications: int = 1      # 0 = find all
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    try:
+        from cache import _redis
+        _redis.ping()
+        redis_ok = True
+    except Exception:
+        redis_ok = False
+    return {"status": "ok", "redis": "ok" if redis_ok else "error"}
 
 
-@app.post("/reason", response_model=ReasonResponse)
-def reason(req: ReasonRequest):
-    import time
-    t0 = time.monotonic()
-
+@app.post("/classify")
+def run_classify(req: ClassifyRequest):
+    """Run OWL-EL classification and persist result in Redis."""
     try:
         g = rdflib.Graph()
         g.parse(io.StringIO(req.ntriples), format="nt")
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Failed to parse N-Triples: {exc}")
+        raise HTTPException(422, f"Failed to parse N-Triples: {exc}")
 
+    result = classify(g, req.version_id)
+    store_classification(result)
+
+    return {
+        "version_id": result.version_id,
+        "class_count": result.class_count,
+        "unsatisfiable_count": len(result.unsatisfiable),
+        "duration_ms": result.duration_ms,
+        "cached": True,
+    }
+
+
+@app.get("/classify/{version_id}")
+def get_classification(version_id: str):
+    result = _load_or_404(version_id)
+    from dataclasses import asdict
+    return asdict(result)
+
+
+@app.get("/classify/{version_id}/superclasses")
+def get_superclasses(version_id: str, cls: str, direct: bool = False):
+    result = _load_or_404(version_id)
+    if cls not in result.superclasses and cls not in result.direct_superclasses:
+        raise HTTPException(404, "Class not found in classification index")
+    if direct:
+        return {"class": cls, "superclasses": result.direct_superclasses.get(cls, []), "direct": True}
+    return {"class": cls, "superclasses": result.superclasses.get(cls, []), "direct": False}
+
+
+@app.get("/classify/{version_id}/subclasses")
+def get_subclasses(version_id: str, cls: str, direct: bool = False):
+    result = _load_or_404(version_id)
+    if cls not in result.subclasses and cls not in result.direct_subclasses:
+        raise HTTPException(404, "Class not found in classification index")
+    if direct:
+        return {"class": cls, "subclasses": result.direct_subclasses.get(cls, []), "direct": True}
+    return {"class": cls, "subclasses": result.subclasses.get(cls, []), "direct": False}
+
+
+@app.get("/classify/{version_id}/consistency")
+def get_consistency(version_id: str):
+    result = _load_or_404(version_id)
+    return {
+        "version_id": version_id,
+        "consistent": len(result.unsatisfiable) == 0,
+        "unsatisfiable_classes": result.unsatisfiable,
+        "unsatisfiable_count": len(result.unsatisfiable),
+    }
+
+
+@app.post("/classify/{version_id}/justification")
+def compute_justification_endpoint(version_id: str, req: JustificationRequest):
+    """
+    Synchronously compute justification(s) and cache result.
+    Long-running; called by the compute_justification Celery task.
+    """
+    import time
+    result = _load_or_404(version_id)
+
+    sup = req.sup if req.sup else str(rdflib.OWL.Nothing)
+
+    # Check cache first
+    cached = load_justification(version_id, req.sub, sup, req.max_justifications)
+    if cached:
+        return cached
+
+    # Reconstruct graph from inferred + direct axioms stored in proof traces
+    g = _reconstruct_graph_from_traces(result)
+
+    t0 = time.monotonic()
+    timed_out = False
     try:
-        inferred = classify(g)
-    except Exception as exc:
-        log.exception("Classification failed")
-        raise HTTPException(status_code=500, detail=f"Reasoning failed: {exc}")
+        import signal
 
-    # Serialise inferred-only triples
-    out = rdflib.Graph()
-    for triple in inferred:
-        out.add(triple)
-    nt_bytes = out.serialize(format="nt").encode() if isinstance(out.serialize(format="nt"), str) else out.serialize(format="nt")
-    if isinstance(nt_bytes, str):
-        nt_bytes = nt_bytes.encode()
+        def _handler(signum, frame):
+            raise TimeoutError("justification time limit exceeded")
 
-    elapsed_ms = (time.monotonic() - t0) * 1000
-    log.info("Classified %d axioms in %.1f ms", len(inferred), elapsed_ms)
+        signal.signal(signal.SIGALRM, _handler)
+        signal.alarm(_JUSTIFICATION_TIME_LIMIT)
+        try:
+            justs = compute_justifications(g, result, req.sub, sup, req.max_justifications)
+        finally:
+            signal.alarm(0)
+    except TimeoutError:
+        timed_out = True
+        justs = []
 
-    return ReasonResponse(
-        version_id=req.version_id,
-        inferred_ntriples=nt_bytes.decode(),
-        axiom_count=len(inferred),
-        duration_ms=round(elapsed_ms, 1),
-    )
+    elapsed_ms = round((time.monotonic() - t0) * 1000, 1)
+    justification_id = str(uuid.uuid4())
+
+    response = {
+        "justification_id": justification_id,
+        "version_id": version_id,
+        "sub": req.sub,
+        "sup": sup,
+        "justifications_requested": req.max_justifications,
+        "justifications_found": len(justs),
+        "minimal": not timed_out,
+        "timed_out": timed_out,
+        "justifications": justs,
+        "proof_traces": [result.proof_traces.get(f"{req.sub}|{sup}", [])],
+        "duration_ms": elapsed_ms,
+    }
+
+    store_justification(version_id, req.sub, sup, req.max_justifications, response)
+    return response
 
 
-# ── OWL-EL Classification ─────────────────────────────────────────────────────
+@app.get("/classify/{version_id}/justification/{justification_id}")
+def get_justification(version_id: str, justification_id: str):
+    raise HTTPException(501, "Use GET /classify/{version_id}?sub=...&sup=... to retrieve justifications")
 
-def classify(g: rdflib.Graph) -> set[tuple]:
-    """
-    Run OWL-EL classification over the graph.
-    Returns a set of (s, p, o) triples representing inferred axioms.
-    """
-    OWL_THING = OWL.Thing
-    OWL_NOTHING = OWL.Nothing
 
-    # Collect named classes
-    classes: set[rdflib.term.Node] = set()
-    for s in g.subjects(RDF.type, OWL.Class):
-        classes.add(s)
-    for s, _, o in g.triples((None, RDFS.subClassOf, None)):
-        classes.update([s, o])
-    for s, _, o in g.triples((None, OWL.equivalentClass, None)):
-        classes.update([s, o])
-    classes.discard(OWL_THING)
-    classes.discard(OWL_NOTHING)
-    classes = {c for c in classes if isinstance(c, rdflib.URIRef)}
+@app.delete("/classify/{version_id}")
+def invalidate(version_id: str):
+    invalidate_version(version_id)
+    return {"detail": f"Cache invalidated for version {version_id}"}
 
-    # Direct subClassOf assertions (named class ⊑ named class only — EL fragment)
-    direct_sub: dict[rdflib.URIRef, set[rdflib.URIRef]] = defaultdict(set)
-    for s, _, o in g.triples((None, RDFS.subClassOf, None)):
-        if isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.URIRef):
-            direct_sub[s].add(o)
 
-    # equivalentClass → bidirectional subClassOf
-    for s, _, o in g.triples((None, OWL.equivalentClass, None)):
-        if isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.URIRef):
-            direct_sub[s].add(o)
-            direct_sub[o].add(s)
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-    # Conjunction left: A ⊑ B ⊓ C → A ⊑ B and A ⊑ C
-    # owl:intersectionOf lists contribute additional subclass edges
-    for node, _, lst in g.triples((None, OWL.intersectionOf, None)):
-        operands = _rdf_list(g, lst)
-        for op in operands:
-            if isinstance(op, rdflib.URIRef):
-                # Any class that is subclass of node is also subclass of each operand
-                for cls in list(classes):
-                    if node in direct_sub.get(cls, set()):
-                        direct_sub[cls].add(op)
-
-    # Transitive closure (CR2)
-    # Use Warshall-style fixed-point iteration
-    inferred_sub: dict[rdflib.URIRef, set[rdflib.URIRef]] = defaultdict(set)
-    for cls in classes:
-        # Reflexive
-        inferred_sub[cls].add(cls)
-        inferred_sub[cls].add(OWL_THING)
-        inferred_sub[cls].update(direct_sub.get(cls, set()))
-
-    changed = True
-    while changed:
-        changed = False
-        for cls in classes:
-            new_supers: set[rdflib.URIRef] = set()
-            for sup in list(inferred_sub[cls]):
-                for sup2 in inferred_sub.get(sup, set()):
-                    if sup2 not in inferred_sub[cls]:
-                        new_supers.add(sup2)
-            if new_supers:
-                inferred_sub[cls].update(new_supers)
-                changed = True
-
-    # Build result: only inferred (not directly asserted or trivially reflexive)
-    asserted: set[tuple] = set()
-    for s, p, o in g.triples((None, RDFS.subClassOf, None)):
-        asserted.add((s, p, o))
-    for s, p, o in g.triples((None, OWL.equivalentClass, None)):
-        asserted.add((s, p, o))
-
-    result: set[tuple] = set()
-    for cls, supers in inferred_sub.items():
-        for sup in supers:
-            if sup == cls:
-                continue  # skip reflexive (trivial)
-            triple = (cls, RDFS.subClassOf, sup)
-            if triple not in asserted:
-                result.add(triple)
-
-    # Infer equivalentClass from symmetric subClassOf pairs
-    for cls in classes:
-        for other in inferred_sub.get(cls, set()):
-            if other != cls and cls in inferred_sub.get(other, set()):
-                eq_triple = (cls, OWL.equivalentClass, other)
-                if eq_triple not in asserted:
-                    result.add(eq_triple)
-
+def _load_or_404(version_id: str):
+    result = load_classification(version_id)
+    if result is None:
+        raise HTTPException(409, "Reasoning not yet completed for this version — submit via POST /classify")
     return result
 
 
-def _rdf_list(g: rdflib.Graph, node: rdflib.term.Node) -> list[rdflib.term.Node]:
-    """Walk an rdf:List and return items."""
-    items = []
-    current = node
-    while current and current != RDF.nil:
-        first = g.value(current, RDF.first)
-        if first is not None:
-            items.append(first)
-        current = g.value(current, RDF.rest)
-    return items
+def _reconstruct_graph_from_traces(result) -> rdflib.Graph:
+    """Reconstruct input axioms from the recorded proof traces."""
+    g = rdflib.Graph()
+    seen: set[str] = set()
+    for steps in result.proof_traces.values():
+        for step in steps:
+            for ax in step.get("axioms", []):
+                if ax not in seen and not ax.startswith("_:"):
+                    seen.add(ax)
+                    try:
+                        g.parse(data=ax, format="nt")
+                    except Exception:
+                        pass
+    return g
