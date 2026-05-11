@@ -195,8 +195,16 @@ def build_index(version_id: str, ontology_id: str) -> IndexStats:
 
         for label_text in all_labels:
             norm = normalise_label(label_text)
-            if norm:
-                pipe.zadd(prefix_key, {f"{norm}|{entity_type}|{iri}": 0})
+            if not norm:
+                continue
+            # Full-label prefix entry (matches from the start)
+            pipe.zadd(prefix_key, {f"{norm}|{entity_type}|{iri}": 0})
+            # Word-suffix entries so mid-label words are searchable
+            # e.g. "cell death" also gets "death|..." so "death" matches it
+            words = norm.split()
+            for i in range(1, len(words)):
+                suffix = " ".join(words[i:])
+                pipe.zadd(prefix_key, {f"{suffix}|{entity_type}|{iri}": 0})
 
         if entity_type == "class":
             class_count += 1
