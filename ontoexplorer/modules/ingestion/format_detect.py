@@ -40,7 +40,8 @@ _MIME_MAP: dict[str, OntologyFormat] = {
     "application/n-triples": OntologyFormat.N_TRIPLES,
     "application/n-quads": OntologyFormat.N_QUADS,
     "application/ld+json": OntologyFormat.JSON_LD,
-    "text/plain": OntologyFormat.OBO,      # OBO files are often served as text/plain
+    # text/plain intentionally omitted — too ambiguous (GitHub serves OWL/XML as text/plain)
+    # OBO detection falls through to byte sniffing (format-version: signature)
     "application/trig": OntologyFormat.TRIG,
     "application/x-manchester": OntologyFormat.MANCHESTER,
 }
