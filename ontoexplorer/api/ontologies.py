@@ -338,6 +338,40 @@ async def list_terms(
         lbl = row["label"]
         label = lbl.value if (lbl is not None and hasattr(lbl, "value")) else None
         terms.append({"iri": row["class"].value, "label": label})
+
+    # Find which terms have children (single query over the fetched IRIs)
+    if terms:
+        iris = terms  # reuse list
+        values_block = " ".join(f"<{t['iri']}>" for t in iris)
+        if entity_type == "property":
+            child_q = f"""
+                PREFIX owl: <http://www.w3.org/2002/07/owl#>
+                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+                SELECT DISTINCT ?parent WHERE {{
+                    GRAPH <{g}> {{
+                        ?child rdfs:subPropertyOf ?parent .
+                        FILTER(isIRI(?child))
+                        VALUES ?parent {{ {values_block} }}
+                    }}
+                }}
+            """
+        else:
+            child_q = f"""
+                PREFIX owl: <http://www.w3.org/2002/07/owl#>
+                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+                SELECT DISTINCT ?parent WHERE {{
+                    GRAPH <{g}> {{
+                        ?child rdfs:subClassOf ?parent .
+                        ?child a owl:Class .
+                        FILTER(isIRI(?child))
+                        VALUES ?parent {{ {values_block} }}
+                    }}
+                }}
+            """
+        has_children_iris = {row["parent"].value for row in store.query(child_q)}
+        for t in terms:
+            t["has_children"] = t["iri"] in has_children_iris
+
     return {"terms": terms, "offset": offset, "limit": limit, "parent": parent}
 
 
@@ -672,8 +706,11 @@ async def inferred_children(
         fragment = iri.rstrip("/")
         return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
 
+    def _has_inferred_children(iri: str) -> bool:
+        return any(iri in _direct_parents(c) for c in all_classes)
+
     return {
-        "terms": [{"iri": iri, "label": _label(iri)} for iri in child_iris],
+        "terms": [{"iri": iri, "label": _label(iri), "has_children": _has_inferred_children(iri)} for iri in child_iris],
         "reasoning_available": True,
     }
 

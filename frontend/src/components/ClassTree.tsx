@@ -44,6 +44,8 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, e
 
   const isSelected = selectedIri === term.iri
   const label = term.label ?? term.iri.split(/[#/]/).pop() ?? term.iri
+  // has_children undefined means unknown (e.g. root before first load) — show toggle optimistically
+  const canExpand = term.has_children !== false
 
   function handleToggle(e: React.MouseEvent) {
     e.stopPropagation()
@@ -66,10 +68,11 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, e
         onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = '' }}
       >
         <span
-          onClick={handleToggle}
-          style={{ width: 14, fontSize: 10, color: 'var(--text-dim)', flexShrink: 0, userSelect: 'none' }}
+          onClick={canExpand ? handleToggle : undefined}
+          style={{ width: 14, fontSize: 10, color: 'var(--text-dim)', flexShrink: 0, userSelect: 'none',
+            cursor: canExpand ? 'pointer' : 'default' }}
         >
-          {isLoading ? '…' : expanded ? '▾' : '▸'}
+          {canExpand ? (isLoading ? '…' : expanded ? '▾' : '▸') : ''}
         </span>
         <span style={{ fontSize: 'var(--font-size-sm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {label}

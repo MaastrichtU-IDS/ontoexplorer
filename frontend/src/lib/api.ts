@@ -96,6 +96,7 @@ export interface OntologyVersion {
 export interface Term {
   iri: string
   label: string | null
+  has_children?: boolean
 }
 
 export interface ClassRef {
