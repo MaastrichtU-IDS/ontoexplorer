@@ -19,15 +19,17 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
-def get_url() -> str:
+def get_url(sync: bool = False) -> str:
     settings = get_settings()
-    # Alembic needs a sync URL for offline mode; strip the +asyncpg driver
-    return settings.database_url.replace("+asyncpg", "")
+    url = settings.database_url
+    if sync:
+        return url.replace("+asyncpg", "")
+    return url
 
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=get_url(),
+        url=get_url(sync=True),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
