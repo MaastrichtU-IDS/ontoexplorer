@@ -26,4 +26,4 @@ RUN uv sync --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
-CMD ["uvicorn", "ontoexplorer.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "ontoexplorer.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

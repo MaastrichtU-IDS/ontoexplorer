@@ -32,6 +32,7 @@ class Settings(BaseSettings):
 
     # Oxigraph (embedded content triplestore) — path to data directory
     oxigraph_data_path: str = "/data/oxigraph"
+    oxigraph_read_only: bool = False  # set True in API container; worker keeps write access
 
     # ELK reasoning service
     elk_service_url: str = "http://localhost:8001"

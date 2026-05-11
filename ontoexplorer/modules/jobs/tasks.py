@@ -25,6 +25,7 @@ celery_app.conf.update(
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    task_ignore_result=True,  # use Postgres jobs table for status; avoid blocking on Redis result backend
 )
 
 

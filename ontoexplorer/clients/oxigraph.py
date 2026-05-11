@@ -22,9 +22,13 @@ _store: pyoxigraph.Store | None = None
 def get_store() -> pyoxigraph.Store:
     global _store
     if _store is None:
-        path = get_settings().oxigraph_data_path
+        settings = get_settings()
+        path = settings.oxigraph_data_path
         Path(path).mkdir(parents=True, exist_ok=True)
-        _store = pyoxigraph.Store(path)
+        if settings.oxigraph_read_only:
+            _store = pyoxigraph.Store.read_only(path)
+        else:
+            _store = pyoxigraph.Store(path)
     return _store
 
 

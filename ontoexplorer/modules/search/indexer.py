@@ -67,6 +67,9 @@ def _short_iri(iri: str) -> str:
     return iri.rstrip("/").split("/")[-1]
 
 
+_CURIE_PATTERN = re.compile(r"^([A-Za-z_][A-Za-z0-9_\-]*):\s*([A-Za-z0-9_\-\.]+)$")
+
+
 def entity_lookup(
     version_id: str,
     prefix: str,
@@ -75,7 +78,22 @@ def entity_lookup(
 ) -> list[dict]:
     """Prefix-search entities. Returns list of entity dicts with label/type/iri/short."""
     r = _get_redis()
-    norm = normalise_label(prefix)
+
+    # Direct full-IRI lookup
+    if prefix.startswith("http://") or prefix.startswith("https://"):
+        detail = r.hgetall(_iri_key(version_id, prefix.strip()))
+        if detail and (entity_type is None or detail.get("type") == entity_type):
+            return [detail]
+        return []
+
+    # CURIE lookup — search by the local name (the short form is indexed)
+    curie_match = _CURIE_PATTERN.match(prefix.strip())
+    if curie_match:
+        local_name = curie_match.group(2)
+        norm = normalise_label(local_name)
+    else:
+        norm = normalise_label(prefix)
+
     if not norm:
         return []
 

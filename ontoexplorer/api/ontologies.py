@@ -42,32 +42,40 @@ async def submit_ontology(
     user: User | None = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    import asyncio
     from ontoexplorer.modules.jobs.tasks import ingest_ontology
 
     content_type = request.headers.get("content-type", "")
     owner_id = user.id if user else None
+    loop = asyncio.get_event_loop()
 
     if "multipart/form-data" in content_type and file:
         raw = await file.read()
-        task = ingest_ontology.delay(
-            raw_bytes_hex=raw.hex(),
-            filename=file.filename,
-            content_type=file.content_type,
-            owner_id=owner_id,
+        task = await loop.run_in_executor(
+            None,
+            lambda: ingest_ontology.delay(
+                raw_bytes_hex=raw.hex(),
+                filename=file.filename,
+                content_type=file.content_type,
+                owner_id=owner_id,
+            ),
         )
         return {"task_id": task.id, "status": "queued"}
 
     body = await request.json()
     if "iri" in body:
-        task = ingest_ontology.delay(iri=body["iri"], owner_id=owner_id)
+        task = await loop.run_in_executor(None, lambda: ingest_ontology.delay(iri=body["iri"], owner_id=owner_id))
     elif "url" in body:
-        task = ingest_ontology.delay(url=body["url"], owner_id=owner_id)
+        task = await loop.run_in_executor(None, lambda: ingest_ontology.delay(url=body["url"], owner_id=owner_id))
     elif "content" in body:
         raw = body["content"].encode()
-        task = ingest_ontology.delay(
-            raw_bytes_hex=raw.hex(),
-            content_type=body.get("format"),
-            owner_id=owner_id,
+        task = await loop.run_in_executor(
+            None,
+            lambda: ingest_ontology.delay(
+                raw_bytes_hex=raw.hex(),
+                content_type=body.get("format"),
+                owner_id=owner_id,
+            ),
         )
     else:
         raise HTTPException(status_code=422, detail="Provide 'iri', 'url', 'content', or a file upload")
@@ -152,13 +160,14 @@ async def list_terms(
     g = graph_iri(ontology_id, version_id)
 
     if parent is None or parent == "root":
-        # Root classes: owl:Class that are not subClassOf any other owl:Class in this ontology
+        # Root classes: named owl:Class not subClassOf any other named owl:Class in this ontology
         query = f"""
             PREFIX owl: <http://www.w3.org/2002/07/owl#>
             PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
             SELECT ?class ?label WHERE {{
                 GRAPH <{g}> {{
                     ?class a owl:Class .
+                    FILTER(isIRI(?class))
                     OPTIONAL {{ ?class rdfs:label ?label }}
                     FILTER NOT EXISTS {{
                         ?class rdfs:subClassOf ?p .
@@ -178,6 +187,7 @@ async def list_terms(
             SELECT ?class ?label WHERE {{
                 GRAPH <{g}> {{
                     ?class a owl:Class .
+                    FILTER(isIRI(?class))
                     ?class rdfs:subClassOf <{parent}> .
                     OPTIONAL {{ ?class rdfs:label ?label }}
                 }}
@@ -186,13 +196,14 @@ async def list_terms(
             LIMIT {limit} OFFSET {offset}
         """
     else:
-        # Fallback: all classes
+        # Fallback: all named classes
         query = f"""
             PREFIX owl: <http://www.w3.org/2002/07/owl#>
             PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
             SELECT ?class ?label WHERE {{
                 GRAPH <{g}> {{
                     ?class a owl:Class .
+                    FILTER(isIRI(?class))
                     OPTIONAL {{ ?class rdfs:label ?label }}
                 }}
             }}
@@ -203,10 +214,8 @@ async def list_terms(
     results = store.query(query)
     terms = []
     for row in results:
-        try:
-            label = row["label"].value
-        except KeyError:
-            label = None
+        lbl = row["label"]
+        label = lbl.value if (lbl is not None and hasattr(lbl, "value")) else None
         terms.append({"iri": row["class"].value, "label": label})
     return {"terms": terms, "offset": offset, "limit": limit, "parent": parent}
 

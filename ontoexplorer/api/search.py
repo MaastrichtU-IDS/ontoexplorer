@@ -39,21 +39,27 @@ async def search(
 ):
     await _get_version_or_404(db, ontology_id, version_id)
 
-    # Determine effective mode
-    effective_mode = mode
-    ast = None
-    if mode in ("auto", "expression"):
-        try:
-            ast = parse(q)
-            if mode == "auto":
-                effective_mode = "expression" if _is_expression(ast) else "entity"
-        except ParseError as exc:
-            if mode == "expression":
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "parse_error", "message": str(exc)},
-                )
-            effective_mode = "entity"
+    # Bare IRIs (no angle brackets) go straight to entity lookup — skip the parser
+    q_stripped = q.strip()
+    if q_stripped.startswith("http://") or q_stripped.startswith("https://"):
+        effective_mode = "entity"
+        ast = None
+    else:
+        # Determine effective mode
+        effective_mode = mode
+        ast = None
+        if mode in ("auto", "expression"):
+            try:
+                ast = parse(q)
+                if mode == "auto":
+                    effective_mode = "expression" if _is_expression(ast) else "entity"
+            except ParseError as exc:
+                if mode == "expression":
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": "parse_error", "message": str(exc)},
+                    )
+                effective_mode = "entity"
 
     if effective_mode == "entity":
         results = await asyncio.to_thread(entity_lookup, version_id, q, None, limit)
@@ -70,7 +76,7 @@ async def search(
 
     # Expression mode
     try:
-        search_results = await evaluate(ast, version_id)
+        search_results = await evaluate(ast, version_id, ontology_id)
     except AmbiguousLabelError as exc:
         return JSONResponse(
             status_code=422,

@@ -118,7 +118,7 @@ async def get_classification(version_id: str) -> dict:
     url = f"{_elk_url('')}/classify/{version_id}"
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(url)
-    if resp.status_code == 404:
+    if resp.status_code in (404, 409):
         raise ReasoningNotReadyError(version_id)
     resp.raise_for_status()
     return resp.json()

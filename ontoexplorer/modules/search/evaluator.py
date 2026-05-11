@@ -4,7 +4,7 @@ from __future__ import annotations
 import urllib.parse
 from dataclasses import dataclass
 
-from ontoexplorer.clients.oxigraph import graph_iri, sparql_query
+from ontoexplorer.clients.oxigraph import graph_iri as _graph_iri, sparql_query
 from ontoexplorer.clients.reasoning import ReasoningNotReadyError, get_classification
 from ontoexplorer.modules.search.indexer import (
     _get_redis,
@@ -100,14 +100,34 @@ def _resolve_label(r, version_id: str, node: NamedClass) -> str:
     raise AmbiguousLabelError(node.ref, matched)
 
 
-async def evaluate(node, version_id: str) -> list[SearchResult]:
+def _needs_elk(node) -> bool:
+    """True if the top-level node uses the ELK subclass index (NamedClass, And, Or, Not).
+    Restrictions go through SPARQL and never need ELK, even when their filler is a NamedClass."""
+    if isinstance(node, NamedClass):
+        return True
+    if isinstance(node, And):
+        return _needs_elk(node.left) or _needs_elk(node.right)
+    if isinstance(node, Or):
+        return _needs_elk(node.left) or _needs_elk(node.right)
+    if isinstance(node, Not):
+        return True
+    # Restrictions (SomeValuesFrom, AllValuesFrom, etc.) are SPARQL-only
+    return False
+
+
+async def evaluate(node, version_id: str, ontology_id: str) -> list[SearchResult]:
     """Evaluate a MOS AST node against the given version, returning matching classes."""
     r = _get_redis()
-    classification = await get_classification(version_id)
-    subclasses_index: dict[str, list[str]] = classification.get("subclasses", {})
-    all_class_iris: set[str] = set(subclasses_index.keys()) | {
-        iri for subs in subclasses_index.values() for iri in subs
-    }
+
+    # Only fetch ELK classification when the expression needs the subclass hierarchy
+    subclasses_index: dict[str, list[str]] = {}
+    all_class_iris: set[str] = set()
+    if _needs_elk(node):
+        classification = await get_classification(version_id)
+        subclasses_index = classification.get("subclasses", {})
+        all_class_iris = set(subclasses_index.keys()) | {
+            iri for subs in subclasses_index.values() for iri in subs
+        }
 
     async def _eval(n) -> set[str]:
         if isinstance(n, NamedClass):
@@ -127,7 +147,7 @@ async def evaluate(node, version_id: str) -> list[SearchResult]:
 
         if isinstance(n, (SomeValuesFrom, AllValuesFrom, HasValue, HasSelf,
                           MinCardinality, MaxCardinality, ExactCardinality)):
-            return _sparql_eval(n, version_id, r)
+            return _sparql_eval(n, version_id, ontology_id, r)
 
         return set()
 
@@ -147,58 +167,86 @@ async def evaluate(node, version_id: str) -> list[SearchResult]:
     return results
 
 
-def _sparql_eval(node, version_id: str, r) -> set[str]:
+def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
     """Translate restriction AST nodes to SPARQL and query Oxigraph."""
     OWL = "http://www.w3.org/2002/07/owl#"
     RDFS = "http://www.w3.org/2000/01/rdf-schema#"
+    g = _graph_iri(ontology_id, version_id)
+
+    def resolve(named_class_node) -> str:
+        return _resolve_label(r, version_id, named_class_node)
 
     if isinstance(node, SomeValuesFrom):
-        prop_iri = node.property_ref.ref if node.property_ref.curie is None else node.property_ref.ref
-        fill_iri = node.filler.ref if isinstance(node.filler, NamedClass) and node.filler.curie is None else getattr(node.filler, "ref", "")
-        q = f"""
-            SELECT DISTINCT ?cls WHERE {{
-                ?cls <{RDFS}subClassOf> ?restr .
-                ?restr <{OWL}onProperty> <{prop_iri}> .
-                ?restr <{OWL}someValuesFrom> <{fill_iri}> .
-            }}
-        """
+        prop_iri = resolve(node.property_ref)
+        if isinstance(node.filler, NamedClass):
+            fill_iri = resolve(node.filler)
+            q = f"""
+                SELECT DISTINCT ?cls WHERE {{
+                    GRAPH <{g}> {{
+                        ?cls <{RDFS}subClassOf> ?restr .
+                        ?restr <{OWL}onProperty> <{prop_iri}> .
+                        ?restr <{OWL}someValuesFrom> <{fill_iri}> .
+                    }}
+                }}
+            """
+        else:
+            # Complex filler — not directly expressible as a single triple pattern;
+            # return all classes with any someValuesFrom on this property, then
+            # post-filter via the caller's set logic.
+            q = f"""
+                SELECT DISTINCT ?cls WHERE {{
+                    GRAPH <{g}> {{
+                        ?cls <{RDFS}subClassOf> ?restr .
+                        ?restr <{OWL}onProperty> <{prop_iri}> .
+                        ?restr <{OWL}someValuesFrom> ?fill .
+                    }}
+                }}
+            """
     elif isinstance(node, AllValuesFrom):
-        prop_iri = node.property_ref.ref
-        fill_iri = node.filler.ref if isinstance(node.filler, NamedClass) else ""
+        prop_iri = resolve(node.property_ref)
+        fill_iri = resolve(node.filler) if isinstance(node.filler, NamedClass) else node.filler.ref
         q = f"""
             SELECT DISTINCT ?cls WHERE {{
-                ?cls <{RDFS}subClassOf> ?restr .
-                ?restr <{OWL}onProperty> <{prop_iri}> .
-                ?restr <{OWL}allValuesFrom> <{fill_iri}> .
+                GRAPH <{g}> {{
+                    ?cls <{RDFS}subClassOf> ?restr .
+                    ?restr <{OWL}onProperty> <{prop_iri}> .
+                    ?restr <{OWL}allValuesFrom> <{fill_iri}> .
+                }}
             }}
         """
     elif isinstance(node, MinCardinality):
-        prop_iri = node.property_ref.ref
+        prop_iri = resolve(node.property_ref)
         q = f"""
             SELECT DISTINCT ?cls WHERE {{
-                ?cls <{RDFS}subClassOf> ?restr .
-                ?restr <{OWL}onProperty> <{prop_iri}> .
-                ?restr <{OWL}minCardinality> ?n .
-                FILTER(?n >= {node.cardinality})
+                GRAPH <{g}> {{
+                    ?cls <{RDFS}subClassOf> ?restr .
+                    ?restr <{OWL}onProperty> <{prop_iri}> .
+                    ?restr <{OWL}minCardinality> ?n .
+                    FILTER(?n >= {node.cardinality})
+                }}
             }}
         """
     elif isinstance(node, MaxCardinality):
-        prop_iri = node.property_ref.ref
+        prop_iri = resolve(node.property_ref)
         q = f"""
             SELECT DISTINCT ?cls WHERE {{
-                ?cls <{RDFS}subClassOf> ?restr .
-                ?restr <{OWL}onProperty> <{prop_iri}> .
-                ?restr <{OWL}maxCardinality> ?n .
-                FILTER(?n <= {node.cardinality})
+                GRAPH <{g}> {{
+                    ?cls <{RDFS}subClassOf> ?restr .
+                    ?restr <{OWL}onProperty> <{prop_iri}> .
+                    ?restr <{OWL}maxCardinality> ?n .
+                    FILTER(?n <= {node.cardinality})
+                }}
             }}
         """
     elif isinstance(node, ExactCardinality):
-        prop_iri = node.property_ref.ref
+        prop_iri = resolve(node.property_ref)
         q = f"""
             SELECT DISTINCT ?cls WHERE {{
-                ?cls <{RDFS}subClassOf> ?restr .
-                ?restr <{OWL}onProperty> <{prop_iri}> .
-                ?restr <{OWL}cardinality> {node.cardinality} .
+                GRAPH <{g}> {{
+                    ?cls <{RDFS}subClassOf> ?restr .
+                    ?restr <{OWL}onProperty> <{prop_iri}> .
+                    ?restr <{OWL}cardinality> {node.cardinality} .
+                }}
             }}
         """
     else:
@@ -207,7 +255,11 @@ def _sparql_eval(node, version_id: str, r) -> set[str]:
     results: set[str] = set()
     for sol in sparql_query(q):
         try:
-            results.add(sol["cls"].value)
+            cls_val = sol["cls"]
+            if cls_val is not None:
+                results.add(cls_val.value)
         except Exception:
             pass
     return results
+
+

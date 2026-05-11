@@ -109,10 +109,12 @@ _GRAMMAR = r"""
     entity_ref   : QUOTED_LABEL
                  | CURIE
                  | FULL_IRI
+                 | BARE_LABEL
 
     QUOTED_LABEL : "'" /[^']+/ "'"
     CURIE        : /[A-Za-z_][A-Za-z0-9_\-]*:[A-Za-z0-9_\-\.]+/
     FULL_IRI     : "<" /[^>]+/ ">"
+    BARE_LABEL   : /(?!(and|or|not|some|only|value|Self|min|max|exactly)\b)[A-Za-z_][A-Za-z0-9_]*/
     INT          : /[0-9]+/
 
     %ignore /\s+/
@@ -134,7 +136,7 @@ def _entity_ref_to_named_class(tree: Tree) -> NamedClass:
         return NamedClass(ref=inner, curie=None)
     if isinstance(token, Token) and token.type == "FULL_IRI":
         return NamedClass(ref=raw[1:-1], curie=None)  # strip < >
-    return NamedClass(ref=raw, curie=None)  # CURIE
+    return NamedClass(ref=raw, curie=None)  # CURIE or BARE_LABEL
 
 
 def _build(tree: Tree) -> ASTNode:
