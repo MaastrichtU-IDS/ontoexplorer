@@ -227,32 +227,111 @@ async def get_term(
     term_iri: str,
     db: AsyncSession = Depends(get_db),
 ):
-    await _get_version_or_404(db, ontology_id, version_id)
+    import asyncio
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
+    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
+
+    await _get_version_or_404(db, ontology_id, version_id)
 
     store = get_store()
     g_iri = graph_iri(ontology_id, version_id)
 
-    query = f"""
+    # Fetch raw asserted properties
+    props_query = f"""
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
         SELECT ?pred ?obj WHERE {{
             GRAPH <{g_iri}> {{
                 <{term_iri}> ?pred ?obj .
+                FILTER(isIRI(?obj) || isLiteral(?obj))
             }}
         }}
     """
-    results = list(store.query(query))
-    if not results:
+    prop_rows = list(store.query(props_query))
+    if not prop_rows:
         raise HTTPException(status_code=404, detail="Term not found in this ontology version")
 
     properties: dict[str, list] = {}
-    for row in results:
+    for row in prop_rows:
         pred = row["pred"].value
         obj = row["obj"].value
         properties.setdefault(pred, []).append(obj)
 
-    return {"iri": term_iri, "properties": properties}
+    # Asserted subclasses — named classes that declare subClassOf this term
+    asserted_sub_query = f"""
+        SELECT ?sub WHERE {{
+            GRAPH <{g_iri}> {{
+                ?sub <http://www.w3.org/2000/01/rdf-schema#subClassOf> <{term_iri}> .
+                FILTER(isIRI(?sub))
+            }}
+        }}
+        ORDER BY ?sub
+    """
+    asserted_sub_iris = [r["sub"].value for r in store.query(asserted_sub_query)]
+
+    # Inferred sub/superclasses from ELK — run concurrently, ignore if not ready
+    async def _elk_subclasses():
+        try:
+            return await elk_subclasses(version_id, term_iri, direct=False)
+        except (ReasoningNotReadyError, ClassNotFoundError):
+            return {}
+        except Exception:
+            return {}
+
+    async def _elk_superclasses():
+        try:
+            return await elk_superclasses(version_id, term_iri, direct=False)
+        except (ReasoningNotReadyError, ClassNotFoundError):
+            return {}
+        except Exception:
+            return {}
+
+    elk_sub_result, elk_sup_result = await asyncio.gather(
+        _elk_subclasses(), _elk_superclasses()
+    )
+
+    _OWL_THING = "http://www.w3.org/2002/07/owl#Thing"
+    _OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing"
+    inferred_sub_iris: list[str] = [
+        s for s in elk_sub_result.get("subclasses", [])
+        if s not in (_OWL_THING, _OWL_NOTHING)
+    ]
+    inferred_sup_iris: list[str] = [
+        s for s in elk_sup_result.get("superclasses", [])
+        if s not in (_OWL_THING, _OWL_NOTHING)
+    ]
+
+    # Asserted superclasses — named-class targets of rdfs:subClassOf
+    RDFS_SC = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
+    asserted_sup_iris = [v for v in properties.get(RDFS_SC, [])
+                         if v.startswith("http://") or v.startswith("https://") or v.startswith("urn:")]
+
+    # Resolve labels from Redis index
+    r = _get_redis()
+
+    def _label(iri: str) -> str:
+        detail = r.hgetall(_iri_key(version_id, iri))
+        if detail and detail.get("label"):
+            return detail["label"]
+        fragment = iri.rstrip("/")
+        return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
+
+    def _term_list(iris: list[str]) -> list[dict]:
+        return [{"iri": iri, "label": _label(iri)} for iri in iris]
+
+    return {
+        "iri": term_iri,
+        "label": _label(term_iri),
+        "properties": properties,
+        "superclasses": {
+            "asserted": _term_list(asserted_sup_iris),
+            "inferred": _term_list(inferred_sup_iris),
+        },
+        "subclasses": {
+            "asserted": _term_list(asserted_sub_iris),
+            "inferred": _term_list(inferred_sub_iris),
+        },
+    }
 
 
 # ── Inferred axioms ────────────────────────────────────────────────────────────
