@@ -380,6 +380,14 @@ async def deprecate_version(
     except Exception:
         pass  # Non-fatal — TTL will expire anyway
 
+    # Invalidate search entity index for this version
+    try:
+        import asyncio
+        from ontoexplorer.modules.search.indexer import invalidate_index
+        await asyncio.to_thread(invalidate_index, version_id)
+    except Exception:
+        pass  # Non-fatal
+
     return {"detail": f"Version {version_id} deprecated"}
 
 

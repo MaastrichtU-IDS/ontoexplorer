@@ -188,11 +188,20 @@ async def _run_reasoning(db, version_id: str) -> dict:
     return {"version_id": version_id, "inferred_count": inferred_count}
 
 
-@celery_app.task(name="ontoexplorer.index_ontology")
-def index_ontology(version_id: str) -> dict:
-    """Stub: NL search indexing — implemented in Subsystem 3."""
-    log.info("index_ontology_stub", version_id=version_id)
-    return {"status": "stub", "version_id": version_id}
+@celery_app.task(name="ontoexplorer.index_ontology", bind=True, max_retries=2)
+def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
+    """Build the Redis entity search index for a version."""
+    log.info("index_ontology_start", version_id=version_id)
+    try:
+        from ontoexplorer.modules.search.indexer import build_index
+        stats = build_index(version_id, ontology_id)
+        log.info("index_ontology_done", version_id=version_id,
+                 class_count=stats.class_count, property_count=stats.property_count)
+        return {"status": "done", "version_id": version_id,
+                "class_count": stats.class_count, "property_count": stats.property_count}
+    except Exception as exc:
+        log.error("index_ontology_failed", version_id=version_id, error=str(exc))
+        raise self.retry(exc=exc, countdown=30)
 
 
 @celery_app.task(bind=True, name="ontoexplorer.compute_justification", max_retries=1,

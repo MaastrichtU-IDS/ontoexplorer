@@ -171,7 +171,7 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
 
     # ── Step 9: Queue search indexing ─────────────────────────────────────────
     from ontoexplorer.modules.jobs.tasks import index_ontology
-    index_ontology.delay(version_id)
+    index_ontology.delay(version_id, ontology_id=ontology_id)
 
     elapsed = time.monotonic() - _t0
     metrics.ontologies_ingested_total.labels(format=fmt.value, duplicate="false").inc()
