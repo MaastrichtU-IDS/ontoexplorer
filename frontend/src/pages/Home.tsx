@@ -174,6 +174,12 @@ function MOSQuery({ onNavigate }: { onNavigate: (path: string) => void }) {
   const searchResults = useMOSFanout(scopePairs, mosQuery)
   const allResults: SearchResult[] = searchResults.flatMap(r => r.data?.results ?? [])
 
+  // Surface error message only when all queries failed (no results at all)
+  const firstError = searchResults.find(r => r.error)?.error as (Error & { status?: number; body?: { error?: string; detail?: string } }) | undefined
+  const errorMsg = allResults.length === 0 && firstError
+    ? (firstError.body?.detail ?? firstError.message)
+    : null
+
   function handleSelect(r: SearchResult) {
     const ont = ontologies.find(o => o.id === r.ontology_id)
     if (!ont || !r.version_id) return
@@ -204,7 +210,12 @@ function MOSQuery({ onNavigate }: { onNavigate: (path: string) => void }) {
           : 'searching all ontologies'}
       </p>
 
-      {mosQuery && allResults.length === 0 && (
+      {mosQuery && errorMsg && (
+        <p style={{ color: 'var(--error, #e06c75)', fontSize: 'var(--font-size-sm)', textAlign: 'center', marginTop: '2rem' }}>
+          {errorMsg}
+        </p>
+      )}
+      {mosQuery && !errorMsg && allResults.length === 0 && (
         <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', textAlign: 'center', marginTop: '2rem' }}>
           No results for "{mosQuery}"
         </p>

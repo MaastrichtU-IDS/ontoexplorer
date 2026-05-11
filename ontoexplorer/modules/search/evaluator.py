@@ -94,7 +94,7 @@ def _resolve_label(r, version_id: str, node: NamedClass) -> str:
             matched.append(detail)
 
     if len(matched) == 0:
-        return node.ref  # unknown — pass through, SPARQL may handle it
+        raise ValueError(f"'{node.ref}' not found in this ontology's index")
     if len(matched) == 1:
         return matched[0]["iri"]
     raise AmbiguousLabelError(node.ref, matched)

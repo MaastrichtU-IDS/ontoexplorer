@@ -91,6 +91,11 @@ async def search(
             status_code=503,
             content={"error": "not_classified"},
         )
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "unresolved_term", "detail": str(exc)},
+        )
 
     trimmed = search_results[:limit]
     return {
