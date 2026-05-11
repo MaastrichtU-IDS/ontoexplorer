@@ -42,12 +42,12 @@ export default function SearchBar({ ontologyId, versionId, onSearch, placeholder
     setValue(newValue)
     setCursor(newCursor)
     setShowSuggestions(true)
-    requestAnimationFrame(() => {
+    // Restore cursor position in the input after React re-renders
+    setTimeout(() => {
       if (inputRef.current) {
-        inputRef.current.focus()
         inputRef.current.setSelectionRange(newCursor, newCursor)
       }
-    })
+    }, 0)
   }
 
   return (
@@ -87,7 +87,7 @@ export default function SearchBar({ ontologyId, versionId, onSearch, placeholder
           {completions.map((c, i) => (
             <li
               key={i}
-              onMouseDown={() => applyCompletion(c.insert)}
+              onMouseDown={(e) => { e.preventDefault(); applyCompletion(c.insert) }}
               style={{
                 padding: '6px 12px', cursor: 'pointer',
                 display: 'flex', gap: 8, alignItems: 'center',
