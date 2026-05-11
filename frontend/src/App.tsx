@@ -5,6 +5,7 @@ import Home from './pages/Home'
 import Browse from './pages/Browse'
 import TermPage from './pages/TermPage'
 import Search from './pages/Search'
+import Ontologies from './pages/Ontologies'
 import Dashboard from './pages/Dashboard'
 import ApiKeys from './pages/ApiKeys'
 import Webhooks from './pages/Webhooks'
@@ -28,6 +29,7 @@ export default function App() {
       <Route path="/browse" element={<Shell><Browse /></Shell>} />
       <Route path="/browse/:oid/:vid" element={<Shell><Browse /></Shell>} />
       <Route path="/browse/:oid/:vid/term/*" element={<Shell><TermPage /></Shell>} />
+      <Route path="/ontologies" element={<Shell><Ontologies /></Shell>} />
       <Route path="/search" element={<Shell><Search /></Shell>} />
       <Route path="/login" element={<Shell><Login /></Shell>} />
       <Route path="/auth/:provider/callback" element={<AuthCallback />} />
