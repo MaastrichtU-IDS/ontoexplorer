@@ -17,7 +17,7 @@ Steps:
 
 from __future__ import annotations
 
-import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 
@@ -45,8 +45,10 @@ from ontoexplorer.modules.ingestion.source_resolver import (
     resolve_url,
 )
 from ontoexplorer.modules.storage.minio_client import store_ontology
+from ontoexplorer.logging_config import get_logger
+from ontoexplorer import metrics
 
-logger = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 @dataclass
@@ -74,14 +76,15 @@ class IngestionResult:
 
 async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> IngestionResult:
     """Run the full ingestion pipeline. Returns IngestionResult."""
+    _t0 = time.monotonic()
 
     # ── Step 0: Resolve source ────────────────────────────────────────────────
     source: ResolvedSource
     if request.iri:
-        logger.info("Resolving IRI: %s", request.iri)
+        log.info("resolving_iri", iri=request.iri)
         source = resolve_iri(request.iri)
     elif request.url:
-        logger.info("Resolving URL: %s", request.url)
+        log.info("resolving_url", url=request.url)
         source = resolve_url(request.url)
     elif request.raw_bytes is not None:
         source = resolve_bytes(request.raw_bytes, request.content_type)
@@ -94,11 +97,11 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
         filename=request.filename,
         content_type=source.content_type or request.content_type,
     )
-    logger.info("Detected format: %s", fmt)
+    log.info("format_detected", format=fmt.value)
 
     # ── Step 2: Parse ─────────────────────────────────────────────────────────
     graph = parse_ontology(source.data, fmt)
-    logger.info("Parsed %d triples", len(graph))
+    log.info("parsed_triples", count=len(graph))
 
     # ── Step 3: Resolve owl:imports ───────────────────────────────────────────
     import_results = resolve_imports(graph)
@@ -109,7 +112,8 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     existing = await db.execute(select(OntologyVersion).where(OntologyVersion.sha256 == sha256))
     existing_version = existing.scalar_one_or_none()
     if existing_version:
-        logger.info("Duplicate detected (sha256=%s), returning existing version", sha256)
+        log.info("duplicate_detected", sha256=sha256, existing_version_id=existing_version.id)
+        metrics.ontologies_ingested_total.labels(format=fmt.value, duplicate="true").inc()
         return IngestionResult(
             ontology_id=existing_version.ontology_id,
             version_id=existing_version.id,
@@ -169,10 +173,12 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     from ontoexplorer.modules.jobs.tasks import index_ontology
     index_ontology.delay(version_id)
 
-    logger.info(
-        "Ingestion complete: ontology=%s version=%s triples=%d",
-        ontology_id, version_id, triple_count,
-    )
+    elapsed = time.monotonic() - _t0
+    metrics.ontologies_ingested_total.labels(format=fmt.value, duplicate="false").inc()
+    metrics.ingestion_duration_seconds.labels(format=fmt.value).observe(elapsed)
+    metrics.ingestion_triples.observe(triple_count)
+    log.info("ingestion_complete", ontology_id=ontology_id, version_id=version_id,
+             triple_count=triple_count, duration_s=round(elapsed, 2))
 
     return IngestionResult(
         ontology_id=ontology_id,
@@ -243,7 +249,7 @@ async def _write_fair_metadata(
 
         await write_version_metadata(ontology_id, version_id, dcat_graph, prov_graph)
     except Exception as exc:
-        logger.warning("FAIR metadata write failed (non-fatal): %s", exc)
+        log.warning("fair_metadata_failed", error=str(exc))
 
 
 def _extract_ontology_iri(graph) -> str | None:

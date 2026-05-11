@@ -4,10 +4,13 @@ GET/POST /sparql         → QLever (FAIR metadata)
 GET/POST /sparql/content → Oxigraph (asserted ontology triples)
 """
 
+import time
+
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
 from ontoexplorer.clients import qlever as qlever_client
+from ontoexplorer import metrics
 
 router = APIRouter(tags=["sparql"])
 
@@ -18,7 +21,15 @@ _DEFAULT_ACCEPT = "application/sparql-results+json"
 @router.post("/sparql")
 async def sparql_metadata(request: Request):
     query, accept = await _extract_query_and_accept(request)
-    body, content_type = await qlever_client.query_passthrough(query, accept)
+    metrics.sparql_requests_total.labels(endpoint="qlever", method=request.method).inc()
+    t0 = time.monotonic()
+    try:
+        body, content_type = await qlever_client.query_passthrough(query, accept)
+    except Exception:
+        metrics.sparql_errors_total.labels(endpoint="qlever").inc()
+        raise
+    finally:
+        metrics.sparql_latency_seconds.labels(endpoint="qlever").observe(time.monotonic() - t0)
     return Response(content=body, media_type=content_type)
 
 
@@ -26,7 +37,15 @@ async def sparql_metadata(request: Request):
 @router.post("/sparql/content")
 async def sparql_content(request: Request):
     query, accept = await _extract_query_and_accept(request)
-    body, content_type = _oxigraph_query(query, accept)
+    metrics.sparql_requests_total.labels(endpoint="oxigraph", method=request.method).inc()
+    t0 = time.monotonic()
+    try:
+        body, content_type = _oxigraph_query(query, accept)
+    except Exception:
+        metrics.sparql_errors_total.labels(endpoint="oxigraph").inc()
+        raise
+    finally:
+        metrics.sparql_latency_seconds.labels(endpoint="oxigraph").observe(time.monotonic() - t0)
     return Response(content=body, media_type=content_type)
 
 

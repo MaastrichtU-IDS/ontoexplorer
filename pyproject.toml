@@ -25,12 +25,16 @@ dependencies = [
     "python-jose[cryptography]",
     "prometheus-fastapi-instrumentator",
     "python-multipart",
+    "structlog>=24.0",
+    "prometheus-client",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "anyio[trio]",
+    "aiosqlite",
     "httpx",
     "ruff>=0.4",
     "mypy>=1.10",
@@ -54,3 +58,6 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.anyio]
+backend = "asyncio"

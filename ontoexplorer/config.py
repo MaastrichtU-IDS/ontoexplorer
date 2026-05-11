@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     # Prometheus
     enable_metrics: bool = True
 
+    # Logging
+    log_level: str = "INFO"
+    json_logs: bool = True
+
     @field_validator("database_url")
     @classmethod
     def validate_database_url(cls, v: str) -> str:

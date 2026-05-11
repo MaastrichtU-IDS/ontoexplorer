@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+import structlog
+
 from ontoexplorer.api.api_keys import router as api_keys_router
 from ontoexplorer.api.auth import router as auth_router
 from ontoexplorer.api.health import router as health_router
@@ -10,10 +12,13 @@ from ontoexplorer.api.sparql import router as sparql_router
 from ontoexplorer.api.stats import router as stats_router
 from ontoexplorer.api.webhooks import router as webhooks_router
 from ontoexplorer.config import get_settings
+from ontoexplorer.logging_config import configure_logging
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    configure_logging(log_level=settings.log_level, json_logs=settings.json_logs)
+    log = structlog.get_logger("ontoexplorer.startup")
 
     app = FastAPI(
         title=settings.app_name,
@@ -45,6 +50,7 @@ def create_app() -> FastAPI:
     app.include_router(api_keys_router)
     app.include_router(stats_router)
 
+    log.info("OntoExplorer API ready", version="0.1.0")
     return app
 
 

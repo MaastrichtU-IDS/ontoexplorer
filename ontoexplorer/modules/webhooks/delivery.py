@@ -3,7 +3,6 @@
 import hashlib
 import hmac
 import json
-import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -12,8 +11,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.models.db import Webhook, WebhookDelivery
+from ontoexplorer.logging_config import get_logger
+from ontoexplorer import metrics
 
-logger = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 _TIMEOUT = httpx.Timeout(10.0)
 _MAX_ATTEMPTS = 5
@@ -62,12 +63,13 @@ async def deliver_webhook(
         delivery.http_status = resp.status_code
         delivery.status = "delivered" if resp.is_success else "failed"
     except Exception as exc:
-        logger.warning("Webhook delivery failed for %s: %s", webhook.url, exc)
+        log.warning("webhook_delivery_failed", url=webhook.url, error=str(exc))
         delivery.status = "failed"
         delivery.http_status = None
 
     delivery.attempts = 1
     delivery.last_attempt_at = datetime.now(UTC)
+    metrics.webhook_deliveries_total.labels(status=delivery.status).inc()
     await db.commit()
     return delivery
 
@@ -83,4 +85,4 @@ async def broadcast_event(db: AsyncSession, event: str, payload: dict) -> None:
             try:
                 await deliver_webhook(db, webhook, event, payload)
             except Exception as exc:
-                logger.warning("Failed to deliver %s to webhook %s: %s", event, webhook.id, exc)
+                log.warning("broadcast_delivery_failed", event=event, webhook_id=webhook.id, error=str(exc))
