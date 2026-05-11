@@ -229,4 +229,6 @@ async def ontology_autocomplete(
             for c in completions
         ],
         "context": ctx.token_type.lower(),
+        "replace_from": ctx.token_start,
+        "replace_to": effective_cursor,
     }

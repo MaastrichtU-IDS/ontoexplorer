@@ -138,6 +138,14 @@ export interface AutocompleteCompletion {
   insert: string
 }
 
+export interface AutocompleteResponse {
+  completions: AutocompleteCompletion[]
+  context: string
+  replace_from: number
+  replace_to: number
+  version_id?: string
+}
+
 export interface Job {
   id: string
   version_id: string
@@ -256,11 +264,11 @@ export const api = {
         `/ontologies/${oid}/${vid}/search?q=${encodeURIComponent(q)}&mode=${mode}`
       ),
     autocomplete: (oid: string, vid: string, q: string, cursor = -1) =>
-      request<{ completions: AutocompleteCompletion[]; context: string }>(
+      request<AutocompleteResponse>(
         `/ontologies/${oid}/${vid}/autocomplete?q=${encodeURIComponent(q)}&cursor=${cursor}`
       ),
     autocompleteLatest: (oid: string, q: string, cursor = -1) =>
-      request<{ completions: AutocompleteCompletion[]; context: string }>(
+      request<AutocompleteResponse>(
         `/ontologies/${oid}/autocomplete?q=${encodeURIComponent(q)}&cursor=${cursor}`
       ),
     submitByIri: (iri: string) =>

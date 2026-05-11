@@ -216,6 +216,7 @@ def parse(text: str) -> ASTNode:
 class PartialParseResult:
     token_type: str   # "OPEN_QUOTE" | "EXPECT_ENTITY" | "EXPECT_KEYWORD" | "EXPECT_INT"
     partial: str      # partial text being typed at cursor
+    token_start: int  # index in the original query where the current token starts (splice point)
 
 
 _KEYWORD_RESTRICTION = {"some", "only", "value", "Self", "min", "max", "exactly"}
@@ -298,26 +299,31 @@ def partial_parse(text: str, cursor: int) -> PartialParseResult:
                 quote_start = -1
 
     if in_quote:
-        return PartialParseResult(token_type="OPEN_QUOTE", partial=prefix[quote_start + 1:])
+        # Replace from char after the opening quote up to the cursor
+        return PartialParseResult(
+            token_type="OPEN_QUOTE",
+            partial=prefix[quote_start + 1:],
+            token_start=quote_start + 1,
+        )
 
     tokens = _tokenize_prefix(prefix)
 
     if not tokens:
-        return PartialParseResult(token_type="EXPECT_ENTITY", partial="")
+        return PartialParseResult(token_type="EXPECT_ENTITY", partial="", token_start=cursor)
 
     last_type, last_val = tokens[-1]
 
     # After a complete entity reference → expect restriction or boolean keyword
     if last_type in ("QUOTED_LABEL", "CURIE", "FULL_IRI"):
-        return PartialParseResult(token_type="EXPECT_KEYWORD", partial="")
+        return PartialParseResult(token_type="EXPECT_KEYWORD", partial="", token_start=cursor)
 
     # After min/max/exactly → expect integer
     if last_type == "KW_RESTRICTION" and last_val in ("min", "max", "exactly"):
-        return PartialParseResult(token_type="EXPECT_INT", partial="")
+        return PartialParseResult(token_type="EXPECT_INT", partial="", token_start=cursor)
 
     # After integer → expect entity (filler class)
     if last_type == "INT":
-        return PartialParseResult(token_type="EXPECT_ENTITY", partial="")
+        return PartialParseResult(token_type="EXPECT_ENTITY", partial="", token_start=cursor)
 
     # After restriction keyword (some/only/value) or boolean (and/or) or not / ( → expect entity
-    return PartialParseResult(token_type="EXPECT_ENTITY", partial="")
+    return PartialParseResult(token_type="EXPECT_ENTITY", partial="", token_start=cursor)

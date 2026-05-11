@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { api } from '../lib/api'
+import { api, AutocompleteResponse } from '../lib/api'
 
 export function useSearch(ontologyId: string | null, versionId: string | null, query: string) {
   return useQuery({
@@ -18,7 +18,7 @@ export function useAutocomplete(
   cursor: number,
   enabled: boolean,
 ) {
-  return useQuery({
+  return useQuery<AutocompleteResponse>({
     queryKey: ['autocomplete', ontologyId, versionId, query, cursor],
     queryFn: () =>
       versionId

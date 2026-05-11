@@ -18,6 +18,8 @@ export default function SearchBar({ ontologyId, versionId, onSearch, placeholder
   const autocompleteEnabled = showSuggestions && value.length >= 1
   const { data: acData } = useAutocomplete(ontologyId, versionId, value, cursor, autocompleteEnabled)
   const completions = acData?.completions ?? []
+  const replaceFrom = acData?.replace_from ?? value.length
+  const replaceTo   = acData?.replace_to   ?? value.length
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter') {
@@ -35,9 +37,17 @@ export default function SearchBar({ ontologyId, versionId, onSearch, placeholder
   }
 
   function applyCompletion(insert: string) {
-    setValue(insert)
-    setShowSuggestions(false)
-    inputRef.current?.focus()
+    const newValue = value.slice(0, replaceFrom) + insert + value.slice(replaceTo)
+    const newCursor = replaceFrom + insert.length
+    setValue(newValue)
+    setCursor(newCursor)
+    setShowSuggestions(true)
+    requestAnimationFrame(() => {
+      if (inputRef.current) {
+        inputRef.current.focus()
+        inputRef.current.setSelectionRange(newCursor, newCursor)
+      }
+    })
   }
 
   return (
