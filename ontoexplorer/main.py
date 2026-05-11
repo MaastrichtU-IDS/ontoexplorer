@@ -47,12 +47,14 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(sparql_router)
     app.include_router(jobs_router)
+    # global_search_router before ontologies_router: static /search segment must match
+    # before ontologies_router's /{ontology_id}/{version_id} parameterized route
+    app.include_router(global_search_router)
     app.include_router(ontologies_router)
     app.include_router(search_router)
     app.include_router(webhooks_router)
     app.include_router(api_keys_router)
     app.include_router(stats_router)
-    app.include_router(global_search_router)
 
     log.info("OntoExplorer API ready", version="0.1.0")
     return app

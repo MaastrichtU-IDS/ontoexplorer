@@ -1,56 +1,232 @@
-"""Global cross-ontology entity search — GET /api/v1/search?q=<query>."""
+"""Global cross-ontology search — GET /api/v1/search."""
 import asyncio
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ontoexplorer.clients.reasoning import ReasoningNotReadyError
 from ontoexplorer.database import get_db
-from ontoexplorer.models.db import OntologyVersion
+from ontoexplorer.models.db import Ontology, OntologyVersion
+from ontoexplorer.modules.auth.dependencies import get_current_user
+from ontoexplorer.modules.search.autocomplete import get_completions
+from ontoexplorer.modules.search.evaluator import AmbiguousLabelError, evaluate
 from ontoexplorer.modules.search.indexer import entity_lookup
+from ontoexplorer.modules.search.mos_parser import ParseError, NamedClass, parse
 
-router = APIRouter(prefix="/api/v1/search", tags=["global-search"])
+router = APIRouter(prefix="/api/v1", tags=["search"])
 
 
-@router.get("", summary="Cross-ontology entity prefix search")
+def _is_expression(node) -> bool:
+    return not isinstance(node, NamedClass)
+
+
+async def _latest_ingested_versions(db: AsyncSession) -> list[OntologyVersion]:
+    """Return the most-recently-ingested non-deprecated version for every ontology."""
+    result = await db.execute(
+        select(OntologyVersion)
+        .where(OntologyVersion.status == "ingested")
+        .order_by(OntologyVersion.ontology_id, OntologyVersion.created_at.desc())
+    )
+    seen: set[str] = set()
+    latest: list[OntologyVersion] = []
+    for v in result.scalars():
+        if v.ontology_id not in seen:
+            seen.add(v.ontology_id)
+            latest.append(v)
+    return latest
+
+
+async def _get_latest_version_or_404(db: AsyncSession, ontology_id: str) -> OntologyVersion:
+    from fastapi import HTTPException
+    result = await db.execute(
+        select(OntologyVersion)
+        .where(OntologyVersion.ontology_id == ontology_id,
+               OntologyVersion.status == "ingested")
+        .order_by(OntologyVersion.created_at.desc())
+        .limit(1)
+    )
+    v = result.scalar_one_or_none()
+    if not v:
+        raise HTTPException(status_code=404, detail="Ontology not found or has no ingested version")
+    return v
+
+
+# ── Global search ─────────────────────────────────────────────────────────────
+
+@router.get("/search", summary="Cross-ontology entity or MOS expression search")
 async def global_search(
-    q: str = Query(..., min_length=1, description="Entity label prefix"),
-    limit: int = Query(20, ge=1, le=100),
+    q: str = Query(..., min_length=1, description="Entity label, CURIE, IRI, or MOS expression"),
+    mode: str = Query("auto", description="auto | entity | expression"),
+    limit: int = Query(20, ge=1, le=200),
+    _user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # Gather all version IDs that are not deprecated
-    result = await db.execute(
-        select(OntologyVersion.id, OntologyVersion.ontology_id, OntologyVersion.status)
-        .where(OntologyVersion.status != "deprecated")
-    )
-    versions = result.fetchall()
-
+    versions = await _latest_ingested_versions(db)
     if not versions:
-        return {"results": [], "count": 0, "truncated": False}
+        return {"mode": "entity", "query": q, "results": [], "count": 0, "truncated": False}
+
+    # Determine effective mode and parse once
+    q_stripped = q.strip()
+    if q_stripped.startswith("http://") or q_stripped.startswith("https://"):
+        effective_mode = "entity"
+        ast = None
+    else:
+        effective_mode = mode
+        ast = None
+        if mode in ("auto", "expression"):
+            try:
+                ast = parse(q)
+                if mode == "auto":
+                    effective_mode = "expression" if _is_expression(ast) else "entity"
+            except ParseError as exc:
+                if mode == "expression":
+                    return JSONResponse(status_code=400, content={"error": "parse_error", "message": str(exc)})
+                effective_mode = "entity"
 
     per_version = max(5, limit // max(len(versions), 1))
 
-    async def search_version(vid: str, oid: str) -> list[dict]:
-        rows = await asyncio.to_thread(entity_lookup, vid, q, None, per_version)
-        for r in rows:
-            r["version_id"] = vid
-            r["ontology_id"] = oid
-        return rows
-
-    nested = await asyncio.gather(
-        *[search_version(str(v.id), str(v.ontology_id)) for v in versions]
-    )
-
     seen_iris: set[str] = set()
     merged: list[dict] = []
+
+    if effective_mode == "entity":
+        async def search_one_entity(v: OntologyVersion) -> list[dict]:
+            rows = await asyncio.to_thread(entity_lookup, str(v.id), q, None, per_version)
+            for r in rows:
+                r["version_id"] = str(v.id)
+                r["ontology_id"] = str(v.ontology_id)
+            return rows
+
+        nested = await asyncio.gather(*[search_one_entity(v) for v in versions])
+        for rows in nested:
+            for row in rows:
+                if row["iri"] not in seen_iris:
+                    seen_iris.add(row["iri"])
+                    merged.append(row)
+                    if len(merged) >= limit:
+                        break
+            if len(merged) >= limit:
+                break
+
+        return {"mode": "entity", "query": q, "results": merged,
+                "count": len(merged), "truncated": len(merged) >= limit}
+
+    # Expression mode — evaluate against each version separately
+    async def search_one_expression(v: OntologyVersion) -> list[dict]:
+        try:
+            results = await evaluate(ast, str(v.id), str(v.ontology_id))
+            return [
+                {"iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type,
+                 "version_id": str(v.id), "ontology_id": str(v.ontology_id)}
+                for r in results
+            ]
+        except (ReasoningNotReadyError, AmbiguousLabelError):
+            return []
+        except Exception:
+            return []
+
+    nested = await asyncio.gather(*[search_one_expression(v) for v in versions])
     for rows in nested:
         for row in rows:
             if row["iri"] not in seen_iris:
                 seen_iris.add(row["iri"])
                 merged.append(row)
-            if len(merged) >= limit:
-                break
+                if len(merged) >= limit:
+                    break
         if len(merged) >= limit:
             break
 
-    return {"results": merged, "count": len(merged), "truncated": len(merged) >= limit}
+    return {"mode": "expression", "query": q, "results": merged[:limit],
+            "count": len(merged[:limit]), "truncated": len(merged) > limit}
+
+
+# ── Per-ontology search (latest version) ──────────────────────────────────────
+
+@router.get("/ontologies/{ontology_id}/search",
+            summary="Search within an ontology (latest version)")
+async def ontology_search(
+    ontology_id: str,
+    q: str = Query(..., description="Entity label, CURIE, IRI, or MOS expression"),
+    mode: str = Query("auto", description="auto | entity | expression"),
+    limit: int = Query(20, ge=1, le=200),
+    _user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    version = await _get_latest_version_or_404(db, ontology_id)
+    version_id = str(version.id)
+
+    q_stripped = q.strip()
+    if q_stripped.startswith("http://") or q_stripped.startswith("https://"):
+        effective_mode = "entity"
+        ast = None
+    else:
+        effective_mode = mode
+        ast = None
+        if mode in ("auto", "expression"):
+            try:
+                ast = parse(q)
+                if mode == "auto":
+                    effective_mode = "expression" if _is_expression(ast) else "entity"
+            except ParseError as exc:
+                if mode == "expression":
+                    return JSONResponse(status_code=400, content={"error": "parse_error", "message": str(exc)})
+                effective_mode = "entity"
+
+    if effective_mode == "entity":
+        results = await asyncio.to_thread(entity_lookup, version_id, q, None, limit)
+        return {
+            "mode": "entity", "query": q, "version_id": version_id,
+            "results": [
+                {"iri": r["iri"], "label": r["label"], "short": r["short"], "match_type": "entity"}
+                for r in results
+            ],
+            "count": len(results), "truncated": len(results) >= limit,
+        }
+
+    try:
+        search_results = await evaluate(ast, version_id, ontology_id)
+    except AmbiguousLabelError as exc:
+        return JSONResponse(status_code=422, content={
+            "error": "ambiguous_label", "label": exc.label, "candidates": exc.candidates,
+        })
+    except ReasoningNotReadyError:
+        return JSONResponse(status_code=503, content={"error": "not_classified"})
+
+    trimmed = search_results[:limit]
+    return {
+        "mode": "expression", "query": q, "version_id": version_id,
+        "results": [
+            {"iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type}
+            for r in trimmed
+        ],
+        "count": len(trimmed), "truncated": len(search_results) > limit,
+    }
+
+
+# ── Per-ontology autocomplete (latest version) ────────────────────────────────
+
+@router.get("/ontologies/{ontology_id}/autocomplete",
+            summary="MOS autocomplete for an ontology (latest version)")
+async def ontology_autocomplete(
+    ontology_id: str,
+    q: str = Query(..., description="Partial MOS expression text"),
+    cursor: int = Query(-1, description="Byte offset of cursor (-1 = end of q)"),
+    limit: int = Query(10, ge=1, le=50),
+    _user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    version = await _get_latest_version_or_404(db, ontology_id)
+    version_id = str(version.id)
+    effective_cursor = cursor if cursor >= 0 else len(q)
+    completions = await asyncio.to_thread(get_completions, q, effective_cursor, version_id, limit)
+    from ontoexplorer.modules.search.mos_parser import partial_parse
+    ctx = partial_parse(q, effective_cursor)
+    return {
+        "version_id": version_id,
+        "completions": [
+            {"text": c.text, "type": c.type, "iri": c.iri, "short": c.short, "insert": c.insert}
+            for c in completions
+        ],
+        "context": ctx.token_type.lower(),
+    }
