@@ -20,15 +20,20 @@ _store: pyoxigraph.Store | None = None
 
 
 def get_store() -> pyoxigraph.Store:
+    """Return the Oxigraph store.
+
+    Write mode (worker): singleton for the process lifetime.
+    Read-only mode (API): open fresh each call — secondary RocksDB instances are frozen
+    at open time and won't see writes made after they were opened.
+    """
     global _store
+    settings = get_settings()
+    path = settings.oxigraph_data_path
+    Path(path).mkdir(parents=True, exist_ok=True)
+    if settings.oxigraph_read_only:
+        return pyoxigraph.Store.read_only(path)
     if _store is None:
-        settings = get_settings()
-        path = settings.oxigraph_data_path
-        Path(path).mkdir(parents=True, exist_ok=True)
-        if settings.oxigraph_read_only:
-            _store = pyoxigraph.Store.read_only(path)
-        else:
-            _store = pyoxigraph.Store(path)
+        _store = pyoxigraph.Store(path)
     return _store
 
 
