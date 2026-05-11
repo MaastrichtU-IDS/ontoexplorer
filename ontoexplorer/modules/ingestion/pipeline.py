@@ -21,11 +21,19 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 
+import rdflib
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ontoexplorer.config import get_settings
+
 from ontoexplorer.clients.oxigraph import load_graph
 from ontoexplorer.models.db import Ontology, OntologyImport, OntologyVersion
+from ontoexplorer.modules.metadata.dcat import build_dcat_record
+from ontoexplorer.modules.metadata.prov import build_ingestion_activity
+from ontoexplorer.modules.metadata.qlever_writer import write_version_metadata
+from ontoexplorer.modules.metadata.void import compute_void_stats
+from ontoexplorer.modules.storage.minio_client import ontology_download_url
 from ontoexplorer.modules.ingestion.deduplicator import compute_sha256
 from ontoexplorer.modules.ingestion.format_detect import OntologyFormat, detect_format
 from ontoexplorer.modules.ingestion.import_resolver import resolve_imports
@@ -143,11 +151,23 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     # ── Step 6: Load into Oxigraph ────────────────────────────────────────────
     triple_count = load_graph(ontology_id, version_id, graph)
 
-    # ── Steps 7-10: Stubs (implemented in later phases) ──────────────────────
-    # Phase 3: extract_fair_metadata(version_id)
-    # Phase 3: queue reasoning job
-    # Phase 3: queue search indexing
-    # Phase 4: deliver_webhooks("ontology.ingested", version_id)
+    # ── Step 7: Extract FAIR metadata → QLever ────────────────────────────────
+    await _write_fair_metadata(
+        ontology_id=ontology_id,
+        version_id=version_id,
+        graph=graph,
+        version=version,
+        source=source,
+        triple_count=triple_count,
+    )
+
+    # ── Step 8: Queue reasoning job ───────────────────────────────────────────
+    from ontoexplorer.modules.jobs.tasks import reason_ontology
+    reason_ontology.delay(version_id)
+
+    # ── Step 9: Queue search indexing ─────────────────────────────────────────
+    from ontoexplorer.modules.jobs.tasks import index_ontology
+    index_ontology.delay(version_id)
 
     logger.info(
         "Ingestion complete: ontology=%s version=%s triples=%d",
@@ -183,6 +203,47 @@ async def _ensure_ontology(db: AsyncSession, graph, request: IngestionRequest) -
     db.add(ontology)
     await db.flush()
     return ontology.id
+
+
+async def _write_fair_metadata(
+    *,
+    ontology_id: str,
+    version_id: str,
+    graph: rdflib.Graph,
+    version: OntologyVersion,
+    source: ResolvedSource,
+    triple_count: int,
+) -> None:
+    """Compute VoID stats, build DCAT + PROV-O graphs, write to QLever."""
+    try:
+        settings = get_settings()
+        void_stats = compute_void_stats(graph)
+        download_url = ontology_download_url(version.minio_key)
+
+        dcat_graph = build_dcat_record(
+            ontology_id=ontology_id,
+            version_id=version_id,
+            ontology_iri=version.ontology.iri if version.ontology else ontology_id,
+            version_iri=version.version_iri,
+            minio_download_url=download_url,
+            format_ext=version.format,
+            void_stats=void_stats,
+            app_base_url=str(settings.app_url),
+        )
+
+        prov_graph = build_ingestion_activity(
+            version_id=version_id,
+            ontology_iri=version.ontology.iri if version.ontology else ontology_id,
+            source_url=source.final_url,
+            mode=source.mode.value,
+            sha256=version.sha256,
+            triple_count=triple_count,
+            app_base_url=str(settings.app_url),
+        )
+
+        await write_version_metadata(ontology_id, version_id, dcat_graph, prov_graph)
+    except Exception as exc:
+        logger.warning("FAIR metadata write failed (non-fatal): %s", exc)
 
 
 def _extract_ontology_iri(graph) -> str | None:

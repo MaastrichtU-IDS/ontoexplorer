@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from ontoexplorer.api.health import router as health_router
+from ontoexplorer.api.jobs import router as jobs_router
+from ontoexplorer.api.sparql import router as sparql_router
 from ontoexplorer.config import get_settings
 
 
@@ -30,6 +32,8 @@ def create_app() -> FastAPI:
         Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
     app.include_router(health_router)
+    app.include_router(sparql_router)
+    app.include_router(jobs_router)
 
     return app
 
