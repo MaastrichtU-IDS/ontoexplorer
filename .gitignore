@@ -72,3 +72,4 @@ logs/
 
 # Data volumes (local dev)
 data/
+.superpowers/
