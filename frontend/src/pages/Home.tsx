@@ -224,7 +224,7 @@ export default function Home() {
               textTransform: 'capitalize',
             }}
           >
-            {m === 'search' ? 'Search' : 'Query (MOS)'}
+            {m === 'search' ? 'Keyword Search' : 'Structured Query'}
           </button>
         ))}
       </div>
