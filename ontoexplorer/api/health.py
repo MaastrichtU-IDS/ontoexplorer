@@ -1,0 +1,58 @@
+import asyncio
+
+import httpx
+from fastapi import APIRouter, status
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
+
+from ontoexplorer.config import get_settings
+from ontoexplorer.database import AsyncSessionLocal
+
+router = APIRouter(tags=["health"])
+
+
+@router.get("/health", summary="Liveness probe")
+async def health():
+    return {"status": "ok"}
+
+
+@router.get("/ready", summary="Readiness probe — checks all backend connections")
+async def ready():
+    settings = get_settings()
+    checks: dict[str, str] = {}
+    healthy = True
+
+    # Postgres
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+        checks["postgres"] = "ok"
+    except Exception as exc:
+        checks["postgres"] = f"error: {exc}"
+        healthy = False
+
+    # QLever
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{settings.qlever_endpoint}{settings.qlever_sparql_path}", params={"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 1"})
+            checks["qlever"] = "ok" if resp.status_code < 500 else f"error: {resp.status_code}"
+            if resp.status_code >= 500:
+                healthy = False
+    except Exception as exc:
+        checks["qlever"] = f"error: {exc}"
+        healthy = False
+
+    # MinIO (check if endpoint is reachable)
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            scheme = "https" if settings.minio_secure else "http"
+            resp = await client.get(f"{scheme}://{settings.minio_endpoint}/minio/health/live")
+            checks["minio"] = "ok" if resp.status_code == 200 else f"error: {resp.status_code}"
+            if resp.status_code != 200:
+                healthy = False
+    except Exception as exc:
+        checks["minio"] = f"error: {exc}"
+        healthy = False
+
+    code = status.HTTP_200_OK if healthy else status.HTTP_503_SERVICE_UNAVAILABLE
+    return JSONResponse({"status": "ready" if healthy else "degraded", "checks": checks}, status_code=code)
