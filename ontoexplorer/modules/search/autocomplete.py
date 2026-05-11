@@ -39,8 +39,8 @@ def get_completions(
         return kws
 
     if result.token_type == "EXPECT_KEYWORD":
-        # After a complete entity ref — offer restriction + boolean keywords
-        kws = _keyword_completions(_RESTRICTION_KEYWORDS + _BOOLEAN_KEYWORDS)
+        # Boolean operators first (and/or/not more common after a class), then restrictions
+        kws = _keyword_completions(_BOOLEAN_KEYWORDS + _RESTRICTION_KEYWORDS)
         return kws
 
     if result.token_type == "EXPECT_INT":
