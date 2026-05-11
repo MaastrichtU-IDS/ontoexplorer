@@ -313,6 +313,10 @@ export const api = {
       request<{ terms: Term[]; reasoning_available: boolean }>(
         `/ontologies/${oid}/${vid}/inferred-children?cls=${encodeURIComponent(cls)}`
       ),
+    ancestors: (oid: string, vid: string, iri: string, mode: 'asserted' | 'inferred' = 'asserted') =>
+      request<{ ancestors: Term[]; reasoning_available?: boolean }>(
+        `/ontologies/${oid}/${vid}/ancestors?iri=${encodeURIComponent(iri)}&mode=${mode}`
+      ),
 
     stats: (oid: string, vid: string) =>
       request<{

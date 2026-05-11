@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useOntologies } from '../hooks/useOntologies'
 import { useVersions } from '../hooks/useVersions'
-import { slugFromIri, OntologyVersion, api } from '../lib/api'
+import { slugFromIri, OntologyVersion, SearchResult, api } from '../lib/api'
 import ClassTree from '../components/ClassTree'
 import TermPanel from '../components/TermPanel'
 import ResizeHandle from '../components/ResizeHandle'
@@ -142,6 +142,111 @@ function CollapsibleSection({ label, defaultOpen = true, children }: {
   )
 }
 
+// ── Ontology search bar ───────────────────────────────────────────────────────
+
+function useDebounce<T>(value: T, ms: number): T {
+  const [d, setD] = useState(value)
+  useEffect(() => {
+    const id = setTimeout(() => setD(value), ms)
+    return () => clearTimeout(id)
+  }, [value, ms])
+  return d
+}
+
+function OntologySearchBar({
+  ontologyId, versionId, onSelect,
+}: { ontologyId: string; versionId: string; onSelect: (iri: string) => void }) {
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+  const [activeIdx, setActiveIdx] = useState(-1)
+  const dq = useDebounce(query, 200)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const { data } = useQuery({
+    queryKey: ['onto-search', ontologyId, versionId, dq],
+    queryFn: () => api.ontologies.search(ontologyId, versionId, dq),
+    enabled: dq.length >= 2,
+    staleTime: 30_000,
+  })
+
+  const results: SearchResult[] = data?.results ?? []
+
+  useEffect(() => { setActiveIdx(-1) }, [results])
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (!containerRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  function pick(r: SearchResult) {
+    onSelect(r.iri); setQuery(''); setOpen(false)
+  }
+
+  function handleKey(e: React.KeyboardEvent) {
+    if (!open || results.length === 0) return
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx(i => Math.min(i + 1, results.length - 1)) }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIdx(i => Math.max(i - 1, 0)) }
+    else if (e.key === 'Enter' && activeIdx >= 0) { e.preventDefault(); pick(results[activeIdx]) }
+    else if (e.key === 'Escape') { setOpen(false) }
+  }
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', padding: '6px 8px', borderBottom: '1px solid var(--border)' }}>
+      <input
+        value={query}
+        onChange={e => { setQuery(e.target.value); setOpen(true) }}
+        onFocus={() => { if (query) setOpen(true) }}
+        onKeyDown={handleKey}
+        placeholder="Search classes & properties…"
+        style={{
+          width: '100%', boxSizing: 'border-box',
+          padding: '5px 8px', fontSize: 'var(--font-size-sm)',
+          background: 'var(--bg)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-sm)', color: 'var(--text)',
+          outline: 'none',
+        }}
+      />
+      {open && results.length > 0 && (
+        <ul style={{
+          position: 'absolute', top: '100%', left: 8, right: 8,
+          zIndex: 100, listStyle: 'none', margin: 0, padding: 0,
+          background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-sm)', boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          maxHeight: 260, overflowY: 'auto',
+        }}>
+          {results.map((r, i) => (
+            <li
+              key={r.iri}
+              onMouseDown={() => pick(r)}
+              onMouseEnter={() => setActiveIdx(i)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '5px 10px', cursor: 'pointer', fontSize: 'var(--font-size-sm)',
+                background: i === activeIdx ? 'var(--bg-hover)' : 'transparent',
+                color: 'var(--text)',
+              }}
+            >
+              <span style={{
+                fontSize: 9, fontWeight: 700, padding: '1px 4px',
+                borderRadius: 3, background: 'var(--bg)', color: 'var(--text-dim)',
+                flexShrink: 0,
+              }}>
+                {r.short}
+              </span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {r.label}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 type HierarchyMode = 'asserted' | 'inferred'
 
 // ── Main page ─────────────────────────────────────────────────────────────────
@@ -219,6 +324,15 @@ export default function OntologyPage() {
           </button>
         </div>
 
+        {/* Search bar */}
+        {oid && activeVid && (
+          <OntologySearchBar
+            ontologyId={oid}
+            versionId={activeVid}
+            onSelect={selectTerm}
+          />
+        )}
+
         {/* Version selector */}
         {versions.length > 1 && (
           <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)' }}>
@@ -271,6 +385,7 @@ export default function OntologyPage() {
                 onSelect={selectTerm}
                 entityType="class"
                 mode={classMode}
+                revealIri={selectedTermIri}
               />
             </div>
             <CollapsibleSection label="Properties" defaultOpen={false}>
@@ -280,6 +395,7 @@ export default function OntologyPage() {
                 selectedIri={selectedTermIri}
                 onSelect={selectTerm}
                 entityType="property"
+                revealIri={selectedTermIri}
               />
             </CollapsibleSection>
           </div>

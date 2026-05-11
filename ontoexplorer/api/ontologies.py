@@ -678,6 +678,91 @@ async def inferred_children(
     }
 
 
+@router.get("/{ontology_id}/{version_id}/ancestors",
+            summary="Ancestor chain for a term (asserted or inferred)")
+async def term_ancestors(
+    ontology_id: str,
+    version_id: str,
+    iri: str = Query(..., description="Term IRI"),
+    mode: str = Query("asserted", description="'asserted' or 'inferred'"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all ancestors (superclasses) of a term so the UI can expand the tree path."""
+    await _get_version_or_404(db, ontology_id, version_id)
+
+    if mode == "inferred":
+        from ontoexplorer.clients.reasoning import get_classification
+        from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
+
+        try:
+            classification = await get_classification(version_id)
+        except Exception:
+            return {"ancestors": [], "reasoning_available": False}
+
+        elk_direct: dict[str, list[str]] = classification.get("direct_superclasses", {})
+        elk_all:    dict[str, list[str]] = classification.get("superclasses", {})
+        _excl = {_OWL_THING, _OWL_NOTHING}
+
+        def _direct_parents(c: str) -> list[str]:
+            if c in elk_direct:
+                return elk_direct[c]
+            raw = [p for p in elk_all.get(c, []) if p not in _excl]
+            return [p for p in raw
+                    if not any(p in elk_all.get(q, []) for q in raw if q != p)]
+
+        # Walk up from term to root collecting every ancestor
+        ancestors: list[str] = []
+        visited: set[str] = set()
+        queue = list(_direct_parents(iri))
+        while queue:
+            p = queue.pop()
+            if p in visited or p in _excl:
+                continue
+            visited.add(p)
+            ancestors.append(p)
+            queue.extend(_direct_parents(p))
+
+        r = _get_redis()
+
+        def _label(i: str) -> str:
+            detail = r.hgetall(_iri_key(version_id, i))
+            if detail and detail.get("label"):
+                return detail["label"]
+            fragment = i.rstrip("/")
+            return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
+
+        return {
+            "ancestors": [{"iri": a, "label": _label(a)} for a in ancestors],
+            "reasoning_available": True,
+        }
+
+    # Asserted: SPARQL property path rdfs:subClassOf+
+    from ontoexplorer.clients.oxigraph import get_store
+    store = get_store()
+    g = f"urn:ontology:{ontology_id}:{version_id}"
+    query = f"""
+        PREFIX owl:  <http://www.w3.org/2002/07/owl#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        SELECT DISTINCT ?ancestor ?label WHERE {{
+            GRAPH <{g}> {{
+                <{iri}> rdfs:subClassOf+ ?ancestor .
+                ?ancestor a owl:Class .
+                FILTER(isIRI(?ancestor))
+                FILTER(?ancestor != owl:Thing)
+                OPTIONAL {{ ?ancestor rdfs:label ?label }}
+            }}
+        }}
+    """
+    rows = store.query(query)
+    ancestors_out = []
+    for row in rows:
+        lbl = row["label"]
+        label = lbl.value if (lbl is not None and hasattr(lbl, "value")) else None
+        ancestors_out.append({"iri": row["ancestor"].value, "label": label})
+
+    return {"ancestors": ancestors_out}
+
+
 @router.get("/{ontology_id}/{version_id}/consistency", summary="Consistency check for a version")
 async def get_consistency(
     ontology_id: str,

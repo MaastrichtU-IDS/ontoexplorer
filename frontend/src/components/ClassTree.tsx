@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useClassTreeNodes } from '../hooks/useClassTree'
 import { useInferredTreeNodes } from '../hooks/useInferredTree'
-import { Term } from '../lib/api'
+import { Term, api } from '../lib/api'
 
 type Mode = 'asserted' | 'inferred'
 
@@ -14,10 +15,17 @@ interface NodeProps {
   onSelect: (iri: string) => void
   entityType: 'class' | 'property'
   mode: Mode
+  expandSet: Set<string>
 }
 
-function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, entityType, mode }: NodeProps) {
-  const [expanded, setExpanded] = useState(false)
+function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, entityType, mode, expandSet }: NodeProps) {
+  const shouldExpand = expandSet.has(term.iri)
+  const [expanded, setExpanded] = useState(shouldExpand)
+
+  // When a new reveal path arrives, force-expand ancestors
+  useEffect(() => {
+    if (shouldExpand) setExpanded(true)
+  }, [shouldExpand])
 
   const asserted = useClassTreeNodes(
     mode === 'asserted' && expanded ? ontologyId : null,
@@ -80,6 +88,7 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, e
               onSelect={onSelect}
               entityType={entityType}
               mode={mode}
+              expandSet={expandSet}
             />
           ))}
         </ul>
@@ -95,15 +104,29 @@ interface Props {
   onSelect: (iri: string) => void
   entityType?: 'class' | 'property'
   mode?: Mode
+  revealIri?: string | null
 }
 
-export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect, entityType = 'class', mode = 'asserted' }: Props) {
+const EMPTY_SET = new Set<string>()
+
+export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect, entityType = 'class', mode = 'asserted', revealIri }: Props) {
   const asserted = useClassTreeNodes(mode === 'asserted' ? ontologyId : null, mode === 'asserted' ? versionId : null, null, entityType)
   const inferred = useInferredTreeNodes(mode === 'inferred' ? ontologyId : null, mode === 'inferred' ? versionId : null, null)
 
   const { data, isLoading } = mode === 'asserted' ? asserted : inferred
   const roots: Term[] = (data as any)?.terms ?? []
   const reasoningAvailable = mode === 'inferred' ? (data as any)?.reasoning_available !== false : true
+
+  const { data: ancestorData } = useQuery({
+    queryKey: ['ancestors', ontologyId, versionId, revealIri, mode],
+    queryFn: () => api.ontologies.ancestors(ontologyId, versionId, revealIri!, mode),
+    enabled: !!revealIri,
+    staleTime: 120_000,
+  })
+
+  const expandSet: Set<string> = ancestorData?.ancestors
+    ? new Set(ancestorData.ancestors.map((a: Term) => a.iri))
+    : EMPTY_SET
 
   if (isLoading) {
     return <div style={{ padding: '0.5rem 1rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</div>
@@ -136,6 +159,7 @@ export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect
           onSelect={onSelect}
           entityType={entityType}
           mode={mode}
+          expandSet={expandSet}
         />
       ))}
     </ul>
