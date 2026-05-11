@@ -403,5 +403,9 @@ export const api = {
         queries_per_month: Array<{ month: string; count: number }>
         job_durations: Array<{ month: string; avg_seconds: number }>
       }>('/stats'),
+    public: () =>
+      request<{ total_ontologies: number; total_classes: number; total_properties: number }>(
+        '/stats/public'
+      ),
   },
 }

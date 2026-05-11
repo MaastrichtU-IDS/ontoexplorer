@@ -11,6 +11,34 @@ from ontoexplorer.modules.auth.dependencies import require_auth
 router = APIRouter(prefix="/api/v1/stats", tags=["stats"])
 
 
+@router.get("/public", summary="Public aggregate statistics (no auth required)")
+async def get_public_stats(db: AsyncSession = Depends(get_db)):
+    import json
+    from ontoexplorer.modules.search.indexer import _get_redis
+
+    total_ontologies = (await db.execute(select(func.count(Ontology.id)))).scalar_one()
+
+    r = _get_redis()
+    total_classes = 0
+    total_properties = 0
+    for key in r.scan_iter("search:meta:*"):
+        raw = r.get(key)
+        if not raw:
+            continue
+        try:
+            meta = json.loads(raw)
+            total_classes += int(meta.get("class_count", 0))
+            total_properties += int(meta.get("property_count", 0))
+        except (ValueError, TypeError, json.JSONDecodeError):
+            pass
+
+    return {
+        "total_ontologies": total_ontologies,
+        "total_classes": total_classes,
+        "total_properties": total_properties,
+    }
+
+
 @router.get("", summary="Usage statistics for the authenticated user")
 async def get_stats(user: User = Depends(require_auth), db: AsyncSession = Depends(get_db)):
     total_ontologies = (await db.execute(
