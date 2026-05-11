@@ -1,0 +1,69 @@
+"""FastAPI dependency injection for authentication."""
+
+import hashlib
+from datetime import UTC, datetime
+
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import JWTError
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ontoexplorer.database import get_db
+from ontoexplorer.models.db import ApiKey, User
+from ontoexplorer.modules.auth.session import decode_access_token
+
+_bearer = HTTPBearer(auto_error=False)
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
+    """
+    Extract the authenticated user from a Bearer token (JWT or API key).
+    Returns None if no valid credentials are present.
+    """
+    if not credentials:
+        return None
+
+    token = credentials.credentials
+
+    # Try JWT first
+    try:
+        user_id = decode_access_token(token)
+        result = await db.execute(select(User).where(User.id == user_id))
+        return result.scalar_one_or_none()
+    except JWTError:
+        pass
+
+    # Try API key
+    key_hash = hashlib.sha256(token.encode()).hexdigest()
+    result = await db.execute(
+        select(ApiKey).where(
+            ApiKey.key_hash == key_hash,
+            ApiKey.revoked_at.is_(None),
+        )
+    )
+    api_key = result.scalar_one_or_none()
+    if api_key:
+        # Update last_used_at
+        await db.execute(
+            update(ApiKey).where(ApiKey.id == api_key.id).values(last_used_at=datetime.now(UTC))
+        )
+        await db.commit()
+        result2 = await db.execute(select(User).where(User.id == api_key.user_id))
+        return result2.scalar_one_or_none()
+
+    return None
+
+
+async def require_auth(user: User | None = Depends(get_current_user)) -> User:
+    """Dependency that raises 401 if the user is not authenticated."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user
