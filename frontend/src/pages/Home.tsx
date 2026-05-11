@@ -31,7 +31,7 @@ export default function Home() {
         />
         <div style={{ flex: 1 }}>
           <SearchBar
-            ontologyId={selectedOids[0] ?? null}
+            ontologyId={selectedOids[0] ?? ontologies[0]?.id ?? null}
             versionId={null}
             onSearch={setSubmittedQuery}
           />

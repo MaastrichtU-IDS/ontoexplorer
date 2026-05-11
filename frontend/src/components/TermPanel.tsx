@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { useTerm } from '../hooks/useTerm'
-import { useClassTreeNodes } from '../hooks/useClassTree'
+import { ClassRef } from '../lib/api'
 
 interface Props {
   ontologyId: string
@@ -8,26 +8,36 @@ interface Props {
   termIri: string
 }
 
-function SubclassList({ ontologyId, versionId, parentIri }: { ontologyId: string; versionId: string; parentIri: string }) {
-  const { data: childData, isLoading } = useClassTreeNodes(ontologyId, versionId, parentIri)
-  const children = childData?.terms ?? []
-
-  if (isLoading) return <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</span>
-  if (children.length === 0) return <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>No subclasses</span>
-
+function ClassItem({ c, oid, vid }: { c: ClassRef; oid: string; vid: string }) {
   return (
-    <ul style={{ listStyle: 'none' }}>
-      {children.slice(0, 10).map(c => (
-        <li key={c.iri} style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', padding: '2px 0' }}>
-          ▸ {c.label ?? c.iri.split(/[#/]/).pop()}
-        </li>
-      ))}
-      {children.length > 10 && (
-        <li style={{ color: 'var(--text-dim)', fontSize: 11, padding: '2px 0' }}>
-          + {children.length - 10} more…
-        </li>
-      )}
-    </ul>
+    <div style={{ color: 'var(--accent)', fontSize: 'var(--font-size-sm)', paddingLeft: 8, marginBottom: 2 }}>
+      <Link
+        to={`/browse/${oid}/${vid}?term=${encodeURIComponent(c.iri)}`}
+        style={{ color: 'var(--accent)', textDecoration: 'none' }}
+      >
+        {c.label}
+      </Link>
+    </div>
+  )
+}
+
+function HierGroup({ label, items, oid, vid, badge }: {
+  label: string; items: ClassRef[]; oid: string; vid: string; badge?: string
+}) {
+  if (items.length === 0) return null
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3 }}>
+        <span style={{ color: 'var(--text-dim)', fontSize: 10, textTransform: 'uppercase' }}>{label}</span>
+        {badge && (
+          <span style={{
+            fontSize: 9, background: 'var(--bg)', color: 'var(--text-dim)',
+            borderRadius: 2, padding: '1px 4px',
+          }}>{badge}</span>
+        )}
+      </div>
+      {items.map(c => <ClassItem key={c.iri} c={c} oid={oid} vid={vid} />)}
+    </div>
   )
 }
 
@@ -40,6 +50,9 @@ export default function TermPanel({ ontologyId, versionId, termIri }: Props) {
   const typeColor = data.entityType === 'class' ? 'var(--accent-purple)'
     : data.entityType === 'property' ? 'var(--accent-blue)' : 'var(--text-muted)'
   const shortIri = data.iri.split(/[#/]/).pop() ?? data.iri
+
+  const hasSuperclasses = data.superclasses.asserted.length > 0 || data.superclasses.inferred.length > 0
+  const hasSubclasses   = data.subclasses.asserted.length > 0   || data.subclasses.inferred.length > 0
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -71,16 +84,13 @@ export default function TermPanel({ ontologyId, versionId, termIri }: Props) {
               {data.definition}
             </p>
           )}
-          {data.superclasses.length > 0 && (
+          {hasSuperclasses && (
             <div style={{ marginBottom: 10 }}>
               <div style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', marginBottom: 4 }}>
                 Superclasses
               </div>
-              {data.superclasses.map(iri => (
-                <div key={iri} style={{ color: 'var(--accent)', fontSize: 'var(--font-size-sm)', paddingLeft: 8, marginBottom: 2 }}>
-                  {iri.split(/[#/]/).pop()}
-                </div>
-              ))}
+              <HierGroup label="asserted" items={data.superclasses.asserted} oid={ontologyId} vid={versionId} />
+              <HierGroup label="inferred" items={data.superclasses.inferred} oid={ontologyId} vid={versionId} badge="ELK" />
             </div>
           )}
           {(data.synonyms.exact.length > 0 || data.synonyms.related.length > 0) && (
@@ -100,7 +110,14 @@ export default function TermPanel({ ontologyId, versionId, termIri }: Props) {
           <div style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', marginBottom: 6 }}>
             Subclasses
           </div>
-          <SubclassList ontologyId={ontologyId} versionId={versionId} parentIri={termIri} />
+          {hasSubclasses ? (
+            <>
+              <HierGroup label="asserted" items={data.subclasses.asserted} oid={ontologyId} vid={versionId} />
+              <HierGroup label="inferred" items={data.subclasses.inferred} oid={ontologyId} vid={versionId} badge="ELK" />
+            </>
+          ) : (
+            <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>No subclasses</span>
+          )}
         </div>
       </div>
     </div>

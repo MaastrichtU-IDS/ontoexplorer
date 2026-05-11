@@ -98,9 +98,17 @@ export interface Term {
   label: string | null
 }
 
+export interface ClassRef {
+  iri: string
+  label: string
+}
+
 export interface RawTermDetail {
   iri: string
+  label: string
   properties: Record<string, string[]>
+  superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
+  subclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
 }
 
 export interface ParsedTerm {
@@ -109,7 +117,8 @@ export interface ParsedTerm {
   definition: string | null
   entityType: 'class' | 'property' | 'individual'
   synonyms: { exact: string[]; related: string[]; broad: string[]; narrow: string[] }
-  superclasses: string[]
+  superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
+  subclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
 }
 
 export interface SearchResult {
@@ -197,10 +206,9 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
   } else if (types.includes(P.owlIndividual)) {
     entityType = 'individual'
   }
-  const superclasses = (p[P.subClassOf] ?? []).filter(v => v.startsWith('http'))
   return {
     iri: raw.iri,
-    label,
+    label: raw.label ?? label,
     definition,
     entityType,
     synonyms: {
@@ -209,7 +217,8 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
       broad:   p[P.broadSyn]   ?? [],
       narrow:  p[P.narrowSyn]  ?? [],
     },
-    superclasses,
+    superclasses: raw.superclasses ?? { asserted: [], inferred: [] },
+    subclasses:   raw.subclasses   ?? { asserted: [], inferred: [] },
   }
 }
 
@@ -249,6 +258,10 @@ export const api = {
     autocomplete: (oid: string, vid: string, q: string, cursor = -1) =>
       request<{ completions: AutocompleteCompletion[]; context: string }>(
         `/ontologies/${oid}/${vid}/autocomplete?q=${encodeURIComponent(q)}&cursor=${cursor}`
+      ),
+    autocompleteLatest: (oid: string, q: string, cursor = -1) =>
+      request<{ completions: AutocompleteCompletion[]; context: string }>(
+        `/ontologies/${oid}/autocomplete?q=${encodeURIComponent(q)}&cursor=${cursor}`
       ),
     submitByIri: (iri: string) =>
       request<{ task_id: string; status: string }>('/ontologies', {

@@ -20,8 +20,11 @@ export function useAutocomplete(
 ) {
   return useQuery({
     queryKey: ['autocomplete', ontologyId, versionId, query, cursor],
-    queryFn: () => api.ontologies.autocomplete(ontologyId!, versionId!, query, cursor),
-    enabled: enabled && !!ontologyId && !!versionId && query.length >= 1,
+    queryFn: () =>
+      versionId
+        ? api.ontologies.autocomplete(ontologyId!, versionId, query, cursor)
+        : api.ontologies.autocompleteLatest(ontologyId!, query, cursor),
+    enabled: enabled && !!ontologyId && query.length >= 1,
     staleTime: 5_000,
   })
 }
