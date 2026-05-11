@@ -1,24 +1,18 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import SearchBar from '../components/SearchBar'
-import OntologySelector from '../components/OntologySelector'
+import OntologyPicker from '../components/OntologyPicker'
 import { useGlobalSearch } from '../hooks/useSearch'
-import { useOntologies } from '../hooks/useOntologies'
+import { useOntologySearch } from '../hooks/useOntologySearch'
 
 export default function Home() {
-  const [selectedOid, setSelectedOid] = useState<string | null>(null)
+  const [selectedOids, setSelectedOids] = useState<string[]>([])
   const [submittedQuery, setSubmittedQuery] = useState('')
   const navigate = useNavigate()
 
   const { data: searchData } = useGlobalSearch(submittedQuery)
-  const { ontologies } = useOntologies()
-
-  const filteredOntologies = submittedQuery
-    ? ontologies.filter(o =>
-        o.id.toLowerCase().includes(submittedQuery.toLowerCase()) ||
-        o.iri.toLowerCase().includes(submittedQuery.toLowerCase())
-      )
-    : ontologies
+  const { data: ontologyData } = useOntologySearch('')
+  const ontologies = ontologyData?.ontologies ?? []
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '3rem 1.5rem' }}>
@@ -29,11 +23,15 @@ export default function Home() {
         FAIR ontology repository — search terms, ontologies, and MOS expressions
       </p>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: '1.5rem', alignItems: 'center' }}>
-        <OntologySelector value={selectedOid} onChange={setSelectedOid} />
+      <div style={{ display: 'flex', gap: 8, marginBottom: '1.5rem', alignItems: 'flex-start' }}>
+        <OntologyPicker
+          value={selectedOids}
+          onChange={setSelectedOids}
+          placeholder="Filter by ontology…"
+        />
         <div style={{ flex: 1 }}>
           <SearchBar
-            ontologyId={selectedOid}
+            ontologyId={selectedOids[0] ?? null}
             versionId={null}
             onSearch={setSubmittedQuery}
           />
@@ -81,11 +79,11 @@ export default function Home() {
           <h2 style={{ color: 'var(--accent-blue)', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1, marginBottom: '0.75rem' }}>
             Ontologies
           </h2>
-          {filteredOntologies.length === 0 ? (
+          {ontologies.length === 0 ? (
             <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>No ontologies</p>
           ) : (
             <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {filteredOntologies.slice(0, 10).map(o => (
+              {ontologies.slice(0, 10).map(o => (
                 <li
                   key={o.id}
                   onClick={() => navigate(`/browse/${o.id}/latest`)}
@@ -97,6 +95,7 @@ export default function Home() {
                   onMouseLeave={e => (e.currentTarget.style.background = '')}
                 >
                   <span style={{ color: 'var(--accent)', fontWeight: 500 }}>{o.id}</span>
+                  <span style={{ color: 'var(--text-dim)', fontSize: 11, wordBreak: 'break-all' }}>{o.iri}</span>
                 </li>
               ))}
             </ul>

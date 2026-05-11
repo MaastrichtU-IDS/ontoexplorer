@@ -221,10 +221,13 @@ export const api = {
   },
 
   ontologies: {
-    list: (offset = 0, limit = 50) =>
-      request<{ ontologies: Ontology[]; offset: number; limit: number }>(
-        `/ontologies?offset=${offset}&limit=${limit}`
-      ),
+    list: (offset = 0, limit = 50, q?: string) => {
+      const params = new URLSearchParams({ offset: String(offset), limit: String(limit) })
+      if (q) params.set('q', q)
+      return request<{ ontologies: Ontology[]; offset: number; limit: number }>(
+        `/ontologies?${params}`
+      )
+    },
     get: (id: string) => request<Ontology>(`/ontologies/${id}`),
     versions: (id: string) =>
       request<{ versions: OntologyVersion[] }>(`/ontologies/${id}/versions`),

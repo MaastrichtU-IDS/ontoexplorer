@@ -79,11 +79,20 @@ async def submit_ontology(
 
 @router.get("", summary="List ontologies")
 async def list_ontologies(
+    q: str | None = Query(None, description="Keyword filter on ontology ID or IRI"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Ontology).order_by(Ontology.created_at.desc()).offset(offset).limit(limit))
+    stmt = select(Ontology)
+    if q:
+        pattern = f"%{q.lower()}%"
+        from sqlalchemy import func
+        stmt = stmt.where(
+            func.lower(Ontology.id).like(pattern) | func.lower(Ontology.iri).like(pattern)
+        )
+    stmt = stmt.order_by(Ontology.created_at.desc()).offset(offset).limit(limit)
+    result = await db.execute(stmt)
     ontologies = result.scalars().all()
     return {"ontologies": [_ontology_dict(o) for o in ontologies], "offset": offset, "limit": limit}
 

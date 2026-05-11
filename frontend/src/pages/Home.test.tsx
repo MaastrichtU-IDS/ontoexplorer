@@ -6,17 +6,15 @@ vi.mock('../hooks/useSearch', () => ({
   useGlobalSearch: () => ({ data: undefined }),
 }))
 
-vi.mock('../hooks/useOntologies', () => ({
-  useOntologies: () => ({
-    ontologies: [
-      { id: 'go', iri: 'http://go', created_at: '2024-01-01' },
-    ],
+vi.mock('../hooks/useOntologySearch', () => ({
+  useOntologySearch: () => ({
+    data: { ontologies: [{ id: 'go', iri: 'http://purl.obolibrary.org/obo/go.owl', created_at: '2024-01-01' }] },
     isLoading: false,
   }),
 }))
 
-vi.mock('../components/OntologySelector', () => ({
-  default: () => <select aria-label="ontology" />,
+vi.mock('../components/OntologyPicker', () => ({
+  default: () => <div data-testid="ontology-picker" />,
 }))
 
 vi.mock('../components/SearchBar', () => ({
