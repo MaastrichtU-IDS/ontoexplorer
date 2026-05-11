@@ -7,7 +7,6 @@ import { useVersions } from '../hooks/useVersions'
 
 export default function Search() {
   const [selectedOid, setSelectedOid] = useState<string | null>(null)
-  const [query, setQuery] = useState('')
   const [submitted, setSubmitted] = useState('')
   const navigate = useNavigate()
 
@@ -19,7 +18,6 @@ export default function Search() {
   function handleSearch(q: string) {
     if (!selectedOid) return
     setSubmitted(q)
-    setQuery(q)
   }
 
   const badgeColor = (type: string) =>
@@ -63,7 +61,7 @@ export default function Search() {
           {apiError.body?.candidates?.map((c: string) => (
             <button
               key={c}
-              onClick={() => setQuery(c)}
+              onClick={() => setSubmitted(c)}
               style={{ color: 'var(--accent)', marginRight: 8, fontSize: 'var(--font-size-sm)' }}
             >
               {c}
