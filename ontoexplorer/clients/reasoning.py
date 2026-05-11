@@ -107,6 +107,23 @@ async def health_check() -> bool:
         return False
 
 
+async def get_classification(version_id: str) -> dict:
+    """Fetch the full ClassificationResult JSON from the ELK service cache.
+
+    Returns the raw dict with keys: superclasses, subclasses, direct_superclasses,
+    direct_subclasses, unsatisfiable, class_count, proof_traces, etc.
+
+    Raises ReasoningNotReadyError if the version has not been classified yet.
+    """
+    url = f"{_elk_url('')}/classify/{version_id}"
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(url)
+    if resp.status_code == 404:
+        raise ReasoningNotReadyError(version_id)
+    resp.raise_for_status()
+    return resp.json()
+
+
 class ReasoningNotReadyError(Exception):
     def __init__(self, version_id: str):
         super().__init__(f"Reasoning not yet completed for version {version_id}")
