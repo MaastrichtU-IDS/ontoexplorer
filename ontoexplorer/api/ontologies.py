@@ -192,6 +192,55 @@ async def get_term(
     return {"iri": term_iri, "properties": properties}
 
 
+# ── Inferred axioms ────────────────────────────────────────────────────────────
+
+@router.get("/{ontology_id}/{version_id}/inferred", summary="Inferred subclass axioms from OWL-EL reasoning")
+async def list_inferred(
+    ontology_id: str,
+    version_id: str,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return inferred subClassOf axioms for a version.
+    The :inferred named graph is populated by the reason_ontology Celery task.
+    Returns 404 if reasoning has not yet completed.
+    """
+    await _get_version_or_404(db, ontology_id, version_id)
+    from ontoexplorer.clients.oxigraph import get_store, graph_iri
+
+    store = get_store()
+    inferred_iri = graph_iri(ontology_id, version_id, inferred=True)
+
+    query = f"""
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        SELECT ?sub ?sup WHERE {{
+            GRAPH <{inferred_iri}> {{
+                ?sub rdfs:subClassOf ?sup .
+                FILTER(isIRI(?sub) && isIRI(?sup))
+            }}
+        }}
+        ORDER BY ?sub ?sup
+        LIMIT {limit} OFFSET {offset}
+    """
+    try:
+        results = list(store.query(query))
+    except Exception:
+        results = []
+
+    axioms = [{"subClass": str(r["sub"]), "superClass": str(r["sup"])} for r in results]
+    return {
+        "version_id": version_id,
+        "ontology_id": ontology_id,
+        "inferred_graph": inferred_iri,
+        "axioms": axioms,
+        "offset": offset,
+        "limit": limit,
+    }
+
+
 # ── Deprecate ──────────────────────────────────────────────────────────────────
 
 @router.delete("/{ontology_id}/{version_id}", summary="Deprecate a version (soft delete)")

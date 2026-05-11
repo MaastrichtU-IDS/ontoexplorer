@@ -54,5 +54,17 @@ async def ready():
         checks["minio"] = f"error: {exc}"
         healthy = False
 
+    # ELK reasoning service
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{settings.elk_service_url}/health")
+            checks["elk"] = "ok" if resp.status_code == 200 else f"error: {resp.status_code}"
+            if resp.status_code != 200:
+                healthy = False
+    except Exception as exc:
+        checks["elk"] = f"error: {exc}"
+        # ELK unavailable is degraded but not fatal for read operations
+        healthy = False
+
     code = status.HTTP_200_OK if healthy else status.HTTP_503_SERVICE_UNAVAILABLE
     return JSONResponse({"status": "ready" if healthy else "degraded", "checks": checks}, status_code=code)

@@ -1,14 +1,24 @@
-# ELK (Entity Linking for Knowledge Graphs) service — Phase 6 placeholder
-# This will be replaced with the actual ELK integration in Phase 6.
-# For now it provides a minimal Alpine + JRE image that starts without errors.
-FROM eclipse-temurin:21-jre-alpine
+# ELK OWL-EL reasoning service
+# Accepts ontology triples (N-Triples) via HTTP and returns materialised
+# subClassOf / equivalentClass inferences as N-Triples.
+#
+# Uses py_horned_owl for OWL 2 parsing and a pure-Python OWL-EL reasoner
+# (structural subsumption over the OWL-EL fragment). No JVM required.
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Placeholder: copy a stub jar if it exists (not required at this stage)
-# COPY elk-1.x.jar /app/elk.jar
+RUN pip install --no-cache-dir \
+    "fastapi==0.111.*" \
+    "uvicorn[standard]" \
+    "py_horned_owl" \
+    "rdflib"
+
+COPY main.py .
 
 EXPOSE 8001
 
-# Stub entrypoint — exits immediately with a 0 code so Docker considers it healthy
-CMD ["sh", "-c", "echo 'ELK service placeholder — Phase 6 not yet implemented' && sleep infinity"]
+HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
