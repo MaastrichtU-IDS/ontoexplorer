@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOntologySearch } from '../hooks/useOntologySearch'
 import { useVersions } from '../hooks/useVersions'
-import { Ontology } from '../lib/api'
+import { Ontology, slugFromIri } from '../lib/api'
 
 function OntologyRow({ o }: { o: Ontology }) {
   const navigate = useNavigate()
@@ -13,7 +13,7 @@ function OntologyRow({ o }: { o: Ontology }) {
 
   return (
     <tr
-      onClick={() => latest && navigate(`/browse/${o.id}/${latest.id}`)}
+      onClick={() => latest && navigate(`/ontologies/${slugFromIri(o.iri)}`)}
       style={{ cursor: latest ? 'pointer' : 'default' }}
       onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
       onMouseLeave={e => (e.currentTarget.style.background = '')}

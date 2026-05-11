@@ -142,13 +142,82 @@ async def download_version(ontology_id: str, version_id: str, db: AsyncSession =
     return RedirectResponse(url=url)
 
 
+@router.get("/{ontology_id}/{version_id}/stats", summary="VoID statistics for a version")
+async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = Depends(get_db)):
+    await _get_version_or_404(db, ontology_id, version_id)
+    from ontoexplorer.clients.oxigraph import get_store, graph_iri
+    from ontoexplorer.modules.search.indexer import _meta_key, _get_redis
+
+    store = get_store()
+    g = graph_iri(ontology_id, version_id)
+
+    def _count(sparql: str) -> int:
+        rows = list(store.query(sparql))
+        if rows:
+            v = rows[0].get("n")
+            return int(v.value) if v is not None else 0
+        return 0
+
+    triple_count = _count(f"SELECT (COUNT(*) AS ?n) WHERE {{ GRAPH <{g}> {{ ?s ?p ?o }} }}")
+    class_count  = _count(f"""
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        SELECT (COUNT(DISTINCT ?c) AS ?n) WHERE {{
+            GRAPH <{g}> {{ ?c a owl:Class . FILTER(isIRI(?c)) }}
+        }}
+    """)
+    prop_count   = _count(f"""
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE {{
+            GRAPH <{g}> {{
+                {{ ?p a owl:ObjectProperty }} UNION
+                {{ ?p a owl:DatatypeProperty }} UNION
+                {{ ?p a owl:AnnotationProperty }}
+                FILTER(isIRI(?p))
+            }}
+        }}
+    """)
+    ind_count    = _count(f"""
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        SELECT (COUNT(DISTINCT ?i) AS ?n) WHERE {{
+            GRAPH <{g}> {{ ?i a owl:NamedIndividual . FILTER(isIRI(?i)) }}
+        }}
+    """)
+
+    index_meta: dict = {}
+    try:
+        import json as _json
+        r = _get_redis()
+        raw = r.get(_meta_key(version_id))
+        if raw:
+            index_meta = _json.loads(raw)
+    except Exception:
+        pass
+
+    return {
+        "triple_count":    triple_count,
+        "class_count":     class_count,
+        "property_count":  prop_count,
+        "individual_count": ind_count,
+        "index_meta":      index_meta,
+    }
+
+
 # ── Terms ──────────────────────────────────────────────────────────────────────
 
-@router.get("/{ontology_id}/{version_id}/terms", summary="List terms (classes)")
+_PROP_TYPES = (
+    "owl:ObjectProperty",
+    "owl:DatatypeProperty",
+    "owl:AnnotationProperty",
+)
+_PROP_UNION = " UNION ".join(f"{{ ?entity a {t} }}" for t in _PROP_TYPES)
+
+
+@router.get("/{ontology_id}/{version_id}/terms", summary="List terms (classes or properties)")
 async def list_terms(
     ontology_id: str,
     version_id: str,
-    parent: str | None = Query(None, description="'root' for top-level classes, or an IRI for direct subclasses"),
+    parent: str | None = Query(None, description="'root' for top-level, or an IRI for direct children"),
+    entity_type: str = Query("class", description="'class' or 'property'"),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -159,7 +228,59 @@ async def list_terms(
     store = get_store()
     g = graph_iri(ontology_id, version_id)
 
-    if parent is None or parent == "root":
+    if entity_type == "property":
+        if parent is None or parent == "root":
+            query = f"""
+                PREFIX owl: <http://www.w3.org/2002/07/owl#>
+                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+                SELECT ?class ?label WHERE {{
+                    GRAPH <{g}> {{
+                        {{ {_PROP_UNION} }}
+                        BIND(?entity AS ?class)
+                        FILTER(isIRI(?class))
+                        OPTIONAL {{ ?class rdfs:label ?label }}
+                        FILTER NOT EXISTS {{
+                            ?class rdfs:subPropertyOf ?p .
+                            FILTER(isIRI(?p))
+                            GRAPH <{g}> {{ {{ ?p a owl:ObjectProperty }} UNION {{ ?p a owl:DatatypeProperty }} UNION {{ ?p a owl:AnnotationProperty }} }}
+                        }}
+                    }}
+                }}
+                ORDER BY ?class
+                LIMIT {limit} OFFSET {offset}
+            """
+        elif parent.startswith("http"):
+            query = f"""
+                PREFIX owl: <http://www.w3.org/2002/07/owl#>
+                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+                SELECT ?class ?label WHERE {{
+                    GRAPH <{g}> {{
+                        {{ {_PROP_UNION} }}
+                        BIND(?entity AS ?class)
+                        FILTER(isIRI(?class))
+                        ?class rdfs:subPropertyOf <{parent}> .
+                        OPTIONAL {{ ?class rdfs:label ?label }}
+                    }}
+                }}
+                ORDER BY ?class
+                LIMIT {limit} OFFSET {offset}
+            """
+        else:
+            query = f"""
+                PREFIX owl: <http://www.w3.org/2002/07/owl#>
+                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+                SELECT ?class ?label WHERE {{
+                    GRAPH <{g}> {{
+                        {{ {_PROP_UNION} }}
+                        BIND(?entity AS ?class)
+                        FILTER(isIRI(?class))
+                        OPTIONAL {{ ?class rdfs:label ?label }}
+                    }}
+                }}
+                ORDER BY ?class
+                LIMIT {limit} OFFSET {offset}
+            """
+    elif parent is None or parent == "root":
         # Root classes: named owl:Class not subClassOf any other named owl:Class in this ontology
         query = f"""
             PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -319,6 +440,74 @@ async def get_term(
     def _term_list(iris: list[str]) -> list[dict]:
         return [{"iri": iri, "label": _label(iri)} for iri in iris]
 
+    # Property usage — classes that reference this term via owl:onProperty restrictions
+    _OWL_PROP_TYPES = {
+        "http://www.w3.org/2002/07/owl#ObjectProperty",
+        "http://www.w3.org/2002/07/owl#DatatypeProperty",
+        "http://www.w3.org/2002/07/owl#AnnotationProperty",
+    }
+    rdf_types = set(properties.get("http://www.w3.org/1999/02/22-rdf-syntax-ns#type", []))
+    is_property = bool(rdf_types & _OWL_PROP_TYPES)
+
+    usage: list[dict] = []
+    if is_property:
+        usage_query = f"""
+            PREFIX owl:  <http://www.w3.org/2002/07/owl#>
+            PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+            SELECT ?class ?restrictType ?filler WHERE {{
+                GRAPH <{g_iri}> {{
+                    ?class rdfs:subClassOf ?r .
+                    ?r owl:onProperty <{term_iri}> .
+                    FILTER(isIRI(?class))
+                    {{
+                        ?r owl:someValuesFrom ?filler .
+                        BIND("some" AS ?restrictType)
+                    }} UNION {{
+                        ?r owl:allValuesFrom ?filler .
+                        BIND("only" AS ?restrictType)
+                    }} UNION {{
+                        ?r owl:hasValue ?filler .
+                        BIND("value" AS ?restrictType)
+                    }} UNION {{
+                        ?r owl:minCardinality ?filler .
+                        BIND("min" AS ?restrictType)
+                    }} UNION {{
+                        ?r owl:maxCardinality ?filler .
+                        BIND("max" AS ?restrictType)
+                    }} UNION {{
+                        ?r owl:exactCardinality ?filler .
+                        BIND("exactly" AS ?restrictType)
+                    }} UNION {{
+                        ?r owl:minQualifiedCardinality ?filler .
+                        BIND("min" AS ?restrictType)
+                    }} UNION {{
+                        ?r owl:maxQualifiedCardinality ?filler .
+                        BIND("max" AS ?restrictType)
+                    }} UNION {{
+                        ?r owl:exactQualifiedCardinality ?filler .
+                        BIND("exactly" AS ?restrictType)
+                    }}
+                }}
+            }}
+            ORDER BY ?class ?restrictType
+            LIMIT 200
+        """
+        for row in store.query(usage_query):
+            cls_iri   = row["class"].value
+            rtype     = row["restrictType"].value if row["restrictType"] else "?"
+            filler    = row["filler"]
+            filler_val = filler.value if filler is not None else None
+            filler_label: str | None = None
+            if filler_val and (filler_val.startswith("http") or filler_val.startswith("urn:")):
+                filler_label = _label(filler_val)
+            usage.append({
+                "class_iri":    cls_iri,
+                "class_label":  _label(cls_iri),
+                "restriction":  rtype,
+                "filler_iri":   filler_val if filler_val and filler_val.startswith("http") else None,
+                "filler_label": filler_label or filler_val,
+            })
+
     return {
         "iri": term_iri,
         "label": _label(term_iri),
@@ -331,6 +520,7 @@ async def get_term(
             "asserted": _term_list(asserted_sub_iris),
             "inferred": _term_list(inferred_sub_iris),
         },
+        "usage": usage,
     }
 
 

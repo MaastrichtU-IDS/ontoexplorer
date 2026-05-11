@@ -103,12 +103,21 @@ export interface ClassRef {
   label: string
 }
 
+export interface PropertyUsage {
+  class_iri: string
+  class_label: string
+  restriction: string
+  filler_iri: string | null
+  filler_label: string | null
+}
+
 export interface RawTermDetail {
   iri: string
   label: string
   properties: Record<string, string[]>
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
   subclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
+  usage: PropertyUsage[]
 }
 
 export interface ParsedTerm {
@@ -119,6 +128,11 @@ export interface ParsedTerm {
   synonyms: { exact: string[]; related: string[]; broad: string[]; narrow: string[] }
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
   subclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
+  domain: string[]
+  range: string[]
+  characteristics: string[]
+  inverseOf: string[]
+  usage: PropertyUsage[]
 }
 
 export interface SearchResult {
@@ -192,6 +206,9 @@ const P = {
   definition:  'http://purl.obolibrary.org/obo/IAO_0000115',
   subClassOf:  'http://www.w3.org/2000/01/rdf-schema#subClassOf',
   type:        'http://www.w3.org/1999/02/22-rdf-syntax-ns#type',
+  domain:      'http://www.w3.org/2000/01/rdf-schema#domain',
+  range:       'http://www.w3.org/2000/01/rdf-schema#range',
+  inverseOf:   'http://www.w3.org/2002/07/owl#inverseOf',
   exactSyn:    'http://www.geneontology.org/formats/oboInOwl#hasExactSynonym',
   relatedSyn:  'http://www.geneontology.org/formats/oboInOwl#hasRelatedSynonym',
   broadSyn:    'http://www.geneontology.org/formats/oboInOwl#hasBroadSynonym',
@@ -201,6 +218,21 @@ const P = {
   owlDataProp: 'http://www.w3.org/2002/07/owl#DatatypeProperty',
   owlAnnProp:  'http://www.w3.org/2002/07/owl#AnnotationProperty',
   owlIndividual: 'http://www.w3.org/2002/07/owl#NamedIndividual',
+}
+
+const OWL_CHARACTERISTICS: Record<string, string> = {
+  'http://www.w3.org/2002/07/owl#FunctionalProperty':        'Functional',
+  'http://www.w3.org/2002/07/owl#InverseFunctionalProperty': 'InverseFunctional',
+  'http://www.w3.org/2002/07/owl#TransitiveProperty':        'Transitive',
+  'http://www.w3.org/2002/07/owl#SymmetricProperty':         'Symmetric',
+  'http://www.w3.org/2002/07/owl#AsymmetricProperty':        'Asymmetric',
+  'http://www.w3.org/2002/07/owl#ReflexiveProperty':         'Reflexive',
+  'http://www.w3.org/2002/07/owl#IrreflexiveProperty':       'Irreflexive',
+}
+
+export function slugFromIri(iri: string): string {
+  const last = iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? iri
+  return last.replace(/\.(owl|ttl|rdf|obo|json|xml|nt)$/i, '').toLowerCase()
 }
 
 export function parseTerm(raw: RawTermDetail): ParsedTerm {
@@ -214,6 +246,7 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
   } else if (types.includes(P.owlIndividual)) {
     entityType = 'individual'
   }
+  const characteristics = types.map(t => OWL_CHARACTERISTICS[t]).filter(Boolean) as string[]
   return {
     iri: raw.iri,
     label: raw.label ?? label,
@@ -225,8 +258,13 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
       broad:   p[P.broadSyn]   ?? [],
       narrow:  p[P.narrowSyn]  ?? [],
     },
-    superclasses: raw.superclasses ?? { asserted: [], inferred: [] },
-    subclasses:   raw.subclasses   ?? { asserted: [], inferred: [] },
+    superclasses:    raw.superclasses ?? { asserted: [], inferred: [] },
+    subclasses:      raw.subclasses   ?? { asserted: [], inferred: [] },
+    domain:          p[P.domain]      ?? [],
+    range:           p[P.range]       ?? [],
+    characteristics,
+    inverseOf:       p[P.inverseOf]   ?? [],
+    usage:           raw.usage        ?? [],
   }
 }
 
@@ -248,8 +286,8 @@ export const api = {
     get: (id: string) => request<Ontology>(`/ontologies/${id}`),
     versions: (id: string) =>
       request<{ versions: OntologyVersion[] }>(`/ontologies/${id}/versions`),
-    terms: (oid: string, vid: string, parent?: string | null) => {
-      const params = new URLSearchParams({ limit: '200' })
+    terms: (oid: string, vid: string, parent?: string | null, entityType: 'class' | 'property' = 'class') => {
+      const params = new URLSearchParams({ limit: '200', entity_type: entityType })
       params.set('parent', parent ?? 'root')
       return request<{ terms: Term[]; offset: number; limit: number; parent: string | null }>(
         `/ontologies/${oid}/${vid}/terms?${params}`
@@ -271,6 +309,15 @@ export const api = {
       request<AutocompleteResponse>(
         `/ontologies/${oid}/autocomplete?q=${encodeURIComponent(q)}&cursor=${cursor}`
       ),
+    stats: (oid: string, vid: string) =>
+      request<{
+        triple_count: number
+        class_count: number
+        property_count: number
+        individual_count: number
+        index_meta: { indexed_at?: string; class_count?: number; property_count?: number }
+      }>(`/ontologies/${oid}/${vid}/stats`),
+
     submitByIri: (iri: string) =>
       request<{ task_id: string; status: string }>('/ontologies', {
         method: 'POST',

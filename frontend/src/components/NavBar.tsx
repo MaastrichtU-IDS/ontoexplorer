@@ -4,7 +4,6 @@ import { logout } from '../lib/auth'
 
 const navLinks = [
   { to: '/ontologies', label: 'Ontologies' },
-  { to: '/browse', label: 'Browse' },
   { to: '/search', label: 'Search' },
   { to: '/dashboard', label: 'Dashboard' },
 ]

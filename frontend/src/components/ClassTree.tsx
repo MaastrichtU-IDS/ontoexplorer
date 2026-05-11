@@ -9,15 +9,17 @@ interface NodeProps {
   depth: number
   selectedIri: string | null
   onSelect: (iri: string) => void
+  entityType: 'class' | 'property'
 }
 
-function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect }: NodeProps) {
+function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, entityType }: NodeProps) {
   const [expanded, setExpanded] = useState(false)
 
   const { data: childData, isLoading } = useClassTreeNodes(
     expanded ? ontologyId : null,
     expanded ? versionId : null,
     expanded ? term.iri : null,
+    entityType,
   )
 
   const children = childData?.terms ?? []
@@ -65,6 +67,7 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect }:
               depth={depth + 1}
               selectedIri={selectedIri}
               onSelect={onSelect}
+              entityType={entityType}
             />
           ))}
         </ul>
@@ -78,22 +81,25 @@ interface Props {
   versionId: string
   selectedIri: string | null
   onSelect: (iri: string) => void
+  entityType?: 'class' | 'property'
 }
 
-export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect }: Props) {
-  const { data, isLoading } = useClassTreeNodes(ontologyId, versionId, null)
+export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect, entityType = 'class' }: Props) {
+  const { data, isLoading } = useClassTreeNodes(ontologyId, versionId, null, entityType)
   const roots = data?.terms ?? []
 
   if (isLoading) {
-    return <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</div>
+    return <div style={{ padding: '0.5rem 1rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</div>
   }
 
   if (roots.length === 0) {
-    return <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>No classes found</div>
+    return <div style={{ padding: '0.5rem 1rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
+      No {entityType === 'property' ? 'properties' : 'classes'} found
+    </div>
   }
 
   return (
-    <ul style={{ listStyle: 'none', overflow: 'auto', flex: 1 }}>
+    <ul style={{ listStyle: 'none' }}>
       {roots.map(term => (
         <TreeNode
           key={term.iri}
@@ -103,6 +109,7 @@ export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect
           depth={0}
           selectedIri={selectedIri}
           onSelect={onSelect}
+          entityType={entityType}
         />
       ))}
     </ul>

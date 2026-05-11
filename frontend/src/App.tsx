@@ -2,14 +2,13 @@ import { Route, Routes } from 'react-router-dom'
 import NavBar from './components/NavBar'
 import AuthGuard from './components/AuthGuard'
 import Home from './pages/Home'
-import Browse from './pages/Browse'
-import TermPage from './pages/TermPage'
 import Search from './pages/Search'
 import Ontologies from './pages/Ontologies'
 import Dashboard from './pages/Dashboard'
 import ApiKeys from './pages/ApiKeys'
 import Webhooks from './pages/Webhooks'
 import Stats from './pages/Stats'
+import OntologyPage from './pages/OntologyPage'
 import Login from './pages/Login'
 import AuthCallback from './pages/AuthCallback'
 
@@ -26,10 +25,9 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Shell><Home /></Shell>} />
-      <Route path="/browse" element={<Shell><Browse /></Shell>} />
-      <Route path="/browse/:oid/:vid" element={<Shell><Browse /></Shell>} />
-      <Route path="/browse/:oid/:vid/term/*" element={<Shell><TermPage /></Shell>} />
       <Route path="/ontologies" element={<Shell><Ontologies /></Shell>} />
+      <Route path="/ontologies/:slug" element={<Shell><OntologyPage /></Shell>} />
+      <Route path="/ontologies/:slug/:version" element={<Shell><OntologyPage /></Shell>} />
       <Route path="/search" element={<Shell><Search /></Shell>} />
       <Route path="/login" element={<Shell><Login /></Shell>} />
       <Route path="/auth/:provider/callback" element={<AuthCallback />} />
