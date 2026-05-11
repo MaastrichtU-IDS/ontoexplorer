@@ -2,6 +2,8 @@
 
 import asyncio
 
+import pyoxigraph
+import rdflib
 from celery import Celery
 
 from ontoexplorer.config import get_settings
@@ -41,7 +43,7 @@ def ingest_ontology(
     owner_id: str | None = None,
 ) -> dict:
     """Celery task: run the full ingestion pipeline for one ontology submission."""
-    from ontoexplorer.database import AsyncSessionLocal
+    from ontoexplorer.database import make_celery_db_session
     from ontoexplorer.modules.ingestion.pipeline import IngestionRequest, run_ingestion
 
     raw_bytes = bytes.fromhex(raw_bytes_hex) if raw_bytes_hex else None
@@ -51,7 +53,7 @@ def ingest_ontology(
     )
 
     async def _run():
-        async with AsyncSessionLocal() as db:
+        async with make_celery_db_session()() as db:
             return await run_ingestion(db, request)
 
     try:
@@ -83,10 +85,10 @@ def reason_ontology(self, version_id: str) -> dict:
     5. Deliver reasoning.completed / reasoning.failed webhook
     """
     import time
-    from ontoexplorer.database import AsyncSessionLocal
+    from ontoexplorer.database import make_celery_db_session
 
     async def _run():
-        async with AsyncSessionLocal() as db:
+        async with make_celery_db_session()() as db:
             return await _run_reasoning(db, version_id)
 
     t0 = time.monotonic()
@@ -110,7 +112,6 @@ async def _run_reasoning(db, version_id: str) -> dict:
     """Async body of the reasoning task."""
     from sqlalchemy import select
 
-    import rdflib
     from rdflib.namespace import RDFS
 
     from ontoexplorer.clients import reasoning as reasoning_client
@@ -135,8 +136,28 @@ async def _run_reasoning(db, version_id: str) -> dict:
     store = get_store()
     asserted_iri = graph_iri(ontology_id, version_id, inferred=False)
     asserted_graph = rdflib.Graph()
-    for triple in store.quads(graph_name=rdflib.URIRef(asserted_iri)):
-        asserted_graph.add((triple[0], triple[1], triple[2]))
+    named_node = pyoxigraph.NamedNode(asserted_iri)
+    for quad in store.quads_for_pattern(None, None, None, named_node):
+        # subject
+        if isinstance(quad.subject, pyoxigraph.NamedNode):
+            s = rdflib.URIRef(quad.subject.value)
+        else:
+            s = rdflib.BNode(quad.subject.value)
+        # predicate (always a NamedNode in valid RDF)
+        p = rdflib.URIRef(quad.predicate.value)
+        # object
+        o_raw = quad.object
+        if isinstance(o_raw, pyoxigraph.NamedNode):
+            o = rdflib.URIRef(o_raw.value)
+        elif isinstance(o_raw, pyoxigraph.Literal):
+            if o_raw.language:
+                o = rdflib.Literal(o_raw.value, lang=o_raw.language)
+            else:
+                dt = rdflib.URIRef(o_raw.datatype.value) if o_raw.datatype else None
+                o = rdflib.Literal(o_raw.value, datatype=dt)
+        else:
+            o = rdflib.BNode(o_raw.value)
+        asserted_graph.add((s, p, o))
 
     if len(asserted_graph) == 0:
         log.warning("reasoning_empty_graph", version_id=version_id, graph=asserted_iri)
@@ -166,7 +187,6 @@ async def _run_reasoning(db, version_id: str) -> dict:
     inferred_iri = graph_iri(ontology_id, version_id, inferred=True)
     if inferred_nt.strip():
         import io as _io
-        import pyoxigraph
         inferred_named = pyoxigraph.NamedNode(inferred_iri)
         store.remove_graph(inferred_named)
         store.add_graph(inferred_named)
@@ -225,11 +245,11 @@ def compute_justification(
 
     async def _run():
         from ontoexplorer.clients import reasoning as reasoning_client
-        from ontoexplorer.database import AsyncSessionLocal
+        from ontoexplorer.database import make_celery_db_session
         from ontoexplorer.modules.jobs import tracker
         from ontoexplorer.modules.webhooks.delivery import broadcast_event
 
-        async with AsyncSessionLocal() as db:
+        async with make_celery_db_session()() as db:
             job = await tracker.create_job(db, version_id=version_id, job_type="justification")
             await tracker.mark_running(db, job.id)
             try:

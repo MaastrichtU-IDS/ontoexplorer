@@ -176,6 +176,7 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
     def resolve(named_class_node) -> str:
         return _resolve_label(r, version_id, named_class_node)
 
+    RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
     if isinstance(node, SomeValuesFrom):
         prop_iri = resolve(node.property_ref)
         if isinstance(node.filler, NamedClass):
@@ -183,22 +184,33 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
             q = f"""
                 SELECT DISTINCT ?cls WHERE {{
                     GRAPH <{g}> {{
-                        ?cls <{RDFS}subClassOf> ?restr .
-                        ?restr <{OWL}onProperty> <{prop_iri}> .
-                        ?restr <{OWL}someValuesFrom> <{fill_iri}> .
+                        {{
+                            ?cls <{RDFS}subClassOf> ?restr .
+                            ?restr <{OWL}onProperty> <{prop_iri}> .
+                            ?restr <{OWL}someValuesFrom> <{fill_iri}> .
+                        }} UNION {{
+                            ?cls <{OWL}equivalentClass> ?inter .
+                            ?inter <{OWL}intersectionOf>/<{RDF}rest>*/<{RDF}first> ?restr .
+                            ?restr <{OWL}onProperty> <{prop_iri}> .
+                            ?restr <{OWL}someValuesFrom> <{fill_iri}> .
+                        }}
                     }}
                 }}
             """
         else:
-            # Complex filler — not directly expressible as a single triple pattern;
-            # return all classes with any someValuesFrom on this property, then
-            # post-filter via the caller's set logic.
             q = f"""
                 SELECT DISTINCT ?cls WHERE {{
                     GRAPH <{g}> {{
-                        ?cls <{RDFS}subClassOf> ?restr .
-                        ?restr <{OWL}onProperty> <{prop_iri}> .
-                        ?restr <{OWL}someValuesFrom> ?fill .
+                        {{
+                            ?cls <{RDFS}subClassOf> ?restr .
+                            ?restr <{OWL}onProperty> <{prop_iri}> .
+                            ?restr <{OWL}someValuesFrom> ?fill .
+                        }} UNION {{
+                            ?cls <{OWL}equivalentClass> ?inter .
+                            ?inter <{OWL}intersectionOf>/<{RDF}rest>*/<{RDF}first> ?restr .
+                            ?restr <{OWL}onProperty> <{prop_iri}> .
+                            ?restr <{OWL}someValuesFrom> ?fill .
+                        }}
                     }}
                 }}
             """

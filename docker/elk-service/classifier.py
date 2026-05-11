@@ -48,6 +48,15 @@ def classify(graph: rdflib.Graph, version_id: str) -> ClassificationResult:
             inferred[cls].add(equiv)
             inferred[equiv].add(cls)
 
+    # Handle A equivalentClass _:n where _:n is an anonymous (blank node) intersection or
+    # restriction — add the blank node IRI string to inferred[A] so that CR3 can fire when
+    # it finds the corresponding intersectionOf triple.
+    for s, _, o in graph.triples((None, OWL.equivalentClass, None)):
+        if isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.BNode):
+            cls_str = str(s)
+            if cls_str in classes:
+                inferred[cls_str].add(str(o))
+
     # Proof trace: "sub|sup" -> list of steps
     traces: dict[str, list[dict]] = {}
 
@@ -88,6 +97,30 @@ def classify(graph: rdflib.Graph, version_id: str) -> ClassificationResult:
         filler = graph.value(o, OWL.someValuesFrom)
         if role is not None and filler is not None:
             a_exists[cls_str].append((str(role), str(filler)))
+
+    # Also collect existential restrictions from equivalentClass intersections.
+    # For A equivalentClass intersection([B, restriction(P some F), ...]),
+    # treat A as having the existential A ⊑ ∃P.F so CR4 can fire.
+    for s, _, o in graph.triples((None, OWL.equivalentClass, None)):
+        if not isinstance(s, rdflib.URIRef):
+            continue
+        cls_str = str(s)
+        if cls_str not in classes:
+            continue
+        # Check for direct restriction (A equivalentClass restriction(...))
+        role = graph.value(o, OWL.onProperty)
+        filler = graph.value(o, OWL.someValuesFrom)
+        if role is not None and filler is not None:
+            a_exists[cls_str].append((str(role), str(filler)))
+            continue
+        # Check for intersection (A equivalentClass intersectionOf([..., restriction(...), ...]))
+        inter_list = graph.value(o, OWL.intersectionOf)
+        if inter_list is not None:
+            for item in _rdf_list(graph, inter_list):
+                role = graph.value(item, OWL.onProperty)
+                filler = graph.value(item, OWL.someValuesFrom)
+                if role is not None and filler is not None:
+                    a_exists[cls_str].append((str(role), str(filler)))
     # Also collect ∃r.B ⊑ D GCIs from all restrictions (already done in
     # _collect_existential_supers, but also add any found via GCI on blank nodes)
     for restr, _, _ in graph.triples((None, RDF.type, OWL.Restriction)):
@@ -171,10 +204,14 @@ def classify(graph: rdflib.Graph, version_id: str) -> ClassificationResult:
             asserted_all.add((cls, eq))
             asserted_all.add((eq, cls))
 
+    def _is_named_iri(s: str) -> bool:
+        return "://" in s or s.startswith("urn:")
+
     superclasses: dict[str, list[str]] = {}
     subclasses:   dict[str, list[str]] = defaultdict(list)
     for cls in classes:
-        inf_sups = [s for s in inferred[cls] if s != cls and (cls, s) not in asserted_all]
+        inf_sups = [s for s in inferred[cls]
+                    if s != cls and (cls, s) not in asserted_all and _is_named_iri(s)]
         superclasses[cls] = inf_sups
         for sup in inf_sups:
             subclasses[sup].append(cls)
