@@ -87,7 +87,7 @@ Extracted per version from the asserted named graph `urn:ontology:{oid}:{vid}`:
 
 ## MOS Grammar (lark)
 
-Covers the OWL-EL-useful fragment. Keywords (`some`, `only`, `and`, `or`, `not`, `min`, `max`, `exactly`, `value`, `Self`) are reserved — labels containing them must be quoted with backticks.
+Covers the OWL-EL-useful fragment. All entity references (classes, properties, individuals) are written as single-quoted labels. The `'` character triggers autocomplete in the UI. Because labels are always quoted, keywords (`some`, `only`, `and`, `or`, `not`, `min`, `max`, `exactly`, `value`, `Self`) can never collide with label text — no escaping needed.
 
 ```lark
 expression   : or_expr
@@ -105,27 +105,38 @@ restriction  : property_ref "some"     expression
              | property_ref "max"      INT expression
              | property_ref "exactly"  INT expression
 
-named_class  : LABEL "(" CURIE ")"    // disambiguated form: "cell death (GO:0008219)"
-             | CURIE                  // direct CURIE:        GO:0008219
-             | FULL_IRI               // full IRI:            <http://…/GO_0008219>
-             | LABEL                  // bare label: must resolve to exactly one IRI
+named_class   : QUOTED_LABEL   // 'cell death' or 'cell death (GO:0008219)'
+              | CURIE           // GO:0008219
+              | FULL_IRI        // <http://…/GO_0008219>
 
-property_ref : LABEL "(" CURIE ")"
-             | CURIE
-             | FULL_IRI
-             | LABEL
+property_ref  : QUOTED_LABEL
+              | CURIE
+              | FULL_IRI
 
-individual_ref: CURIE | FULL_IRI | LABEL
+individual_ref: QUOTED_LABEL | CURIE | FULL_IRI
 
-CURIE     : /[A-Za-z_][A-Za-z0-9_\-]*:[A-Za-z0-9_\-\.]+/
-FULL_IRI  : "<" /[^>]+/ ">"
-LABEL     : /`[^`]+`/ | /[A-Za-z][A-Za-z0-9 \-_]*/
-INT       : /[0-9]+/
+QUOTED_LABEL : "'" /[^']+/ "'"
+CURIE        : /[A-Za-z_][A-Za-z0-9_\-]*:[A-Za-z0-9_\-\.]+/
+FULL_IRI     : "<" /[^>]+/ ">"
+INT          : /[0-9]+/
 
 %ignore /\s+/
 ```
 
-`partial_parse(text, cursor)` runs the grammar in lark's error-recovery mode on the prefix `text[:cursor]` and returns the expected token type at the cursor: one of `CLASS`, `PROPERTY`, `KEYWORD_RESTRICTION`, `KEYWORD_BOOLEAN`, `INT`, `CLOSE_PAREN`.
+**Disambiguated label form inside quotes:** when a label is ambiguous, the autocomplete inserts the full form `'cell death (GO:0008219)'` — the CURIE is embedded inside the quotes. The evaluator strips the outer quotes and checks for the `{label} ({CURIE})` pattern to resolve the IRI directly.
+
+**Example expressions:**
+```
+'Cell' and 'hasPart' some 'Nucleus'
+'cell death (GO:0008219)' and not 'apoptosis (GO:0006915)'
+'Disease' and 'causedBy' some 'Bacterium' and not 'CancerDisease'
+'DevelopmentalProcess' and ('occursIn' some 'Brain' or 'occursIn' some 'SpinalCord')
+'hasPart' min 2 'Protein'
+```
+
+`partial_parse(text, cursor)` runs the grammar in lark's error-recovery mode on the prefix `text[:cursor]` and returns the expected token type at the cursor: one of `CLASS`, `PROPERTY`, `KEYWORD_RESTRICTION`, `KEYWORD_BOOLEAN`, `INT`, `CLOSE_PAREN`, `OPEN_QUOTE`.
+
+The `OPEN_QUOTE` context fires as soon as the user types `'` — the autocomplete engine begins prefix-scanning Redis immediately with whatever follows.
 
 ---
 
@@ -135,12 +146,13 @@ INT       : /[0-9]+/
 
 Steps:
 1. Call `partial_parse(q, cursor)` → expected token type + partial token being typed
-2. If expected type is `CLASS` or `PROPERTY`: prefix-scan Redis with partial token, filter by type set
-3. If multiple Redis hits share the same normalised label (across different IRIs): return the disambiguated `"label (CURIE)"` form for each
-4. If expected type is `KEYWORD_RESTRICTION`: inject `some`, `only`, `value`, `Self`, `min`, `max`, `exactly`
-5. If expected type is `KEYWORD_BOOLEAN`: inject `and`, `or`, `)`, plus any valid class completions
-6. Rank: exact prefix matches first, then fuzzy (edit distance ≤ 2), then keyword suggestions
-7. Return `[{text, type, iri, short, insert}]` where `insert` is the string to splice at cursor
+2. If expected type is `OPEN_QUOTE` or cursor is inside an open `'…`: extract the partial label text after the `'`, prefix-scan Redis, filter by expected entity type (CLASS or PROPERTY based on position)
+3. If multiple Redis hits share the same normalised label (different IRIs): return the disambiguated `label (CURIE)` form for each; if only one hit, return plain `label`
+4. `insert` field always includes the closing `'`: e.g. `'cell death (GO:0008219)'` or `'cell death'`
+5. If expected type is `KEYWORD_RESTRICTION`: inject `some`, `only`, `value`, `Self`, `min`, `max`, `exactly`
+6. If expected type is `KEYWORD_BOOLEAN`: inject `and`, `or`, `)`, plus `'` to start a new entity reference
+7. Rank: exact prefix matches first, then fuzzy (edit distance ≤ 2), then keyword suggestions
+8. Return `[{text, type, iri, short, insert}]` where `insert` is the string to splice at cursor
 
 ---
 
@@ -162,10 +174,13 @@ Steps:
 
 Mixed expressions (e.g. `NamedClass and SomeValuesFrom`): each subtree evaluated independently, results intersected.
 
-**Label disambiguation in evaluator:**
-- Bare `LABEL` node: resolve via Redis prefix index
-- One match → proceed
-- Multiple matches → raise `AmbiguousLabelError(label, candidates)` → API returns `422` with `{"error": "ambiguous_label", "label": "…", "candidates": [{label, curie, iri}]}`
+**Label resolution in evaluator:**
+- `QUOTED_LABEL` node: strip outer `'` characters, check for embedded `{label} ({CURIE})` pattern
+  - If CURIE present → resolve CURIE directly via Redis hash lookup (unambiguous)
+  - If no CURIE → normalise label, prefix-scan Redis for exact match
+    - One match → proceed
+    - Multiple matches → raise `AmbiguousLabelError(label, candidates)` → API returns `422` with `{"error": "ambiguous_label", "label": "…", "candidates": [{label, curie, iri}]}`
+- CURIE and FULL_IRI nodes → direct Redis hash lookup, no ambiguity possible
 
 **ELK cache loading:** evaluator loads the full `ClassificationResult` from Redis (Subsystem 2 cache) once per request and holds it in memory for the request lifetime. If the cache is cold (version not yet classified), returns `503` with `{"error": "not_classified"}`.
 
@@ -218,12 +233,15 @@ Both endpoints require authentication (Bearer token, same as existing endpoints)
 ```json
 {
   "completions": [
-    {"text": "cell death (GO:0008219)", "type": "class", "iri": "…", "short": "GO:0008219", "insert": "cell death (GO:0008219)"},
-    {"text": "some", "type": "keyword", "iri": null, "short": null, "insert": " some "}
+    {"text": "cell death (GO:0008219)", "type": "class",   "iri": "…", "short": "GO:0008219", "insert": "cell death (GO:0008219)'"},
+    {"text": "cell death (MONDO:0021700)", "type": "class","iri": "…", "short": "MONDO:0021700", "insert": "cell death (MONDO:0021700)'"},
+    {"text": "cell division",             "type": "class", "iri": "…", "short": "GO:0051301",   "insert": "cell division'"}
   ],
-  "context": "expecting_class_or_keyword"
+  "context": "open_quote"
 }
 ```
+
+The `insert` value completes the token from the current cursor position (after the `'`) through the closing `'`. The client splices `insert` at the cursor to produce e.g. `'cell death (GO:0008219)'`.
 
 `context` values: `expecting_class`, `expecting_property`, `expecting_class_or_keyword`, `expecting_restriction_keyword`, `expecting_cardinality`, `expecting_close_paren`.
 
