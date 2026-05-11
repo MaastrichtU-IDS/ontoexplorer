@@ -7,13 +7,14 @@ interface Props {
   ontologyId: string
   versionId: string
   termIri: string
+  slug: string
   singlePane?: boolean
 }
 
-function IriLink({ iri, label, oid, vid }: { iri: string; label: string; oid: string; vid: string }) {
+function IriLink({ iri, label, slug, vid }: { iri: string; label: string; slug: string; vid: string }) {
   return (
     <Link
-      to={`/ontologies/${oid}/${vid}?term=${encodeURIComponent(iri)}`}
+      to={`/ontologies/${slug}/${vid}?term=${encodeURIComponent(iri)}`}
       style={{ color: 'var(--accent)', textDecoration: 'none', fontSize: 'var(--font-size-sm)' }}
     >
       {label}
@@ -21,29 +22,44 @@ function IriLink({ iri, label, oid, vid }: { iri: string; label: string; oid: st
   )
 }
 
-function ClassItem({ c, oid, vid }: { c: ClassRef; oid: string; vid: string }) {
+function ClassBubble({ c, slug, vid }: { c: ClassRef; slug: string; vid: string }) {
   return (
-    <div style={{ paddingLeft: 8, marginBottom: 2 }}>
-      <IriLink iri={c.iri} label={c.label} oid={oid} vid={vid} />
-    </div>
+    <Link
+      to={`/ontologies/${slug}/${vid}?term=${encodeURIComponent(c.iri)}`}
+      style={{
+        display: 'inline-block',
+        fontSize: 12, padding: '3px 10px',
+        borderRadius: 12,
+        background: 'var(--bg)', border: '1px solid var(--border)',
+        color: 'var(--accent)', textDecoration: 'none',
+        whiteSpace: 'nowrap',
+        transition: 'border-color 0.1s',
+      }}
+      onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+      onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}
+    >
+      {c.label}
+    </Link>
   )
 }
 
-function HierGroup({ label, items, oid, vid, badge }: {
-  label: string; items: ClassRef[]; oid: string; vid: string; badge?: string
+function HierGroup({ label, items, slug, vid, badge }: {
+  label: string; items: ClassRef[]; slug: string; vid: string; badge?: string
 }) {
   if (items.length === 0) return null
   return (
-    <div style={{ marginBottom: 6 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3 }}>
-        <span style={{ color: 'var(--text-dim)', fontSize: 10, textTransform: 'uppercase' }}>{label}</span>
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 5 }}>
+        <span style={{ color: 'var(--text-dim)', fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</span>
         {badge && (
           <span style={{ fontSize: 9, background: 'var(--bg)', color: 'var(--text-dim)', borderRadius: 2, padding: '1px 4px' }}>
             {badge}
           </span>
         )}
       </div>
-      {items.map(c => <ClassItem key={c.iri} c={c} oid={oid} vid={vid} />)}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {items.map(c => <ClassBubble key={c.iri} c={c} slug={slug} vid={vid} />)}
+      </div>
     </div>
   )
 }
@@ -59,7 +75,7 @@ function Section({ label, children }: { label: string; children: React.ReactNode
   )
 }
 
-function UsageTable({ usage, oid, vid }: { usage: PropertyUsage[]; oid: string; vid: string }) {
+function UsageTable({ usage, slug, vid }: { usage: PropertyUsage[]; slug: string; vid: string }) {
   if (usage.length === 0) return <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>No axioms found</span>
 
   return (
@@ -78,14 +94,14 @@ function UsageTable({ usage, oid, vid }: { usage: PropertyUsage[]; oid: string; 
         {usage.map((u, i) => (
           <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
             <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
-              <IriLink iri={u.class_iri} label={u.class_label} oid={oid} vid={vid} />
+              <IriLink iri={u.class_iri} label={u.class_label} slug={slug} vid={vid} />
             </td>
             <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
               <code style={{ color: 'var(--accent-blue)', fontSize: 11 }}>{u.restriction}</code>
             </td>
             <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
               {u.filler_iri ? (
-                <IriLink iri={u.filler_iri} label={u.filler_label ?? u.filler_iri} oid={oid} vid={vid} />
+                <IriLink iri={u.filler_iri} label={u.filler_label ?? u.filler_iri} slug={slug} vid={vid} />
               ) : (
                 <span style={{ color: 'var(--text-muted)' }}>{u.filler_label ?? '—'}</span>
               )}
@@ -97,9 +113,9 @@ function UsageTable({ usage, oid, vid }: { usage: PropertyUsage[]; oid: string; 
   )
 }
 
-function PropertyBody({ data, ontologyId, versionId }: {
+function PropertyBody({ data, slug, versionId }: {
   data: ReturnType<typeof useTerm>['data'] & {}
-  ontologyId: string
+  slug: string
   versionId: string
 }) {
   const shortLabel = (iri: string) => iri.split(/[#/]/).pop() ?? iri
@@ -129,7 +145,7 @@ function PropertyBody({ data, ontologyId, versionId }: {
         <Section label="Domain">
           {data.domain.map(iri => (
             <div key={iri} style={{ paddingLeft: 8, marginBottom: 2 }}>
-              <IriLink iri={iri} label={shortLabel(iri)} oid={ontologyId} vid={versionId} />
+              <IriLink iri={iri} label={shortLabel(iri)} slug={slug} vid={versionId} />
             </div>
           ))}
         </Section>
@@ -140,7 +156,7 @@ function PropertyBody({ data, ontologyId, versionId }: {
           {data.range.map(iri => (
             <div key={iri} style={{ paddingLeft: 8, marginBottom: 2 }}>
               {iri.startsWith('http') ? (
-                <IriLink iri={iri} label={shortLabel(iri)} oid={ontologyId} vid={versionId} />
+                <IriLink iri={iri} label={shortLabel(iri)} slug={slug} vid={versionId} />
               ) : (
                 <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>{iri}</span>
               )}
@@ -153,7 +169,7 @@ function PropertyBody({ data, ontologyId, versionId }: {
         <Section label="Inverse of">
           {data.inverseOf.map(iri => (
             <div key={iri} style={{ paddingLeft: 8, marginBottom: 2 }}>
-              <IriLink iri={iri} label={shortLabel(iri)} oid={ontologyId} vid={versionId} />
+              <IriLink iri={iri} label={shortLabel(iri)} slug={slug} vid={versionId} />
             </div>
           ))}
         </Section>
@@ -168,13 +184,13 @@ function PropertyBody({ data, ontologyId, versionId }: {
       )}
 
       <Section label={`Used in axioms${data.usage.length > 0 ? ` (${data.usage.length})` : ''}`}>
-        <UsageTable usage={data.usage} oid={ontologyId} vid={versionId} />
+        <UsageTable usage={data.usage} slug={slug} vid={versionId} />
       </Section>
     </div>
   )
 }
 
-export default function TermPanel({ ontologyId, versionId, termIri, singlePane = false }: Props) {
+export default function TermPanel({ ontologyId, versionId, termIri, slug, singlePane = false }: Props) {
   const { data, isLoading, error } = useTerm(ontologyId, versionId, termIri)
 
   if (isLoading) return <div style={{ padding: '1rem', color: 'var(--text-dim)' }}>Loading…</div>
@@ -190,7 +206,7 @@ export default function TermPanel({ ontologyId, versionId, termIri, singlePane =
   let body: React.ReactNode
 
   if (data.entityType === 'property') {
-    body = <PropertyBody data={data} ontologyId={ontologyId} versionId={versionId} />
+    body = <PropertyBody data={data} slug={slug} versionId={versionId} />
   } else if (singlePane) {
     body = (
       <div style={{ flex: 1, padding: '10px 16px', overflow: 'auto' }}>
@@ -208,15 +224,15 @@ export default function TermPanel({ ontologyId, versionId, termIri, singlePane =
         )}
         {hasSuperclasses && (
           <Section label="Superclasses">
-            <HierGroup label="asserted" items={data.superclasses.asserted} oid={ontologyId} vid={versionId} />
-            <HierGroup label="inferred" items={data.superclasses.inferred} oid={ontologyId} vid={versionId} badge="ELK" />
+            <HierGroup label="asserted" items={data.superclasses.asserted} slug={slug} vid={versionId} />
+            <HierGroup label="inferred" items={data.superclasses.inferred} slug={slug} vid={versionId} badge="ELK" />
           </Section>
         )}
         <Section label="Subclasses">
           {hasSubclasses ? (
             <>
-              <HierGroup label="asserted" items={data.subclasses.asserted} oid={ontologyId} vid={versionId} />
-              <HierGroup label="inferred" items={data.subclasses.inferred} oid={ontologyId} vid={versionId} badge="ELK" />
+              <HierGroup label="asserted" items={data.subclasses.asserted} slug={slug} vid={versionId} />
+              <HierGroup label="inferred" items={data.subclasses.inferred} slug={slug} vid={versionId} badge="ELK" />
             </>
           ) : (
             <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>No subclasses</span>
@@ -236,8 +252,8 @@ export default function TermPanel({ ontologyId, versionId, termIri, singlePane =
           {hasSuperclasses && (
             <div style={{ marginBottom: 10 }}>
               <div style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', marginBottom: 4 }}>Superclasses</div>
-              <HierGroup label="asserted" items={data.superclasses.asserted} oid={ontologyId} vid={versionId} />
-              <HierGroup label="inferred" items={data.superclasses.inferred} oid={ontologyId} vid={versionId} badge="ELK" />
+              <HierGroup label="asserted" items={data.superclasses.asserted} slug={slug} vid={versionId} />
+              <HierGroup label="inferred" items={data.superclasses.inferred} slug={slug} vid={versionId} badge="ELK" />
             </div>
           )}
           {(data.synonyms.exact.length > 0 || data.synonyms.related.length > 0) && (
@@ -253,8 +269,8 @@ export default function TermPanel({ ontologyId, versionId, termIri, singlePane =
           <div style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', marginBottom: 6 }}>Subclasses</div>
           {hasSubclasses ? (
             <>
-              <HierGroup label="asserted" items={data.subclasses.asserted} oid={ontologyId} vid={versionId} />
-              <HierGroup label="inferred" items={data.subclasses.inferred} oid={ontologyId} vid={versionId} badge="ELK" />
+              <HierGroup label="asserted" items={data.subclasses.asserted} slug={slug} vid={versionId} />
+              <HierGroup label="inferred" items={data.subclasses.inferred} slug={slug} vid={versionId} badge="ELK" />
             </>
           ) : (
             <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>No subclasses</span>
@@ -277,7 +293,7 @@ export default function TermPanel({ ontologyId, versionId, termIri, singlePane =
           borderRadius: 3, padding: '1px 5px', textTransform: 'uppercase',
         }}>{data.entityType}</span>
         <Link
-          to={`/browse/${ontologyId}/${versionId}/term/${encodeURIComponent(data.iri)}`}
+          to={`/ontologies/${slug}/${versionId}?term=${encodeURIComponent(data.iri)}`}
           style={{ color: 'var(--text-dim)', fontSize: 11, flexShrink: 0 }}
         >
           Open full page ↗

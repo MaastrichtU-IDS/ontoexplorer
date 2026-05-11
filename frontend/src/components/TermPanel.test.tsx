@@ -27,7 +27,7 @@ vi.mock('../hooks/useClassTree', () => ({
 test('shows term label and definition', () => {
   render(
     <MemoryRouter>
-      <TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" />
+      <TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" slug="go" />
     </MemoryRouter>
   )
   expect(screen.getByText('cell death')).toBeInTheDocument()
@@ -37,7 +37,7 @@ test('shows term label and definition', () => {
 test('shows synonyms', () => {
   render(
     <MemoryRouter>
-      <TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" />
+      <TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" slug="go" />
     </MemoryRouter>
   )
   expect(screen.getByText('cell killing')).toBeInTheDocument()
@@ -46,7 +46,7 @@ test('shows synonyms', () => {
 test('shows open full page link', () => {
   render(
     <MemoryRouter>
-      <TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" />
+      <TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" slug="go" />
     </MemoryRouter>
   )
   expect(screen.getByText('Open full page ↗')).toBeInTheDocument()
@@ -55,7 +55,7 @@ test('shows open full page link', () => {
 test('shows subclasses', () => {
   render(
     <MemoryRouter>
-      <TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" />
+      <TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" slug="go" />
     </MemoryRouter>
   )
   expect(screen.getByText(/apoptosis/i)).toBeInTheDocument()

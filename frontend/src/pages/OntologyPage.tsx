@@ -416,6 +416,7 @@ export default function OntologyPage() {
             ontologyId={oid}
             versionId={activeVid}
             termIri={selectedTermIri}
+            slug={slug!}
             singlePane={true}
           />
         ) : (

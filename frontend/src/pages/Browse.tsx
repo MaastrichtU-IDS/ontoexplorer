@@ -109,7 +109,7 @@ export default function Browse() {
       {/* Right pane */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {oid && activeVid && selectedTermIri ? (
-          <TermPanel ontologyId={oid} versionId={activeVid} termIri={selectedTermIri} />
+          <TermPanel ontologyId={oid} versionId={activeVid} termIri={selectedTermIri} slug={oid} />
         ) : (
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',
