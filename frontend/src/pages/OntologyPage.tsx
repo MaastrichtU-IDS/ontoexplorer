@@ -144,6 +144,8 @@ const PRED_ORDER: string[] = [
   'http://purl.org/dc/terms/license',
   'https://schema.org/funding',
   'http://purl.org/dc/terms/bibliographicCitation',
+  'http://purl.org/vocab/vann/preferredNamespacePrefix',
+  'http://purl.org/vocab/vann/preferredNamespaceUri',
   'https://w3id.org/mod#prefLabelProperty',
   'https://w3id.org/mod#definitionProperty',
   'https://w3id.org/mod#hasRepresentationLanguage',
