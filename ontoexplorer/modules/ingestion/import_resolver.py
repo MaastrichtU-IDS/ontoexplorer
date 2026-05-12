@@ -38,7 +38,10 @@ def resolve_imports_sparql(ontology_id: str, version_id: str) -> dict[str, Resol
             ?ont <http://www.w3.org/2002/07/owl#imports> ?import .
         }}
     """)
-    import_iris = [str(row["import"]) for row in results]
+    import_iris = [
+        (row["import"].value if hasattr(row["import"], "value") else str(row["import"]))
+        for row in results
+    ]
     if not import_iris:
         return {}
 
