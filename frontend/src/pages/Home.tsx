@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { useQuery, useQueries } from '@tanstack/react-query'
 import { useOntologies } from '../hooks/useOntologies'
 import { useGlobalSearch } from '../hooks/useSearch'
@@ -28,36 +28,51 @@ function StatCard({ label, value }: { label: string; value: number | string }) {
   )
 }
 
-function ResultList({ results, onSelect }: {
+function ResultList({ results, pathFor }: {
   results: SearchResult[]
-  onSelect: (r: SearchResult) => void
+  pathFor: (r: SearchResult) => string | null
 }) {
   if (results.length === 0) return null
   return (
     <ul style={{ listStyle: 'none', marginTop: '0.5rem' }}>
-      {results.map(r => (
-        <li
-          key={r.iri}
-          onClick={() => onSelect(r)}
-          style={{
-            padding: '8px 10px', borderRadius: 'var(--radius-sm)',
-            cursor: 'pointer', display: 'flex', gap: 10, alignItems: 'baseline',
-            borderBottom: '1px solid var(--border)',
-          }}
-          onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
-          onMouseLeave={e => (e.currentTarget.style.background = '')}
-        >
-          <span style={{ color: 'var(--accent)', fontWeight: 500, flexShrink: 0 }}>{r.label}</span>
-          <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{r.short}</span>
-        </li>
-      ))}
+      {results.map(r => {
+        const path = pathFor(r)
+        const inner = (
+          <>
+            <span style={{ color: 'var(--accent)', fontWeight: 500, flexShrink: 0 }}>{r.label}</span>
+            <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{r.short}</span>
+          </>
+        )
+        const sharedStyle: React.CSSProperties = {
+          padding: '8px 10px', borderRadius: 'var(--radius-sm)',
+          display: 'flex', gap: 10, alignItems: 'baseline',
+          borderBottom: '1px solid var(--border)',
+          textDecoration: 'none',
+        }
+        return path ? (
+          <li key={r.iri}>
+            <Link
+              to={path}
+              style={sharedStyle}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
+              onMouseLeave={e => (e.currentTarget.style.background = '')}
+            >
+              {inner}
+            </Link>
+          </li>
+        ) : (
+          <li key={r.iri} style={{ ...sharedStyle, color: 'var(--text-dim)' }}>
+            {inner}
+          </li>
+        )
+      })}
     </ul>
   )
 }
 
 // ── Search tab ────────────────────────────────────────────────────────────────
 
-function KeywordSearch({ onNavigate }: { onNavigate: (path: string) => void }) {
+function KeywordSearch() {
   const [query, setQuery] = useState('')
   const [submitted, setSubmitted] = useState('')
   const { ontologies } = useOntologies()
@@ -69,10 +84,10 @@ function KeywordSearch({ onNavigate }: { onNavigate: (path: string) => void }) {
     setSubmitted(query.trim())
   }
 
-  function handleSelect(r: SearchResult) {
+  function pathFor(r: SearchResult): string | null {
     const ont = ontologies.find(o => o.id === r.ontology_id)
-    if (!ont || !r.version_id) return
-    onNavigate(`/ontologies/${slugFromIri(ont.iri)}/${r.version_id}?term=${encodeURIComponent(r.iri)}`)
+    if (!ont || !r.version_id) return null
+    return `/ontologies/${slugFromIri(ont.iri)}/${r.version_id}?term=${encodeURIComponent(r.iri)}`
   }
 
   return (
@@ -119,7 +134,7 @@ function KeywordSearch({ onNavigate }: { onNavigate: (path: string) => void }) {
           No results for "{submitted}"
         </p>
       )}
-      <ResultList results={results} onSelect={handleSelect} />
+      <ResultList results={results} pathFor={pathFor} />
     </>
   )
 }
@@ -149,7 +164,7 @@ function useMOSFanout(pairs: { oid: string; vid: string }[], query: string) {
   })
 }
 
-function MOSQuery({ onNavigate }: { onNavigate: (path: string) => void }) {
+function MOSQuery() {
   const { ontologies } = useOntologies()
   const [selectedOids, setSelectedOids] = useState<string[]>([])
   const [mosQuery, setMosQuery] = useState('')
@@ -172,18 +187,28 @@ function MOSQuery({ onNavigate }: { onNavigate: (path: string) => void }) {
 
   // Fan-out MOS search across scoped ontologies
   const searchResults = useMOSFanout(scopePairs, mosQuery)
-  const allResults: SearchResult[] = searchResults.flatMap(r => r.data?.results ?? [])
+  // Tag each result with the oid/vid of the ontology it came from
+  const allResults: SearchResult[] = searchResults.flatMap((r, i) =>
+    (r.data?.results ?? []).map(res => ({
+      ...res,
+      ontology_id: scopePairs[i]?.oid,
+      version_id: scopePairs[i]?.vid,
+    }))
+  )
 
   // Surface error message only when all queries failed (no results at all)
   const firstError = searchResults.find(r => r.error)?.error as (Error & { status?: number; body?: { error?: string; detail?: string } }) | undefined
+  const allNotClassified = mosQuery.length >= 2 && searchResults.length > 0 && searchResults.every(r => (r.error as (Error & { body?: { error?: string } }) | undefined)?.body?.error === 'not_classified')
   const errorMsg = allResults.length === 0 && firstError
-    ? (firstError.body?.detail ?? firstError.message)
+    ? allNotClassified
+      ? 'Ontology classification is not ready yet — reasoning is still running. Try again in a few minutes.'
+      : (firstError.body?.detail ?? firstError.body?.error ?? firstError.message)
     : null
 
-  function handleSelect(r: SearchResult) {
+  function pathFor(r: SearchResult): string | null {
     const ont = ontologies.find(o => o.id === r.ontology_id)
-    if (!ont || !r.version_id) return
-    onNavigate(`/ontologies/${slugFromIri(ont.iri)}/${r.version_id}?term=${encodeURIComponent(r.iri)}`)
+    if (!ont || !r.version_id) return null
+    return `/ontologies/${slugFromIri(ont.iri)}/${r.version_id}?term=${encodeURIComponent(r.iri)}`
   }
 
   return (
@@ -220,7 +245,7 @@ function MOSQuery({ onNavigate }: { onNavigate: (path: string) => void }) {
           No results for "{mosQuery}"
         </p>
       )}
-      <ResultList results={allResults} onSelect={handleSelect} />
+      <ResultList results={allResults} pathFor={pathFor} />
     </>
   )
 }
@@ -229,7 +254,6 @@ function MOSQuery({ onNavigate }: { onNavigate: (path: string) => void }) {
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>('search')
-  const navigate = useNavigate()
 
   const { data: publicStats } = useQuery({
     queryKey: ['public-stats'],
@@ -273,8 +297,8 @@ export default function Home() {
       </div>
 
       {mode === 'search'
-        ? <KeywordSearch onNavigate={navigate} />
-        : <MOSQuery onNavigate={navigate} />
+        ? <KeywordSearch />
+        : <MOSQuery />
       }
     </div>
   )
