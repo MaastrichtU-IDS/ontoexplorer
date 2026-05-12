@@ -57,6 +57,7 @@ A next-generation FAIR ontology repository — ingest, browse, query, and reason
 
 - Docker + Docker Compose v2
 - [uv](https://docs.astral.sh/uv/) >= 0.5 (Python deps)
+- Node.js >= 20 + npm (frontend dev server)
 
 ### 1. Clone and configure
 
@@ -67,7 +68,7 @@ cp .env.example .env
 # Edit .env — set OAuth credentials (ORCID/GitHub/Google) and JWT_SECRET_KEY
 ```
 
-### 2. Start the stack
+### 2. Start the backend stack
 
 ```bash
 docker compose up -d
@@ -79,19 +80,31 @@ docker compose up -d
 docker compose exec api uv run alembic upgrade head
 ```
 
-Services:
+Backend services:
 
 | Service       | URL                        | Purpose                      |
 |---------------|----------------------------|------------------------------|
-| API + UI      | http://localhost:8000      | FastAPI backend + React SPA  |
-| API Docs      | http://localhost:8000/docs | Swagger UI                   |
+| API           | http://localhost:8000      | FastAPI backend              |
+| API Docs      | http://localhost:8000/api/docs | Swagger UI               |
 | MinIO Console | http://localhost:9001      | Object storage (admin/admin) |
 | Fuseki        | http://localhost:7001      | SPARQL metadata endpoint     |
 | Prometheus    | http://localhost:9090      | Metrics                      |
 | Grafana       | http://localhost:3000      | Dashboards                   |
 | Loki          | http://localhost:3100      | Log aggregation              |
 
-### 4. Run tests
+### 4. Start the frontend dev server
+
+The React SPA is not served by Docker — run it locally with Vite:
+
+```bash
+cd frontend
+npm install   # first time only
+npm run dev
+```
+
+Open **http://localhost:5173**. The Vite dev server proxies `/api`, `/auth`, and `/sparql` to the FastAPI backend at `localhost:8000`, so no CORS configuration is needed.
+
+### 5. Run tests
 
 ```bash
 uv run pytest
