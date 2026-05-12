@@ -50,7 +50,7 @@ async def test_evaluate_named_class_returns_subclasses():
     with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
          patch("ontoexplorer.modules.search.evaluator.get_classification",
                new=AsyncMock(return_value=classification)):
-        results = await evaluate(NamedClass(ref="Cell", curie=None), "v1")
+        results = await evaluate(NamedClass(ref="Cell", curie=None), "v1", "ont1")
     iris = {r.iri for r in results}
     assert "http://ex.org/EukaryoticCell" in iris
     assert "http://ex.org/ProkaryoticCell" in iris
@@ -73,7 +73,7 @@ async def test_evaluate_and_intersects():
          patch("ontoexplorer.modules.search.evaluator.get_classification",
                new=AsyncMock(return_value=classification)):
         results = await evaluate(
-            And(NamedClass("Cell", None), NamedClass("Nucleus", None)), "v1"
+            And(NamedClass("Cell", None), NamedClass("Nucleus", None)), "v1", "ont1"
         )
     iris = {r.iri for r in results}
     assert iris == {"http://ex.org/B"}
@@ -95,7 +95,7 @@ async def test_evaluate_or_unions():
          patch("ontoexplorer.modules.search.evaluator.get_classification",
                new=AsyncMock(return_value=classification)):
         results = await evaluate(
-            Or(NamedClass("Cell", None), NamedClass("Virus", None)), "v1"
+            Or(NamedClass("Cell", None), NamedClass("Virus", None)), "v1", "ont1"
         )
     iris = {r.iri for r in results}
     assert {"http://ex.org/A", "http://ex.org/B"} <= iris
@@ -116,7 +116,7 @@ async def test_evaluate_ambiguous_label_raises():
          patch("ontoexplorer.modules.search.evaluator.get_classification",
                new=AsyncMock(return_value=classification)):
         with pytest.raises(AmbiguousLabelError) as exc_info:
-            await evaluate(NamedClass(ref="cell death", curie=None), "v1")
+            await evaluate(NamedClass(ref="cell death", curie=None), "v1", "ont1")
     assert exc_info.value.label == "cell death"
     assert len(exc_info.value.candidates) == 2
 
@@ -143,7 +143,7 @@ async def test_evaluate_some_values_from_calls_sparql():
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
                return_value=[mock_sol]) as mock_sparql:
         results = await evaluate(
-            SomeValuesFrom(NamedClass("hasPart", None), NamedClass("Nucleus", None)), "v1"
+            SomeValuesFrom(NamedClass("hasPart", None), NamedClass("Nucleus", None)), "v1", "ont1"
         )
     assert mock_sparql.called
     assert any(r.match_type == "sparql" for r in results)
