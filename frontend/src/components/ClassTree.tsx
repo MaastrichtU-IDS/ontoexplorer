@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useClassTreeNodes } from '../hooks/useClassTree'
+import { useClassTreeNodes, EntityType } from '../hooks/useClassTree'
 import { useInferredTreeNodes } from '../hooks/useInferredTree'
 import { Term, api } from '../lib/api'
 
@@ -13,7 +13,7 @@ interface NodeProps {
   depth: number
   selectedIri: string | null
   onSelect: (iri: string) => void
-  entityType: 'class' | 'property'
+  entityType: EntityType
   mode: Mode
   expandSet: Set<string>
 }
@@ -106,7 +106,7 @@ interface Props {
   versionId: string
   selectedIri: string | null
   onSelect: (iri: string) => void
-  entityType?: 'class' | 'property'
+  entityType?: EntityType
   mode?: Mode
   revealIri?: string | null
 }
@@ -180,8 +180,13 @@ export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect
   }
 
   if (roots.length === 0) {
+    const label = entityType === 'class' ? 'classes'
+      : entityType === 'object_property' ? 'object properties'
+      : entityType === 'data_property' ? 'data properties'
+      : entityType === 'annotation_property' ? 'annotation properties'
+      : 'properties'
     return <div style={{ padding: '0.5rem 1rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
-      No {entityType === 'property' ? 'properties' : 'classes'} found
+      No {label} found
     </div>
   }
 

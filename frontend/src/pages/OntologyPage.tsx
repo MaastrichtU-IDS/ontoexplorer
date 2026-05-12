@@ -388,13 +388,33 @@ export default function OntologyPage() {
                 revealIri={selectedTermIri}
               />
             </div>
-            <CollapsibleSection label="Properties" defaultOpen={false}>
+            <CollapsibleSection label="Object Properties" defaultOpen={false}>
               <ClassTree
                 ontologyId={oid}
                 versionId={activeVid}
                 selectedIri={selectedTermIri}
                 onSelect={selectTerm}
-                entityType="property"
+                entityType="object_property"
+                revealIri={selectedTermIri}
+              />
+            </CollapsibleSection>
+            <CollapsibleSection label="Data Properties" defaultOpen={false}>
+              <ClassTree
+                ontologyId={oid}
+                versionId={activeVid}
+                selectedIri={selectedTermIri}
+                onSelect={selectTerm}
+                entityType="data_property"
+                revealIri={selectedTermIri}
+              />
+            </CollapsibleSection>
+            <CollapsibleSection label="Annotation Properties" defaultOpen={false}>
+              <ClassTree
+                ontologyId={oid}
+                versionId={activeVid}
+                selectedIri={selectedTermIri}
+                onSelect={selectTerm}
+                entityType="annotation_property"
                 revealIri={selectedTermIri}
               />
             </CollapsibleSection>

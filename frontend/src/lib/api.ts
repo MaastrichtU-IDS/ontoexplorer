@@ -125,7 +125,7 @@ export interface ParsedTerm {
   iri: string
   label: string
   definition: string | null
-  entityType: 'class' | 'property' | 'individual'
+  entityType: 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' | 'individual'
   synonyms: { exact: string[]; related: string[]; broad: string[]; narrow: string[] }
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
   subclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
@@ -242,8 +242,12 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
   const definition = p[P.definition]?.[0] ?? p[P.comment]?.[0] ?? null
   const types = p[P.type] ?? []
   let entityType: ParsedTerm['entityType'] = 'class'
-  if (types.some(t => t === P.owlObjProp || t === P.owlDataProp || t === P.owlAnnProp)) {
-    entityType = 'property'
+  if (types.includes(P.owlObjProp)) {
+    entityType = 'object_property'
+  } else if (types.includes(P.owlDataProp)) {
+    entityType = 'data_property'
+  } else if (types.includes(P.owlAnnProp)) {
+    entityType = 'annotation_property'
   } else if (types.includes(P.owlIndividual)) {
     entityType = 'individual'
   }
@@ -287,7 +291,7 @@ export const api = {
     get: (id: string) => request<Ontology>(`/ontologies/${id}`),
     versions: (id: string) =>
       request<{ versions: OntologyVersion[] }>(`/ontologies/${id}/versions`),
-    terms: (oid: string, vid: string, parent?: string | null, entityType: 'class' | 'property' = 'class') => {
+    terms: (oid: string, vid: string, parent?: string | null, entityType: 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' = 'class') => {
       const params = new URLSearchParams({ limit: '200', entity_type: entityType })
       params.set('parent', parent ?? 'root')
       return request<{ terms: Term[]; offset: number; limit: number; parent: string | null }>(

@@ -89,10 +89,20 @@ def entity_lookup(
     """Prefix-search entities. Returns list of entity dicts with label/type/iri/short."""
     r = _get_redis()
 
+    _PROP_SUBTYPES_SET = {"object_property", "data_property", "annotation_property"}
+
+    def _detail_type_matches(detail: dict) -> bool:
+        if entity_type is None:
+            return True
+        stored = detail.get("type", "")
+        if entity_type == "property":
+            return stored in _PROP_SUBTYPES_SET or stored == "property"
+        return stored == entity_type
+
     # Direct full-IRI lookup
     if prefix.startswith("http://") or prefix.startswith("https://"):
         detail = r.hgetall(_iri_key(version_id, prefix.strip()))
-        if detail and (entity_type is None or detail.get("type") == entity_type):
+        if detail and _detail_type_matches(detail):
             return [detail]
         return []
 
@@ -123,6 +133,15 @@ def entity_lookup(
     exact_members = r.zrangebylex(key, f"[{norm}|", f"[{norm}|\xff", start=0, num=max(limit, 50))
     all_members = r.zrangebylex(key, f"[{norm}", f"[{norm}\xff", start=0, num=limit * 5)
 
+    _PROP_SUBTYPES = {"object_property", "data_property", "annotation_property"}
+
+    def _type_matches(etype: str) -> bool:
+        if entity_type is None:
+            return True
+        if entity_type == "property":
+            return etype in _PROP_SUBTYPES or etype == "property"
+        return etype == entity_type
+
     seen_iris: set[str] = set()
     candidates: list[dict] = []
 
@@ -132,7 +151,7 @@ def entity_lookup(
             if len(parts) != 3:
                 continue
             _, etype, iri = parts
-            if entity_type and etype != entity_type:
+            if not _type_matches(etype):
                 continue
             if iri in seen_iris:
                 continue
@@ -158,12 +177,12 @@ def build_index(version_id: str, ontology_id: str) -> IndexStats:
     named_graph = graph_iri(ontology_id, version_id)
 
     # Collect entity IRIs with their types
-    entities: dict[str, str] = {}  # iri -> "class" | "property"
+    entities: dict[str, str] = {}  # iri -> "class" | "object_property" | "data_property" | "annotation_property"
     for entity_type, owl_type in [
-        ("class",    "http://www.w3.org/2002/07/owl#Class"),
-        ("property", "http://www.w3.org/2002/07/owl#ObjectProperty"),
-        ("property", "http://www.w3.org/2002/07/owl#DatatypeProperty"),
-        ("property", "http://www.w3.org/2002/07/owl#AnnotationProperty"),
+        ("class",               "http://www.w3.org/2002/07/owl#Class"),
+        ("object_property",     "http://www.w3.org/2002/07/owl#ObjectProperty"),
+        ("data_property",       "http://www.w3.org/2002/07/owl#DatatypeProperty"),
+        ("annotation_property", "http://www.w3.org/2002/07/owl#AnnotationProperty"),
     ]:
         q = f"""
             SELECT DISTINCT ?entity WHERE {{
@@ -237,8 +256,10 @@ def build_index(version_id: str, ontology_id: str) -> IndexStats:
             property_count += 1
 
     pipe.expire(prefix_key, _SEARCH_TTL)
-    pipe.expire(_type_key(version_id, "class"),    _SEARCH_TTL)
-    pipe.expire(_type_key(version_id, "property"), _SEARCH_TTL)
+    pipe.expire(_type_key(version_id, "class"),               _SEARCH_TTL)
+    pipe.expire(_type_key(version_id, "object_property"),     _SEARCH_TTL)
+    pipe.expire(_type_key(version_id, "data_property"),       _SEARCH_TTL)
+    pipe.expire(_type_key(version_id, "annotation_property"), _SEARCH_TTL)
     pipe.setex(_meta_key(version_id), _SEARCH_TTL, json.dumps({
         "indexed_at":      datetime.now(timezone.utc).isoformat(),
         "class_count":     class_count,
@@ -369,20 +390,22 @@ def _build_tree_cache(
         json.dumps({"terms": class_terms, "offset": 0, "limit": _DEFAULT_LIMIT, "parent": "root"}),
     )
 
-    root_props = sorted(
-        (iri for iri, t in entities.items()
-         if t == "property" and iri not in non_root_props and iri not in deprecated_iris),
-        key=_sort_key,
-    )
-    prop_terms = [
-        {"iri": iri, "label": _primary_label(iri), "has_children": iri in has_children_props}
-        for iri in root_props[:_DEFAULT_LIMIT]
-    ]
-    r.setex(
-        f"terms_root:{version_id}:property:{_DEFAULT_LIMIT}",
-        _SEARCH_TTL,
-        json.dumps({"terms": prop_terms, "offset": 0, "limit": _DEFAULT_LIMIT, "parent": "root"}),
-    )
+    _PROP_SUBTYPES = ("object_property", "data_property", "annotation_property")
+    for subtype in _PROP_SUBTYPES:
+        root_props = sorted(
+            (iri for iri, t in entities.items()
+             if t == subtype and iri not in non_root_props and iri not in deprecated_iris),
+            key=_sort_key,
+        )
+        prop_terms = [
+            {"iri": iri, "label": _primary_label(iri), "has_children": iri in has_children_props}
+            for iri in root_props[:_DEFAULT_LIMIT]
+        ]
+        r.setex(
+            f"terms_root:{version_id}:{subtype}:{_DEFAULT_LIMIT}",
+            _SEARCH_TTL,
+            json.dumps({"terms": prop_terms, "offset": 0, "limit": _DEFAULT_LIMIT, "parent": "root"}),
+        )
 
 
 def invalidate_index(version_id: str) -> None:

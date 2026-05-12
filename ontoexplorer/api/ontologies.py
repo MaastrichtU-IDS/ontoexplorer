@@ -211,13 +211,26 @@ _PROP_TYPES = (
 )
 _PROP_UNION = " UNION ".join(f"{{ ?entity a {t} }}" for t in _PROP_TYPES)
 
+_PROP_SUBTYPE_FILTER = {
+    "object_property":     "{ ?entity a owl:ObjectProperty }",
+    "data_property":       "{ ?entity a owl:DatatypeProperty }",
+    "annotation_property": "{ ?entity a owl:AnnotationProperty }",
+}
+
+# Subtype → subPropertyOf child type filter (for child queries)
+_PROP_SUBTYPE_CHILD_FILTER = {
+    "object_property":     "{ ?class a owl:ObjectProperty }",
+    "data_property":       "{ ?class a owl:DatatypeProperty }",
+    "annotation_property": "{ ?class a owl:AnnotationProperty }",
+}
+
 
 @router.get("/{ontology_id}/{version_id}/terms", summary="List terms (classes or properties)")
 async def list_terms(
     ontology_id: str,
     version_id: str,
     parent: str | None = Query(None, description="'root' for top-level, or an IRI for direct children"),
-    entity_type: str = Query("class", description="'class' or 'property'"),
+    entity_type: str = Query("class", description="'class', 'property', 'object_property', 'data_property', or 'annotation_property'"),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -229,6 +242,8 @@ async def list_terms(
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
 
     is_root = parent is None or parent == "root"
+    is_prop_subtype = entity_type in _PROP_SUBTYPE_FILTER
+    is_any_property = entity_type == "property" or is_prop_subtype
 
     # Serve root requests from Redis cache when available
     if is_root and offset == 0:
@@ -256,13 +271,15 @@ async def list_terms(
         # Pass 1: all entities with labels. Pass 2: entities that have a named parent. Subtract in Python.
         _NOT_DEPRECATED = f"FILTER NOT EXISTS {{ ?class owl:deprecated ?_d . FILTER(str(?_d) = \"true\") }}"
 
-        if entity_type == "property":
+        if is_any_property:
+            prop_filter = _PROP_SUBTYPE_FILTER.get(entity_type, _PROP_UNION)
+            child_type_filter = _PROP_SUBTYPE_CHILD_FILTER.get(entity_type, f"{{ {_PROP_UNION} }}")
             all_q = f"""
                 PREFIX owl: <http://www.w3.org/2002/07/owl#>
                 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
                 SELECT ?class ?label WHERE {{
                     GRAPH <{g}> {{
-                        {{ {_PROP_UNION} }}
+                        {{ {prop_filter} }}
                         BIND(?entity AS ?class)
                         FILTER(isIRI(?class))
                         {_NOT_DEPRECATED}
@@ -278,9 +295,7 @@ async def list_terms(
                     GRAPH <{g}> {{
                         ?class rdfs:subPropertyOf ?parent .
                         FILTER(isIRI(?class) && isIRI(?parent))
-                        {{ ?class a owl:ObjectProperty }} UNION
-                        {{ ?class a owl:DatatypeProperty }} UNION
-                        {{ ?class a owl:AnnotationProperty }}
+                        {child_type_filter}
                     }}
                 }}
             """
@@ -323,14 +338,15 @@ async def list_terms(
         page = await asyncio.to_thread(_run_root_two_pass, store, all_q, non_root_q, offset, limit)
         terms = [{"iri": iri, "label": lbl} for iri, lbl in page]
 
-    elif entity_type == "property":
+    elif is_any_property:
+        prop_filter = _PROP_SUBTYPE_FILTER.get(entity_type, _PROP_UNION)
         if parent.startswith("http"):
             query = f"""
                 PREFIX owl: <http://www.w3.org/2002/07/owl#>
                 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
                 SELECT ?class ?label WHERE {{
                     GRAPH <{g}> {{
-                        {{ {_PROP_UNION} }}
+                        {{ {prop_filter} }}
                         BIND(?entity AS ?class)
                         FILTER(isIRI(?class))
                         ?class rdfs:subPropertyOf <{parent}> .
@@ -346,7 +362,7 @@ async def list_terms(
                 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
                 SELECT ?class ?label WHERE {{
                     GRAPH <{g}> {{
-                        {{ {_PROP_UNION} }}
+                        {{ {prop_filter} }}
                         BIND(?entity AS ?class)
                         FILTER(isIRI(?class))
                         OPTIONAL {{ ?class rdfs:label ?label }}
@@ -413,7 +429,7 @@ async def list_terms(
     # Find which terms have children (single query over the fetched IRIs)
     if terms:
         values_block = " ".join(f"<{t['iri']}>" for t in terms)
-        if entity_type == "property":
+        if is_any_property:
             child_q = f"""
                 PREFIX owl: <http://www.w3.org/2002/07/owl#>
                 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>

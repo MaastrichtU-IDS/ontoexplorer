@@ -224,15 +224,25 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
   if (isLoading) return <div style={{ padding: '1rem', color: 'var(--text-dim)' }}>Loading…</div>
   if (error || !data) return <div style={{ padding: '1rem', color: 'var(--text-dim)' }}>Term not found</div>
 
+  const isProperty = data.entityType === 'object_property' || data.entityType === 'data_property'
+    || data.entityType === 'annotation_property' || data.entityType === 'property'
+
   const typeColor = data.entityType === 'class' ? 'var(--accent-purple)'
-    : data.entityType === 'property' ? 'var(--accent-blue)' : 'var(--text-muted)'
+    : isProperty ? 'var(--accent-blue)' : 'var(--text-muted)'
+
+  const typeLabel = data.entityType === 'class' ? 'class'
+    : data.entityType === 'object_property' ? 'object property'
+    : data.entityType === 'data_property' ? 'data property'
+    : data.entityType === 'annotation_property' ? 'annotation property'
+    : data.entityType === 'property' ? 'property'
+    : data.entityType
 
   const hasSuperclasses = data.superclasses.asserted.length > 0 || data.superclasses.inferred.length > 0
   const hasSubclasses   = data.subclasses.asserted.length > 0   || data.subclasses.inferred.length > 0
 
   let body: React.ReactNode
 
-  if (data.entityType === 'property') {
+  if (isProperty) {
     body = <PropertyBody data={data} slug={slug} versionId={versionId} />
   } else if (singlePane) {
     body = (
@@ -317,7 +327,7 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
         <span style={{
           fontSize: 10, background: 'var(--bg)', color: typeColor,
           borderRadius: 3, padding: '1px 5px', textTransform: 'uppercase', flexShrink: 0,
-        }}>{data.entityType}</span>
+        }}>{typeLabel}</span>
         <CopyChip text={data.iri.split(/[#/]/).pop() ?? data.iri} title={data.iri} />
         <CopyChip text={data.iri} />
         <Link
