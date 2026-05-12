@@ -165,17 +165,25 @@ async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = De
             GRAPH <{g}> {{ ?c a owl:Class . FILTER(isIRI(?c)) }}
         }}
     """)
-    prop_count   = _count(f"""
+    obj_prop_count  = _count(f"""
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
         SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE {{
-            GRAPH <{g}> {{
-                {{ ?p a owl:ObjectProperty }} UNION
-                {{ ?p a owl:DatatypeProperty }} UNION
-                {{ ?p a owl:AnnotationProperty }}
-                FILTER(isIRI(?p))
-            }}
+            GRAPH <{g}> {{ ?p a owl:ObjectProperty . FILTER(isIRI(?p)) }}
         }}
     """)
+    data_prop_count = _count(f"""
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE {{
+            GRAPH <{g}> {{ ?p a owl:DatatypeProperty . FILTER(isIRI(?p)) }}
+        }}
+    """)
+    ann_prop_count  = _count(f"""
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE {{
+            GRAPH <{g}> {{ ?p a owl:AnnotationProperty . FILTER(isIRI(?p)) }}
+        }}
+    """)
+    prop_count = obj_prop_count + data_prop_count + ann_prop_count
     ind_count    = _count(f"""
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
         SELECT (COUNT(DISTINCT ?i) AS ?n) WHERE {{
@@ -194,12 +202,71 @@ async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = De
         pass
 
     return {
-        "triple_count":    triple_count,
-        "class_count":     class_count,
-        "property_count":  prop_count,
-        "individual_count": ind_count,
-        "index_meta":      index_meta,
+        "triple_count":              triple_count,
+        "class_count":               class_count,
+        "property_count":            prop_count,
+        "object_property_count":     obj_prop_count,
+        "datatype_property_count":   data_prop_count,
+        "annotation_property_count": ann_prop_count,
+        "individual_count":          ind_count,
+        "index_meta":                index_meta,
     }
+
+
+# ── Ontology document metadata ────────────────────────────────────────────────
+
+@router.get("/{ontology_id}/{version_id}/ontology-metadata", summary="Metadata from the ontology document itself")
+async def get_ontology_document_metadata(
+    ontology_id: str,
+    version_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all triples where the subject is the primary owl:Ontology IRI."""
+    import asyncio
+    from ontoexplorer.clients.oxigraph import get_store, graph_iri
+
+    ontology = await _get_ontology_or_404(db, ontology_id)
+    await _get_version_or_404(db, ontology_id, version_id)
+
+    store = get_store()
+    g = graph_iri(ontology_id, version_id)
+    onto_iri = ontology.iri
+
+    query = f"""
+        SELECT ?pred ?obj WHERE {{
+            GRAPH <{g}> {{
+                <{onto_iri}> ?pred ?obj .
+            }}
+        }}
+        ORDER BY ?pred
+    """
+
+    def _run(s, q):
+        predicates: dict[str, list] = {}
+        for row in s.query(q):
+            pred = row["pred"]
+            obj = row["obj"]
+            if pred is None or obj is None:
+                continue
+            pred_iri = pred.value
+            # Distinguish Literal (has .datatype) from NamedNode/BlankNode
+            if hasattr(obj, "datatype"):
+                entry: dict = {
+                    "value": obj.value,
+                    "type": "literal",
+                    "language": getattr(obj, "language", None),
+                    "datatype": obj.datatype.value if obj.datatype else None,
+                }
+            else:
+                val = obj.value
+                if not (val.startswith("http://") or val.startswith("https://") or val.startswith("urn:")):
+                    continue  # skip blank nodes
+                entry = {"value": val, "type": "iri"}
+            predicates.setdefault(pred_iri, []).append(entry)
+        return predicates
+
+    predicates = await asyncio.to_thread(_run, store, query)
+    return {"ontology_iri": onto_iri, "predicates": predicates}
 
 
 # ── Terms ──────────────────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useOntologies } from '../hooks/useOntologies'
 import { useVersions } from '../hooks/useVersions'
 import { useTerm } from '../hooks/useTerm'
-import { slugFromIri, OntologyVersion, SearchResult, api } from '../lib/api'
+import { slugFromIri, OntologyVersion, OntologyMetadataEntry, SearchResult, api } from '../lib/api'
 import ClassTree from '../components/ClassTree'
 import TermPanel from '../components/TermPanel'
 import ResizeHandle from '../components/ResizeHandle'
@@ -12,6 +12,19 @@ import ResizeHandle from '../components/ResizeHandle'
 const PANE_MIN = 220
 const PANE_MAX = 640
 const PANE_DEFAULT = 300
+
+// ── Mobile detection ──────────────────────────────────────────────────────────
+
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < breakpoint)
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`)
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [breakpoint])
+  return isMobile
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -36,13 +49,137 @@ function StatCard({ label, value }: { label: string; value: number | string }) {
   return (
     <div style={{
       background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-      borderRadius: 'var(--radius)', padding: '12px 16px', minWidth: 120,
+      borderRadius: 'var(--radius)', padding: '10px 14px', flex: '1 1 100px', minWidth: 0,
     }}>
-      <div style={{ color: 'var(--text)', fontSize: 20, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+      <div style={{ color: 'var(--text)', fontSize: 18, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
         {typeof value === 'number' ? value.toLocaleString() : value}
       </div>
       <div style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: 2 }}>{label}</div>
     </div>
+  )
+}
+
+// ── Predicate label map ───────────────────────────────────────────────────────
+
+const PRED_LABELS: Record<string, string> = {
+  'http://www.w3.org/2000/01/rdf-schema#label':              'Label',
+  'http://www.w3.org/2000/01/rdf-schema#comment':            'Comment',
+  'http://www.w3.org/2002/07/owl#versionInfo':               'Version Info',
+  'http://www.w3.org/2002/07/owl#versionIRI':                'Version IRI',
+  'http://www.w3.org/2002/07/owl#priorVersion':              'Prior Version',
+  'http://www.w3.org/2002/07/owl#backwardCompatibleWith':    'Backward Compatible With',
+  'http://www.w3.org/2002/07/owl#incompatibleWith':          'Incompatible With',
+  'http://purl.org/dc/terms/title':                          'Title',
+  'http://purl.org/dc/terms/description':                    'Description',
+  'http://purl.org/dc/terms/creator':                        'Creator',
+  'http://purl.org/dc/terms/contributor':                    'Contributor',
+  'http://purl.org/dc/terms/publisher':                      'Publisher',
+  'http://purl.org/dc/terms/license':                        'License',
+  'http://purl.org/dc/terms/rights':                         'Rights',
+  'http://purl.org/dc/terms/created':                        'Created',
+  'http://purl.org/dc/terms/modified':                       'Modified',
+  'http://purl.org/dc/terms/issued':                         'Issued',
+  'http://purl.org/dc/terms/language':                       'Language',
+  'http://purl.org/dc/terms/subject':                        'Subject',
+  'http://purl.org/dc/terms/alternative':                    'Alternative Title',
+  'http://purl.org/dc/terms/bibliographicCitation':          'Citation',
+  'http://purl.org/dc/terms/source':                         'Source',
+  'http://purl.org/dc/elements/1.1/creator':                 'Creator (dc)',
+  'http://purl.org/dc/elements/1.1/description':             'Description (dc)',
+  'http://purl.org/dc/elements/1.1/title':                   'Title (dc)',
+  'http://purl.org/pav/authoredBy':                          'Authored By',
+  'http://purl.org/pav/version':                             'PAV Version',
+  'http://purl.org/vocab/vann/preferredNamespacePrefix':     'Namespace Prefix',
+  'http://purl.org/vocab/vann/preferredNamespaceUri':        'Namespace URI',
+  'http://www.w3.org/ns/dcat#accessURL':                     'Access URL',
+  'http://xmlns.com/foaf/0.1/homepage':                      'Homepage',
+  'http://xmlns.com/foaf/0.1/page':                          'Page',
+  'https://schema.org/funding':                              'Funding',
+  'https://schema.org/includedInDataCatalog':                'In Catalog',
+  'http://omv.ontoware.org/2005/05/ontology#acronym':        'Acronym',
+}
+
+function predLabel(iri: string): string {
+  if (PRED_LABELS[iri]) return PRED_LABELS[iri]
+  const frag = iri.replace(/[/#]+$/, '')
+  return frag.includes('#') ? frag.split('#').pop()! : frag.split('/').pop()!
+}
+
+function MetaValue({ entry }: { entry: OntologyMetadataEntry }) {
+  if (entry.type === 'iri') {
+    const display = entry.value.length > 80 ? entry.value.slice(0, 77) + '…' : entry.value
+    if (entry.value.startsWith('http://') || entry.value.startsWith('https://')) {
+      return (
+        <a href={entry.value} target="_blank" rel="noreferrer"
+          style={{ color: 'var(--accent)', wordBreak: 'break-all' }}>
+          {display} ↗
+        </a>
+      )
+    }
+    return <span style={{ wordBreak: 'break-all' }}>{entry.value}</span>
+  }
+  return (
+    <span style={{ wordBreak: 'break-word' }}>
+      {entry.value}
+      {entry.language && (
+        <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--text-dim)', fontStyle: 'italic' }}>
+          @{entry.language}
+        </span>
+      )}
+    </span>
+  )
+}
+
+const SKIP_PREDICATES = new Set([
+  'http://www.w3.org/1999/02/22-rdf-syntax-ns#type',
+  'http://www.w3.org/2002/07/owl#imports',
+])
+
+function OntologyDocMeta({ ontologyId, versionId }: { ontologyId: string; versionId: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['onto-doc-meta', ontologyId, versionId],
+    queryFn: () => api.ontologies.ontologyMetadata(ontologyId, versionId),
+    staleTime: 300_000,
+  })
+
+  const predicates = data?.predicates ?? {}
+  const entries = Object.entries(predicates).filter(([p]) => !SKIP_PREDICATES.has(p))
+
+  if (isLoading) {
+    return <div style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading metadata…</div>
+  }
+
+  if (entries.length === 0) {
+    return (
+      <div style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', fontStyle: 'italic' }}>
+        No ontology-level metadata found in document.
+      </div>
+    )
+  }
+
+  return (
+    <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+      <tbody>
+        {entries.map(([pred, values]) => (
+          <tr key={pred}>
+            <td style={{
+              padding: '5px 0', verticalAlign: 'top',
+              color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)',
+              whiteSpace: 'nowrap', paddingRight: 20, width: 1,
+            }}>
+              {predLabel(pred)}
+            </td>
+            <td style={{ padding: '5px 0', fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}>
+              {values.map((v, i) => (
+                <div key={i} style={{ marginBottom: values.length > 1 ? 2 : 0 }}>
+                  <MetaValue entry={v} />
+                </div>
+              ))}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   )
 }
 
@@ -65,9 +202,36 @@ function OntologyMeta({ iri, version }: { iri: string; version: OntologyVersion 
   return (
     <div style={{ padding: '1.5rem 2rem', overflow: 'auto', flex: 1 }}>
 
-      {/* ── Metadata ── */}
+      {/* ── Document metadata ── */}
       <h3 style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
-        Metadata
+        Document Metadata
+      </h3>
+      <div style={{ marginBottom: 28 }}>
+        <OntologyDocMeta ontologyId={version.ontology_id} versionId={version.id} />
+      </div>
+
+      {/* ── Statistics ── */}
+      <h3 style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
+        Statistics
+      </h3>
+      {statsLoading ? (
+        <div style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading stats…</div>
+      ) : stats ? (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 28 }}>
+          <StatCard label="Axioms" value={stats.triple_count} />
+          <StatCard label="Classes" value={stats.class_count} />
+          <StatCard label="Object Properties" value={stats.object_property_count} />
+          <StatCard label="Datatype Properties" value={stats.datatype_property_count} />
+          <StatCard label="Annotation Properties" value={stats.annotation_property_count} />
+          {stats.individual_count > 0 && (
+            <StatCard label="Individuals" value={stats.individual_count} />
+          )}
+        </div>
+      ) : null}
+
+      {/* ── Repository metadata ── */}
+      <h3 style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
+        Repository
       </h3>
       <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 28 }}>
         <tbody>
@@ -94,26 +258,6 @@ function OntologyMeta({ iri, version }: { iri: string; version: OntologyVersion 
           )}
         </tbody>
       </table>
-
-      {/* ── Statistics ── */}
-      <h3 style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
-        Statistics
-      </h3>
-      {statsLoading ? (
-        <div style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading stats…</div>
-      ) : stats ? (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-          <StatCard label="Triples" value={stats.triple_count} />
-          <StatCard label="Classes" value={stats.class_count} />
-          <StatCard label="Properties" value={stats.property_count} />
-          {stats.individual_count > 0 && (
-            <StatCard label="Individuals" value={stats.individual_count} />
-          )}
-          {stats.index_meta?.indexed_at && (
-            <StatCard label="Indexed" value={new Date(stats.index_meta.indexed_at).toLocaleDateString()} />
-          )}
-        </div>
-      ) : null}
     </div>
   )
 }
@@ -279,6 +423,7 @@ export default function OntologyPage() {
   const { slug, version } = useParams<{ slug: string; version?: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
+  const isMobile = useIsMobile()
   const { ontologies, isLoading: ontologiesLoading } = useOntologies()
 
   const ontology = ontologies.find(o => slugFromIri(o.iri) === slug)
@@ -293,6 +438,7 @@ export default function OntologyPage() {
 
   const selectedTermIri = searchParams.get('term')
   const [classMode, setClassMode] = useState<HierarchyMode>('asserted')
+  const [mobilePane, setMobilePane] = useState<'tree' | 'detail'>('tree')
 
   const [hideInverseProps, setHideInverseProps] = useState(true)
   const [classExpand,   setClassExpand]   = useState(0)
@@ -325,10 +471,12 @@ export default function OntologyPage() {
 
   function selectTerm(iri: string) {
     setSearchParams({ term: iri })
+    if (isMobile) setMobilePane('detail')
   }
 
   function resetToMeta() {
     setSearchParams({})
+    if (isMobile) setMobilePane('detail')
   }
 
   if (!ontologiesLoading && !ontology) {
@@ -339,187 +487,207 @@ export default function OntologyPage() {
     )
   }
 
-  return (
-    <div style={{ display: 'flex', height: 'calc(100vh - var(--nav-height))', overflow: 'hidden' }}>
+  // ── Shared tree pane content ──────────────────────────────────────────────
 
-      {/* ── Left pane ── */}
-      <div style={{
-        width: paneWidth, flexShrink: 0,
-        display: 'flex', flexDirection: 'column',
-        background: 'var(--bg-secondary)', borderRight: '1px solid var(--border)',
-        overflow: 'hidden',
-      }}>
+  const treePaneContent = (
+    <>
+      {/* Ontology name / back-to-meta */}
+      <div style={{ padding: '10px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <button
+          onClick={resetToMeta}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+            color: 'var(--accent)', fontWeight: 600, fontSize: 'var(--font-size-sm)', textAlign: 'left', flex: 1 }}
+        >
+          {slug}
+        </button>
+      </div>
 
-        {/* Clickable ontology name */}
-        <div style={{ padding: '10px', borderBottom: '1px solid var(--border)' }}>
-          <button
-            onClick={resetToMeta}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-              color: 'var(--accent)', fontWeight: 600, fontSize: 'var(--font-size-sm)',
-              textAlign: 'left',
-            }}
+      {/* Search bar */}
+      {oid && activeVid && (
+        <OntologySearchBar ontologyId={oid} versionId={activeVid} onSelect={selectTerm} />
+      )}
+
+      {/* Version selector */}
+      {versions.length > 1 && (
+        <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)' }}>
+          <select
+            value={activeVid ?? ''}
+            onChange={e => navigate(`/ontologies/${slug}/${e.target.value}`, { replace: true })}
+            style={{ width: '100%', fontSize: 'var(--font-size-sm)' }}
           >
-            {slug}
-          </button>
+            {versions.map(v => (
+              <option key={v.id} value={v.id}>{v.version_iri ?? v.id}</option>
+            ))}
+          </select>
         </div>
+      )}
 
-        {/* Search bar */}
-        {oid && activeVid && (
-          <OntologySearchBar
-            ontologyId={oid}
-            versionId={activeVid}
-            onSelect={selectTerm}
-          />
-        )}
-
-        {/* Version selector */}
-        {versions.length > 1 && (
-          <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)' }}>
-            <select
-              value={activeVid ?? ''}
-              onChange={e => navigate(`/ontologies/${slug}/${e.target.value}`, { replace: true })}
-              style={{ width: '100%', fontSize: 'var(--font-size-sm)' }}
-            >
-              {versions.map(v => (
-                <option key={v.id} value={v.id}>
-                  {v.version_iri ?? v.id}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        {/* Scrollable hierarchy area */}
-        {oid && activeVid ? (
-          <div style={{ flex: 1, overflow: 'auto' }}>
-            {/* Classes section with asserted/inferred toggle */}
-            <div style={{ borderBottom: '1px solid var(--border)' }}>
-              <div style={{
-                padding: '5px 10px', display: 'flex', alignItems: 'center', gap: 8,
-              }}>
-                <span style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, flex: 1 }}>
-                  Classes
-                </span>
-                <ExpandToggleBtn
-                  onExpand={() => setClassExpand(v => v + 1)}
-                  onCollapse={() => setClassCollapse(v => v + 1)}
-                />
-                <div style={{ display: 'flex', borderRadius: 4, overflow: 'hidden', border: '1px solid var(--border)' }}>
-                  {(['asserted', 'inferred'] as HierarchyMode[]).map(m => (
-                    <button
-                      key={m}
-                      onClick={() => setClassMode(m)}
-                      style={{
-                        padding: '2px 8px', fontSize: 10, border: 'none', cursor: 'pointer',
-                        background: classMode === m ? 'var(--accent)' : 'transparent',
-                        color: classMode === m ? '#000' : 'var(--text-dim)',
-                        textTransform: 'capitalize',
-                      }}
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
+      {/* Hierarchy */}
+      {oid && activeVid ? (
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          <div style={{ borderBottom: '1px solid var(--border)' }}>
+            <div style={{ padding: '5px 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, flex: 1 }}>
+                Classes
+              </span>
+              <ExpandToggleBtn
+                onExpand={() => setClassExpand(v => v + 1)}
+                onCollapse={() => setClassCollapse(v => v + 1)}
+              />
+              <div style={{ display: 'flex', borderRadius: 4, overflow: 'hidden', border: '1px solid var(--border)' }}>
+                {(['asserted', 'inferred'] as HierarchyMode[]).map(m => (
+                  <button
+                    key={m}
+                    onClick={() => setClassMode(m)}
+                    style={{
+                      padding: '2px 8px', fontSize: 10, border: 'none', cursor: 'pointer',
+                      background: classMode === m ? 'var(--accent)' : 'transparent',
+                      color: classMode === m ? '#000' : 'var(--text-dim)',
+                      textTransform: 'capitalize',
+                    }}
+                  >
+                    {m}
+                  </button>
+                ))}
               </div>
-              <ClassTree
-                ontologyId={oid}
-                versionId={activeVid}
-                selectedIri={selectedTermIri}
-                onSelect={selectTerm}
-                entityType="class"
-                mode={classMode}
-                revealIri={selectedTermIri}
-                expandSignal={classExpand}
-                collapseSignal={classCollapse}
+            </div>
+            <ClassTree
+              ontologyId={oid} versionId={activeVid}
+              selectedIri={selectedTermIri} onSelect={selectTerm}
+              entityType="class" mode={classMode} revealIri={selectedTermIri}
+              expandSignal={classExpand} collapseSignal={classCollapse}
+            />
+          </div>
+          <CollapsibleSection label="Object Properties" defaultOpen={true}>
+            <div style={{ padding: '4px 10px 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <ExpandToggleBtn
+                onExpand={() => setObjExpand(v => v + 1)}
+                onCollapse={() => setObjCollapse(v => v + 1)}
+              />
+              <button
+                onClick={() => setHideInverseProps(v => !v)}
+                style={{
+                  fontSize: 9, padding: '2px 6px', borderRadius: 3,
+                  border: '1px solid var(--border)', background: 'none',
+                  color: 'var(--text-dim)', cursor: 'pointer',
+                  textTransform: 'uppercase', letterSpacing: 0.5,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--text-muted)' }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
+              >
+                {hideInverseProps ? 'Show Inv' : 'Hide Inv'}
+              </button>
+            </div>
+            <ClassTree
+              ontologyId={oid} versionId={activeVid}
+              selectedIri={selectedTermIri} onSelect={selectTerm}
+              entityType="object_property" revealIri={selectedTermIri}
+              hideInverse={hideInverseProps}
+              expandSignal={objExpand} collapseSignal={objCollapse}
+            />
+          </CollapsibleSection>
+          <CollapsibleSection label="Data Properties" defaultOpen={true}>
+            <div style={{ padding: '4px 10px 2px' }}>
+              <ExpandToggleBtn
+                onExpand={() => setDataExpand(v => v + 1)}
+                onCollapse={() => setDataCollapse(v => v + 1)}
               />
             </div>
-            <CollapsibleSection label="Object Properties" defaultOpen={true}>
-              <div style={{ padding: '4px 10px 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <ExpandToggleBtn
-                  onExpand={() => setObjExpand(v => v + 1)}
-                  onCollapse={() => setObjCollapse(v => v + 1)}
-                />
-                <button
-                  onClick={() => setHideInverseProps(v => !v)}
-                  style={{
-                    fontSize: 9, padding: '2px 6px', borderRadius: 3,
-                    border: '1px solid var(--border)', background: 'none',
-                    color: 'var(--text-dim)', cursor: 'pointer',
-                    textTransform: 'uppercase', letterSpacing: 0.5,
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--text-muted)' }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
-                >
-                  {hideInverseProps ? 'Show Inv' : 'Hide Inv'}
-                </button>
-              </div>
-              <ClassTree
-                ontologyId={oid}
-                versionId={activeVid}
-                selectedIri={selectedTermIri}
-                onSelect={selectTerm}
-                entityType="object_property"
-                revealIri={selectedTermIri}
-                hideInverse={hideInverseProps}
-                expandSignal={objExpand}
-                collapseSignal={objCollapse}
-              />
-            </CollapsibleSection>
-            <CollapsibleSection label="Data Properties" defaultOpen={true}>
-              <div style={{ padding: '4px 10px 2px' }}>
-                <ExpandToggleBtn
-                  onExpand={() => setDataExpand(v => v + 1)}
-                  onCollapse={() => setDataCollapse(v => v + 1)}
-                />
-              </div>
-              <ClassTree
-                ontologyId={oid}
-                versionId={activeVid}
-                selectedIri={selectedTermIri}
-                onSelect={selectTerm}
-                entityType="data_property"
-                revealIri={selectedTermIri}
-                expandSignal={dataExpand}
-                collapseSignal={dataCollapse}
-              />
-            </CollapsibleSection>
-            <CollapsibleSection label="Annotation Properties" defaultOpen={false}>
-              <ClassTree
-                ontologyId={oid}
-                versionId={activeVid}
-                selectedIri={selectedTermIri}
-                onSelect={selectTerm}
-                entityType="annotation_property"
-                revealIri={selectedTermIri}
-              />
-            </CollapsibleSection>
+            <ClassTree
+              ontologyId={oid} versionId={activeVid}
+              selectedIri={selectedTermIri} onSelect={selectTerm}
+              entityType="data_property" revealIri={selectedTermIri}
+              expandSignal={dataExpand} collapseSignal={dataCollapse}
+            />
+          </CollapsibleSection>
+          <CollapsibleSection label="Annotation Properties" defaultOpen={false}>
+            <ClassTree
+              ontologyId={oid} versionId={activeVid}
+              selectedIri={selectedTermIri} onSelect={selectTerm}
+              entityType="annotation_property" revealIri={selectedTermIri}
+            />
+          </CollapsibleSection>
+        </div>
+      ) : (
+        <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
+          {versionsLoading ? 'Loading…' : 'No versions available'}
+        </div>
+      )}
+    </>
+  )
+
+  // ── Shared detail pane content ────────────────────────────────────────────
+
+  const detailPaneContent = (
+    <>
+      {/* Mobile top bar: back button */}
+      {isMobile && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '8px 12px', borderBottom: '1px solid var(--border)',
+          background: 'var(--bg-secondary)', flexShrink: 0,
+        }}>
+          <button
+            onClick={() => setMobilePane('tree')}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              fontSize: 'var(--font-size-sm)', color: 'var(--accent)',
+              background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+            }}
+          >
+            ← Browse
+          </button>
+          <span style={{ color: 'var(--border)' }}>|</span>
+          <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {selectedTermIri
+              ? (selectedTermIri.split(/[#/]/).pop() ?? selectedTermIri)
+              : slug}
+          </span>
+        </div>
+      )}
+      {oid && activeVid && selectedTermIri ? (
+        <TermPanel
+          ontologyId={oid} versionId={activeVid}
+          termIri={selectedTermIri} slug={slug!} singlePane={true}
+        />
+      ) : (
+        <OntologyMeta iri={ontology?.iri ?? ''} version={activeVersion} />
+      )}
+    </>
+  )
+
+  // ── Mobile layout: one pane at a time ─────────────────────────────────────
+
+  if (isMobile) {
+    return (
+      <div style={{ height: 'calc(100vh - var(--nav-height))', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        {mobilePane === 'tree' ? (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg-secondary)' }}>
+            {treePaneContent}
           </div>
         ) : (
-          <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
-            {versionsLoading ? 'Loading…' : 'No versions available'}
+          <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            {detailPaneContent}
           </div>
         )}
       </div>
+    )
+  }
 
-      {/* Resize handle */}
+  // ── Desktop layout: side-by-side ──────────────────────────────────────────
+
+  return (
+    <div style={{ display: 'flex', height: 'calc(100vh - var(--nav-height))', overflow: 'hidden' }}>
+      <div style={{
+        width: paneWidth, flexShrink: 0, display: 'flex', flexDirection: 'column',
+        background: 'var(--bg-secondary)', borderRight: '1px solid var(--border)', overflow: 'hidden',
+      }}>
+        {treePaneContent}
+      </div>
       <ResizeHandle onDelta={handleDelta} />
-
-      {/* ── Right pane (single column) ── */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {oid && activeVid && selectedTermIri ? (
-          <TermPanel
-            ontologyId={oid}
-            versionId={activeVid}
-            termIri={selectedTermIri}
-            slug={slug!}
-            singlePane={true}
-          />
-        ) : (
-          <OntologyMeta iri={ontology?.iri ?? ''} version={activeVersion} />
-        )}
+        {detailPaneContent}
       </div>
-
     </div>
   )
 }

@@ -138,6 +138,18 @@ export interface ParsedTerm {
   usage: PropertyUsage[]
 }
 
+export interface OntologyMetadataEntry {
+  value: string
+  type: 'iri' | 'literal'
+  language: string | null
+  datatype: string | null
+}
+
+export interface OntologyDocumentMetadata {
+  ontology_iri: string
+  predicates: Record<string, OntologyMetadataEntry[]>
+}
+
 export interface SearchResult {
   iri: string
   label: string
@@ -327,11 +339,17 @@ export const api = {
         `/ontologies/${oid}/${vid}/ancestors?iri=${encodeURIComponent(iri)}&mode=${mode}`
       ),
 
+    ontologyMetadata: (oid: string, vid: string) =>
+      request<OntologyDocumentMetadata>(`/ontologies/${oid}/${vid}/ontology-metadata`),
+
     stats: (oid: string, vid: string) =>
       request<{
         triple_count: number
         class_count: number
         property_count: number
+        object_property_count: number
+        datatype_property_count: number
+        annotation_property_count: number
         individual_count: number
         index_meta: { indexed_at?: string; class_count?: number; property_count?: number }
       }>(`/ontologies/${oid}/${vid}/stats`),
