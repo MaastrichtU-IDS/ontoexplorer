@@ -62,42 +62,88 @@ function StatCard({ label, value }: { label: string; value: number | string }) {
 // ── Predicate label map ───────────────────────────────────────────────────────
 
 const PRED_LABELS: Record<string, string> = {
+  // Identity
   'http://www.w3.org/2000/01/rdf-schema#label':              'Label',
-  'http://www.w3.org/2000/01/rdf-schema#comment':            'Comment',
-  'http://www.w3.org/2002/07/owl#versionInfo':               'Version Info',
-  'http://www.w3.org/2002/07/owl#versionIRI':                'Version IRI',
-  'http://www.w3.org/2002/07/owl#priorVersion':              'Prior Version',
-  'http://www.w3.org/2002/07/owl#backwardCompatibleWith':    'Backward Compatible With',
-  'http://www.w3.org/2002/07/owl#incompatibleWith':          'Incompatible With',
   'http://purl.org/dc/terms/title':                          'Title',
+  'http://purl.org/dc/elements/1.1/title':                   'Title',
+  'http://purl.org/dc/terms/alternative':                    'Alternative Title',
+  // Description
+  'http://www.w3.org/2000/01/rdf-schema#comment':            'Comment',
   'http://purl.org/dc/terms/description':                    'Description',
-  'http://purl.org/dc/terms/creator':                        'Creator',
-  'http://purl.org/dc/terms/contributor':                    'Contributor',
-  'http://purl.org/dc/terms/publisher':                      'Publisher',
-  'http://purl.org/dc/terms/license':                        'License',
-  'http://purl.org/dc/terms/rights':                         'Rights',
+  'http://purl.org/dc/elements/1.1/description':             'Description',
+  // Status & dates
+  'https://w3id.org/mod#status':                             'Status',
   'http://purl.org/dc/terms/created':                        'Created',
   'http://purl.org/dc/terms/modified':                       'Modified',
   'http://purl.org/dc/terms/issued':                         'Issued',
-  'http://purl.org/dc/terms/language':                       'Language',
-  'http://purl.org/dc/terms/subject':                        'Subject',
-  'http://purl.org/dc/terms/alternative':                    'Alternative Title',
-  'http://purl.org/dc/terms/bibliographicCitation':          'Citation',
-  'http://purl.org/dc/terms/source':                         'Source',
-  'http://purl.org/dc/elements/1.1/creator':                 'Creator (dc)',
-  'http://purl.org/dc/elements/1.1/description':             'Description (dc)',
-  'http://purl.org/dc/elements/1.1/title':                   'Title (dc)',
+  // Agents
+  'http://purl.org/dc/terms/creator':                        'Creator',
+  'http://purl.org/dc/elements/1.1/creator':                 'Creator',
   'http://purl.org/pav/authoredBy':                          'Authored By',
+  'http://purl.org/dc/terms/contributor':                    'Contributor',
+  'http://purl.org/dc/terms/publisher':                      'Publisher',
+  // Version
+  'http://www.w3.org/2002/07/owl#versionInfo':               'Version Info',
   'http://purl.org/pav/version':                             'PAV Version',
-  'http://purl.org/vocab/vann/preferredNamespacePrefix':     'Namespace Prefix',
-  'http://purl.org/vocab/vann/preferredNamespaceUri':        'Namespace URI',
-  'http://www.w3.org/ns/dcat#accessURL':                     'Access URL',
+  'http://www.w3.org/2002/07/owl#versionIRI':                'Version IRI',
+  // Web presence
   'http://xmlns.com/foaf/0.1/homepage':                      'Homepage',
   'http://xmlns.com/foaf/0.1/page':                          'Page',
-  'https://schema.org/funding':                              'Funding',
+  'http://www.w3.org/ns/dcat#accessURL':                     'Access URL',
   'https://schema.org/includedInDataCatalog':                'In Catalog',
+  'https://schema.org/funding':                              'Funding',
+  // MOD structural metadata
+  'https://w3id.org/mod#prefLabelProperty':                  'Pref Label Property',
+  'https://w3id.org/mod#definitionProperty':                 'Definition Property',
+  'https://w3id.org/mod#hasRepresentationLanguage':          'Representation Language',
+  'https://w3id.org/mod#hasSyntax':                          'Syntax',
+  // Secondary
+  'http://purl.org/dc/terms/language':                       'Language',
+  'http://purl.org/dc/terms/license':                        'License',
+  'http://purl.org/dc/terms/rights':                         'Rights',
+  'http://purl.org/dc/terms/subject':                        'Subject',
+  'http://purl.org/dc/terms/source':                         'Source',
+  'http://purl.org/dc/terms/bibliographicCitation':          'Citation',
+  'http://purl.org/vocab/vann/preferredNamespacePrefix':     'Namespace Prefix',
+  'http://purl.org/vocab/vann/preferredNamespaceUri':        'Namespace URI',
+  'http://www.w3.org/2002/07/owl#priorVersion':              'Prior Version',
+  'http://www.w3.org/2002/07/owl#backwardCompatibleWith':    'Backward Compatible With',
+  'http://www.w3.org/2002/07/owl#incompatibleWith':          'Incompatible With',
   'http://omv.ontoware.org/2005/05/ontology#acronym':        'Acronym',
+  'http://xmlns.com/foaf/0.1/fundedBy':                      'Funded By',
 }
+
+// Display order — predicates not listed here are appended alphabetically by label
+const PRED_ORDER: string[] = [
+  'http://www.w3.org/2000/01/rdf-schema#label',
+  'http://purl.org/dc/terms/title',
+  'http://purl.org/dc/elements/1.1/title',
+  'http://purl.org/dc/terms/alternative',
+  'http://purl.org/dc/terms/description',
+  'http://purl.org/dc/elements/1.1/description',
+  'http://www.w3.org/2000/01/rdf-schema#comment',
+  'https://w3id.org/mod#status',
+  'http://purl.org/dc/terms/created',
+  'http://purl.org/dc/terms/modified',
+  'http://purl.org/dc/terms/issued',
+  'http://purl.org/dc/terms/creator',
+  'http://purl.org/dc/elements/1.1/creator',
+  'http://purl.org/pav/authoredBy',
+  'http://purl.org/dc/terms/contributor',
+  'http://purl.org/dc/terms/publisher',
+  'http://www.w3.org/2002/07/owl#versionInfo',
+  'http://purl.org/pav/version',
+  'http://www.w3.org/2002/07/owl#versionIRI',
+  'http://xmlns.com/foaf/0.1/homepage',
+  'http://xmlns.com/foaf/0.1/page',
+  'http://www.w3.org/ns/dcat#accessURL',
+  'https://schema.org/includedInDataCatalog',
+  'https://schema.org/funding',
+  'https://w3id.org/mod#prefLabelProperty',
+  'https://w3id.org/mod#definitionProperty',
+  'https://w3id.org/mod#hasRepresentationLanguage',
+  'https://w3id.org/mod#hasSyntax',
+]
 
 function predLabel(iri: string): string {
   if (PRED_LABELS[iri]) return PRED_LABELS[iri]
@@ -143,7 +189,16 @@ function OntologyDocMeta({ ontologyId, versionId }: { ontologyId: string; versio
   })
 
   const predicates = data?.predicates ?? {}
-  const entries = Object.entries(predicates).filter(([p]) => !SKIP_PREDICATES.has(p))
+  const entries = Object.entries(predicates)
+    .filter(([p]) => !SKIP_PREDICATES.has(p))
+    .sort(([a], [b]) => {
+      const ai = PRED_ORDER.indexOf(a)
+      const bi = PRED_ORDER.indexOf(b)
+      if (ai !== -1 && bi !== -1) return ai - bi
+      if (ai !== -1) return -1
+      if (bi !== -1) return 1
+      return predLabel(a).localeCompare(predLabel(b))
+    })
 
   if (isLoading) {
     return <div style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading metadata…</div>
