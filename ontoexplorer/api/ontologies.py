@@ -231,6 +231,7 @@ async def list_terms(
     version_id: str,
     parent: str | None = Query(None, description="'root' for top-level, or an IRI for direct children"),
     entity_type: str = Query("class", description="'class', 'property', 'object_property', 'data_property', or 'annotation_property'"),
+    hide_inverse: bool = Query(False, description="Exclude object properties that are the object of owl:inverseOf"),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -245,8 +246,8 @@ async def list_terms(
     is_prop_subtype = entity_type in _PROP_SUBTYPE_FILTER
     is_any_property = entity_type == "property" or is_prop_subtype
 
-    # Serve root requests from Redis cache when available
-    if is_root and offset == 0:
+    # Serve root requests from Redis cache when available (skip for hide_inverse — different result set)
+    if is_root and offset == 0 and not hide_inverse:
         try:
             from ontoexplorer.modules.search.indexer import _get_redis
             _r = _get_redis()
@@ -426,6 +427,24 @@ async def list_terms(
 
         terms = await asyncio.to_thread(_run_terms, store, query)
 
+    # Filter out inverse object properties when requested
+    if hide_inverse and is_any_property and terms:
+        inv_q = f"""
+            PREFIX owl: <http://www.w3.org/2002/07/owl#>
+            SELECT DISTINCT ?prop WHERE {{
+                GRAPH <{g}> {{
+                    ?anyProp owl:inverseOf ?prop .
+                    FILTER(isIRI(?prop) && isIRI(?anyProp))
+                }}
+            }}
+        """
+
+        def _run_inverse(s, q):
+            return {row["prop"].value for row in s.query(q)}
+
+        inverse_iris = await asyncio.to_thread(_run_inverse, store, inv_q)
+        terms = [t for t in terms if t["iri"] not in inverse_iris]
+
     # Find which terms have children (single query over the fetched IRIs)
     if terms:
         values_block = " ".join(f"<{t['iri']}>" for t in terms)
@@ -464,8 +483,8 @@ async def list_terms(
 
     response = {"terms": terms, "offset": offset, "limit": limit, "parent": parent}
 
-    # Cache root results so the second load (and every panel re-open) is instant
-    if is_root and offset == 0:
+    # Cache root results so the second load (and every panel re-open) is instant (skip for hide_inverse)
+    if is_root and offset == 0 and not hide_inverse:
         try:
             from ontoexplorer.modules.search.indexer import _get_redis
             _r = _get_redis()

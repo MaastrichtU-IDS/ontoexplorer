@@ -119,24 +119,31 @@ function OntologyMeta({ iri, version }: { iri: string; version: OntologyVersion 
 
 // ── Collapsible section ───────────────────────────────────────────────────────
 
-function CollapsibleSection({ label, defaultOpen = true, children }: {
-  label: string; defaultOpen?: boolean; children: React.ReactNode
+function CollapsibleSection({ label, defaultOpen = true, headerExtra, children }: {
+  label: string; defaultOpen?: boolean; headerExtra?: React.ReactNode; children: React.ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
     <div style={{ borderBottom: '1px solid var(--border)' }}>
-      <button
-        onClick={() => setOpen(v => !v)}
-        style={{
-          width: '100%', textAlign: 'left',
-          padding: '7px 10px', display: 'flex', alignItems: 'center', gap: 6,
-          background: 'none', border: 'none', cursor: 'pointer',
-          color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
-        }}
-      >
-        <span style={{ fontSize: 9, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>
-        {label}
-      </button>
+      <div style={{ display: 'flex', alignItems: 'center' }}>
+        <button
+          onClick={() => setOpen(v => !v)}
+          style={{
+            flex: 1, textAlign: 'left',
+            padding: '7px 10px', display: 'flex', alignItems: 'center', gap: 6,
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
+          }}
+        >
+          <span style={{ fontSize: 9, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>
+          {label}
+        </button>
+        {headerExtra && (
+          <div style={{ paddingRight: 8, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+            {headerExtra}
+          </div>
+        )}
+      </div>
       {open && children}
     </div>
   )
@@ -270,6 +277,7 @@ export default function OntologyPage() {
   const selectedTermIri = searchParams.get('term')
   const [classMode, setClassMode] = useState<HierarchyMode>('asserted')
 
+  const [hideInverseProps, setHideInverseProps] = useState(true)
   const [paneWidth, setPaneWidth] = useState<number>(() => {
     const stored = localStorage.getItem('onto-pane-width')
     return stored ? Number(stored) : PANE_DEFAULT
@@ -388,7 +396,25 @@ export default function OntologyPage() {
                 revealIri={selectedTermIri}
               />
             </div>
-            <CollapsibleSection label="Object Properties" defaultOpen={false}>
+            <CollapsibleSection
+              label="Object Properties"
+              defaultOpen={false}
+              headerExtra={
+                <button
+                  onClick={() => setHideInverseProps(v => !v)}
+                  title={hideInverseProps ? 'Showing direct properties only (click to show inverses)' : 'Showing all properties (click to hide inverses)'}
+                  style={{
+                    fontSize: 9, padding: '1px 5px', borderRadius: 3,
+                    border: '1px solid var(--border)',
+                    background: hideInverseProps ? 'var(--bg)' : 'rgba(80,160,255,0.15)',
+                    color: hideInverseProps ? 'var(--text-dim)' : 'var(--accent-blue)',
+                    cursor: 'pointer', textTransform: 'uppercase', letterSpacing: 0.5,
+                  }}
+                >
+                  {hideInverseProps ? 'hide inv' : 'show inv'}
+                </button>
+              }
+            >
               <ClassTree
                 ontologyId={oid}
                 versionId={activeVid}
@@ -396,6 +422,7 @@ export default function OntologyPage() {
                 onSelect={selectTerm}
                 entityType="object_property"
                 revealIri={selectedTermIri}
+                hideInverse={hideInverseProps}
               />
             </CollapsibleSection>
             <CollapsibleSection label="Data Properties" defaultOpen={false}>

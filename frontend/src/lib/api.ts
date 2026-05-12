@@ -291,9 +291,10 @@ export const api = {
     get: (id: string) => request<Ontology>(`/ontologies/${id}`),
     versions: (id: string) =>
       request<{ versions: OntologyVersion[] }>(`/ontologies/${id}/versions`),
-    terms: (oid: string, vid: string, parent?: string | null, entityType: 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' = 'class') => {
+    terms: (oid: string, vid: string, parent?: string | null, entityType: 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' = 'class', hideInverse = false) => {
       const params = new URLSearchParams({ limit: '200', entity_type: entityType })
       params.set('parent', parent ?? 'root')
+      if (hideInverse) params.set('hide_inverse', 'true')
       return request<{ terms: Term[]; offset: number; limit: number; parent: string | null }>(
         `/ontologies/${oid}/${vid}/terms?${params}`
       )

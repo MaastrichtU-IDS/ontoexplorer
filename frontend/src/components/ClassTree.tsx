@@ -16,9 +16,10 @@ interface NodeProps {
   entityType: EntityType
   mode: Mode
   expandSet: Set<string>
+  hideInverse: boolean
 }
 
-function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, entityType, mode, expandSet }: NodeProps) {
+function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, entityType, mode, expandSet, hideInverse }: NodeProps) {
   const shouldExpand = expandSet.has(term.iri)
   const [expanded, setExpanded] = useState(shouldExpand)
 
@@ -32,6 +33,7 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, e
     mode === 'asserted' && expanded ? versionId : null,
     mode === 'asserted' && expanded ? term.iri : null,
     entityType,
+    hideInverse,
   )
   const inferred = useInferredTreeNodes(
     mode === 'inferred' && expanded ? ontologyId : null,
@@ -93,6 +95,7 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, e
               entityType={entityType}
               mode={mode}
               expandSet={expandSet}
+              hideInverse={hideInverse}
             />
           ))}
         </ul>
@@ -109,12 +112,13 @@ interface Props {
   entityType?: EntityType
   mode?: Mode
   revealIri?: string | null
+  hideInverse?: boolean
 }
 
 const EMPTY_SET = new Set<string>()
 
-export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect, entityType = 'class', mode = 'asserted', revealIri }: Props) {
-  const asserted = useClassTreeNodes(mode === 'asserted' ? ontologyId : null, mode === 'asserted' ? versionId : null, null, entityType)
+export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect, entityType = 'class', mode = 'asserted', revealIri, hideInverse = false }: Props) {
+  const asserted = useClassTreeNodes(mode === 'asserted' ? ontologyId : null, mode === 'asserted' ? versionId : null, null, entityType, hideInverse)
   const inferred = useInferredTreeNodes(mode === 'inferred' ? ontologyId : null, mode === 'inferred' ? versionId : null, null)
 
   const { data, isLoading } = mode === 'asserted' ? asserted : inferred
@@ -204,6 +208,7 @@ export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect
           entityType={entityType}
           mode={mode}
           expandSet={expandSet}
+          hideInverse={hideInverse}
         />
       ))}
     </ul>
