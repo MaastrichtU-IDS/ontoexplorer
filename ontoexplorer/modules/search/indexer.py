@@ -108,29 +108,44 @@ def entity_lookup(
         return []
 
     key = _prefix_key(version_id)
-    min_val = f"[{norm}"
-    max_val = f"[{norm}\xff"
-    # Fetch more candidates than needed so ranking can promote exact matches
-    members = r.zrangebylex(key, min_val, max_val, start=0, num=limit * 5)
 
-    candidates: list[dict] = []
+    # The sorted set stores entries as "{norm_label}|{type}|{iri}".
+    # Because space (0x20) < pipe (0x7C), word-suffix entries like
+    # "cell death b cells|..." sort BEFORE the exact entry "cell death|..."
+    # in a single lexicographic scan.  We avoid that by doing two scans:
+    #   1. Exact-label scan: "[{norm}|" → "[{norm}|\xff"  — only entries
+    #      whose label part is exactly norm.
+    #   2. Full prefix scan:  "[{norm}"  → "[{norm}\xff"  — everything.
+    # Exact matches are always emitted first; the full scan fills the rest.
+
+    # Use at least 50 for the exact scan so common query terms (e.g. "cell death")
+    # don't miss the canonical entry when many synonyms share the same label.
+    exact_members = r.zrangebylex(key, f"[{norm}|", f"[{norm}|\xff", start=0, num=max(limit, 50))
+    all_members = r.zrangebylex(key, f"[{norm}", f"[{norm}\xff", start=0, num=limit * 5)
+
     seen_iris: set[str] = set()
+    candidates: list[dict] = []
 
-    for member in members:
-        parts = member.split("|", 2)
-        if len(parts) != 3:
-            continue
-        _, etype, iri = parts
-        if entity_type and etype != entity_type:
-            continue
-        if iri in seen_iris:
-            continue
-        seen_iris.add(iri)
-        detail = r.hgetall(_iri_key(version_id, iri))
-        if not detail:
-            continue
-        candidates.append(detail)
+    def _collect(members: list[str]) -> None:
+        for member in members:
+            parts = member.split("|", 2)
+            if len(parts) != 3:
+                continue
+            _, etype, iri = parts
+            if entity_type and etype != entity_type:
+                continue
+            if iri in seen_iris:
+                continue
+            seen_iris.add(iri)
+            detail = r.hgetall(_iri_key(version_id, iri))
+            if not detail:
+                continue
+            candidates.append(detail)
 
+    _collect(exact_members)   # tier-0 results first
+    _collect(all_members)     # then prefix / word-suffix results
+
+    # Within each tier, sort alphabetically by label for stable ordering
     candidates.sort(key=lambda d: _rank_key(d, norm))
     return candidates[:limit]
 
