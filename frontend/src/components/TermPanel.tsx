@@ -1,7 +1,35 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useTerm } from '../hooks/useTerm'
 import { ClassRef, PropertyUsage } from '../lib/api'
+
+function CopyIriButton({ iri }: { iri: string }) {
+  const [copied, setCopied] = useState(false)
+  function handleCopy() {
+    navigator.clipboard.writeText(iri).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+  return (
+    <button
+      onClick={handleCopy}
+      title={iri}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 4,
+        background: 'none', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+        color: copied ? 'var(--accent)' : 'var(--text-dim)',
+        fontSize: 11, padding: '2px 7px', cursor: 'pointer',
+        transition: 'color 0.15s, border-color 0.15s',
+        flexShrink: 0,
+      }}
+      onMouseEnter={e => { if (!copied) e.currentTarget.style.borderColor = 'var(--text-muted)' }}
+      onMouseLeave={e => { if (!copied) e.currentTarget.style.borderColor = 'var(--border)' }}
+    >
+      {copied ? '✓' : '⎘'} {iri.split(/[#/]/).pop()}
+    </button>
+  )
+}
 
 interface Props {
   ontologyId: string
@@ -198,7 +226,6 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
 
   const typeColor = data.entityType === 'class' ? 'var(--accent-purple)'
     : data.entityType === 'property' ? 'var(--accent-blue)' : 'var(--text-muted)'
-  const shortIri = data.iri.split(/[#/]/).pop() ?? data.iri
 
   const hasSuperclasses = data.superclasses.asserted.length > 0 || data.superclasses.inferred.length > 0
   const hasSubclasses   = data.subclasses.asserted.length > 0   || data.subclasses.inferred.length > 0
@@ -287,7 +314,7 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
         display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
       }}>
         <span style={{ fontWeight: 600, color: 'var(--accent)', flex: 1 }}>{data.label}</span>
-        <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{shortIri}</span>
+        <CopyIriButton iri={data.iri} />
         <span style={{
           fontSize: 10, background: 'var(--bg)', color: typeColor,
           borderRadius: 3, padding: '1px 5px', textTransform: 'uppercase',
