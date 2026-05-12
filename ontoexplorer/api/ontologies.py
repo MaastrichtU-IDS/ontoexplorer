@@ -317,6 +317,7 @@ async def list_terms(
                 all_rows.append((row["class"].value, _row_label(row)))
             non_roots = {row["class"].value for row in s.query(nrq)}
             roots = [(iri, lbl) for iri, lbl in all_rows if iri not in non_roots]
+            roots.sort(key=lambda x: (x[1] or x[0]).lower())
             return roots[off: off + lim]
 
         page = await asyncio.to_thread(_run_root_two_pass, store, all_q, non_root_q, offset, limit)
@@ -356,7 +357,9 @@ async def list_terms(
             """
 
         def _run_terms(s, q):
-            return [{"iri": row["class"].value, "label": _row_label(row)} for row in s.query(q)]
+            rows = [{"iri": row["class"].value, "label": _row_label(row)} for row in s.query(q)]
+            rows.sort(key=lambda t: (t["label"] or t["iri"]).lower())
+            return rows
 
         terms = await asyncio.to_thread(_run_terms, store, query)
 
@@ -378,7 +381,9 @@ async def list_terms(
         """
 
         def _run_terms(s, q):
-            return [{"iri": row["class"].value, "label": _row_label(row)} for row in s.query(q)]
+            rows = [{"iri": row["class"].value, "label": _row_label(row)} for row in s.query(q)]
+            rows.sort(key=lambda t: (t["label"] or t["iri"]).lower())
+            return rows
 
         terms = await asyncio.to_thread(_run_terms, store, query)
 
@@ -399,7 +404,9 @@ async def list_terms(
         """
 
         def _run_terms(s, q):
-            return [{"iri": row["class"].value, "label": _row_label(row)} for row in s.query(q)]
+            rows = [{"iri": row["class"].value, "label": _row_label(row)} for row in s.query(q)]
+            rows.sort(key=lambda t: (t["label"] or t["iri"]).lower())
+            return rows
 
         terms = await asyncio.to_thread(_run_terms, store, query)
 

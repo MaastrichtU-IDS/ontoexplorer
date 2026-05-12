@@ -351,9 +351,13 @@ def _build_tree_cache(
 
     _DEFAULT_LIMIT = 100
 
+    def _sort_key(iri: str) -> str:
+        return (_primary_label(iri) or iri).lower()
+
     root_classes = sorted(
-        iri for iri, t in entities.items()
-        if t == "class" and iri not in non_root_classes and iri not in deprecated_iris
+        (iri for iri, t in entities.items()
+         if t == "class" and iri not in non_root_classes and iri not in deprecated_iris),
+        key=_sort_key,
     )
     class_terms = [
         {"iri": iri, "label": _primary_label(iri), "has_children": iri in has_children_classes}
@@ -366,8 +370,9 @@ def _build_tree_cache(
     )
 
     root_props = sorted(
-        iri for iri, t in entities.items()
-        if t == "property" and iri not in non_root_props and iri not in deprecated_iris
+        (iri for iri, t in entities.items()
+         if t == "property" and iri not in non_root_props and iri not in deprecated_iris),
+        key=_sort_key,
     )
     prop_terms = [
         {"iri": iri, "label": _primary_label(iri), "has_children": iri in has_children_props}
