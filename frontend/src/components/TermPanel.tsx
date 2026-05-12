@@ -3,10 +3,10 @@ import { Link } from 'react-router-dom'
 import { useTerm } from '../hooks/useTerm'
 import { ClassRef, PropertyUsage } from '../lib/api'
 
-function CopyIriButton({ iri }: { iri: string }) {
+function CopyChip({ text, title }: { text: string; title?: string }) {
   const [copied, setCopied] = useState(false)
   function handleCopy() {
-    navigator.clipboard.writeText(iri).then(() => {
+    navigator.clipboard.writeText(text).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     })
@@ -14,9 +14,9 @@ function CopyIriButton({ iri }: { iri: string }) {
   return (
     <button
       onClick={handleCopy}
-      title={iri}
+      title={title ?? text}
       style={{
-        display: 'flex', alignItems: 'center', gap: 4,
+        display: 'inline-flex', alignItems: 'center', gap: 4,
         background: 'none', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
         color: copied ? 'var(--accent)' : 'var(--text-dim)',
         fontSize: 11, padding: '2px 7px', cursor: 'pointer',
@@ -26,7 +26,7 @@ function CopyIriButton({ iri }: { iri: string }) {
       onMouseEnter={e => { if (!copied) e.currentTarget.style.borderColor = 'var(--text-muted)' }}
       onMouseLeave={e => { if (!copied) e.currentTarget.style.borderColor = 'var(--border)' }}
     >
-      {copied ? '✓' : '⎘'} {iri.split(/[#/]/).pop()}
+      {copied ? '✓' : '⎘'} {text}
     </button>
   )
 }
@@ -314,7 +314,8 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
         display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
       }}>
         <span style={{ fontWeight: 600, color: 'var(--accent)', flex: 1 }}>{data.label}</span>
-        <CopyIriButton iri={data.iri} />
+        <CopyChip text={data.iri.split(/[#/]/).pop() ?? data.iri} title={data.iri} />
+        <CopyChip text={data.iri} />
         <span style={{
           fontSize: 10, background: 'var(--bg)', color: typeColor,
           borderRadius: 3, padding: '1px 5px', textTransform: 'uppercase',
