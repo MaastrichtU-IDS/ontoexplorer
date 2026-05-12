@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useClassTreeNodes } from '../hooks/useClassTree'
 import { useInferredTreeNodes } from '../hooks/useInferredTree'
@@ -55,6 +55,7 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, e
   return (
     <li>
       <div
+        data-iri={term.iri}
         onClick={() => onSelect(term.iri)}
         style={{
           display: 'flex', alignItems: 'center', gap: 4,
@@ -131,6 +132,41 @@ export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect
     ? new Set(ancestorData.ancestors.map((a: Term) => a.iri))
     : EMPTY_SET
 
+  // After ancestors load (which drives expansion), scroll the selected node into view.
+  // We use a MutationObserver rather than a fixed timeout because deep hierarchies require
+  // multiple cascading async fetches (one per level) before the target node exists in the DOM.
+  const containerRef = useRef<HTMLUListElement>(null)
+  useEffect(() => {
+    if (!revealIri || ancestorData === undefined) return
+    const container = containerRef.current
+    if (!container) return
+
+    const escaped = CSS.escape(revealIri)
+    const scrollTo = (el: HTMLElement) => el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+
+    // Already in DOM (e.g. shallow tree or cached expansion)
+    const existing = container.querySelector(`[data-iri="${escaped}"]`) as HTMLElement | null
+    if (existing) {
+      scrollTo(existing)
+      return
+    }
+
+    // Watch for the node to appear as the tree expands level by level
+    const observer = new MutationObserver(() => {
+      const el = container.querySelector(`[data-iri="${escaped}"]`) as HTMLElement | null
+      if (el) {
+        observer.disconnect()
+        clearTimeout(giveUp)
+        scrollTo(el)
+      }
+    })
+    observer.observe(container, { childList: true, subtree: true })
+
+    // Give up after 5s to avoid leaking the observer on broken trees
+    const giveUp = setTimeout(() => observer.disconnect(), 5000)
+    return () => { observer.disconnect(); clearTimeout(giveUp) }
+  }, [revealIri, ancestorData])
+
   if (isLoading) {
     return <div style={{ padding: '0.5rem 1rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</div>
   }
@@ -150,7 +186,7 @@ export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect
   }
 
   return (
-    <ul style={{ listStyle: 'none' }}>
+    <ul ref={containerRef} style={{ listStyle: 'none' }}>
       {roots.map(term => (
         <TreeNode
           key={term.iri}

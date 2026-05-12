@@ -70,6 +70,16 @@ def _short_iri(iri: str) -> str:
 _CURIE_PATTERN = re.compile(r"^([A-Za-z_][A-Za-z0-9_\-]*):\s*([A-Za-z0-9_\-\.]+)$")
 
 
+def _rank_key(detail: dict, norm_query: str) -> tuple:
+    """Return sort key: (tier, label). Tier 0=exact, 1=prefix, 2=word-suffix."""
+    lbl = normalise_label(detail.get("label", ""))
+    if lbl == norm_query:
+        return (0, lbl)
+    if lbl.startswith(norm_query):
+        return (1, lbl)
+    return (2, lbl)
+
+
 def entity_lookup(
     version_id: str,
     prefix: str,
@@ -100,9 +110,10 @@ def entity_lookup(
     key = _prefix_key(version_id)
     min_val = f"[{norm}"
     max_val = f"[{norm}\xff"
-    members = r.zrangebylex(key, min_val, max_val, start=0, num=limit * 3)
+    # Fetch more candidates than needed so ranking can promote exact matches
+    members = r.zrangebylex(key, min_val, max_val, start=0, num=limit * 5)
 
-    results: list[dict] = []
+    candidates: list[dict] = []
     seen_iris: set[str] = set()
 
     for member in members:
@@ -118,11 +129,10 @@ def entity_lookup(
         detail = r.hgetall(_iri_key(version_id, iri))
         if not detail:
             continue
-        results.append(detail)
-        if len(results) >= limit:
-            break
+        candidates.append(detail)
 
-    return results
+    candidates.sort(key=lambda d: _rank_key(d, norm))
+    return candidates[:limit]
 
 
 def build_index(version_id: str, ontology_id: str) -> IndexStats:
@@ -222,11 +232,136 @@ def build_index(version_id: str, ontology_id: str) -> IndexStats:
     }))
     pipe.execute()
 
+    _build_tree_cache(version_id, ontology_id, entities, labels_by_iri, r)
+
     return IndexStats(
         version_id=version_id,
         class_count=class_count,
         property_count=property_count,
         individual_count=0,
+    )
+
+
+def _build_tree_cache(
+    version_id: str,
+    ontology_id: str,
+    entities: dict[str, str],
+    labels_by_iri: dict[str, list[str]],
+    r: redis.Redis,
+) -> None:
+    """Pre-compute root class/property lists and cache in Redis.
+
+    Uses two simple join queries instead of correlated FILTER NOT EXISTS so this
+    stays fast even for ontologies with 50k+ classes (e.g. GO).
+    """
+    named_graph = graph_iri(ontology_id, version_id)
+    _OWL_THING = "http://www.w3.org/2002/07/owl#Thing"
+
+    # Deprecated entities — excluded from tree views
+    deprecated_q = f"""
+        SELECT DISTINCT ?c WHERE {{
+            GRAPH <{named_graph}> {{
+                ?c <http://www.w3.org/2002/07/owl#deprecated> ?d .
+                FILTER(str(?d) = "true")
+            }}
+        }}
+    """
+    deprecated_iris = {sol["c"].value for sol in sparql_query(deprecated_q)}
+
+    # Classes with a named-class parent — these are NOT roots
+    non_root_class_q = f"""
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        SELECT DISTINCT ?child WHERE {{
+            GRAPH <{named_graph}> {{
+                ?child rdfs:subClassOf ?parent .
+                ?child a owl:Class .
+                ?parent a owl:Class .
+                FILTER(isIRI(?child) && isIRI(?parent) && str(?parent) != "{_OWL_THING}")
+            }}
+        }}
+    """
+    non_root_classes = {sol["child"].value for sol in sparql_query(non_root_class_q)}
+
+    # Classes that have at least one direct subclass
+    has_children_class_q = f"""
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        SELECT DISTINCT ?parent WHERE {{
+            GRAPH <{named_graph}> {{
+                ?child rdfs:subClassOf ?parent .
+                ?child a owl:Class .
+                ?parent a owl:Class .
+                FILTER(isIRI(?child) && isIRI(?parent))
+            }}
+        }}
+    """
+    has_children_classes = {sol["parent"].value for sol in sparql_query(has_children_class_q)}
+
+    # Properties with a named parent — not roots
+    non_root_prop_q = f"""
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        SELECT DISTINCT ?child WHERE {{
+            GRAPH <{named_graph}> {{
+                ?child rdfs:subPropertyOf ?parent .
+                FILTER(isIRI(?child) && isIRI(?parent))
+                {{ ?child a owl:ObjectProperty }} UNION
+                {{ ?child a owl:DatatypeProperty }} UNION
+                {{ ?child a owl:AnnotationProperty }}
+            }}
+        }}
+    """
+    non_root_props = {sol["child"].value for sol in sparql_query(non_root_prop_q)}
+
+    # Properties with children
+    has_children_prop_q = f"""
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        SELECT DISTINCT ?parent WHERE {{
+            GRAPH <{named_graph}> {{
+                ?child rdfs:subPropertyOf ?parent .
+                FILTER(isIRI(?child) && isIRI(?parent))
+                {{ ?child a owl:ObjectProperty }} UNION
+                {{ ?child a owl:DatatypeProperty }} UNION
+                {{ ?child a owl:AnnotationProperty }}
+            }}
+        }}
+    """
+    has_children_props = {sol["parent"].value for sol in sparql_query(has_children_prop_q)}
+
+    def _primary_label(iri: str) -> str | None:
+        labels = labels_by_iri.get(iri, [])
+        return labels[0] if labels else None
+
+    _DEFAULT_LIMIT = 100
+
+    root_classes = sorted(
+        iri for iri, t in entities.items()
+        if t == "class" and iri not in non_root_classes and iri not in deprecated_iris
+    )
+    class_terms = [
+        {"iri": iri, "label": _primary_label(iri), "has_children": iri in has_children_classes}
+        for iri in root_classes[:_DEFAULT_LIMIT]
+    ]
+    r.setex(
+        f"terms_root:{version_id}:class:{_DEFAULT_LIMIT}",
+        _SEARCH_TTL,
+        json.dumps({"terms": class_terms, "offset": 0, "limit": _DEFAULT_LIMIT, "parent": "root"}),
+    )
+
+    root_props = sorted(
+        iri for iri, t in entities.items()
+        if t == "property" and iri not in non_root_props and iri not in deprecated_iris
+    )
+    prop_terms = [
+        {"iri": iri, "label": _primary_label(iri), "has_children": iri in has_children_props}
+        for iri in root_props[:_DEFAULT_LIMIT]
+    ]
+    r.setex(
+        f"terms_root:{version_id}:property:{_DEFAULT_LIMIT}",
+        _SEARCH_TTL,
+        json.dumps({"terms": prop_terms, "offset": 0, "limit": _DEFAULT_LIMIT, "parent": "root"}),
     )
 
 

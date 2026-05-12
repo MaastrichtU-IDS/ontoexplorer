@@ -95,6 +95,7 @@ export default function Browse() {
             versionId={activeVid}
             selectedIri={selectedTermIri}
             onSelect={selectTerm}
+            revealIri={selectedTermIri}
           />
         ) : (
           <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>

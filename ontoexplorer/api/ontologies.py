@@ -222,15 +222,42 @@ async def list_terms(
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
+    import asyncio
+    import json as _json
+
     await _get_version_or_404(db, ontology_id, version_id)
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
+
+    is_root = parent is None or parent == "root"
+
+    # Serve root requests from Redis cache when available
+    if is_root and offset == 0:
+        try:
+            from ontoexplorer.modules.search.indexer import _get_redis
+            _r = _get_redis()
+            _cache_key = f"terms_root:{version_id}:{entity_type}:{limit}"
+            _cached = _r.get(_cache_key)
+            if _cached:
+                return _json.loads(_cached)
+        except Exception:
+            pass
 
     store = get_store()
     g = graph_iri(ontology_id, version_id)
 
-    if entity_type == "property":
-        if parent is None or parent == "root":
-            query = f"""
+    _OWL_THING_STR = "http://www.w3.org/2002/07/owl#Thing"
+
+    def _row_label(row) -> str | None:
+        lbl = row["label"]
+        return lbl.value if (lbl is not None and hasattr(lbl, "value")) else None
+
+    if is_root:
+        # Two-pass root detection avoids correlated FILTER NOT EXISTS (O(n²) on large ontologies).
+        # Pass 1: all entities with labels. Pass 2: entities that have a named parent. Subtract in Python.
+        _NOT_DEPRECATED = f"FILTER NOT EXISTS {{ ?class owl:deprecated ?_d . FILTER(str(?_d) = \"true\") }}"
+
+        if entity_type == "property":
+            all_q = f"""
                 PREFIX owl: <http://www.w3.org/2002/07/owl#>
                 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
                 SELECT ?class ?label WHERE {{
@@ -238,18 +265,65 @@ async def list_terms(
                         {{ {_PROP_UNION} }}
                         BIND(?entity AS ?class)
                         FILTER(isIRI(?class))
+                        {_NOT_DEPRECATED}
                         OPTIONAL {{ ?class rdfs:label ?label }}
-                        FILTER NOT EXISTS {{
-                            ?class rdfs:subPropertyOf ?p .
-                            FILTER(isIRI(?p))
-                            GRAPH <{g}> {{ {{ ?p a owl:ObjectProperty }} UNION {{ ?p a owl:DatatypeProperty }} UNION {{ ?p a owl:AnnotationProperty }} }}
-                        }}
                     }}
                 }}
                 ORDER BY ?class
-                LIMIT {limit} OFFSET {offset}
             """
-        elif parent.startswith("http"):
+            non_root_q = f"""
+                PREFIX owl: <http://www.w3.org/2002/07/owl#>
+                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+                SELECT DISTINCT ?class WHERE {{
+                    GRAPH <{g}> {{
+                        ?class rdfs:subPropertyOf ?parent .
+                        FILTER(isIRI(?class) && isIRI(?parent))
+                        {{ ?class a owl:ObjectProperty }} UNION
+                        {{ ?class a owl:DatatypeProperty }} UNION
+                        {{ ?class a owl:AnnotationProperty }}
+                    }}
+                }}
+            """
+        else:
+            all_q = f"""
+                PREFIX owl: <http://www.w3.org/2002/07/owl#>
+                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+                SELECT ?class ?label WHERE {{
+                    GRAPH <{g}> {{
+                        ?class a owl:Class .
+                        FILTER(isIRI(?class))
+                        {_NOT_DEPRECATED}
+                        OPTIONAL {{ ?class rdfs:label ?label }}
+                    }}
+                }}
+                ORDER BY ?class
+            """
+            non_root_q = f"""
+                PREFIX owl: <http://www.w3.org/2002/07/owl#>
+                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+                SELECT DISTINCT ?class WHERE {{
+                    GRAPH <{g}> {{
+                        ?class rdfs:subClassOf ?parent .
+                        ?class a owl:Class .
+                        ?parent a owl:Class .
+                        FILTER(isIRI(?class) && isIRI(?parent) && str(?parent) != "{_OWL_THING_STR}")
+                    }}
+                }}
+            """
+
+        def _run_root_two_pass(s, aq, nrq, off, lim):
+            all_rows = []
+            for row in s.query(aq):
+                all_rows.append((row["class"].value, _row_label(row)))
+            non_roots = {row["class"].value for row in s.query(nrq)}
+            roots = [(iri, lbl) for iri, lbl in all_rows if iri not in non_roots]
+            return roots[off: off + lim]
+
+        page = await asyncio.to_thread(_run_root_two_pass, store, all_q, non_root_q, offset, limit)
+        terms = [{"iri": iri, "label": lbl} for iri, lbl in page]
+
+    elif entity_type == "property":
+        if parent.startswith("http"):
             query = f"""
                 PREFIX owl: <http://www.w3.org/2002/07/owl#>
                 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -280,26 +354,12 @@ async def list_terms(
                 ORDER BY ?class
                 LIMIT {limit} OFFSET {offset}
             """
-    elif parent is None or parent == "root":
-        # Root classes: named owl:Class not subClassOf any other named owl:Class in this ontology
-        query = f"""
-            PREFIX owl: <http://www.w3.org/2002/07/owl#>
-            PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-            SELECT ?class ?label WHERE {{
-                GRAPH <{g}> {{
-                    ?class a owl:Class .
-                    FILTER(isIRI(?class))
-                    OPTIONAL {{ ?class rdfs:label ?label }}
-                    FILTER NOT EXISTS {{
-                        ?class rdfs:subClassOf ?p .
-                        FILTER(isIRI(?p) && str(?p) != "http://www.w3.org/2002/07/owl#Thing")
-                        GRAPH <{g}> {{ ?p a owl:Class }}
-                    }}
-                }}
-            }}
-            ORDER BY ?class
-            LIMIT {limit} OFFSET {offset}
-        """
+
+        def _run_terms(s, q):
+            return [{"iri": row["class"].value, "label": _row_label(row)} for row in s.query(q)]
+
+        terms = await asyncio.to_thread(_run_terms, store, query)
+
     elif parent.startswith("http"):
         # Direct subclasses of the given parent IRI
         query = f"""
@@ -316,6 +376,12 @@ async def list_terms(
             ORDER BY ?class
             LIMIT {limit} OFFSET {offset}
         """
+
+        def _run_terms(s, q):
+            return [{"iri": row["class"].value, "label": _row_label(row)} for row in s.query(q)]
+
+        terms = await asyncio.to_thread(_run_terms, store, query)
+
     else:
         # Fallback: all named classes
         query = f"""
@@ -332,17 +398,14 @@ async def list_terms(
             LIMIT {limit} OFFSET {offset}
         """
 
-    results = store.query(query)
-    terms = []
-    for row in results:
-        lbl = row["label"]
-        label = lbl.value if (lbl is not None and hasattr(lbl, "value")) else None
-        terms.append({"iri": row["class"].value, "label": label})
+        def _run_terms(s, q):
+            return [{"iri": row["class"].value, "label": _row_label(row)} for row in s.query(q)]
+
+        terms = await asyncio.to_thread(_run_terms, store, query)
 
     # Find which terms have children (single query over the fetched IRIs)
     if terms:
-        iris = terms  # reuse list
-        values_block = " ".join(f"<{t['iri']}>" for t in iris)
+        values_block = " ".join(f"<{t['iri']}>" for t in terms)
         if entity_type == "property":
             child_q = f"""
                 PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -368,11 +431,27 @@ async def list_terms(
                     }}
                 }}
             """
-        has_children_iris = {row["parent"].value for row in store.query(child_q)}
+
+        def _run_children(s, q):
+            return {row["parent"].value for row in s.query(q)}
+
+        has_children_iris = await asyncio.to_thread(_run_children, store, child_q)
         for t in terms:
             t["has_children"] = t["iri"] in has_children_iris
 
-    return {"terms": terms, "offset": offset, "limit": limit, "parent": parent}
+    response = {"terms": terms, "offset": offset, "limit": limit, "parent": parent}
+
+    # Cache root results so the second load (and every panel re-open) is instant
+    if is_root and offset == 0:
+        try:
+            from ontoexplorer.modules.search.indexer import _get_redis
+            _r = _get_redis()
+            _cache_key = f"terms_root:{version_id}:{entity_type}:{limit}"
+            _r.setex(_cache_key, 300, _json.dumps(response))
+        except Exception:
+            pass
+
+    return response
 
 
 @router.get("/{ontology_id}/{version_id}/terms/{term_iri:path}", summary="Term detail")
@@ -774,6 +853,7 @@ async def term_ancestors(
         }
 
     # Asserted: SPARQL property path rdfs:subClassOf+
+    import asyncio
     from ontoexplorer.clients.oxigraph import get_store
     store = get_store()
     g = f"urn:ontology:{ontology_id}:{version_id}"
@@ -790,13 +870,16 @@ async def term_ancestors(
             }}
         }}
     """
-    rows = store.query(query)
-    ancestors_out = []
-    for row in rows:
-        lbl = row["label"]
-        label = lbl.value if (lbl is not None and hasattr(lbl, "value")) else None
-        ancestors_out.append({"iri": row["ancestor"].value, "label": label})
 
+    def _run(s, q):
+        out = []
+        for row in s.query(q):
+            lbl = row["label"]
+            label = lbl.value if (lbl is not None and hasattr(lbl, "value")) else None
+            out.append({"iri": row["ancestor"].value, "label": label})
+        return out
+
+    ancestors_out = await asyncio.to_thread(_run, store, query)
     return {"ancestors": ancestors_out}
 
 

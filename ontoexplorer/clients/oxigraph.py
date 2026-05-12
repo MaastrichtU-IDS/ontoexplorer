@@ -6,6 +6,7 @@ Stores one named graph per ontology version:
 """
 
 import logging
+import time
 from io import BytesIO
 from pathlib import Path
 
@@ -17,21 +18,28 @@ from ontoexplorer.config import get_settings
 logger = logging.getLogger(__name__)
 
 _store: pyoxigraph.Store | None = None
+_ro_store: pyoxigraph.Store | None = None
+_ro_store_opened_at: float = 0.0
+_RO_STORE_TTL: float = 60.0  # refresh read-only snapshot every 60 s
 
 
 def get_store() -> pyoxigraph.Store:
     """Return the Oxigraph store.
 
     Write mode (worker): singleton for the process lifetime.
-    Read-only mode (API): open fresh each call — secondary RocksDB instances are frozen
-    at open time and won't see writes made after they were opened.
+    Read-only mode (API): singleton refreshed every 60 s so the API sees recent writes
+    without paying the RocksDB secondary-open cost on every request.
     """
-    global _store
+    global _store, _ro_store, _ro_store_opened_at
     settings = get_settings()
     path = settings.oxigraph_data_path
     Path(path).mkdir(parents=True, exist_ok=True)
     if settings.oxigraph_read_only:
-        return pyoxigraph.Store.read_only(path)
+        now = time.monotonic()
+        if _ro_store is None or (now - _ro_store_opened_at) > _RO_STORE_TTL:
+            _ro_store = pyoxigraph.Store.read_only(path)
+            _ro_store_opened_at = now
+        return _ro_store
     if _store is None:
         _store = pyoxigraph.Store(path)
     return _store
