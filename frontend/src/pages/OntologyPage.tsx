@@ -121,19 +121,25 @@ function OntologyMeta({ iri, version }: { iri: string; version: OntologyVersion 
 // ── Collapsible section ───────────────────────────────────────────────────────
 
 function ExpandToggleBtn({ onExpand, onCollapse }: { onExpand: () => void; onCollapse: () => void }) {
-  const btnStyle: React.CSSProperties = {
-    fontSize: 9, padding: '2px 6px', borderRadius: 3,
-    border: '1px solid var(--border)', background: 'none',
-    color: 'var(--text-dim)', cursor: 'pointer',
-    textTransform: 'uppercase', letterSpacing: 0.5,
+  const [expanded, setExpanded] = useState(false)
+  function handleClick() {
+    if (expanded) { onCollapse() } else { onExpand() }
+    setExpanded(v => !v)
   }
-  const hover = (e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.borderColor = 'var(--text-muted)' }
-  const unhover = (e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.borderColor = 'var(--border)' }
   return (
-    <div style={{ display: 'inline-flex', gap: 4 }}>
-      <button style={btnStyle} onMouseEnter={hover} onMouseLeave={unhover} onClick={onExpand}>Expand</button>
-      <button style={btnStyle} onMouseEnter={hover} onMouseLeave={unhover} onClick={onCollapse}>Collapse</button>
-    </div>
+    <button
+      onClick={handleClick}
+      style={{
+        fontSize: 9, padding: '2px 6px', borderRadius: 3,
+        border: '1px solid var(--border)', background: 'none',
+        color: 'var(--text-dim)', cursor: 'pointer',
+        textTransform: 'uppercase', letterSpacing: 0.5,
+      }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--text-muted)' }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
+    >
+      {expanded ? 'Collapse' : 'Expand'}
+    </button>
   )
 }
 
