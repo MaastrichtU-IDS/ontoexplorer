@@ -399,7 +399,7 @@ export default function OntologyPage() {
                 revealIri={selectedTermIri}
               />
             </div>
-            <CollapsibleSection label="Object Properties" defaultOpen={false}>
+            <CollapsibleSection label="Object Properties" defaultOpen={true}>
               <div style={{ padding: '4px 10px 2px' }}>
                 <button
                   onClick={() => setHideInverseProps(v => !v)}
@@ -426,7 +426,7 @@ export default function OntologyPage() {
                 hideInverse={hideInverseProps}
               />
             </CollapsibleSection>
-            <CollapsibleSection label="Data Properties" defaultOpen={false}>
+            <CollapsibleSection label="Data Properties" defaultOpen={true}>
               <ClassTree
                 ontologyId={oid}
                 versionId={activeVid}
