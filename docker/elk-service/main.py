@@ -5,6 +5,7 @@ import io
 import logging
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import rdflib
@@ -27,6 +28,11 @@ logging.basicConfig(level=logging.INFO)
 _JUSTIFICATION_TIME_LIMIT = int(os.getenv("JUSTIFICATION_TIME_LIMIT_SECONDS", "300"))
 
 app = FastAPI(title="ELK Reasoning Service", version="2.0.0")
+
+# Single-threaded executor so classifications are serialized (classifier is not thread-safe)
+_classifier_pool = ThreadPoolExecutor(max_workers=1)
+# Track in-progress version IDs so GET /classify/{id} returns 409 while running
+_in_progress: set[str] = set()
 
 
 # ── Request / Response models ─────────────────────────────────────────────────
@@ -56,25 +62,36 @@ def health():
     return {"status": "ok", "redis": "ok" if redis_ok else "error"}
 
 
-@app.post("/classify")
+@app.post("/classify", status_code=202)
 def run_classify(req: ClassifyRequest):
-    """Run OWL-EL classification and persist result in Redis."""
+    """Start OWL-EL classification in background; poll GET /classify/{version_id} for result."""
+    # If already cached, this is a no-op re-submit — return 202 and the caller will GET it
+    existing = load_classification(req.version_id)
+    if existing is not None:
+        return {"version_id": req.version_id, "status": "done"}
+
+    if req.version_id in _in_progress:
+        return {"version_id": req.version_id, "status": "running"}
+
     try:
         g = rdflib.Graph()
         g.parse(io.StringIO(req.ntriples), format="nt")
     except Exception as exc:
         raise HTTPException(422, f"Failed to parse N-Triples: {exc}")
 
-    result = classify(g, req.version_id)
-    store_classification(result)
+    _in_progress.add(req.version_id)
 
-    return {
-        "version_id": result.version_id,
-        "class_count": result.class_count,
-        "unsatisfiable_count": len(result.unsatisfiable),
-        "duration_ms": result.duration_ms,
-        "cached": True,
-    }
+    def _run(graph: rdflib.Graph, version_id: str) -> None:
+        try:
+            result = classify(graph, version_id)
+            store_classification(result)
+        except Exception:
+            log.exception("classify_background_error", extra={"version_id": version_id})
+        finally:
+            _in_progress.discard(version_id)
+
+    _classifier_pool.submit(_run, g, req.version_id)
+    return {"version_id": req.version_id, "status": "running"}
 
 
 @app.get("/classify/{version_id}")
@@ -189,6 +206,8 @@ def invalidate(version_id: str):
 def _load_or_404(version_id: str):
     result = load_classification(version_id)
     if result is None:
+        if version_id in _in_progress:
+            raise HTTPException(409, "Reasoning in progress — poll again shortly")
         raise HTTPException(409, "Reasoning not yet completed for this version — submit via POST /classify")
     return result
 

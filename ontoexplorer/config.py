@@ -38,7 +38,7 @@ class Settings(BaseSettings):
 
     # ELK reasoning service
     elk_service_url: str = "http://localhost:8001"
-    elk_service_timeout: int = 300  # seconds — reasoning can be slow
+    elk_service_timeout: int = 3600  # seconds — large ontologies (GO) can take >10 min
 
     # JWT / session
     jwt_secret_key: str = "change-me-in-production"

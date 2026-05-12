@@ -1,6 +1,7 @@
 """HTTP client for the ELK reasoning service (v2)."""
 from __future__ import annotations
 
+import asyncio
 import httpx
 import rdflib
 
@@ -13,15 +14,34 @@ def _elk_url(path: str) -> str:
 
 async def classify_v2(graph: rdflib.Graph, version_id: str) -> dict:
     """
-    Run full OWL-EL classification and cache in ELK service.
-    Returns the summary dict from POST /classify.
+    POST N-Triples to ELK service (returns 202 immediately), then poll until done.
+    Max wait is elk_service_timeout seconds (default 300); raises TimeoutError if exceeded.
     """
     ntriples = graph.serialize(format="nt")
-    async with httpx.AsyncClient(timeout=get_settings().elk_service_timeout) as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(_elk_url("/classify"),
                                  json={"ntriples": ntriples, "version_id": version_id})
         resp.raise_for_status()
-    return resp.json()
+
+    # If already cached (status="done"), we're done
+    if resp.json().get("status") == "done":
+        return resp.json()
+
+    # Poll GET /classify/{version_id} until 200 or timeout
+    max_wait = get_settings().elk_service_timeout
+    poll_interval = 5
+    elapsed = 0
+    while elapsed < max_wait:
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            poll = await client.get(_elk_url(f"/classify/{version_id}"))
+        if poll.status_code == 200:
+            return poll.json()
+        if poll.status_code != 409:
+            poll.raise_for_status()
+
+    raise TimeoutError(f"ELK classification for {version_id} did not complete within {max_wait}s")
 
 
 async def superclasses(version_id: str, class_iri: str, direct: bool = False) -> dict:

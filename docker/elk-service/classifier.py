@@ -27,6 +27,9 @@ class ClassificationResult:
     duration_ms: float
 
 
+_TRACE_CLASS_LIMIT = 5_000  # disable proof traces for ontologies larger than this
+
+
 def classify(graph: rdflib.Graph, version_id: str) -> ClassificationResult:
     """Run OWL-EL classification and return a ClassificationResult."""
     from datetime import datetime, timezone
@@ -38,6 +41,8 @@ def classify(graph: rdflib.Graph, version_id: str) -> ClassificationResult:
     exists_sups  = _collect_existential_supers(graph)   # (role, filler) -> set of named sups
     role_hier    = _collect_role_hierarchy(graph)        # role -> set of super-roles
     disjoints    = _collect_disjointness(graph, classes) # cls -> set of disjoint classes
+
+    record_traces = len(classes) <= _TRACE_CLASS_LIMIT
 
     # Forward index: cls -> set of all inferred supers (starts with asserted + reflexive + Thing)
     inferred: dict[str, set[str]] = defaultdict(set)
@@ -57,10 +62,12 @@ def classify(graph: rdflib.Graph, version_id: str) -> ClassificationResult:
             if cls_str in classes:
                 inferred[cls_str].add(str(o))
 
-    # Proof trace: "sub|sup" -> list of steps
+    # Proof trace: "sub|sup" -> list of steps (disabled for large ontologies)
     traces: dict[str, list[dict]] = {}
 
     def _record(sub: str, sup: str, rule: str, premises: list[str], axioms: list[str]) -> None:
+        if not record_traces:
+            return
         key = f"{sub}|{sup}"
         if key not in traces:
             traces[key] = []
