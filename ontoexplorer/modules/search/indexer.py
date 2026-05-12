@@ -244,6 +244,10 @@ def build_index(version_id: str, ontology_id: str) -> IndexStats:
         if iri in labels_by_iri:
             labels_by_iri[iri].append(sol["label"].value)
 
+    # Invalidate root terms cache so API serves fresh data with the new source fields
+    for key in r.scan_iter(f"terms_root:{version_id}:*"):
+        r.delete(key)
+
     # Write to Redis via pipeline
     prefix_key = _prefix_key(version_id)
     r.delete(prefix_key)
