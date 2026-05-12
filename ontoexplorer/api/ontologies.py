@@ -665,10 +665,21 @@ async def get_term(
                 "filler_label": filler_label or filler_val,
             })
 
+    # Is this term the object of owl:inverseOf declared by another property?
+    def _check_is_inverse_target(s) -> bool:
+        q = f"""
+            PREFIX owl: <http://www.w3.org/2002/07/owl#>
+            ASK {{ GRAPH <{g_iri}> {{ ?p owl:inverseOf <{term_iri}> . FILTER(isIRI(?p)) }} }}
+        """
+        return bool(s.query(q))
+
+    is_inverse_target = await asyncio.to_thread(_check_is_inverse_target, store)
+
     return {
         "iri": term_iri,
         "label": _label(term_iri),
         "properties": properties,
+        "is_inverse_target": is_inverse_target,
         "superclasses": {
             "asserted": _term_list(asserted_sup_iris),
             "inferred": _term_list(inferred_sup_iris),

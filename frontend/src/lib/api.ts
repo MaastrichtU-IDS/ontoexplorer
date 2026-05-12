@@ -116,6 +116,7 @@ export interface RawTermDetail {
   iri: string
   label: string
   properties: Record<string, string[]>
+  is_inverse_target: boolean
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
   subclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
   usage: PropertyUsage[]
@@ -126,6 +127,7 @@ export interface ParsedTerm {
   label: string
   definition: string | null
   entityType: 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' | 'individual'
+  isInverseTarget: boolean
   synonyms: { exact: string[]; related: string[]; broad: string[]; narrow: string[] }
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
   subclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
@@ -257,6 +259,7 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
     label: raw.label ?? label,
     definition,
     entityType,
+    isInverseTarget: raw.is_inverse_target ?? false,
     synonyms: {
       exact:   p[P.exactSyn]   ?? [],
       related: p[P.relatedSyn] ?? [],

@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useOntologies } from '../hooks/useOntologies'
 import { useVersions } from '../hooks/useVersions'
+import { useTerm } from '../hooks/useTerm'
 import { slugFromIri, OntologyVersion, SearchResult, api } from '../lib/api'
 import ClassTree from '../components/ClassTree'
 import TermPanel from '../components/TermPanel'
@@ -119,31 +120,24 @@ function OntologyMeta({ iri, version }: { iri: string; version: OntologyVersion 
 
 // ── Collapsible section ───────────────────────────────────────────────────────
 
-function CollapsibleSection({ label, defaultOpen = true, headerExtra, children }: {
-  label: string; defaultOpen?: boolean; headerExtra?: React.ReactNode; children: React.ReactNode
+function CollapsibleSection({ label, defaultOpen = true, children }: {
+  label: string; defaultOpen?: boolean; children: React.ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
     <div style={{ borderBottom: '1px solid var(--border)' }}>
-      <div style={{ display: 'flex', alignItems: 'center' }}>
-        <button
-          onClick={() => setOpen(v => !v)}
-          style={{
-            flex: 1, textAlign: 'left',
-            padding: '7px 10px', display: 'flex', alignItems: 'center', gap: 6,
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
-          }}
-        >
-          <span style={{ fontSize: 9, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>
-          {label}
-        </button>
-        {headerExtra && (
-          <div style={{ paddingRight: 8, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-            {headerExtra}
-          </div>
-        )}
-      </div>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{
+          width: '100%', textAlign: 'left',
+          padding: '7px 10px', display: 'flex', alignItems: 'center', gap: 6,
+          background: 'none', border: 'none', cursor: 'pointer',
+          color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
+        }}
+      >
+        <span style={{ fontSize: 9, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>
+        {label}
+      </button>
       {open && children}
     </div>
   )
@@ -278,6 +272,15 @@ export default function OntologyPage() {
   const [classMode, setClassMode] = useState<HierarchyMode>('asserted')
 
   const [hideInverseProps, setHideInverseProps] = useState(true)
+
+  // Auto-reveal inverses when navigating to a term that is itself an inverse target
+  const { data: selectedTermData } = useTerm(oid ?? null, activeVid ?? null, selectedTermIri)
+  useEffect(() => {
+    if (selectedTermData?.isInverseTarget && hideInverseProps) {
+      setHideInverseProps(false)
+    }
+  }, [selectedTermData?.isInverseTarget, selectedTermData?.iri])
+
   const [paneWidth, setPaneWidth] = useState<number>(() => {
     const stored = localStorage.getItem('onto-pane-width')
     return stored ? Number(stored) : PANE_DEFAULT
@@ -396,25 +399,23 @@ export default function OntologyPage() {
                 revealIri={selectedTermIri}
               />
             </div>
-            <CollapsibleSection
-              label="Object Properties"
-              defaultOpen={false}
-              headerExtra={
+            <CollapsibleSection label="Object Properties" defaultOpen={false}>
+              <div style={{ padding: '4px 10px 2px' }}>
                 <button
                   onClick={() => setHideInverseProps(v => !v)}
-                  title={hideInverseProps ? 'Showing direct properties only (click to show inverses)' : 'Showing all properties (click to hide inverses)'}
                   style={{
-                    fontSize: 9, padding: '1px 5px', borderRadius: 3,
+                    fontSize: 9, padding: '2px 6px', borderRadius: 3,
                     border: '1px solid var(--border)',
-                    background: hideInverseProps ? 'var(--bg)' : 'rgba(80,160,255,0.15)',
-                    color: hideInverseProps ? 'var(--text-dim)' : 'var(--accent-blue)',
+                    background: 'none',
+                    color: 'var(--text-dim)',
                     cursor: 'pointer', textTransform: 'uppercase', letterSpacing: 0.5,
                   }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--text-muted)' }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
                 >
-                  {hideInverseProps ? 'hide inv' : 'show inv'}
+                  {hideInverseProps ? 'Show Inv' : 'Hide Inv'}
                 </button>
-              }
-            >
+              </div>
               <ClassTree
                 ontologyId={oid}
                 versionId={activeVid}
