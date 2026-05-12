@@ -120,6 +120,23 @@ function OntologyMeta({ iri, version }: { iri: string; version: OntologyVersion 
 
 // ── Collapsible section ───────────────────────────────────────────────────────
 
+function ExpandToggleBtn({ onExpand, onCollapse }: { onExpand: () => void; onCollapse: () => void }) {
+  const btnStyle: React.CSSProperties = {
+    fontSize: 9, padding: '2px 6px', borderRadius: 3,
+    border: '1px solid var(--border)', background: 'none',
+    color: 'var(--text-dim)', cursor: 'pointer',
+    textTransform: 'uppercase', letterSpacing: 0.5,
+  }
+  const hover = (e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.borderColor = 'var(--text-muted)' }
+  const unhover = (e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.borderColor = 'var(--border)' }
+  return (
+    <div style={{ display: 'inline-flex', gap: 4 }}>
+      <button style={btnStyle} onMouseEnter={hover} onMouseLeave={unhover} onClick={onExpand}>Expand</button>
+      <button style={btnStyle} onMouseEnter={hover} onMouseLeave={unhover} onClick={onCollapse}>Collapse</button>
+    </div>
+  )
+}
+
 function CollapsibleSection({ label, defaultOpen = true, children }: {
   label: string; defaultOpen?: boolean; children: React.ReactNode
 }) {
@@ -272,6 +289,12 @@ export default function OntologyPage() {
   const [classMode, setClassMode] = useState<HierarchyMode>('asserted')
 
   const [hideInverseProps, setHideInverseProps] = useState(true)
+  const [classExpand,   setClassExpand]   = useState(0)
+  const [classCollapse, setClassCollapse] = useState(0)
+  const [objExpand,     setObjExpand]     = useState(0)
+  const [objCollapse,   setObjCollapse]   = useState(0)
+  const [dataExpand,    setDataExpand]    = useState(0)
+  const [dataCollapse,  setDataCollapse]  = useState(0)
 
   // Auto-reveal inverses when navigating to a term that is itself an inverse target
   const { data: selectedTermData } = useTerm(oid ?? null, activeVid ?? null, selectedTermIri)
@@ -372,6 +395,10 @@ export default function OntologyPage() {
                 <span style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, flex: 1 }}>
                   Classes
                 </span>
+                <ExpandToggleBtn
+                  onExpand={() => setClassExpand(v => v + 1)}
+                  onCollapse={() => setClassCollapse(v => v + 1)}
+                />
                 <div style={{ display: 'flex', borderRadius: 4, overflow: 'hidden', border: '1px solid var(--border)' }}>
                   {(['asserted', 'inferred'] as HierarchyMode[]).map(m => (
                     <button
@@ -397,24 +424,29 @@ export default function OntologyPage() {
                 entityType="class"
                 mode={classMode}
                 revealIri={selectedTermIri}
+                expandSignal={classExpand}
+                collapseSignal={classCollapse}
               />
             </div>
             <CollapsibleSection label="Object Properties" defaultOpen={true}>
-              <div style={{ padding: '4px 10px 2px' }}>
+              <div style={{ padding: '4px 10px 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <button
                   onClick={() => setHideInverseProps(v => !v)}
                   style={{
                     fontSize: 9, padding: '2px 6px', borderRadius: 3,
-                    border: '1px solid var(--border)',
-                    background: 'none',
-                    color: 'var(--text-dim)',
-                    cursor: 'pointer', textTransform: 'uppercase', letterSpacing: 0.5,
+                    border: '1px solid var(--border)', background: 'none',
+                    color: 'var(--text-dim)', cursor: 'pointer',
+                    textTransform: 'uppercase', letterSpacing: 0.5,
                   }}
                   onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--text-muted)' }}
                   onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
                 >
                   {hideInverseProps ? 'Show Inv' : 'Hide Inv'}
                 </button>
+                <ExpandToggleBtn
+                  onExpand={() => setObjExpand(v => v + 1)}
+                  onCollapse={() => setObjCollapse(v => v + 1)}
+                />
               </div>
               <ClassTree
                 ontologyId={oid}
@@ -424,9 +456,17 @@ export default function OntologyPage() {
                 entityType="object_property"
                 revealIri={selectedTermIri}
                 hideInverse={hideInverseProps}
+                expandSignal={objExpand}
+                collapseSignal={objCollapse}
               />
             </CollapsibleSection>
             <CollapsibleSection label="Data Properties" defaultOpen={true}>
+              <div style={{ padding: '4px 10px 2px' }}>
+                <ExpandToggleBtn
+                  onExpand={() => setDataExpand(v => v + 1)}
+                  onCollapse={() => setDataCollapse(v => v + 1)}
+                />
+              </div>
               <ClassTree
                 ontologyId={oid}
                 versionId={activeVid}
@@ -434,6 +474,8 @@ export default function OntologyPage() {
                 onSelect={selectTerm}
                 entityType="data_property"
                 revealIri={selectedTermIri}
+                expandSignal={dataExpand}
+                collapseSignal={dataCollapse}
               />
             </CollapsibleSection>
             <CollapsibleSection label="Annotation Properties" defaultOpen={false}>

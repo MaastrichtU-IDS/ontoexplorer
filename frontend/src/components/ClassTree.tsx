@@ -17,9 +17,11 @@ interface NodeProps {
   mode: Mode
   expandSet: Set<string>
   hideInverse: boolean
+  expandSignal: number
+  collapseSignal: number
 }
 
-function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, entityType, mode, expandSet, hideInverse }: NodeProps) {
+function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, entityType, mode, expandSet, hideInverse, expandSignal, collapseSignal }: NodeProps) {
   const shouldExpand = expandSet.has(term.iri)
   const [expanded, setExpanded] = useState(shouldExpand)
 
@@ -27,6 +29,10 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, e
   useEffect(() => {
     if (shouldExpand) setExpanded(true)
   }, [shouldExpand])
+
+  // Respond to expand/collapse all signals
+  useEffect(() => { if (expandSignal > 0 && term.has_children !== false) setExpanded(true) }, [expandSignal])
+  useEffect(() => { if (collapseSignal > 0) setExpanded(false) }, [collapseSignal])
 
   const asserted = useClassTreeNodes(
     mode === 'asserted' && expanded ? ontologyId : null,
@@ -96,6 +102,8 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, e
               mode={mode}
               expandSet={expandSet}
               hideInverse={hideInverse}
+              expandSignal={expandSignal}
+              collapseSignal={collapseSignal}
             />
           ))}
         </ul>
@@ -113,11 +121,13 @@ interface Props {
   mode?: Mode
   revealIri?: string | null
   hideInverse?: boolean
+  expandSignal?: number
+  collapseSignal?: number
 }
 
 const EMPTY_SET = new Set<string>()
 
-export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect, entityType = 'class', mode = 'asserted', revealIri, hideInverse = false }: Props) {
+export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect, entityType = 'class', mode = 'asserted', revealIri, hideInverse = false, expandSignal = 0, collapseSignal = 0 }: Props) {
   const asserted = useClassTreeNodes(mode === 'asserted' ? ontologyId : null, mode === 'asserted' ? versionId : null, null, entityType, hideInverse)
   const inferred = useInferredTreeNodes(mode === 'inferred' ? ontologyId : null, mode === 'inferred' ? versionId : null, null)
 
@@ -209,6 +219,8 @@ export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect
           mode={mode}
           expandSet={expandSet}
           hideInverse={hideInverse}
+          expandSignal={expandSignal}
+          collapseSignal={collapseSignal}
         />
       ))}
     </ul>
