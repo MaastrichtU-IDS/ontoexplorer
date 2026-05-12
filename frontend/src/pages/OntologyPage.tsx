@@ -202,14 +202,6 @@ function OntologyMeta({ iri, version }: { iri: string; version: OntologyVersion 
   return (
     <div style={{ padding: '1.5rem 2rem', overflow: 'auto', flex: 1 }}>
 
-      {/* ── Document metadata ── */}
-      <h3 style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
-        Document Metadata
-      </h3>
-      <div style={{ marginBottom: 28 }}>
-        <OntologyDocMeta ontologyId={version.ontology_id} versionId={version.id} />
-      </div>
-
       {/* ── Statistics ── */}
       <h3 style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
         Statistics
@@ -228,6 +220,14 @@ function OntologyMeta({ iri, version }: { iri: string; version: OntologyVersion 
           )}
         </div>
       ) : null}
+
+      {/* ── Document metadata ── */}
+      <h3 style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
+        Document Metadata
+      </h3>
+      <div style={{ marginBottom: 28 }}>
+        <OntologyDocMeta ontologyId={version.ontology_id} versionId={version.id} />
+      </div>
 
       {/* ── Repository metadata ── */}
       <h3 style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
