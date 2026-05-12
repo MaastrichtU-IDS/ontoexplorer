@@ -209,6 +209,49 @@ async def _run_reasoning(db, version_id: str) -> dict:
     return {"version_id": version_id, "inferred_count": inferred_count}
 
 
+@celery_app.task(name="ontoexplorer.load_imports", bind=True, max_retries=1)
+def load_imports(self, version_id: str, ontology_id: str) -> dict:
+    """
+    Load all resolved owl:imports for a version into Oxigraph (backfill task).
+
+    Safe to re-run: appends triples without clearing the named graph, so it is
+    idempotent if the same triples are already present (Oxigraph deduplicates).
+    """
+    async def _run():
+        from sqlalchemy import select
+        from ontoexplorer.clients.oxigraph import append_bytes_to_graph
+        from ontoexplorer.database import make_celery_db_session
+        from ontoexplorer.models.db import OntologyImport
+        from ontoexplorer.modules.storage.minio_client import get_import_bytes
+
+        loaded = 0
+        async with make_celery_db_session()() as db:
+            result = await db.execute(
+                select(OntologyImport).where(OntologyImport.version_id == version_id)
+            )
+            imports = result.scalars().all()
+
+        for imp in imports:
+            if not imp.resolved_minio_key:
+                continue
+            try:
+                data, ext = get_import_bytes(imp.resolved_minio_key)
+                append_bytes_to_graph(ontology_id, version_id, data, ext)
+                loaded += 1
+                log.info("import_loaded", version_id=version_id, iri=imp.import_iri)
+            except Exception as exc:
+                log.warning("import_load_failed", version_id=version_id,
+                            iri=imp.import_iri, error=str(exc))
+
+        return {"version_id": version_id, "imports_loaded": loaded}
+
+    try:
+        return asyncio.run(_run())
+    except Exception as exc:
+        log.error("load_imports_failed", version_id=version_id, error=str(exc))
+        raise self.retry(exc=exc, countdown=30)
+
+
 @celery_app.task(name="ontoexplorer.index_ontology", bind=True, max_retries=2)
 def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
     """Build the Redis entity search index for a version."""

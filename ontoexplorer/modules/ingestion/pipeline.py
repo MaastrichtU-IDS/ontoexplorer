@@ -83,7 +83,7 @@ class IngestionResult:
     format: OntologyFormat
     triple_count: int
     is_duplicate: bool
-    import_results: dict[str, str] = field(default_factory=dict)
+    import_results: dict = field(default_factory=dict)  # iri → ResolvedImport
     warnings: list[str] = field(default_factory=list)
 
 
@@ -153,12 +153,24 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
         log.info("parsed_triples", count=len(graph))
         triple_count = load_graph(ontology_id, version_id, graph)
 
-    # ── Step 3: Resolve owl:imports ───────────────────────────────────────────
+    # ── Step 3: Resolve owl:imports and load into Oxigraph ───────────────────
     if graph is not None:
         import_results = resolve_imports(graph)
     else:
         import_results = resolve_imports_sparql(ontology_id, version_id)
-    warnings = [f"Failed to fetch import: {iri}" for iri, key in import_results.items() if not key]
+    warnings = [f"Failed to fetch import: {iri}" for iri, r in import_results.items() if not r.key]
+
+    # Load each resolved import's triples into the same named graph so the indexer
+    # and reasoner see the full import closure, not just the main ontology's axioms.
+    from ontoexplorer.clients.oxigraph import append_bytes_to_graph
+    for imp_iri, imp in import_results.items():
+        if imp.data:
+            try:
+                append_bytes_to_graph(ontology_id, version_id, imp.data, imp.ext)
+                log.info("loaded_import_triples", iri=imp_iri, ext=imp.ext)
+            except Exception as exc:
+                log.warning("failed_to_load_import_triples", iri=imp_iri, error=str(exc))
+                warnings.append(f"Could not load import triples: {imp_iri}")
 
     # ── Refine ontology IRI from loaded triples (streaming path) ──────────────
     canonical_iri = _extract_ontology_iri_sparql(ontology_id, version_id)
@@ -182,11 +194,11 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     )
     db.add(version)
 
-    for imp_iri, imp_key in import_results.items():
+    for imp_iri, imp in import_results.items():
         db.add(OntologyImport(
             version_id=version_id,
             import_iri=imp_iri,
-            resolved_minio_key=imp_key or None,
+            resolved_minio_key=imp.key or None,
         ))
 
     await db.commit()

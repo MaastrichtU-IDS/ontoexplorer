@@ -56,6 +56,12 @@ def fetch_import(key: str) -> bytes:
     return download_bytes(_settings().minio_imports_bucket, key)
 
 
+def get_import_bytes(key: str) -> tuple[bytes, str]:
+    """Return (bytes, extension) for a stored import key like '{sha256}.ttl'."""
+    ext = key.rsplit(".", 1)[-1] if "." in key else "rdf"
+    return download_bytes(_settings().minio_imports_bucket, key), ext
+
+
 def import_exists(sha256: str, ext: str) -> bool:
     return object_exists(_settings().minio_imports_bucket, import_key(sha256, ext))
 

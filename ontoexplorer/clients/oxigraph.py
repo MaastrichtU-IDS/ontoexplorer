@@ -94,6 +94,43 @@ def bulk_load_bytes(ontology_id: str, version_id: str, data: bytes, mime_type: s
     return count
 
 
+_EXT_TO_MIME: dict[str, str] = {
+    "rdf": "application/rdf+xml",
+    "owl": "application/rdf+xml",
+    "ttl": "text/turtle",
+    "nt":  "application/n-triples",
+    "jsonld": "application/ld+json",
+}
+
+
+def append_bytes_to_graph(ontology_id: str, version_id: str, data: bytes, ext: str) -> int:
+    """
+    Append triples from bytes into a named graph without clearing existing content.
+
+    Used to merge resolved owl:imports into the same named graph as the importing ontology.
+    Formats not directly supported by Oxigraph (e.g. OBO) are converted via rdflib first.
+    Returns the updated total triple count for the named graph.
+    """
+    store = get_store()
+    iri = graph_iri(ontology_id, version_id)
+    named_graph = pyoxigraph.NamedNode(iri)
+
+    mime = _EXT_TO_MIME.get(ext)
+    if mime:
+        store.bulk_load(BytesIO(data), mime, to_graph=named_graph)
+    else:
+        # OBO or unrecognised format: use rdflib as intermediary
+        import rdflib as _rdflib
+        from ontoexplorer.modules.ingestion.import_resolver import _guess_format
+        fmt = _guess_format(data)
+        g = _rdflib.Graph()
+        g.parse(data=data, format=fmt)
+        nt_bytes = g.serialize(format="nt").encode("utf-8")
+        store.bulk_load(BytesIO(nt_bytes), "application/n-triples", to_graph=named_graph)
+
+    return sum(1 for _ in store.quads_for_pattern(None, None, None, named_graph))
+
+
 def delete_graph(ontology_id: str, version_id: str, inferred: bool = False) -> None:
     store = get_store()
     iri = graph_iri(ontology_id, version_id, inferred)
