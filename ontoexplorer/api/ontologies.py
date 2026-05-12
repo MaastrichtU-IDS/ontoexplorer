@@ -142,12 +142,32 @@ async def download_version(ontology_id: str, version_id: str, db: AsyncSession =
     return RedirectResponse(url=url)
 
 
+_STATS_CACHE_TTL = 86_400  # 24 hours — versions are immutable once ingested
+
+
+def _stats_cache_key(version_id: str) -> str:
+    return f"version_stats:{version_id}"
+
+
 @router.get("/{ontology_id}/{version_id}/stats", summary="VoID statistics for a version")
 async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = Depends(get_db)):
+    import asyncio
+    import json as _json
+
     await _get_version_or_404(db, ontology_id, version_id)
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
     from ontoexplorer.modules.search.indexer import _meta_key, _get_redis
 
+    # ── Redis cache read-through ──────────────────────────────────────────────
+    try:
+        r = _get_redis()
+        cached = r.get(_stats_cache_key(version_id))
+        if cached:
+            return _json.loads(cached)
+    except Exception:
+        pass
+
+    # ── Compute: all queries run concurrently off the event loop ─────────────
     store = get_store()
     g = graph_iri(ontology_id, version_id)
 
@@ -158,59 +178,73 @@ async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = De
             return int(v.value) if v is not None else 0
         return 0
 
-    triple_count = _count(f"SELECT (COUNT(*) AS ?n) WHERE {{ GRAPH <{g}> {{ ?s ?p ?o }} }}")
-    class_count  = _count(f"""
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
-        SELECT (COUNT(DISTINCT ?c) AS ?n) WHERE {{
-            GRAPH <{g}> {{ ?c a owl:Class . FILTER(isIRI(?c)) }}
-        }}
-    """)
-    obj_prop_count  = _count(f"""
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
-        SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE {{
-            GRAPH <{g}> {{ ?p a owl:ObjectProperty . FILTER(isIRI(?p)) }}
-        }}
-    """)
-    data_prop_count = _count(f"""
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
-        SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE {{
-            GRAPH <{g}> {{ ?p a owl:DatatypeProperty . FILTER(isIRI(?p)) }}
-        }}
-    """)
-    ann_prop_count  = _count(f"""
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
-        SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE {{
-            GRAPH <{g}> {{ ?p a owl:AnnotationProperty . FILTER(isIRI(?p)) }}
-        }}
-    """)
-    prop_count = obj_prop_count + data_prop_count + ann_prop_count
-    ind_count    = _count(f"""
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
-        SELECT (COUNT(DISTINCT ?i) AS ?n) WHERE {{
-            GRAPH <{g}> {{ ?i a owl:NamedIndividual . FILTER(isIRI(?i)) }}
-        }}
-    """)
+    (
+        triple_count,
+        class_count,
+        obj_prop_count,
+        data_prop_count,
+        ann_prop_count,
+        ind_count,
+    ) = await asyncio.gather(
+        asyncio.to_thread(_count, f"SELECT (COUNT(*) AS ?n) WHERE {{ GRAPH <{g}> {{ ?s ?p ?o }} }}"),
+        asyncio.to_thread(_count, f"""
+            PREFIX owl: <http://www.w3.org/2002/07/owl#>
+            SELECT (COUNT(DISTINCT ?c) AS ?n) WHERE {{
+                GRAPH <{g}> {{ ?c a owl:Class . FILTER(isIRI(?c)) }}
+            }}
+        """),
+        asyncio.to_thread(_count, f"""
+            PREFIX owl: <http://www.w3.org/2002/07/owl#>
+            SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE {{
+                GRAPH <{g}> {{ ?p a owl:ObjectProperty . FILTER(isIRI(?p)) }}
+            }}
+        """),
+        asyncio.to_thread(_count, f"""
+            PREFIX owl: <http://www.w3.org/2002/07/owl#>
+            SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE {{
+                GRAPH <{g}> {{ ?p a owl:DatatypeProperty . FILTER(isIRI(?p)) }}
+            }}
+        """),
+        asyncio.to_thread(_count, f"""
+            PREFIX owl: <http://www.w3.org/2002/07/owl#>
+            SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE {{
+                GRAPH <{g}> {{ ?p a owl:AnnotationProperty . FILTER(isIRI(?p)) }}
+            }}
+        """),
+        asyncio.to_thread(_count, f"""
+            PREFIX owl: <http://www.w3.org/2002/07/owl#>
+            SELECT (COUNT(DISTINCT ?i) AS ?n) WHERE {{
+                GRAPH <{g}> {{ ?i a owl:NamedIndividual . FILTER(isIRI(?i)) }}
+            }}
+        """),
+    )
 
     index_meta: dict = {}
     try:
-        import json as _json
-        r = _get_redis()
         raw = r.get(_meta_key(version_id))
         if raw:
             index_meta = _json.loads(raw)
     except Exception:
         pass
 
-    return {
+    result = {
         "triple_count":              triple_count,
         "class_count":               class_count,
-        "property_count":            prop_count,
+        "property_count":            obj_prop_count + data_prop_count + ann_prop_count,
         "object_property_count":     obj_prop_count,
         "datatype_property_count":   data_prop_count,
         "annotation_property_count": ann_prop_count,
         "individual_count":          ind_count,
         "index_meta":                index_meta,
     }
+
+    # ── Cache result ──────────────────────────────────────────────────────────
+    try:
+        r.setex(_stats_cache_key(version_id), _STATS_CACHE_TTL, _json.dumps(result))
+    except Exception:
+        pass
+
+    return result
 
 
 # ── Ontology document metadata ────────────────────────────────────────────────
@@ -1102,6 +1136,13 @@ async def deprecate_version(
         import asyncio
         from ontoexplorer.modules.search.indexer import invalidate_index
         await asyncio.to_thread(invalidate_index, version_id)
+    except Exception:
+        pass  # Non-fatal
+
+    # Invalidate stats cache for this version
+    try:
+        from ontoexplorer.modules.search.indexer import _get_redis
+        _get_redis().delete(_stats_cache_key(version_id))
     except Exception:
         pass  # Non-fatal
 
