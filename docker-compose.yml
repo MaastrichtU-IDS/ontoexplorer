@@ -63,8 +63,11 @@ services:
 
   redis:
     image: redis:7
+    command: redis-server --appendonly yes --appendfsync everysec
     ports:
       - "6379:6379"
+    volumes:
+      - redis-data:/data
 
   elk-service:
     build: docker/elk-service
@@ -113,3 +116,4 @@ volumes:
   postgres-data:
   oxigraph-data:
   grafana-data:
+  redis-data:
