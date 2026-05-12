@@ -16,6 +16,60 @@ _TIMEOUT = httpx.Timeout(60.0)
 _MAX_DEPTH = 20  # guard against circular imports
 
 
+def resolve_imports_sparql(ontology_id: str, version_id: str) -> dict[str, str]:
+    """
+    Extract owl:imports from an already-loaded Oxigraph graph via SPARQL, then fetch each.
+
+    Returns a dict mapping import IRI → MinIO key (or empty string if fetch failed).
+    """
+    from ontoexplorer.clients.oxigraph import sparql_query, graph_iri
+
+    g = graph_iri(ontology_id, version_id)
+    results = sparql_query(f"""
+        SELECT ?import FROM <{g}> WHERE {{
+            ?ont <http://www.w3.org/2002/07/owl#imports> ?import .
+        }}
+    """)
+    import_iris = [str(row["import"]) for row in results]
+    if not import_iris:
+        return {}
+
+    visited: set[str] = set()
+    all_results: dict[str, str] = {}
+    for iri in import_iris:
+        _resolve_single_import(iri, visited, all_results, depth=0)
+    return all_results
+
+
+def _resolve_single_import(
+    iri: str,
+    visited: set[str],
+    results: dict[str, str],
+    depth: int,
+) -> None:
+    if iri in visited or depth > _MAX_DEPTH:
+        return
+    visited.add(iri)
+    try:
+        data, ext = _fetch_import(iri)
+        sha256 = hashlib.sha256(data).hexdigest()
+        if not import_exists(sha256, ext):
+            store_import(sha256, ext, data)
+        key = import_key(sha256, ext)
+        results[iri] = key
+        logger.info("Resolved import %s → %s", iri, key)
+        sub_graph = rdflib.Graph()
+        try:
+            sub_graph.parse(data=data, format=_guess_format(data))
+            for sub_iri in sub_graph.objects(None, _OWL_IMPORTS):
+                _resolve_single_import(str(sub_iri), visited, results, depth + 1)
+        except Exception as exc:
+            logger.warning("Could not parse import %s for sub-imports: %s", iri, exc)
+    except Exception as exc:
+        logger.warning("Failed to fetch import %s: %s (continuing with partial closure)", iri, exc)
+        results[iri] = ""
+
+
 def resolve_imports(graph: rdflib.Graph, visited: set[str] | None = None, depth: int = 0) -> dict[str, str]:
     """
     Recursively fetch all owl:imports from graph.

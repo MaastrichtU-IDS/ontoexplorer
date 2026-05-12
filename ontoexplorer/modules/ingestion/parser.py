@@ -22,11 +22,13 @@ def parse_ontology(data: bytes, fmt: OntologyFormat) -> rdflib.Graph:
 
 
 def _parse_with_horned_owl(data: bytes, fmt: OntologyFormat) -> rdflib.Graph:
-    """Parse OWL/XML or Manchester via py_horned_owl, then convert to rdflib Graph."""
+    """Parse OWL/XML or Manchester via py_horned_owl, then convert to rdflib Graph.
+    Falls back to rdflib xml parser when py_horned_owl is not installed."""
     try:
         import py_horned_owl as pho
-    except ImportError as exc:
-        raise RuntimeError("py_horned_owl is not installed") from exc
+    except ImportError:
+        # py_horned_owl not available — OWL/XML is valid RDF/XML, rdflib handles it
+        return _parse_with_rdflib(data, OntologyFormat.RDF_XML)
 
     try:
         if fmt == OntologyFormat.OWL_XML:

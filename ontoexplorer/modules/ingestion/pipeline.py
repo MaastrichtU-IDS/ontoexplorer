@@ -17,26 +17,27 @@ Steps:
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
 
 import rdflib
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.config import get_settings
 
-from ontoexplorer.clients.oxigraph import load_graph
+from ontoexplorer.clients.oxigraph import bulk_load_bytes, load_graph
 from ontoexplorer.models.db import Ontology, OntologyImport, OntologyVersion
 from ontoexplorer.modules.metadata.dcat import build_dcat_record
 from ontoexplorer.modules.metadata.prov import build_ingestion_activity
 from ontoexplorer.modules.metadata.qlever_writer import write_version_metadata
-from ontoexplorer.modules.metadata.void import compute_void_stats
+from ontoexplorer.modules.metadata.void import compute_void_stats_sparql
 from ontoexplorer.modules.storage.minio_client import ontology_download_url
-from ontoexplorer.modules.ingestion.deduplicator import compute_sha256
+from ontoexplorer.modules.ingestion.deduplicator import compute_sha256_bytes
 from ontoexplorer.modules.ingestion.format_detect import OntologyFormat, detect_format
-from ontoexplorer.modules.ingestion.import_resolver import resolve_imports
+from ontoexplorer.modules.ingestion.import_resolver import resolve_imports, resolve_imports_sparql
 from ontoexplorer.modules.ingestion.parser import parse_ontology
 from ontoexplorer.modules.ingestion.source_resolver import (
     ResolvedSource,
@@ -47,6 +48,18 @@ from ontoexplorer.modules.ingestion.source_resolver import (
 from ontoexplorer.modules.storage.minio_client import store_ontology
 from ontoexplorer.logging_config import get_logger
 from ontoexplorer import metrics
+
+# Formats that Oxigraph can bulk-load natively — no rdflib parse needed.
+# OWL/XML (.owl) is almost always RDF/XML serialization, accepted as application/rdf+xml.
+_DIRECT_MIME: dict[OntologyFormat, str] = {
+    OntologyFormat.OWL_XML:   "application/rdf+xml",
+    OntologyFormat.RDF_XML:   "application/rdf+xml",
+    OntologyFormat.TURTLE:    "text/turtle",
+    OntologyFormat.N_TRIPLES: "application/n-triples",
+    OntologyFormat.N_QUADS:   "application/n-quads",
+    OntologyFormat.JSON_LD:   "application/ld+json",
+    OntologyFormat.TRIG:      "application/trig",
+}
 
 log = get_logger(__name__)
 
@@ -99,16 +112,8 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     )
     log.info("format_detected", format=fmt.value)
 
-    # ── Step 2: Parse ─────────────────────────────────────────────────────────
-    graph = parse_ontology(source.data, fmt)
-    log.info("parsed_triples", count=len(graph))
-
-    # ── Step 3: Resolve owl:imports ───────────────────────────────────────────
-    import_results = resolve_imports(graph)
-    warnings = [f"Failed to fetch import: {iri}" for iri, key in import_results.items() if not key]
-
-    # ── Step 4: Deduplicate ───────────────────────────────────────────────────
-    sha256 = compute_sha256(graph)
+    # ── Step 4: Deduplicate (fast hash on raw bytes) ───────────────────────────
+    sha256 = compute_sha256_bytes(source.data)
     existing = await db.execute(select(OntologyVersion).where(OntologyVersion.sha256 == sha256))
     existing_version = existing.scalar_one_or_none()
     if existing_version:
@@ -119,18 +124,52 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
             version_id=existing_version.id,
             sha256=sha256,
             format=fmt,
-            triple_count=len(graph),
+            triple_count=existing_version.triple_count or 0,
             is_duplicate=True,
-            import_results=import_results,
         )
 
     # ── Step 5: Store artifact in MinIO ───────────────────────────────────────
-    ontology_id = await _ensure_ontology(db, graph, request)
+    # Determine provisional ontology IRI before creating the DB record.
+    provisional_iri = (
+        _extract_ontology_iri_fast(source.data, fmt)
+        or request.iri
+        or request.url
+        or f"urn:uuid:{uuid.uuid4()}"
+    )
+    ontology_id = await _ensure_ontology(db, provisional_iri, request)
     version_id = str(uuid.uuid4())
     minio_key = store_ontology(ontology_id, version_id, sha256, fmt.value, source.data)
 
+    # ── Step 2+6: Load into Oxigraph (streaming or via rdflib) ────────────────
+    if fmt in _DIRECT_MIME:
+        # Fast path: stream bytes directly into Oxigraph, skip rdflib parse entirely
+        mime = _DIRECT_MIME[fmt]
+        triple_count = bulk_load_bytes(ontology_id, version_id, source.data, mime)
+        log.info("bulk_loaded_bytes", fmt=fmt.value, mime=mime, triples=triple_count)
+        graph = None
+    else:
+        # Slow path: OBO / Manchester need rdflib first
+        graph = parse_ontology(source.data, fmt)
+        log.info("parsed_triples", count=len(graph))
+        triple_count = load_graph(ontology_id, version_id, graph)
+
+    # ── Step 3: Resolve owl:imports ───────────────────────────────────────────
+    if graph is not None:
+        import_results = resolve_imports(graph)
+    else:
+        import_results = resolve_imports_sparql(ontology_id, version_id)
+    warnings = [f"Failed to fetch import: {iri}" for iri, key in import_results.items() if not key]
+
+    # ── Refine ontology IRI from loaded triples (streaming path) ──────────────
+    canonical_iri = _extract_ontology_iri_sparql(ontology_id, version_id)
+    if canonical_iri and canonical_iri != provisional_iri:
+        await _update_ontology_iri(db, ontology_id, canonical_iri)
+
     # ── Persist version record ────────────────────────────────────────────────
-    version_iri = _extract_version_iri(graph)
+    version_iri = (
+        _extract_version_iri(graph) if graph is not None
+        else _extract_version_iri_sparql(ontology_id, version_id)
+    )
     version = OntologyVersion(
         id=version_id,
         ontology_id=ontology_id,
@@ -139,27 +178,23 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
         sha256=sha256,
         format=fmt.value,
         status="ingested",
+        triple_count=triple_count,
     )
     db.add(version)
 
-    # Persist import records
-    for import_iri, import_key in import_results.items():
+    for imp_iri, imp_key in import_results.items():
         db.add(OntologyImport(
             version_id=version_id,
-            import_iri=import_iri,
-            resolved_minio_key=import_key or None,
+            import_iri=imp_iri,
+            resolved_minio_key=imp_key or None,
         ))
 
     await db.commit()
-
-    # ── Step 6: Load into Oxigraph ────────────────────────────────────────────
-    triple_count = load_graph(ontology_id, version_id, graph)
 
     # ── Step 7: Extract FAIR metadata → QLever ────────────────────────────────
     await _write_fair_metadata(
         ontology_id=ontology_id,
         version_id=version_id,
-        graph=graph,
         version=version,
         source=source,
         triple_count=triple_count,
@@ -192,38 +227,43 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     )
 
 
-async def _ensure_ontology(db: AsyncSession, graph, request: IngestionRequest) -> str:
-    """Get or create the Ontology record, using the ontology IRI from the graph."""
-    ontology_iri = _extract_ontology_iri(graph) or request.iri or request.url or f"urn:uuid:{uuid.uuid4()}"
-
+async def _ensure_ontology(db: AsyncSession, ontology_iri: str, request: IngestionRequest) -> str:
+    """Get or create the Ontology record for the given IRI."""
     result = await db.execute(select(Ontology).where(Ontology.iri == ontology_iri))
     existing = result.scalar_one_or_none()
     if existing:
         return existing.id
-
-    ontology = Ontology(
-        id=str(uuid.uuid4()),
-        iri=ontology_iri,
-        owner_id=request.owner_id,
-    )
+    ontology = Ontology(id=str(uuid.uuid4()), iri=ontology_iri, owner_id=request.owner_id)
     db.add(ontology)
     await db.flush()
     return ontology.id
+
+
+async def _update_ontology_iri(db: AsyncSession, ontology_id: str, canonical_iri: str) -> None:
+    """Update the Ontology row's IRI to the canonical value extracted from the RDF."""
+    existing = await db.execute(select(Ontology).where(Ontology.iri == canonical_iri))
+    if existing.scalar_one_or_none():
+        # Another Ontology row already has this IRI — leave the provisional in place
+        log.warning("canonical_iri_conflict", canonical_iri=canonical_iri, ontology_id=ontology_id)
+        return
+    await db.execute(
+        update(Ontology).where(Ontology.id == ontology_id).values(iri=canonical_iri)
+    )
+    log.info("ontology_iri_updated", ontology_id=ontology_id, canonical_iri=canonical_iri)
 
 
 async def _write_fair_metadata(
     *,
     ontology_id: str,
     version_id: str,
-    graph: rdflib.Graph,
     version: OntologyVersion,
     source: ResolvedSource,
     triple_count: int,
 ) -> None:
-    """Compute VoID stats, build DCAT + PROV-O graphs, write to QLever."""
+    """Compute VoID stats via SPARQL, build DCAT + PROV-O graphs, write to QLever."""
     try:
         settings = get_settings()
-        void_stats = compute_void_stats(graph)
+        void_stats = compute_void_stats_sparql(ontology_id, version_id)
         download_url = ontology_download_url(version.minio_key)
 
         dcat_graph = build_dcat_record(
@@ -252,16 +292,57 @@ async def _write_fair_metadata(
         log.warning("fair_metadata_failed", error=str(exc))
 
 
-def _extract_ontology_iri(graph) -> str | None:
-    from rdflib.namespace import OWL, RDF
-    for s in graph.subjects(RDF.type, OWL.Ontology):
-        if str(s).startswith("http"):
-            return str(s)
+def _extract_ontology_iri_fast(data: bytes, fmt: OntologyFormat) -> str | None:
+    """Scan the first 8 KB of raw bytes to find the ontology IRI without a full parse."""
+    snippet = data[:8192].decode("utf-8", errors="replace")
+    if fmt in (OntologyFormat.OWL_XML, OntologyFormat.RDF_XML):
+        # Most OWL/RDF files: <owl:Ontology rdf:about="...">
+        m = re.search(r'<[^>]*Ontology[^>]+rdf:about="([^"]+)"', snippet)
+        if m:
+            return m.group(1)
+        m = re.search(r'rdf:about="([^"]+)"', snippet)
+        if m and m.group(1).startswith("http"):
+            return m.group(1)
+    elif fmt == OntologyFormat.TURTLE:
+        m = re.search(r'<([^>]+)>\s+(?:rdf:type|a)\s+owl:Ontology', snippet)
+        if m:
+            return m.group(1)
     return None
 
 
-def _extract_version_iri(graph) -> str | None:
+def _extract_ontology_iri_sparql(ontology_id: str, version_id: str) -> str | None:
+    """Query Oxigraph for the ontology IRI of the loaded graph."""
+    from ontoexplorer.clients.oxigraph import sparql_query, graph_iri
+    g = graph_iri(ontology_id, version_id)
+    results = sparql_query(f"""
+        SELECT ?iri FROM <{g}> WHERE {{
+            ?iri a <http://www.w3.org/2002/07/owl#Ontology> .
+            FILTER(isIRI(?iri))
+        }} LIMIT 1
+    """)
+    for row in results:
+        val = str(row["iri"])
+        if val.startswith("http"):
+            return val
+    return None
+
+
+def _extract_version_iri(graph: rdflib.Graph) -> str | None:
     from rdflib.namespace import OWL
     for _, _, o in graph.triples((None, OWL.versionIRI, None)):
         return str(o)
+    return None
+
+
+def _extract_version_iri_sparql(ontology_id: str, version_id: str) -> str | None:
+    """Query Oxigraph for the owl:versionIRI of the loaded graph."""
+    from ontoexplorer.clients.oxigraph import sparql_query, graph_iri
+    g = graph_iri(ontology_id, version_id)
+    results = sparql_query(f"""
+        SELECT ?v FROM <{g}> WHERE {{
+            ?ont <http://www.w3.org/2002/07/owl#versionIRI> ?v .
+        }} LIMIT 1
+    """)
+    for row in results:
+        return str(row["v"])
     return None

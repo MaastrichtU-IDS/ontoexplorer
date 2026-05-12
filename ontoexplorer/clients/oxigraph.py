@@ -68,6 +68,24 @@ def load_graph(ontology_id: str, version_id: str, graph: rdflib.Graph) -> int:
     return count
 
 
+def bulk_load_bytes(ontology_id: str, version_id: str, data: bytes, mime_type: str) -> int:
+    """
+    Load raw ontology bytes directly into a named Oxigraph graph, bypassing rdflib.
+
+    Returns the number of triples loaded.
+    Replaces any existing content in the named graph.
+    """
+    store = get_store()
+    iri = graph_iri(ontology_id, version_id)
+    named_graph = pyoxigraph.NamedNode(iri)
+    store.remove_graph(named_graph)
+    store.add_graph(named_graph)
+    store.bulk_load(BytesIO(data), mime_type, base_iri=iri, to_graph=named_graph)
+    count = sum(1 for _ in store.quads_for_pattern(None, None, None, named_graph))
+    logger.info("Loaded %d triples into <%s>", count, iri)
+    return count
+
+
 def delete_graph(ontology_id: str, version_id: str, inferred: bool = False) -> None:
     store = get_store()
     iri = graph_iri(ontology_id, version_id, inferred)

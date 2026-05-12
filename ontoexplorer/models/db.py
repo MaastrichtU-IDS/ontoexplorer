@@ -86,6 +86,7 @@ class OntologyVersion(Base):
     sha256: Mapped[str] = mapped_column(String, unique=True) # content hash for dedup
     format: Mapped[str] = mapped_column(String)              # "owl", "turtle", "obo", etc.
     status: Mapped[str] = mapped_column(String, default="ingested")  # ingested | reasoning | ready | deprecated
+    triple_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     ontology: Mapped[Ontology] = relationship(back_populates="versions")
