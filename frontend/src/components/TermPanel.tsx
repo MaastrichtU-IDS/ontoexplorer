@@ -93,6 +93,30 @@ function HierGroup({ label, items, slug, vid, badge }: {
   )
 }
 
+function ClassExprList({ exprs, label }: { exprs: string[]; label?: string }) {
+  if (exprs.length === 0) return null
+  return (
+    <div style={{ marginBottom: 8 }}>
+      {label && (
+        <div style={{ color: 'var(--text-dim)', fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 5 }}>
+          {label}
+        </div>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {exprs.map((expr, i) => (
+          <code key={i} style={{
+            fontSize: 11, padding: '3px 8px', borderRadius: 'var(--radius-sm)',
+            background: 'var(--bg)', border: '1px solid var(--border)',
+            color: 'var(--text-muted)', wordBreak: 'break-word', display: 'block',
+          }}>
+            {expr}
+          </code>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 16 }}>
@@ -239,6 +263,7 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
     : data.entityType
 
   const hasSuperclasses = data.superclasses.asserted.length > 0 || data.superclasses.inferred.length > 0
+    || (data.superclassExpressions?.length ?? 0) > 0
   const hasSubclasses   = data.subclasses.asserted.length > 0   || data.subclasses.inferred.length > 0
 
   let body: React.ReactNode
@@ -264,6 +289,7 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
           <Section label="Superclasses">
             <HierGroup label="asserted" items={data.superclasses.asserted} slug={slug} vid={versionId} />
             <HierGroup label="inferred" items={data.superclasses.inferred} slug={slug} vid={versionId} badge="ELK" />
+            <ClassExprList exprs={data.superclassExpressions ?? []} label={data.superclasses.asserted.length > 0 || data.superclasses.inferred.length > 0 ? 'expressions' : undefined} />
           </Section>
         )}
         <Section label="Subclasses">
@@ -292,6 +318,7 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
               <div style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', marginBottom: 4 }}>Superclasses</div>
               <HierGroup label="asserted" items={data.superclasses.asserted} slug={slug} vid={versionId} />
               <HierGroup label="inferred" items={data.superclasses.inferred} slug={slug} vid={versionId} badge="ELK" />
+              <ClassExprList exprs={data.superclassExpressions ?? []} label={data.superclasses.asserted.length > 0 || data.superclasses.inferred.length > 0 ? 'expressions' : undefined} />
             </div>
           )}
           {(data.synonyms.exact.length > 0 || data.synonyms.related.length > 0) && (

@@ -121,6 +121,7 @@ export interface RawTermDetail {
   is_inverse_target: boolean
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
   subclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
+  superclass_expressions?: string[]
   usage: PropertyUsage[]
 }
 
@@ -134,6 +135,7 @@ export interface ParsedTerm {
   synonyms: { exact: string[]; related: string[]; broad: string[]; narrow: string[] }
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
   subclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
+  superclassExpressions: string[]
   domain: string[]
   range: string[]
   characteristics: string[]
@@ -283,9 +285,10 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
       broad:   p[P.broadSyn]   ?? [],
       narrow:  p[P.narrowSyn]  ?? [],
     },
-    superclasses:    raw.superclasses ?? { asserted: [], inferred: [] },
-    subclasses:      raw.subclasses   ?? { asserted: [], inferred: [] },
-    domain:          p[P.domain]      ?? [],
+    superclasses:         raw.superclasses         ?? { asserted: [], inferred: [] },
+    subclasses:           raw.subclasses            ?? { asserted: [], inferred: [] },
+    superclassExpressions: raw.superclass_expressions ?? [],
+    domain:               p[P.domain]               ?? [],
     range:           p[P.range]       ?? [],
     characteristics,
     inverseOf:       p[P.inverseOf]   ?? [],

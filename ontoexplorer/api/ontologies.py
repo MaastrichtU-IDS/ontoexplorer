@@ -24,6 +24,115 @@ router = APIRouter(prefix="/api/v1/ontologies", tags=["ontologies"])
 
 _RDF_FORMATS = {"text/turtle": "turtle", "application/rdf+xml": "xml", "application/n-triples": "nt"}
 
+# ── OWL class-expression resolver ─────────────────────────────────────────────
+
+_OWL = "http://www.w3.org/2002/07/owl#"
+_RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+
+
+def _ms_name(s: str) -> str:
+    """Quote a name in Manchester Syntax if it contains spaces."""
+    return f"'{s}'" if " " in s else s
+
+
+def _rdf_list_items(store, graph_node, list_node) -> list:
+    """Walk an rdf:List and return its items as pyoxigraph term objects."""
+    import pyoxigraph
+    RDF_FIRST = pyoxigraph.NamedNode(_RDF + "first")
+    RDF_REST  = pyoxigraph.NamedNode(_RDF + "rest")
+    RDF_NIL   = pyoxigraph.NamedNode(_RDF + "nil")
+    items, current = [], list_node
+    for _ in range(200):
+        if isinstance(current, pyoxigraph.NamedNode) and current.value == RDF_NIL.value:
+            break
+        firsts = list(store.quads_for_pattern(current, RDF_FIRST, None, graph_node))
+        if firsts:
+            items.append(firsts[0].object)
+        rests = list(store.quads_for_pattern(current, RDF_REST, None, graph_node))
+        current = rests[0].object if rests else None
+        if current is None:
+            break
+    return items
+
+
+def _resolve_class_expr(store, graph_node, node, label_fn, depth: int = 0) -> str:
+    """Recursively render a pyoxigraph node as a Manchester-Syntax class expression."""
+    import pyoxigraph
+    if depth > 10:
+        return "…"
+
+    if isinstance(node, pyoxigraph.NamedNode):
+        return _ms_name(label_fn(node.value))
+
+    if not isinstance(node, pyoxigraph.BlankNode):
+        # Literal
+        return node.value if hasattr(node, "value") else str(node)
+
+    # Collect all predicates of this blank node
+    props: dict[str, list] = {}
+    for quad in store.quads_for_pattern(node, None, None, graph_node):
+        props.setdefault(quad.predicate.value, []).append(quad.object)
+
+    # Restriction (owl:onProperty present)
+    on_prop_list = props.get(_OWL + "onProperty", [])
+    if on_prop_list:
+        on_prop = on_prop_list[0]
+        prop_name = _ms_name(label_fn(on_prop.value) if isinstance(on_prop, pyoxigraph.NamedNode) else str(on_prop))
+
+        for owl_pred, kw in [(_OWL + "someValuesFrom", "some"), (_OWL + "allValuesFrom", "only")]:
+            fl = props.get(owl_pred, [])
+            if fl:
+                filler = _resolve_class_expr(store, graph_node, fl[0], label_fn, depth + 1)
+                return f"{prop_name} {kw} {_ms_name(filler) if ' ' not in filler else f'({filler})'}"
+
+        hv = props.get(_OWL + "hasValue", [])
+        if hv:
+            v = hv[0]
+            val = label_fn(v.value) if isinstance(v, pyoxigraph.NamedNode) and v.value.startswith("http") else (v.value if hasattr(v, "value") else str(v))
+            return f"{prop_name} value {_ms_name(val)}"
+
+        for owl_pred, kw in [
+            (_OWL + "minCardinality", "min"), (_OWL + "maxCardinality", "max"),
+            (_OWL + "exactCardinality", "exactly"),
+            (_OWL + "minQualifiedCardinality", "min"), (_OWL + "maxQualifiedCardinality", "max"),
+            (_OWL + "exactQualifiedCardinality", "exactly"),
+        ]:
+            cl = props.get(owl_pred, [])
+            if cl:
+                n = cl[0].value if hasattr(cl[0], "value") else str(cl[0])
+                on_cls = props.get(_OWL + "onClass", [])
+                if on_cls:
+                    cls_expr = _resolve_class_expr(store, graph_node, on_cls[0], label_fn, depth + 1)
+                    return f"{prop_name} {kw} {n} ({cls_expr})"
+                return f"{prop_name} {kw} {n}"
+
+        return f"{prop_name} ?"
+
+    # Complement
+    comp = props.get(_OWL + "complementOf", [])
+    if comp:
+        inner = _resolve_class_expr(store, graph_node, comp[0], label_fn, depth + 1)
+        return f"not ({inner})" if " " in inner else f"not {inner}"
+
+    # Intersection / Union
+    for owl_pred, kw in [(_OWL + "intersectionOf", "and"), (_OWL + "unionOf", "or")]:
+        ll = props.get(owl_pred, [])
+        if ll:
+            items = _rdf_list_items(store, graph_node, ll[0])
+            parts = [_resolve_class_expr(store, graph_node, it, label_fn, depth + 1) for it in items]
+            joined = f" {kw} ".join(f"({p})" if " " in p else p for p in parts)
+            return joined
+
+    # OneOf
+    oo = props.get(_OWL + "oneOf", [])
+    if oo:
+        items = _rdf_list_items(store, graph_node, oo[0])
+        parts = [_resolve_class_expr(store, graph_node, it, label_fn, depth + 1) for it in items]
+        return "{" + ", ".join(parts) + "}"
+
+    return "?"
+
+
 
 # ── Submit ─────────────────────────────────────────────────────────────────────
 
@@ -689,6 +798,7 @@ async def get_term(
     asserted_sup_iris = [v for v in properties.get(RDFS_SC, [])
                          if v.startswith("http://") or v.startswith("https://") or v.startswith("urn:")]
 
+
     # Resolve labels from Redis index
     r = _get_redis()
 
@@ -703,6 +813,19 @@ async def get_term(
         items = [{"iri": iri, "label": _label(iri)} for iri in iris]
         items.sort(key=lambda t: (t["label"] or t["iri"]).lower())
         return items
+
+    # Superclass expressions — blank-node targets of rdfs:subClassOf (complex class expressions)
+    import pyoxigraph as _ox
+    _graph_node   = _ox.NamedNode(g_iri)
+    _term_node    = _ox.NamedNode(term_iri)
+    _RDFS_SC_NODE = _ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
+    superclass_expressions: list[str] = []
+    for _quad in store.quads_for_pattern(_term_node, _RDFS_SC_NODE, None, _graph_node):
+        if isinstance(_quad.object, _ox.BlankNode):
+            _expr = _resolve_class_expr(store, _graph_node, _quad.object, _label)
+            if _expr and _expr != "?":
+                superclass_expressions.append(_expr)
+    superclass_expressions.sort()
 
     # Property usage — classes that reference this term via owl:onProperty restrictions
     _OWL_PROP_TYPES = {
@@ -799,6 +922,7 @@ async def get_term(
             "asserted": _term_list(asserted_sub_iris),
             "inferred": _term_list(inferred_sub_iris),
         },
+        "superclass_expressions": superclass_expressions,
         "usage": usage,
     }
 
