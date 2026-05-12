@@ -347,5 +347,6 @@ def _extract_version_iri_sparql(ontology_id: str, version_id: str) -> str | None
         }} LIMIT 1
     """)
     for row in results:
-        return str(row["v"])
+        v = row["v"]
+        return v.value if hasattr(v, "value") else str(v)
     return None
