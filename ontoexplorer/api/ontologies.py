@@ -575,6 +575,19 @@ async def list_terms(
         for t in terms:
             t["has_children"] = t["iri"] in has_children_iris
 
+    # Augment terms with source (imported-from) using a Redis pipeline batch read
+    try:
+        from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
+        _r = _get_redis()
+        _pipe = _r.pipeline(transaction=False)
+        for t in terms:
+            _pipe.hget(_iri_key(version_id, t["iri"]), "source")
+        for t, src in zip(terms, _pipe.execute()):
+            t["source"] = src or ""
+    except Exception:
+        for t in terms:
+            t.setdefault("source", "")
+
     response = {"terms": terms, "offset": offset, "limit": limit, "parent": parent}
 
     # Cache root results so the second load (and every panel re-open) is instant (skip for hide_inverse)
@@ -769,9 +782,13 @@ async def get_term(
 
     is_inverse_target = await asyncio.to_thread(_check_is_inverse_target, store)
 
+    term_detail = r.hgetall(_iri_key(version_id, term_iri))
+    source = term_detail.get("source", "") if term_detail else ""
+
     return {
         "iri": term_iri,
         "label": _label(term_iri),
+        "source": source,
         "properties": properties,
         "is_inverse_target": is_inverse_target,
         "superclasses": {

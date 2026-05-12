@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useClassTreeNodes, EntityType } from '../hooks/useClassTree'
 import { useInferredTreeNodes } from '../hooks/useInferredTree'
 import { Term, api } from '../lib/api'
+import SourceBadge from './SourceBadge'
 
 type Mode = 'asserted' | 'inferred'
 
@@ -83,9 +84,10 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, e
         >
           {canExpand ? (isLoading ? '…' : expanded ? '▾' : '▸') : ''}
         </span>
-        <span style={{ fontSize: 'var(--font-size-sm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{ fontSize: 'var(--font-size-sm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
           {label}
         </span>
+        {term.source && <SourceBadge source={term.source} />}
       </div>
       {expanded && children.length > 0 && (
         <ul style={{ listStyle: 'none' }}>

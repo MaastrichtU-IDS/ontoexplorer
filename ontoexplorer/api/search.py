@@ -67,7 +67,8 @@ async def search(
             "mode": "entity",
             "query": q,
             "results": [
-                {"iri": r["iri"], "label": r["label"], "short": r["short"], "match_type": "entity"}
+                {"iri": r["iri"], "label": r["label"], "short": r["short"],
+                 "source": r.get("source", ""), "match_type": "entity"}
                 for r in results
             ],
             "count": len(results),
@@ -98,11 +99,16 @@ async def search(
         )
 
     trimmed = search_results[:limit]
+    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
+    _r = _get_redis()
     return {
         "mode": "expression",
         "query": q,
         "results": [
-            {"iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type}
+            {
+                "iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type,
+                "source": (_r.hget(_iri_key(version_id, r.iri), "source") or ""),
+            }
             for r in trimmed
         ],
         "count": len(trimmed),

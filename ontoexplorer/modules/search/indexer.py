@@ -180,6 +180,32 @@ def build_index(version_id: str, ontology_id: str) -> IndexStats:
     r = _get_redis()
     named_graph = graph_iri(ontology_id, version_id)
 
+    # Build source prefix map from owl:imports declarations
+    # Maps normalized base IRI → short name (e.g. "https://w3id.org/sulo" → "sulo")
+    import_source_map: dict[str, str] = {}
+    try:
+        for row in sparql_query(f"""
+            SELECT DISTINCT ?imp WHERE {{
+                GRAPH <{named_graph}> {{
+                    ?ont <http://www.w3.org/2002/07/owl#imports> ?imp .
+                }}
+            }}
+        """):
+            v = row["imp"]
+            imp_iri = v.value if hasattr(v, "value") else str(v)
+            clean = imp_iri.rstrip("/")
+            short_name = clean.split("/")[-1].split("#")[-1]
+            if short_name:
+                import_source_map[clean] = short_name
+    except Exception:
+        pass
+
+    def _get_source(iri: str) -> str:
+        for base, name in import_source_map.items():
+            if iri.startswith(base):
+                return name
+        return ""
+
     # Collect entity IRIs with their types
     entities: dict[str, str] = {}  # iri -> "class" | "object_property" | "data_property" | "annotation_property"
     for entity_type, owl_type in [
@@ -232,10 +258,11 @@ def build_index(version_id: str, ontology_id: str) -> IndexStats:
         all_labels = labels + ([short] if short not in labels else [])
 
         pipe.hset(_iri_key(version_id, iri), mapping={
-            "label": primary_label,
-            "type":  entity_type,
-            "iri":   iri,
-            "short": short,
+            "label":  primary_label,
+            "type":   entity_type,
+            "iri":    iri,
+            "short":  short,
+            "source": _get_source(iri),
             "synonyms": "|".join(labels[1:]) if len(labels) > 1 else "",
         })
         pipe.expire(_iri_key(version_id, iri), _SEARCH_TTL)

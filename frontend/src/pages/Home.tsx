@@ -6,6 +6,7 @@ import { useGlobalSearch } from '../hooks/useSearch'
 import { slugFromIri, SearchResult, api } from '../lib/api'
 import SearchBar from '../components/SearchBar'
 import OntologyPicker from '../components/OntologyPicker'
+import SourceBadge from '../components/SourceBadge'
 
 const EXAMPLES = ['cell death', 'apoptosis', 'protein binding', 'nucleus', 'membrane']
 
@@ -40,6 +41,7 @@ function ResultList({ results, pathFor }: {
         const inner = (
           <>
             <span style={{ color: 'var(--accent)', fontWeight: 500, flexShrink: 0 }}>{r.label}</span>
+            {r.source && <SourceBadge source={r.source} />}
             <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{r.short}</span>
           </>
         )

@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useTerm } from '../hooks/useTerm'
 import { ClassRef, PropertyUsage } from '../lib/api'
+import SourceBadge from './SourceBadge'
 
 function CopyChip({ text, title }: { text: string; title?: string }) {
   const [copied, setCopied] = useState(false)
@@ -328,6 +329,7 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
           fontSize: 10, background: 'var(--bg)', color: typeColor,
           borderRadius: 3, padding: '1px 5px', textTransform: 'uppercase', flexShrink: 0,
         }}>{typeLabel}</span>
+        {data.source && <SourceBadge source={data.source} />}
         <CopyChip text={data.iri.split(/[#/]/).pop() ?? data.iri} title={data.iri} />
         <CopyChip text={data.iri} />
         <Link

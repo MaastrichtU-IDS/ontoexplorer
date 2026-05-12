@@ -97,6 +97,7 @@ export interface Term {
   iri: string
   label: string | null
   has_children?: boolean
+  source?: string
 }
 
 export interface ClassRef {
@@ -115,6 +116,7 @@ export interface PropertyUsage {
 export interface RawTermDetail {
   iri: string
   label: string
+  source?: string
   properties: Record<string, string[]>
   is_inverse_target: boolean
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
@@ -125,6 +127,7 @@ export interface RawTermDetail {
 export interface ParsedTerm {
   iri: string
   label: string
+  source?: string
   definition: string | null
   entityType: 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' | 'individual'
   isInverseTarget: boolean
@@ -154,6 +157,7 @@ export interface SearchResult {
   iri: string
   label: string
   short: string
+  source?: string
   match_type: 'entity' | 'elk' | 'sparql'
   version_id?: string
   ontology_id?: string
@@ -269,6 +273,7 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
   return {
     iri: raw.iri,
     label: raw.label ?? label,
+    source: raw.source ?? '',
     definition,
     entityType,
     isInverseTarget: raw.is_inverse_target ?? false,
