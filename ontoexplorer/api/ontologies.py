@@ -558,7 +558,9 @@ async def get_term(
         return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
 
     def _term_list(iris: list[str]) -> list[dict]:
-        return [{"iri": iri, "label": _label(iri)} for iri in iris]
+        items = [{"iri": iri, "label": _label(iri)} for iri in iris]
+        items.sort(key=lambda t: (t["label"] or t["iri"]).lower())
+        return items
 
     # Property usage — classes that reference this term via owl:onProperty restrictions
     _OWL_PROP_TYPES = {
