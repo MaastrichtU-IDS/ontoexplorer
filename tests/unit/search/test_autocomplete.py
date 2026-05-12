@@ -88,3 +88,23 @@ def test_completions_after_min_returns_int_hint():
         completions = get_completions("'hasPart' min ", cursor=14, version_id="v1", limit=10)
     types = {c.type for c in completions}
     assert "cardinality" in types
+
+
+def test_completions_excludes_annotation_properties():
+    r = fakeredis.FakeRedis(decode_responses=True)
+    key = _prefix_key("v1")
+    r.zadd(key, {"cell death|class|http://ex.org/CD": 0})
+    r.zadd(key, {"comment|annotation_property|http://www.w3.org/2000/01/rdf-schema#comment": 0})
+    r.hset(_iri_key("v1", "http://ex.org/CD"), mapping={
+        "label": "cell death", "type": "class",
+        "iri": "http://ex.org/CD", "short": "CD", "synonyms": "",
+    })
+    r.hset(_iri_key("v1", "http://www.w3.org/2000/01/rdf-schema#comment"), mapping={
+        "label": "comment", "type": "annotation_property",
+        "iri": "http://www.w3.org/2000/01/rdf-schema#comment", "short": "rdfs:comment", "synonyms": "",
+    })
+    with patch("ontoexplorer.modules.search.autocomplete._get_redis", return_value=r):
+        completions = get_completions("'", cursor=1, version_id="v1", limit=10)
+    types = {c.type for c in completions}
+    assert "class" in types
+    assert "annotation_property" not in types

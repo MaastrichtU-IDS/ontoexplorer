@@ -29,7 +29,8 @@ def get_completions(
     r = _get_redis()
 
     if result.token_type == "OPEN_QUOTE":
-        return _entity_completions(r, version_id, result.partial, entity_type=None, limit=limit)
+        return _entity_completions(r, version_id, result.partial, entity_type=None, limit=limit,
+                                   excluded_types=frozenset({"annotation_property"}))
 
     if result.token_type == "EXPECT_ENTITY":
         # After some/only/not/and/or/(  — figure out if we expect class or property
@@ -57,6 +58,7 @@ def _entity_completions(
     partial: str,
     entity_type: str | None,
     limit: int,
+    excluded_types: frozenset[str] | None = None,
 ) -> list[Completion]:
     norm = normalise_label(partial) if partial else ""
     key = _prefix_key(version_id)
@@ -76,6 +78,8 @@ def _entity_completions(
             continue
         norm_lbl, etype, iri = parts
         if entity_type and etype != entity_type:
+            continue
+        if excluded_types and etype in excluded_types:
             continue
         detail = r.hgetall(_iri_key(version_id, iri))
         if not detail:

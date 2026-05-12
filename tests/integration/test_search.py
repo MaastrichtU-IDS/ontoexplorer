@@ -18,7 +18,7 @@ def _seed_redis(version_id: str, entities: list[tuple[str, str, str]] | None = N
         entities = [
             ("cell death", "http://ex.org/CD", "class"),
             ("nucleus", "http://ex.org/N", "class"),
-            ("has part", "http://ex.org/HP", "property"),
+            ("has part", "http://ex.org/HP", "object_property"),
             ("apoptosis", "http://ex.org/AP", "class"),
         ]
     key = _prefix_key(version_id)
@@ -406,6 +406,34 @@ async def test_search_exact_cardinality(client, user_and_key):
         )
     assert resp.status_code == 200
     assert "cardinality" in mock_sparql.call_args[0][0]
+
+
+# ── Annotation property exclusion ────────────────────────────────────────────
+
+@pytest.mark.anyio
+async def test_search_annotation_property_rejected_in_restriction(client, user_and_key):
+    """Annotation property in property position → 400 (not found as object/data property)."""
+    _, raw_key = user_and_key
+    auth = {"Authorization": f"Bearer {raw_key}"}
+    _seed_redis("fake-vid", entities=[
+        ("cell death", "http://ex.org/CD", "class"),
+        ("nucleus", "http://ex.org/N", "class"),
+        ("label", "http://www.w3.org/2000/01/rdf-schema#label", "annotation_property"),
+    ])
+
+    with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
+         patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
+         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
+         patch(_SEARCH_PATCHES["classification"],
+               new=AsyncMock(return_value=_classification())):
+        resp = await client.get(
+            "/api/v1/ontologies/fake-oid/fake-vid/search",
+            params={"q": "'label' some 'nucleus'", "mode": "expression"},
+            headers=auth,
+        )
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["error"] == "unresolved_term"
 
 
 # ── Label resolution edge cases ───────────────────────────────────────────────

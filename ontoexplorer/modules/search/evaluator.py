@@ -42,8 +42,21 @@ class AmbiguousLabelError(ValueError):
         self.candidates = candidates
 
 
-def _resolve_label(r, version_id: str, node: NamedClass) -> str:
-    """Resolve a NamedClass node to a single IRI. Raises AmbiguousLabelError if ambiguous."""
+_PROPERTY_TYPES = frozenset({"object_property", "data_property"})
+
+
+def _resolve_label(
+    r,
+    version_id: str,
+    node: NamedClass,
+    allowed_types: frozenset[str] | None = None,
+) -> str:
+    """Resolve a NamedClass node to a single IRI. Raises AmbiguousLabelError if ambiguous.
+
+    allowed_types: when set, only entries whose stored entity type is in this set are
+    considered. Use _PROPERTY_TYPES for property-ref positions to exclude annotation
+    properties, which are not valid in OWL class expressions.
+    """
     if node.curie:
         # Disambiguated form: look up by CURIE (stored as `short` field)
         norm = normalise_label(node.curie)
@@ -52,7 +65,9 @@ def _resolve_label(r, version_id: str, node: NamedClass) -> str:
         for m in members:
             parts = m.split("|", 2)
             if len(parts) == 3:
-                _, _, iri = parts
+                etype, iri = parts[1], parts[2]
+                if allowed_types and etype not in allowed_types:
+                    continue
                 detail = r.hgetall(_iri_key(version_id, iri))
                 if detail.get("short") == node.curie:
                     return iri
@@ -68,7 +83,9 @@ def _resolve_label(r, version_id: str, node: NamedClass) -> str:
         for m in members:
             parts = m.split("|", 2)
             if len(parts) == 3:
-                _, _, iri = parts
+                etype, iri = parts[1], parts[2]
+                if allowed_types and etype not in allowed_types:
+                    continue
                 return iri
         return node.ref  # treat as IRI directly
 
@@ -83,8 +100,10 @@ def _resolve_label(r, version_id: str, node: NamedClass) -> str:
         parts = m.split("|", 2)
         if len(parts) != 3:
             continue
-        norm_lbl, _, iri = parts
+        norm_lbl, etype, iri = parts
         if norm_lbl != norm:
+            continue
+        if allowed_types and etype not in allowed_types:
             continue
         if iri in seen_iris:
             continue
@@ -173,12 +192,15 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
     RDFS = "http://www.w3.org/2000/01/rdf-schema#"
     g = _graph_iri(ontology_id, version_id)
 
+    def resolve_prop(named_class_node) -> str:
+        return _resolve_label(r, version_id, named_class_node, allowed_types=_PROPERTY_TYPES)
+
     def resolve(named_class_node) -> str:
         return _resolve_label(r, version_id, named_class_node)
 
     RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
     if isinstance(node, SomeValuesFrom):
-        prop_iri = resolve(node.property_ref)
+        prop_iri = resolve_prop(node.property_ref)
         if isinstance(node.filler, NamedClass):
             fill_iri = resolve(node.filler)
             q = f"""
@@ -215,7 +237,7 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
                 }}
             """
     elif isinstance(node, AllValuesFrom):
-        prop_iri = resolve(node.property_ref)
+        prop_iri = resolve_prop(node.property_ref)
         fill_iri = resolve(node.filler) if isinstance(node.filler, NamedClass) else node.filler.ref
         q = f"""
             SELECT DISTINCT ?cls WHERE {{
@@ -227,7 +249,7 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
             }}
         """
     elif isinstance(node, MinCardinality):
-        prop_iri = resolve(node.property_ref)
+        prop_iri = resolve_prop(node.property_ref)
         q = f"""
             SELECT DISTINCT ?cls WHERE {{
                 GRAPH <{g}> {{
@@ -239,7 +261,7 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
             }}
         """
     elif isinstance(node, MaxCardinality):
-        prop_iri = resolve(node.property_ref)
+        prop_iri = resolve_prop(node.property_ref)
         q = f"""
             SELECT DISTINCT ?cls WHERE {{
                 GRAPH <{g}> {{
@@ -251,7 +273,7 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
             }}
         """
     elif isinstance(node, ExactCardinality):
-        prop_iri = resolve(node.property_ref)
+        prop_iri = resolve_prop(node.property_ref)
         q = f"""
             SELECT DISTINCT ?cls WHERE {{
                 GRAPH <{g}> {{

@@ -125,7 +125,7 @@ async def test_evaluate_ambiguous_label_raises():
 async def test_evaluate_some_values_from_calls_sparql():
     r = fakeredis.FakeRedis(decode_responses=True)
     for label, iri, etype in [
-        ("hasPart", "http://bfo.org/HP", "property"),
+        ("hasPart", "http://bfo.org/HP", "object_property"),
         ("Nucleus",  "http://ex.org/N",   "class"),
     ]:
         r.zadd(_prefix_key("v1"), {f"{label.lower()}|{etype}|{iri}": 0})
