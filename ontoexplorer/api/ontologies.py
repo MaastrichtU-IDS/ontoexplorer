@@ -142,13 +142,6 @@ async def download_version(ontology_id: str, version_id: str, db: AsyncSession =
     return RedirectResponse(url=url)
 
 
-_STATS_CACHE_TTL = 86_400  # 24 hours — versions are immutable once ingested
-
-
-def _stats_cache_key(version_id: str) -> str:
-    return f"version_stats:{version_id}"
-
-
 @router.get("/{ontology_id}/{version_id}/stats", summary="VoID statistics for a version")
 async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = Depends(get_db)):
     import asyncio
@@ -156,7 +149,7 @@ async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = De
 
     await _get_version_or_404(db, ontology_id, version_id)
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
-    from ontoexplorer.modules.search.indexer import _meta_key, _get_redis
+    from ontoexplorer.modules.search.indexer import _meta_key, _get_redis, _stats_cache_key, _SEARCH_TTL
 
     # ── Redis cache read-through ──────────────────────────────────────────────
     try:
@@ -240,7 +233,7 @@ async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = De
 
     # ── Cache result ──────────────────────────────────────────────────────────
     try:
-        r.setex(_stats_cache_key(version_id), _STATS_CACHE_TTL, _json.dumps(result))
+        r.setex(_stats_cache_key(version_id), _SEARCH_TTL, _json.dumps(result))
     except Exception:
         pass
 
@@ -1141,7 +1134,7 @@ async def deprecate_version(
 
     # Invalidate stats cache for this version
     try:
-        from ontoexplorer.modules.search.indexer import _get_redis
+        from ontoexplorer.modules.search.indexer import _get_redis, _stats_cache_key
         _get_redis().delete(_stats_cache_key(version_id))
     except Exception:
         pass  # Non-fatal

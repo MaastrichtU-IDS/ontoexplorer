@@ -57,6 +57,10 @@ def _meta_key(version_id: str) -> str:
     return f"search:meta:{version_id}"
 
 
+def _stats_cache_key(version_id: str) -> str:
+    return f"version_stats:{version_id}"
+
+
 def _get_redis() -> redis.Redis:
     return redis.Redis.from_url(get_settings().redis_url, decode_responses=True)
 
@@ -269,6 +273,7 @@ def build_index(version_id: str, ontology_id: str) -> IndexStats:
     pipe.execute()
 
     _build_tree_cache(version_id, ontology_id, entities, labels_by_iri, r)
+    _populate_stats_cache(version_id, ontology_id, entities, r)
 
     return IndexStats(
         version_id=version_id,
@@ -408,6 +413,60 @@ def _build_tree_cache(
         )
 
 
+def _populate_stats_cache(
+    version_id: str,
+    ontology_id: str,
+    entities: dict[str, str],
+    r: redis.Redis,
+) -> None:
+    """Write full VoID stats to Redis so the first /stats request is instant."""
+    named_graph = graph_iri(ontology_id, version_id)
+
+    # Per-type property counts are free from the already-built entities dict
+    obj_prop_count  = sum(1 for t in entities.values() if t == "object_property")
+    data_prop_count = sum(1 for t in entities.values() if t == "data_property")
+    ann_prop_count  = sum(1 for t in entities.values() if t == "annotation_property")
+    class_count     = sum(1 for t in entities.values() if t == "class")
+
+    # Two extra queries for counts not derivable from the entity dict
+    def _count(sparql: str) -> int:
+        rows = list(sparql_query(sparql))
+        if rows:
+            v = rows[0]["n"]
+            return int(v.value) if v is not None else 0
+        return 0
+
+    triple_count = _count(
+        f"SELECT (COUNT(*) AS ?n) WHERE {{ GRAPH <{named_graph}> {{ ?s ?p ?o }} }}"
+    )
+    ind_count = _count(f"""
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        SELECT (COUNT(DISTINCT ?i) AS ?n) WHERE {{
+            GRAPH <{named_graph}> {{ ?i a owl:NamedIndividual . FILTER(isIRI(?i)) }}
+        }}
+    """)
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    prop_count = obj_prop_count + data_prop_count + ann_prop_count
+
+    stats = {
+        "triple_count":              triple_count,
+        "class_count":               class_count,
+        "property_count":            prop_count,
+        "object_property_count":     obj_prop_count,
+        "datatype_property_count":   data_prop_count,
+        "annotation_property_count": ann_prop_count,
+        "individual_count":          ind_count,
+        "index_meta": {
+            "indexed_at":     now,
+            "class_count":    class_count,
+            "property_count": prop_count,
+        },
+    }
+    r.setex(_stats_cache_key(version_id), _SEARCH_TTL, json.dumps(stats))
+
+
 def invalidate_index(version_id: str) -> None:
     """Delete all search index keys for a version."""
     r = _get_redis()
@@ -419,6 +478,7 @@ def invalidate_index(version_id: str) -> None:
         if cursor == 0:
             break
     to_delete.append(_meta_key(version_id))
+    to_delete.append(_stats_cache_key(version_id))
     keys_present = [k for k in to_delete if r.exists(k)]
     if keys_present:
         r.delete(*keys_present)
