@@ -436,6 +436,10 @@ export default function OntologyPage() {
             </div>
             <CollapsibleSection label="Object Properties" defaultOpen={true}>
               <div style={{ padding: '4px 10px 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <ExpandToggleBtn
+                  onExpand={() => setObjExpand(v => v + 1)}
+                  onCollapse={() => setObjCollapse(v => v + 1)}
+                />
                 <button
                   onClick={() => setHideInverseProps(v => !v)}
                   style={{
@@ -449,10 +453,6 @@ export default function OntologyPage() {
                 >
                   {hideInverseProps ? 'Show Inv' : 'Hide Inv'}
                 </button>
-                <ExpandToggleBtn
-                  onExpand={() => setObjExpand(v => v + 1)}
-                  onCollapse={() => setObjCollapse(v => v + 1)}
-                />
               </div>
               <ClassTree
                 ontologyId={oid}
