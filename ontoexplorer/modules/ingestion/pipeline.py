@@ -192,9 +192,11 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     await db.commit()
 
     # ── Step 7: Extract FAIR metadata → QLever ────────────────────────────────
+    ontology_iri = canonical_iri or provisional_iri
     await _write_fair_metadata(
         ontology_id=ontology_id,
         version_id=version_id,
+        ontology_iri=ontology_iri,
         version=version,
         source=source,
         triple_count=triple_count,
@@ -256,6 +258,7 @@ async def _write_fair_metadata(
     *,
     ontology_id: str,
     version_id: str,
+    ontology_iri: str,
     version: OntologyVersion,
     source: ResolvedSource,
     triple_count: int,
@@ -269,7 +272,7 @@ async def _write_fair_metadata(
         dcat_graph = build_dcat_record(
             ontology_id=ontology_id,
             version_id=version_id,
-            ontology_iri=version.ontology.iri if version.ontology else ontology_id,
+            ontology_iri=ontology_iri,
             version_iri=version.version_iri,
             minio_download_url=download_url,
             format_ext=version.format,
@@ -279,7 +282,7 @@ async def _write_fair_metadata(
 
         prov_graph = build_ingestion_activity(
             version_id=version_id,
-            ontology_iri=version.ontology.iri if version.ontology else ontology_id,
+            ontology_iri=ontology_iri,
             source_url=source.final_url,
             mode=source.mode.value,
             sha256=version.sha256,

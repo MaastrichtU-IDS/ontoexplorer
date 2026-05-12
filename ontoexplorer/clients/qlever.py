@@ -51,7 +51,13 @@ async def sparql_construct(query: str, timeout: float = 30.0) -> str:
 async def sparql_update(update: str, timeout: float = 30.0) -> None:
     """Execute a SPARQL Update statement (INSERT DATA / DELETE DATA / etc.)."""
     _, update_endpoint = _endpoints()
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    s = get_settings()
+    auth = (
+        httpx.BasicAuth(s.qlever_update_user, s.qlever_update_password)
+        if s.qlever_update_user
+        else None
+    )
+    async with httpx.AsyncClient(timeout=timeout, auth=auth) as client:
         resp = await client.post(
             update_endpoint,
             data={"update": update},
@@ -63,15 +69,19 @@ async def sparql_update(update: str, timeout: float = 30.0) -> None:
 
 async def insert_turtle(ttl: str, graph_iri: str | None = None, timeout: float = 60.0) -> None:
     """
-    Insert all triples from a Turtle string into QLever.
+    Insert all triples into the SPARQL store.
 
-    If graph_iri is given, inserts into that named graph.
-    QLever supports SPARQL 1.1 Update INSERT DATA with Turtle inline syntax.
+    Converts Turtle to N-Triples before embedding in INSERT DATA, because
+    SPARQL Update does not accept @prefix declarations inside the data block.
     """
+    import rdflib
+    g = rdflib.Graph()
+    g.parse(data=ttl, format="turtle")
+    nt = g.serialize(format="nt")
     if graph_iri:
-        update = f"INSERT DATA {{ GRAPH <{graph_iri}> {{ {ttl} }} }}"
+        update = f"INSERT DATA {{ GRAPH <{graph_iri}> {{ {nt} }} }}"
     else:
-        update = f"INSERT DATA {{ {ttl} }}"
+        update = f"INSERT DATA {{ {nt} }}"
     await sparql_update(update, timeout=timeout)
 
 

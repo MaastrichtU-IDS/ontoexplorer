@@ -41,11 +41,14 @@ services:
       MINIO_ROOT_PASSWORD: minioadmin
 
   qlever:
-    image: adfreiburg/qlever
+    image: stain/jena-fuseki
+    user: root
     ports:
-      - "7001:7001"
-    volumes:
-      - qlever-data:/data
+      - "7001:3030"
+    environment:
+      ADMIN_PASSWORD: admin
+      JVM_ARGS: "-Xmx1g"
+    command: /jena-fuseki/fuseki-server --update --mem /qlever
 
   postgres:
     image: postgres:16
@@ -107,7 +110,6 @@ services:
 
 volumes:
   minio-data:
-  qlever-data:
   postgres-data:
   oxigraph-data:
   grafana-data:
