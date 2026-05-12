@@ -314,12 +314,12 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
         display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
       }}>
         <span style={{ fontWeight: 600, color: 'var(--accent)', flex: 1 }}>{data.label}</span>
-        <CopyChip text={data.iri.split(/[#/]/).pop() ?? data.iri} title={data.iri} />
-        <CopyChip text={data.iri} />
         <span style={{
           fontSize: 10, background: 'var(--bg)', color: typeColor,
-          borderRadius: 3, padding: '1px 5px', textTransform: 'uppercase',
+          borderRadius: 3, padding: '1px 5px', textTransform: 'uppercase', flexShrink: 0,
         }}>{data.entityType}</span>
+        <CopyChip text={data.iri.split(/[#/]/).pop() ?? data.iri} title={data.iri} />
+        <CopyChip text={data.iri} />
         <Link
           to={`/ontologies/${slug}/${versionId}?term=${encodeURIComponent(data.iri)}`}
           style={{ color: 'var(--text-dim)', fontSize: 11, flexShrink: 0 }}
