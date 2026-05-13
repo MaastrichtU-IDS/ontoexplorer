@@ -5,12 +5,13 @@ A next-generation FAIR ontology repository — ingest, browse, query, and reason
 ## What it does
 
 - **Ingest** ontologies by IRI, URL, or file upload (OWL/XML, Turtle, RDF/XML, OBO, JSON-LD)
-- **Browse** class and property hierarchies with asserted and OWL-EL inferred views
+- **Browse** class and property hierarchies with asserted and OWL-EL inferred views; keyboard-navigable (↑↓→←, Space, Enter)
 - **Search** terms by label, synonym, or CURIE with fast prefix-search backed by Redis
 - **Reason** using ELK (OWL-EL) — superclasses, subclasses, consistency, justifications
 - **Inspect** ontology document metadata (dcterms, pav, vann, schema.org, etc.) and VoID statistics
 - **Query** via SPARQL 1.1 endpoints over both metadata (Fuseki) and content (Oxigraph)
 - **Authenticate** via ORCID, GitHub, or Google OAuth 2.0
+- **Sync** ontologies automatically — hourly polling and GitHub push webhooks trigger re-ingestion when content changes
 - **Track** ingestion jobs, register webhooks, and manage API keys
 
 ## Architecture
@@ -137,6 +138,75 @@ Check job status:
 curl http://localhost:8000/api/v1/jobs/<task_id>
 ```
 
+## Auto-Sync
+
+Ontologies submitted via URL can be kept in sync automatically. There are two complementary mechanisms.
+
+### Hourly polling
+
+Enable `auto_sync` on any ontology and Celery Beat will re-fetch its `source_url` every hour. If the SHA-256 of the fetched content differs from the stored hash a fresh ingestion is queued; if it matches, nothing happens.
+
+```bash
+# Enable auto-sync on an ontology (requires authentication)
+curl -X PATCH http://localhost:8000/api/v1/ontologies/<id> \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"auto_sync": true}'
+```
+
+The `beat` Docker Compose service runs Celery Beat. It starts automatically with `docker compose up -d`.
+
+### GitHub push webhook
+
+For immediate sync on every push, register OntoExplorer as a webhook receiver in your GitHub repository:
+
+1. Go to **GitHub repository → Settings → Webhooks → Add webhook**
+2. Set:
+   - **Payload URL**: `https://your-domain/api/v1/inbound/github`
+   - **Content type**: `application/json`
+   - **Secret**: a random string, e.g. `openssl rand -hex 32`
+   - **Events**: _Just the push event_
+3. Add the secret to `.env`:
+   ```bash
+   GITHUB_WEBHOOK_SECRET=<your-secret>
+   ```
+4. Restart the API: `docker compose up -d api`
+
+When a push arrives, the endpoint:
+1. Verifies the `X-Hub-Signature-256` HMAC header
+2. Extracts all added/modified file paths from the payload
+3. Reconstructs raw GitHub URLs (`https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}`)
+4. Looks up any registered `OntologyVersion.source_url` that matches one of those URLs
+5. Queues `ingest_ontology` for each match
+
+Only ontologies whose `source_url` was recorded at ingestion time (i.e., submitted by URL) are eligible for webhook-triggered sync.
+
+## Using the Browser
+
+### Navigating hierarchies
+
+Open an ontology page (`/ontologies/<name>`) to see the class and property trees in the left panel. Click any node to load its details in the right panel.
+
+**Keyboard navigation** — click anywhere in a tree to give it focus, then use:
+
+| Key | Action |
+|-----|--------|
+| ↓ / ↑ | Move the cursor to the next / previous visible node |
+| → | Expand the focused node (no-op if already expanded or leaf) |
+| Space | Collapse the focused node (no-op if already collapsed or leaf) |
+| ← | Jump to the parent node |
+| Enter | Load the focused node's details in the right panel |
+
+The keyboard cursor (accent outline) is independent from the selected node shown in the right panel — you can arrow around freely and press Enter only when you want to navigate. Each tree section (Classes, Object Properties, Data Properties, Annotation Properties) has its own independent focus; Tab moves between them.
+
+### Searching within an ontology
+
+Use the search bar at the top of the left panel to find classes and properties by label or CURIE. Arrow keys and Enter work in the search dropdown too.
+
+### Asserted vs. inferred views
+
+The Classes tree has an **Asserted / Inferred** toggle. The inferred view requires ELK reasoning to have completed for that ontology version (status shown on the ontology page).
+
 ## API Reference
 
 Base path: `/api/v1/`
@@ -160,6 +230,7 @@ GET    /ontologies/{id}/{vid}/ancestors          Ancestor chain for tree navigat
 GET    /ontologies/{id}/{vid}/consistency        OWL consistency check
 POST   /ontologies/{id}/{vid}/justification      Request justification (async)
 GET    /ontologies/{id}/{vid}/justification/{jid} Retrieve justification result
+PATCH  /ontologies/{id}                          Update ontology (e.g. auto_sync)
 DELETE /ontologies/{id}                          Delete ontology and all versions
 DELETE /ontologies/{id}/{vid}                    Deprecate version
 
@@ -178,6 +249,9 @@ GET    /webhooks                                 List webhooks
 DELETE /webhooks/{id}                            Unregister
 POST   /api-keys                                 Create API key
 DELETE /api-keys/{id}                            Revoke key
+
+# Inbound
+POST   /inbound/github                           GitHub push event receiver (HMAC-verified)
 
 # Auth
 GET    /auth/{provider}/login                    OAuth redirect (orcid/github/google)
@@ -205,13 +279,14 @@ ontoexplorer/                    Python package
     api_keys.py                  API key management
     stats.py                     Usage statistics
     sparql.py                    SPARQL proxy endpoints
+    inbound.py                   Inbound webhook receivers (GitHub push events)
   modules/
     ingestion/                   OWL/RDF parsing pipeline (pyhornedowl + rdflib)
     metadata/                    DCAT/VoID/PROV-O generators, Fuseki writer
     storage/                     MinIO client
     content/                     Oxigraph named-graph management
     auth/                        OAuth providers, JWT sessions, FastAPI deps
-    jobs/                        Celery tasks (ingest, index, reason, justify)
+    jobs/                        Celery tasks (ingest, index, reason, justify, poll)
     search/                      Redis entity index (build_index, entity_lookup)
     webhooks/                    HMAC-signed outbound delivery
   clients/
@@ -252,6 +327,8 @@ tests/
 | ELK protocol | 202-Accepted + poll | Classification takes >10 min for large ontologies (GO ~7.5 min) |
 | Oxigraph in FastAPI | `asyncio.to_thread` + `asyncio.gather` | `Store.query()` is synchronous; blocks event loop if called directly |
 | Stats caching | Redis, pre-populated at index time | COUNT(*) over millions of triples is slow; 30-day TTL, invalidated on deprecation |
+| Auto-sync dedup | SHA-256 comparison before re-queue | Polling fetches the full file; comparing hash avoids spurious ingestion when nothing changed |
+| GitHub sync | HMAC-SHA256 on `X-Hub-Signature-256` | Standard GitHub webhook verification; 401 on mismatch prevents replay attacks |
 | Search index | Redis sorted set (lexicographic) | Sub-millisecond prefix search over 100k+ terms |
 | Mobile layout | Single-pane, tree ↔ detail toggle | Two-pane layout unusable below 768px |
 
@@ -268,6 +345,9 @@ OXIGRAPH_READ_ONLY=true          # set in API container; worker keeps write acce
 ELK_SERVICE_URL=http://elk-service:8001
 ELK_SERVICE_TIMEOUT=3600         # seconds — GO classification takes ~7.5 min
 JWT_SECRET_KEY=change-me-in-production
+
+# Inbound GitHub push webhook (optional — for immediate sync on push)
+GITHUB_WEBHOOK_SECRET=<random-secret>
 
 # OAuth providers (fill in at least one to enable login)
 GITHUB_CLIENT_ID=...
