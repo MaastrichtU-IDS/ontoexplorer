@@ -33,8 +33,79 @@ function fmtCount(n: number | null): string {
 
 // ── Single ontology row ───────────────────────────────────────────────────────
 
+function ShortnameEditor({ ontology }: { ontology: Ontology }) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(ontology.shortname ?? '')
+  const [error, setError] = useState<string | null>(null)
+  const qc = useQueryClient()
+
+  const save = useMutation({
+    mutationFn: (name: string) => api.ontologies.patch(ontology.id, name || null),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['ontologies'] })
+      setEditing(false)
+      setError(null)
+    },
+    onError: (err: unknown) => {
+      setError(err instanceof Error ? err.message : 'Failed to save')
+    },
+  })
+
+  function commit() {
+    const trimmed = value.trim()
+    save.mutate(trimmed)
+  }
+
+  if (!editing) {
+    return (
+      <button
+        onClick={() => { setValue(ontology.shortname ?? ''); setError(null); setEditing(true) }}
+        title="Edit shortname"
+        style={{
+          fontSize: 'var(--font-size-sm)',
+          color: ontology.shortname ? 'var(--accent-blue)' : 'var(--text-dim)',
+          display: 'block',
+          marginTop: '0.15rem',
+        }}
+      >
+        {ontology.shortname ?? '+ shortname'}
+      </button>
+    )
+  }
+
+  return (
+    <span style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', marginTop: '0.15rem' }}>
+      <span style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+        <input
+          autoFocus
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
+          placeholder="my-ontology"
+          style={{ fontSize: 'var(--font-size-sm)', padding: '0.15rem 0.4rem', width: '12rem' }}
+        />
+        <button
+          onClick={commit}
+          disabled={save.isPending}
+          style={{ fontSize: 'var(--font-size-sm)', color: 'var(--accent)' }}
+        >
+          {save.isPending ? '…' : 'save'}
+        </button>
+        <button
+          onClick={() => setEditing(false)}
+          style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}
+        >
+          cancel
+        </button>
+      </span>
+      {error && <span style={{ fontSize: 'var(--font-size-sm)', color: '#f87171' }}>{error}</span>}
+    </span>
+  )
+}
+
 function OntologyRow({ ontology }: { ontology: Ontology }) {
   const [confirming, setConfirming] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const qc = useQueryClient()
 
   const { data: versionsData } = useQuery({
@@ -49,6 +120,10 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['ontologies'] })
     },
+    onError: (err: unknown) => {
+      setConfirming(false)
+      setDeleteError(err instanceof Error ? err.message : 'Delete failed')
+    },
   })
 
   const shortVersion = latest?.version_iri
@@ -57,15 +132,19 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
 
   return (
     <tr style={{ borderBottom: '1px solid var(--border)' }}>
-      {/* IRI + date + triple count */}
+      {/* Name + IRI + shortname + date + triple count */}
       <td style={{ padding: '0.6rem 1rem', verticalAlign: 'top' }}>
         <Link
           to={`/ontologies/${ontology.id}`}
-          style={{ color: 'var(--accent-blue)', fontSize: 'var(--font-size-base)', display: 'block' }}
+          style={{ color: 'var(--accent-blue)', fontSize: 'var(--font-size-base)', display: 'block', fontWeight: 500 }}
         >
-          {ontology.iri}
+          {ontology.shortname ?? ontology.iri.split(/[/#]/).filter(Boolean).pop() ?? ontology.iri}
         </Link>
-        <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
+        <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', display: 'block', wordBreak: 'break-all' }}>
+          {ontology.iri}
+        </span>
+        <ShortnameEditor ontology={ontology} />
+        <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', display: 'block', marginTop: '0.15rem' }}>
           added {new Date(ontology.created_at).toLocaleDateString()}
           {latest?.triple_count != null && ` · ${fmtCount(latest.triple_count)} triples`}
         </span>
@@ -97,10 +176,11 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
               disabled={del.isPending}
               style={{ color: '#f87171', marginRight: '0.35rem', fontSize: 'var(--font-size-sm)' }}
             >
-              yes
+              {del.isPending ? '…' : 'yes'}
             </button>
             <button
               onClick={() => setConfirming(false)}
+              disabled={del.isPending}
               style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}
             >
               no
@@ -108,11 +188,16 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
           </span>
         ) : (
           <button
-            onClick={() => setConfirming(true)}
+            onClick={() => { setDeleteError(null); setConfirming(true) }}
             style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}
           >
             delete
           </button>
+        )}
+        {deleteError && (
+          <span style={{ display: 'block', color: '#f87171', fontSize: 'var(--font-size-sm)', marginTop: '0.25rem' }}>
+            {deleteError}
+          </span>
         )}
       </td>
     </tr>
@@ -121,11 +206,23 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
 
 // ── Add-ontology inline form ──────────────────────────────────────────────────
 
-type AddTab = 'iri' | 'url' | 'paste'
+type AddTab = 'iri' | 'url' | 'upload' | 'paste'
+
+const FORMATS = [
+  { value: 'turtle',      label: 'Turtle (.ttl)' },
+  { value: 'rdf',         label: 'RDF/XML (.rdf, .owl)' },
+  { value: 'n-triples',   label: 'N-Triples (.nt)' },
+  { value: 'json-ld',     label: 'JSON-LD (.jsonld)' },
+  { value: 'obo',         label: 'OBO (.obo)' },
+  { value: 'manchester',  label: 'Manchester (.omn)' },
+]
 
 function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
   const [tab, setTab] = useState<AddTab>('iri')
   const [value, setValue] = useState('')
+  const [file, setFile] = useState<File | null>(null)
+  const [pasteContent, setPasteContent] = useState('')
+  const [pasteFormat, setPasteFormat] = useState('turtle')
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -134,11 +231,21 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
     setSubmitting(true)
     setMessage(null)
     try {
-      const result = tab === 'iri'
-        ? await api.ontologies.submitByIri(value)
-        : await api.ontologies.submitByUrl(value)
+      let result: { task_id: string }
+      if (tab === 'iri') {
+        result = await api.ontologies.submitByIri(value)
+      } else if (tab === 'url') {
+        result = await api.ontologies.submitByUrl(value)
+      } else if (tab === 'upload') {
+        if (!file) return
+        result = await api.ontologies.submitFile(file)
+      } else {
+        result = await api.ontologies.submitByContent(pasteContent, pasteFormat)
+      }
       setMessage(`Queued — task ID: ${result.task_id}`)
       setValue('')
+      setFile(null)
+      setPasteContent('')
       setTimeout(onSuccess, 2000)
     } catch (err: unknown) {
       setMessage(`Error: ${err instanceof Error ? err.message : String(err)}`)
@@ -148,10 +255,15 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
   }
 
   const tabs: { key: AddTab; label: string }[] = [
-    { key: 'iri', label: 'By IRI' },
-    { key: 'url', label: 'By URL' },
-    { key: 'paste', label: 'Upload / Paste' },
+    { key: 'iri',    label: 'By IRI' },
+    { key: 'url',    label: 'By URL' },
+    { key: 'upload', label: 'Upload file' },
+    { key: 'paste',  label: 'Paste RDF' },
   ]
+
+  const submitDisabled = submitting
+    || (tab === 'upload' && !file)
+    || (tab === 'paste' && !pasteContent.trim())
 
   return (
     <div style={{
@@ -165,7 +277,7 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
         {tabs.map(({ key, label }) => (
           <button
             key={key}
-            onClick={() => setTab(key)}
+            onClick={() => { setTab(key); setMessage(null) }}
             style={{
               padding: '0.25rem 0.6rem',
               borderRadius: 'var(--radius-sm)',
@@ -181,22 +293,60 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
         ))}
       </div>
 
-      {tab === 'paste' ? (
-        <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
-          File upload is available via the REST API: <code>POST /api/v1/ontologies</code> with multipart form data.
-        </p>
-      ) : (
-        <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '0.5rem' }}>
-          <input
-            value={value}
-            onChange={e => setValue(e.target.value)}
-            placeholder={tab === 'iri' ? 'https://purl.obolibrary.org/obo/go.owl' : 'https://example.com/ontology.ttl'}
-            style={{ flex: 1 }}
-            required
-          />
+      <form onSubmit={handleSubmit}>
+        {(tab === 'iri' || tab === 'url') && (
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <input
+              value={value}
+              onChange={e => setValue(e.target.value)}
+              placeholder={tab === 'iri' ? 'https://purl.obolibrary.org/obo/go.owl' : 'https://example.com/ontology.ttl'}
+              style={{ flex: 1 }}
+              required
+            />
+          </div>
+        )}
+
+        {tab === 'upload' && (
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <input
+              type="file"
+              accept=".owl,.ttl,.rdf,.nt,.obo,.jsonld,.omn,.xml"
+              onChange={e => setFile(e.target.files?.[0] ?? null)}
+              style={{ flex: 1, fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}
+              required
+            />
+          </div>
+        )}
+
+        {tab === 'paste' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>Format:</span>
+              <select
+                value={pasteFormat}
+                onChange={e => setPasteFormat(e.target.value)}
+                style={{ fontSize: 'var(--font-size-sm)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '0.2rem 0.4rem', color: 'var(--text)' }}
+              >
+                {FORMATS.map(f => (
+                  <option key={f.value} value={f.value}>{f.label}</option>
+                ))}
+              </select>
+            </div>
+            <textarea
+              value={pasteContent}
+              onChange={e => setPasteContent(e.target.value)}
+              placeholder={`Paste your RDF content here…`}
+              rows={6}
+              style={{ resize: 'vertical', fontSize: 'var(--font-size-sm)', fontFamily: 'monospace', color: 'var(--text)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '0.5rem', width: '100%', boxSizing: 'border-box' }}
+              required
+            />
+          </div>
+        )}
+
+        <div style={{ marginTop: '0.5rem' }}>
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitDisabled}
             style={{
               padding: '0.4rem 0.9rem',
               background: 'var(--accent)',
@@ -204,12 +354,13 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
               borderRadius: 'var(--radius-sm)',
               fontWeight: 700,
               fontSize: 'var(--font-size-sm)',
+              opacity: submitDisabled ? 0.5 : 1,
             }}
           >
             {submitting ? 'Adding…' : 'Add'}
           </button>
-        </form>
-      )}
+        </div>
+      </form>
 
       {message && (
         <p style={{

@@ -69,6 +69,7 @@ class Ontology(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     iri: Mapped[str] = mapped_column(String, unique=True)
+    shortname: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
     owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -91,7 +92,7 @@ class OntologyVersion(Base):
 
     ontology: Mapped[Ontology] = relationship(back_populates="versions")
     imports: Mapped[list["OntologyImport"]] = relationship(back_populates="version", cascade="all, delete-orphan")
-    jobs: Mapped[list["Job"]] = relationship(back_populates="version")
+    jobs: Mapped[list["Job"]] = relationship(back_populates="version", passive_deletes=True)
 
 
 class OntologyImport(Base):
@@ -117,7 +118,7 @@ class Job(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    version: Mapped[OntologyVersion] = relationship(back_populates="jobs")
+    version: Mapped[OntologyVersion] = relationship(back_populates="jobs", passive_deletes=True)
 
 
 class Webhook(Base):

@@ -76,7 +76,7 @@ def get_token_url(provider: str) -> str:
 
 def get_redirect_uri(provider: str) -> str:
     s = get_settings()
-    return f"{s.app_url}/auth/{provider}/callback"
+    return f"{str(s.app_url).rstrip('/')}/auth/{provider}/callback"
 
 
 async def fetch_userinfo(provider: str, access_token: str, orcid_id: str | None = None) -> dict:

@@ -9,7 +9,7 @@ function OntologyRow({ o }: { o: Ontology }) {
   const { data: versionsData } = useVersions(o.id)
   const versions = versionsData?.versions ?? []
   const latest = versions[0]
-  const shortName = o.iri.split(/[/#]/).filter(Boolean).pop() ?? o.iri
+  const shortName = o.shortname ?? o.iri.split(/[/#]/).filter(Boolean).pop() ?? o.iri
 
   return (
     <tr

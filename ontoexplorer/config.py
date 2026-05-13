@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     # Application
     app_name: str = "OntoExplorer"
     app_url: AnyHttpUrl = "http://localhost:8000"  # type: ignore[assignment]
+    frontend_url: str = "http://localhost:5173"
     debug: bool = False
 
     # Postgres
@@ -58,6 +59,9 @@ class Settings(BaseSettings):
     # OAuth — Google
     google_client_id: str = ""
     google_client_secret: str = ""
+
+    # Development auth bypass — set AUTH_BYPASS=true to skip OAuth for local dev
+    auth_bypass: bool = False
 
     # Prometheus
     enable_metrics: bool = True

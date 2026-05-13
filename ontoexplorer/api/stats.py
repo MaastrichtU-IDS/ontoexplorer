@@ -1,12 +1,23 @@
 """Usage statistics API."""
 
+import asyncio
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ontoexplorer.config import get_settings
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Job, Ontology, OntologyVersion, User
 from ontoexplorer.modules.auth.dependencies import require_auth
+
+
+def _sum_bucket_bytes(bucket: str) -> int:
+    from ontoexplorer.clients.minio import get_minio_client
+    try:
+        return sum(obj.size or 0 for obj in get_minio_client().list_objects(bucket, recursive=True))
+    except Exception:
+        return 0
 
 router = APIRouter(prefix="/api/v1/stats", tags=["stats"])
 
@@ -76,10 +87,13 @@ async def get_stats(user: User = Depends(require_auth), db: AsyncSession = Depen
         {"uid": user.id},
     )).all()
 
+    s = get_settings()
+    storage_bytes = await asyncio.to_thread(_sum_bucket_bytes, s.minio_ontologies_bucket)
+
     return {
         "total_ontologies": total_ontologies,
         "total_versions": total_versions,
-        "storage_bytes": 0,
+        "storage_bytes": storage_bytes,
         "total_queries": 0,
         "uploads_per_month": [{"month": r.month, "count": r.count} for r in uploads_per_month],
         "queries_per_month": [],

@@ -79,6 +79,7 @@ export interface UserProfile {
 export interface Ontology {
   id: string
   iri: string
+  shortname: string | null
   created_at: string
 }
 
@@ -114,6 +115,14 @@ export interface PropertyUsage {
   filler_label: string | null
 }
 
+export interface ClassUsageEntry {
+  class_iri: string
+  class_label: string
+  property_iri: string | null
+  property_label: string | null
+  restriction: string
+}
+
 export interface InferredExprEntry {
   expr: ClassExprNode
   from_iri: string
@@ -132,9 +141,11 @@ export interface RawTermDetail {
   inferred_superclass_expressions?: InferredExprEntry[]
   equivalent_to?: ClassExprNode[]
   disjoint_with?: ClassExprNode[]
+  inferred_disjoint_with?: InferredExprEntry[]
   disjoint_union_of?: ClassExprNode[][]
   general_class_axioms?: ClassExprNode[]
   usage: PropertyUsage[]
+  class_usage?: ClassUsageEntry[]
 }
 
 export interface ParsedTerm {
@@ -151,6 +162,7 @@ export interface ParsedTerm {
   inferredSuperclassExpressions: InferredExprEntry[]
   equivalentTo: ClassExprNode[]
   disjointWith: ClassExprNode[]
+  inferredDisjointWith: InferredExprEntry[]
   disjointUnionOf: ClassExprNode[][]
   generalClassAxioms: ClassExprNode[]
   domain: string[]
@@ -158,6 +170,7 @@ export interface ParsedTerm {
   characteristics: string[]
   inverseOf: string[]
   usage: PropertyUsage[]
+  classUsage: ClassUsageEntry[]
 }
 
 export interface OntologyMetadataEntry {
@@ -194,7 +207,7 @@ export interface SearchResult {
 
 export interface JustificationAxiom {
   sub: ClassExprNode
-  rel: 'subClassOf' | 'equivalentClass'
+  rel: 'subClassOf' | 'equivalentClass' | 'disjointWith'
   sup: ClassExprNode
 }
 
@@ -329,7 +342,8 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
     superclassExpressions:          raw.superclass_expressions           ?? [],
     inferredSuperclassExpressions:  raw.inferred_superclass_expressions  ?? [],
     equivalentTo:                   raw.equivalent_to                    ?? [],
-    disjointWith:          raw.disjoint_with           ?? [],
+    disjointWith:          raw.disjoint_with            ?? [],
+    inferredDisjointWith:  raw.inferred_disjoint_with   ?? [],
     disjointUnionOf:       raw.disjoint_union_of       ?? [],
     generalClassAxioms:    raw.general_class_axioms    ?? [],
     domain:               p[P.domain]               ?? [],
@@ -337,6 +351,7 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
     characteristics,
     inverseOf:       p[P.inverseOf]   ?? [],
     usage:           raw.usage        ?? [],
+    classUsage:      raw.class_usage  ?? [],
   }
 }
 
@@ -356,6 +371,11 @@ export const api = {
       )
     },
     get: (id: string) => request<Ontology>(`/ontologies/${id}`),
+    patch: (id: string, shortname: string | null) =>
+      request<Ontology>(`/ontologies/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ shortname }),
+      }),
     versions: (id: string) =>
       request<{ versions: OntologyVersion[] }>(`/ontologies/${id}/versions`),
     terms: (oid: string, vid: string, parent?: string | null, entityType: 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' = 'class', hideInverse = false) => {
@@ -429,6 +449,11 @@ export const api = {
         body: fd,
       })
     },
+    submitByContent: (content: string, format?: string) =>
+      request<{ task_id: string; status: string }>('/ontologies', {
+        method: 'POST',
+        body: JSON.stringify({ content, format }),
+      }),
     delete: (id: string) =>
       request<void>(`/ontologies/${id}`, { method: 'DELETE' }),
   },

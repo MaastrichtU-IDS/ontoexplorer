@@ -255,6 +255,43 @@ async def submit_ontology(
     return {"task_id": task.id, "status": "queued"}
 
 
+# ── Patch ─────────────────────────────────────────────────────────────────────
+
+import re as _re
+
+_SHORTNAME_RE = _re.compile(r'^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$')
+
+
+@router.patch("/{ontology_id}", summary="Update ontology metadata (shortname)")
+async def patch_ontology(
+    ontology_id: str,
+    request: Request,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    body = await request.json()
+    ontology = await _get_ontology_or_404(db, ontology_id)
+
+    if "shortname" in body:
+        shortname = body["shortname"]
+        if shortname is not None:
+            if not _SHORTNAME_RE.match(shortname):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Shortname must be 2–64 characters: lowercase letters, digits, hyphens, underscores; must start and end with a letter or digit",
+                )
+            conflict = await db.execute(
+                select(Ontology).where(Ontology.shortname == shortname, Ontology.id != ontology_id)
+            )
+            if conflict.scalar_one_or_none():
+                raise HTTPException(status_code=409, detail="Shortname already taken")
+        ontology.shortname = shortname
+
+    await db.commit()
+    await db.refresh(ontology)
+    return _ontology_dict(ontology)
+
+
 # ── List ───────────────────────────────────────────────────────────────────────
 
 @router.get("", summary="List ontologies")
@@ -890,10 +927,13 @@ async def get_term(
             if _expr.get("type") != "unknown":
                 superclass_expressions.append(_expr)
 
-    # Inferred superclass expressions — anonymous subClassOf expressions inherited via inferred named superclasses
+    # All ancestors: asserted direct parents first, then ELK-inferred (ELK strips asserted parents from its output)
+    _all_ancestor_iris: list[str] = list(dict.fromkeys(asserted_sup_iris + inferred_sup_iris))
+
+    # Inferred superclass expressions — anonymous subClassOf expressions inherited via named superclasses
     _seen_expr_keys: set[str] = {_json_mod.dumps(_e, sort_keys=True) for _e in superclass_expressions}
     inferred_superclass_expressions: list[dict] = []
-    for _sup_iri in inferred_sup_iris[:20]:
+    for _sup_iri in _all_ancestor_iris[:20]:
         _sup_node = _ox.NamedNode(_sup_iri)
         for _quad in store.quads_for_pattern(_sup_node, _RDFS_SC_NODE, None, _graph_node):
             if isinstance(_quad.object, _ox.BlankNode):
@@ -925,6 +965,50 @@ async def get_term(
         _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
         if _expr.get("type") != "unknown":
             disjoint_with.append(_expr)
+
+    # Precompute owl:AllDisjointClasses map: iri → list of co-member IRIs
+    # BFO and similar ontologies often use multi-way DisjointClasses rather than pairwise disjointWith.
+    _OWL_ADC_NODE    = _ox.NamedNode(_OWL + "AllDisjointClasses")
+    _OWL_MEMBERS_NODE = _ox.NamedNode(_OWL + "members")
+    _RDF_TYPE_NODE   = _ox.NamedNode(_RDF + "type")
+    _adc_map: dict[str, list[str]] = {}
+    for _q in store.quads_for_pattern(None, _RDF_TYPE_NODE, _OWL_ADC_NODE, _graph_node):
+        _mem_qs = list(store.quads_for_pattern(_q.subject, _OWL_MEMBERS_NODE, None, _graph_node))
+        if not _mem_qs:
+            continue
+        _miris = [
+            m.value for m in _rdf_list_items(store, _graph_node, _mem_qs[0].object)
+            if isinstance(m, _ox.NamedNode)
+        ]
+        for _miri in _miris:
+            _adc_map.setdefault(_miri, []).extend(o for o in _miris if o != _miri)
+
+    # Inferred disjoint-with — walk ALL ancestors (asserted + inferred); check pairwise + AllDisjointClasses
+    _seen_disjoint_keys: set[str] = {_json_mod.dumps(_e, sort_keys=True) for _e in disjoint_with}
+    inferred_disjoint_with: list[dict] = []
+    for _sup_iri in _all_ancestor_iris:
+        _sup_node = _ox.NamedNode(_sup_iri)
+
+        # Pairwise owl:disjointWith
+        for _quad in store.quads_for_pattern(_sup_node, _OWL_DISJOINT, None, _graph_node):
+            _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
+            if _expr.get("type") != "unknown":
+                _key = _json_mod.dumps(_expr, sort_keys=True)
+                if _key not in _seen_disjoint_keys:
+                    _seen_disjoint_keys.add(_key)
+                    inferred_disjoint_with.append({
+                        "expr": _expr, "from_iri": _sup_iri, "from_label": _label(_sup_iri),
+                    })
+
+        # Multi-way owl:AllDisjointClasses
+        for _partner_iri in _adc_map.get(_sup_iri, []):
+            _expr = {"type": "named", "iri": _partner_iri, "label": _label(_partner_iri)}
+            _key = _json_mod.dumps(_expr, sort_keys=True)
+            if _key not in _seen_disjoint_keys:
+                _seen_disjoint_keys.add(_key)
+                inferred_disjoint_with.append({
+                    "expr": _expr, "from_iri": _sup_iri, "from_label": _label(_sup_iri),
+                })
 
     # Disjoint union of (owl:disjointUnionOf) — each value is an rdf:List of members
     disjoint_union_of: list[list[dict]] = []
@@ -1013,6 +1097,84 @@ async def get_term(
                 "filler_label": filler_label or filler_val,
             })
 
+    # Class usage — axioms in other classes that reference this term as a filler or disjointWith target
+    class_usage: list[dict] = []
+    if not is_property:
+        _cu_query = f"""
+            PREFIX owl:  <http://www.w3.org/2002/07/owl#>
+            PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+            SELECT DISTINCT ?class ?prop ?restrictType WHERE {{
+                GRAPH <{g_iri}> {{
+                    {{
+                        ?r owl:someValuesFrom <{term_iri}> . ?r owl:onProperty ?prop .
+                        BIND("some" AS ?restrictType)
+                    }} UNION {{
+                        ?r owl:allValuesFrom <{term_iri}> . ?r owl:onProperty ?prop .
+                        BIND("only" AS ?restrictType)
+                    }} UNION {{
+                        ?r owl:hasValue <{term_iri}> . ?r owl:onProperty ?prop .
+                        BIND("value" AS ?restrictType)
+                    }}
+                    {{ ?class rdfs:subClassOf ?r . FILTER(isIRI(?class)) }}
+                    UNION {{ ?class owl:equivalentClass ?r . FILTER(isIRI(?class)) }}
+                }}
+            }}
+            ORDER BY ?class ?prop
+            LIMIT 200
+        """
+        _seen_cu: set[str] = set()
+        for _row in store.query(_cu_query):
+            _cls_iri = _row["class"].value
+            _prop_iri = _row["prop"].value if _row["prop"] else None
+            _rtype = _row["restrictType"].value if _row["restrictType"] else "?"
+            _cu_key = f"{_cls_iri}||{_prop_iri}||{_rtype}"
+            if _cu_key not in _seen_cu:
+                _seen_cu.add(_cu_key)
+                class_usage.append({
+                    "class_iri":      _cls_iri,
+                    "class_label":    _label(_cls_iri),
+                    "property_iri":   _prop_iri,
+                    "property_label": _label(_prop_iri) if _prop_iri else None,
+                    "restriction":    _rtype,
+                })
+        # Pairwise owl:disjointWith: ?class owl:disjointWith <term>
+        _disj_query = f"""
+            PREFIX owl: <http://www.w3.org/2002/07/owl#>
+            SELECT ?class WHERE {{
+                GRAPH <{g_iri}> {{
+                    ?class owl:disjointWith <{term_iri}> .
+                    FILTER(isIRI(?class))
+                }}
+            }}
+            ORDER BY ?class
+            LIMIT 100
+        """
+        for _row in store.query(_disj_query):
+            _cls_iri = _row["class"].value
+            _cu_key = f"{_cls_iri}||disjointWith"
+            if _cu_key not in _seen_cu:
+                _seen_cu.add(_cu_key)
+                class_usage.append({
+                    "class_iri":      _cls_iri,
+                    "class_label":    _label(_cls_iri),
+                    "property_iri":   None,
+                    "property_label": None,
+                    "restriction":    "disjointWith",
+                })
+        # owl:AllDisjointClasses co-members
+        for _co_iri in _adc_map.get(term_iri, []):
+            _cu_key = f"{_co_iri}||disjointWith"
+            if _cu_key not in _seen_cu:
+                _seen_cu.add(_cu_key)
+                class_usage.append({
+                    "class_iri":      _co_iri,
+                    "class_label":    _label(_co_iri),
+                    "property_iri":   None,
+                    "property_label": None,
+                    "restriction":    "disjointWith",
+                })
+        class_usage.sort(key=lambda x: (x["class_label"] or x["class_iri"]).lower())
+
     # Is this term the object of owl:inverseOf declared by another property?
     def _check_is_inverse_target(s) -> bool:
         q = f"""
@@ -1044,9 +1206,11 @@ async def get_term(
         "inferred_superclass_expressions": inferred_superclass_expressions,
         "equivalent_to": equivalent_to,
         "disjoint_with": disjoint_with,
+        "inferred_disjoint_with": inferred_disjoint_with,
         "disjoint_union_of": disjoint_union_of,
         "general_class_axioms": general_class_axioms,
         "usage": usage,
+        "class_usage": class_usage,
     }
 
 
@@ -1493,7 +1657,7 @@ async def _get_version_or_404(db: AsyncSession, ontology_id: str, version_id: st
 
 
 def _ontology_dict(o: Ontology) -> dict:
-    return {"id": o.id, "iri": o.iri, "created_at": o.created_at.isoformat()}
+    return {"id": o.id, "iri": o.iri, "shortname": o.shortname, "created_at": o.created_at.isoformat()}
 
 
 def _version_dict(v: OntologyVersion) -> dict:

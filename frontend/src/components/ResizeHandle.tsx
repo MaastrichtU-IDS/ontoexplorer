@@ -7,13 +7,14 @@ interface Props {
 export default function ResizeHandle({ onDelta }: Props) {
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
-    const startX = e.clientX
+    let lastX = e.clientX
 
     function onMouseMove(ev: MouseEvent) {
-      onDelta(ev.clientX - startX)
+      onDelta(ev.clientX - lastX)
+      lastX = ev.clientX
     }
     function onMouseUp(ev: MouseEvent) {
-      onDelta(ev.clientX - startX)
+      onDelta(ev.clientX - lastX)
       document.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('mouseup', onMouseUp)
     }

@@ -2,20 +2,21 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, type Webhook } from '../lib/api'
 
+const ALL_EVENTS = [
+  'ontology.ingested',
+  'version.deprecated',
+  'reasoning.completed',
+  'reasoning.failed',
+  'indexing.completed',
+]
+
 export default function Webhooks() {
   const qc = useQueryClient()
   const [url, setUrl] = useState('')
   const [secret, setSecret] = useState('')
   const [selectedEvents, setSelectedEvents] = useState<string[]>(['ontology.ingested'])
   const [expandedId, setExpandedId] = useState<string | null>(null)
-
-  const ALL_EVENTS = [
-    'ontology.ingested',
-    'version.deprecated',
-    'reasoning.completed',
-    'reasoning.failed',
-    'indexing.completed',
-  ]
+  const [showForm, setShowForm] = useState(false)
 
   const { data, isLoading } = useQuery({ queryKey: ['webhooks'], queryFn: () => api.webhooks.list() })
 
@@ -31,6 +32,7 @@ export default function Webhooks() {
       setUrl('')
       setSecret('')
       setSelectedEvents(['ontology.ingested'])
+      setShowForm(false)
       qc.invalidateQueries({ queryKey: ['webhooks'] })
     },
   })
@@ -53,108 +55,159 @@ export default function Webhooks() {
 
   return (
     <div>
-      <h1 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '1.5rem' }}>Webhooks</h1>
-
-      <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, padding: '1.25rem', marginBottom: '2rem' }}>
-        <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem' }}>Register webhook</h2>
-        <form onSubmit={e => { e.preventDefault(); create.mutate() }}>
-          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            <input
-              value={url}
-              onChange={e => setUrl(e.target.value)}
-              placeholder="https://example.com/webhook"
-              required
-              style={{ flex: 1, padding: '0.5rem 0.75rem', border: '1px solid #e2e8f0', borderRadius: 6 }}
-            />
-            <input
-              value={secret}
-              onChange={e => setSecret(e.target.value)}
-              placeholder="Optional signing secret"
-              style={{ flex: 1, padding: '0.5rem 0.75rem', border: '1px solid #e2e8f0', borderRadius: 6 }}
-            />
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-            {ALL_EVENTS.map(ev => (
-              <label key={ev} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem', cursor: 'pointer' }}>
-                <input type="checkbox" checked={selectedEvents.includes(ev)} onChange={() => toggleEvent(ev)} />
-                <code>{ev}</code>
-              </label>
-            ))}
-          </div>
-          <button
-            type="submit"
-            disabled={create.isPending || selectedEvents.length === 0}
-            style={{ padding: '0.5rem 1rem', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6, fontWeight: 600 }}
-          >
-            {create.isPending ? 'Registering…' : 'Register'}
-          </button>
-          {create.isError && (
-            <p style={{ marginTop: '0.5rem', color: '#dc2626', fontSize: '0.875rem' }}>
-              {(create.error as Error).message}
-            </p>
-          )}
-        </form>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <h1 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Webhooks</h1>
+        <button
+          onClick={() => setShowForm(v => !v)}
+          style={{
+            padding: '0.35rem 0.8rem',
+            background: showForm ? 'var(--bg-secondary)' : 'var(--accent)',
+            color: showForm ? 'var(--text-muted)' : '#0f172a',
+            border: showForm ? '1px solid var(--border)' : 'none',
+            borderRadius: 'var(--radius-sm)',
+            fontWeight: 600,
+            fontSize: 'var(--font-size-sm)',
+          }}
+        >
+          {showForm ? '× Cancel' : '+ Register Webhook'}
+        </button>
       </div>
 
-      {isLoading ? <p style={{ color: '#64748b' }}>Loading…</p> : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      {/* Register form */}
+      {showForm && (
+        <div style={{
+          background: 'var(--bg-secondary)',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)',
+          padding: '1rem',
+          marginBottom: '1.25rem',
+        }}>
+          <form onSubmit={e => { e.preventDefault(); create.mutate() }}>
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+              <input
+                value={url}
+                onChange={e => setUrl(e.target.value)}
+                placeholder="https://example.com/webhook"
+                required
+                style={{ flex: 2 }}
+              />
+              <input
+                value={secret}
+                onChange={e => setSecret(e.target.value)}
+                placeholder="Optional signing secret"
+                style={{ flex: 1 }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+              {ALL_EVENTS.map(ev => (
+                <label key={ev} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: 'var(--font-size-sm)', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                  <input type="checkbox" checked={selectedEvents.includes(ev)} onChange={() => toggleEvent(ev)} />
+                  <code style={{ color: 'var(--text-muted)' }}>{ev}</code>
+                </label>
+              ))}
+            </div>
+            <button
+              type="submit"
+              disabled={create.isPending || selectedEvents.length === 0}
+              style={{
+                padding: '0.4rem 0.9rem',
+                background: 'var(--accent)',
+                color: '#0f172a',
+                borderRadius: 'var(--radius-sm)',
+                fontWeight: 700,
+                fontSize: 'var(--font-size-sm)',
+              }}
+            >
+              {create.isPending ? 'Registering…' : 'Register'}
+            </button>
+            {create.isError && (
+              <span style={{ marginLeft: '0.75rem', color: '#f87171', fontSize: 'var(--font-size-sm)' }}>
+                {(create.error as Error).message}
+              </span>
+            )}
+          </form>
+        </div>
+      )}
+
+      {/* List */}
+      {isLoading ? (
+        <p style={{ color: 'var(--text-dim)' }}>Loading…</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           {(data?.webhooks ?? []).map((wh: Webhook) => (
-            <div key={wh.id} style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
+            <div key={wh.id} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
               <div style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <div style={{ flex: 1 }}>
-                  <code style={{ fontSize: '0.875rem', fontWeight: 500 }}>{wh.url}</code>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <code style={{ fontSize: 'var(--font-size-base)', color: 'var(--text)' }}>{wh.url}</code>
                   <div style={{ marginTop: '0.25rem', display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
                     {wh.events.map(ev => (
-                      <span key={ev} style={{ fontSize: '0.7rem', padding: '0.1rem 0.4rem', background: '#eff6ff', color: '#2563eb', borderRadius: 4 }}>{ev}</span>
+                      <span key={ev} style={{
+                        fontSize: '0.7rem',
+                        padding: '0.1rem 0.4rem',
+                        background: 'rgba(99, 179, 237, 0.1)',
+                        color: 'var(--accent-blue)',
+                        borderRadius: 'var(--radius-sm)',
+                        border: '1px solid rgba(99, 179, 237, 0.2)',
+                      }}>
+                        {ev}
+                      </span>
                     ))}
                   </div>
                 </div>
-                <span style={{ fontSize: '0.75rem', color: wh.active ? '#16a34a' : '#94a3b8', fontWeight: 600 }}>
-                  {wh.active ? 'Active' : 'Inactive'}
+                <span style={{
+                  fontSize: 'var(--font-size-sm)',
+                  color: wh.active ? 'var(--accent)' : 'var(--text-dim)',
+                  fontWeight: 600,
+                  whiteSpace: 'nowrap',
+                }}>
+                  {wh.active ? 'active' : 'inactive'}
                 </span>
                 <button
                   onClick={() => test.mutate(wh.id)}
                   disabled={test.isPending}
-                  style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', border: '1px solid #e2e8f0', borderRadius: 4, background: '#fff' }}
+                  style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}
                 >
-                  Test
+                  test
                 </button>
                 <button
                   onClick={() => setExpandedId(expandedId === wh.id ? null : wh.id)}
-                  style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', border: '1px solid #e2e8f0', borderRadius: 4, background: '#fff' }}
+                  style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}
                 >
-                  {expandedId === wh.id ? 'Hide' : 'History'}
+                  {expandedId === wh.id ? 'hide' : 'history'}
                 </button>
                 <button
                   onClick={() => remove.mutate(wh.id)}
-                  style={{ fontSize: '0.8rem', color: '#dc2626', background: 'none', border: '1px solid #fca5a5', borderRadius: 4, padding: '0.25rem 0.5rem' }}
+                  style={{ fontSize: 'var(--font-size-sm)', color: '#f87171' }}
                 >
-                  Delete
+                  delete
                 </button>
               </div>
 
               {expandedId === wh.id && (
-                <div style={{ borderTop: '1px solid #f1f5f9', padding: '0.75rem 1rem' }}>
-                  <p style={{ fontSize: '0.8rem', fontWeight: 600, color: '#64748b', marginBottom: '0.5rem' }}>Delivery history</p>
+                <div style={{ borderTop: '1px solid var(--border)', padding: '0.75rem 1rem' }}>
+                  <p style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, color: 'var(--text-dim)', marginBottom: '0.5rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Delivery history
+                  </p>
                   {!deliveries?.deliveries.length ? (
-                    <p style={{ fontSize: '0.8rem', color: '#94a3b8' }}>No deliveries yet.</p>
+                    <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>No deliveries yet.</p>
                   ) : (
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-size-sm)' }}>
                       <thead>
                         <tr>
                           {['Event', 'Status', 'HTTP', 'Attempts', 'Last attempt'].map(h => (
-                            <th key={h} style={{ textAlign: 'left', padding: '0.25rem 0.5rem', color: '#64748b', fontWeight: 600 }}>{h}</th>
+                            <th key={h} style={{ textAlign: 'left', padding: '0.25rem 0.5rem', color: 'var(--text-dim)', fontWeight: 600 }}>{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {deliveries.deliveries.map((d: any) => (
-                          <tr key={d.id} style={{ borderTop: '1px solid #f1f5f9' }}>
-                            <td style={{ padding: '0.25rem 0.5rem' }}><code>{d.event}</code></td>
-                            <td style={{ padding: '0.25rem 0.5rem', color: d.status === 'delivered' ? '#16a34a' : '#dc2626' }}>{d.status}</td>
-                            <td style={{ padding: '0.25rem 0.5rem' }}>{d.response_status ?? '—'}</td>
-                            <td style={{ padding: '0.25rem 0.5rem' }}>{d.attempts}</td>
-                            <td style={{ padding: '0.25rem 0.5rem', color: '#64748b' }}>
+                          <tr key={d.id} style={{ borderTop: '1px solid var(--border)' }}>
+                            <td style={{ padding: '0.25rem 0.5rem' }}><code style={{ color: 'var(--text-muted)' }}>{d.event}</code></td>
+                            <td style={{ padding: '0.25rem 0.5rem', color: d.status === 'delivered' ? 'var(--accent)' : '#f87171' }}>{d.status}</td>
+                            <td style={{ padding: '0.25rem 0.5rem', color: 'var(--text-muted)' }}>{d.response_status ?? '—'}</td>
+                            <td style={{ padding: '0.25rem 0.5rem', color: 'var(--text-muted)' }}>{d.attempts}</td>
+                            <td style={{ padding: '0.25rem 0.5rem', color: 'var(--text-dim)' }}>
                               {d.last_attempt_at ? new Date(d.last_attempt_at).toLocaleString() : '—'}
                             </td>
                           </tr>
@@ -167,7 +220,9 @@ export default function Webhooks() {
             </div>
           ))}
           {!data?.webhooks.length && (
-            <p style={{ textAlign: 'center', color: '#94a3b8', padding: '1.5rem' }}>No webhooks registered.</p>
+            <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+              No webhooks registered. Use "+ Register Webhook" above to add one.
+            </div>
           )}
         </div>
       )}

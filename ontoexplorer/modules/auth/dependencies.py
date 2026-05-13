@@ -9,11 +9,23 @@ from jose import JWTError
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ontoexplorer.config import get_settings
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import ApiKey, User
 from ontoexplorer.modules.auth.session import decode_access_token
 
 _bearer = HTTPBearer(auto_error=False)
+
+
+async def _get_or_create_dev_user(db: AsyncSession) -> User:
+    result = await db.execute(select(User).where(User.email == "dev@localhost"))
+    dev_user = result.scalar_one_or_none()
+    if not dev_user:
+        dev_user = User(email="dev@localhost", display_name="Dev User")
+        db.add(dev_user)
+        await db.commit()
+        await db.refresh(dev_user)
+    return dev_user
 
 
 async def get_current_user(
@@ -24,6 +36,9 @@ async def get_current_user(
     Extract the authenticated user from a Bearer token (JWT or API key).
     Returns None if no valid credentials are present.
     """
+    if get_settings().auth_bypass:
+        return await _get_or_create_dev_user(db)
+
     if not credentials:
         return None
 

@@ -160,6 +160,7 @@ GET    /ontologies/{id}/{vid}/ancestors          Ancestor chain for tree navigat
 GET    /ontologies/{id}/{vid}/consistency        OWL consistency check
 POST   /ontologies/{id}/{vid}/justification      Request justification (async)
 GET    /ontologies/{id}/{vid}/justification/{jid} Retrieve justification result
+DELETE /ontologies/{id}                          Delete ontology and all versions
 DELETE /ontologies/{id}/{vid}                    Deprecate version
 
 # SPARQL
@@ -267,12 +268,62 @@ OXIGRAPH_READ_ONLY=true          # set in API container; worker keeps write acce
 ELK_SERVICE_URL=http://elk-service:8001
 ELK_SERVICE_TIMEOUT=3600         # seconds — GO classification takes ~7.5 min
 JWT_SECRET_KEY=change-me-in-production
-ORCID_CLIENT_ID=...
+
+# OAuth providers (fill in at least one to enable login)
 GITHUB_CLIENT_ID=...
+GITHUB_CLIENT_SECRET=...
 GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+ORCID_CLIENT_ID=...
+ORCID_CLIENT_SECRET=...
+
+# URL settings — must match your deployment
+APP_URL=http://localhost:8000    # API base URL, used to build OAuth callback URIs
+FRONTEND_URL=http://localhost:5173  # SPA base URL, used for post-OAuth redirects
+
+# Development only — skips OAuth, creates a dev@localhost user automatically
+AUTH_BYPASS=false
 ```
 
 See `.env.example` for the full list.
+
+## OAuth Setup
+
+### GitHub (quickest for local dev)
+
+1. Go to **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**
+2. Set:
+   - **Homepage URL**: `http://localhost:5173`
+   - **Authorization callback URL**: `http://localhost:8000/auth/github/callback`
+3. Copy the **Client ID** and generate a **Client Secret**
+4. Add to `.env`:
+   ```bash
+   GITHUB_CLIENT_ID=<your-client-id>
+   GITHUB_CLIENT_SECRET=<your-client-secret>
+   AUTH_BYPASS=false
+   ```
+5. Restart the API: `docker compose up -d api`
+
+> **SSH port forwarding**: if accessing the app over SSH, forward both ports — the browser must reach port 8000 directly for the OAuth callback to work:
+> ```bash
+> ssh -L 5173:localhost:5173 -L 8000:localhost:8000 user@host
+> ```
+
+### ORCID
+
+1. Register at https://orcid.org/developer-tools (or https://sandbox.orcid.org for testing)
+2. Set **Redirect URI** to `http://localhost:8000/auth/orcid/callback`
+3. Add `ORCID_CLIENT_ID`, `ORCID_CLIENT_SECRET` (and `ORCID_SANDBOX=true` for sandbox) to `.env`
+
+### Google
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials → Create OAuth Client ID
+2. Add `http://localhost:8000/auth/google/callback` as an **Authorized redirect URI**
+3. Add `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` to `.env`
+
+### Development bypass
+
+Set `AUTH_BYPASS=true` to skip OAuth entirely. The API will create a `dev@localhost` user and treat every request as authenticated. **Never use this in production.**
 
 ## License
 
