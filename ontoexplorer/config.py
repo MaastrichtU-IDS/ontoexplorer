@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     # Inbound GitHub webhook — set to the secret configured in the GitHub repo's webhook settings
     github_webhook_secret: str = ""
 
+    # Admin access — comma-separated list of email addresses granted /admin access
+    admin_emails: str = ""
+
     # Development auth bypass — set AUTH_BYPASS=true to skip OAuth for local dev
     auth_bypass: bool = False
 
@@ -79,6 +82,12 @@ class Settings(BaseSettings):
         if not v.startswith("postgresql"):
             raise ValueError("database_url must be a PostgreSQL URL")
         return v
+
+
+def is_admin(user) -> bool:
+    """Return True if user.email is in the ADMIN_EMAILS allowlist."""
+    emails = {e.strip().lower() for e in get_settings().admin_emails.split(",") if e.strip()}
+    return bool(user.email and user.email.lower() in emails)
 
 
 _settings: Settings | None = None

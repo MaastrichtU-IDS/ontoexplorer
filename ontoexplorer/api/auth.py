@@ -21,6 +21,7 @@ from ontoexplorer.modules.auth.session import (
     refresh_session,
     revoke_session,
 )
+from ontoexplorer.config import get_settings, is_admin
 from ontoexplorer.models.db import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -122,6 +123,7 @@ async def me(user: User = Depends(require_auth)):
         "email": user.email,
         "display_name": user.display_name,
         "created_at": user.created_at.isoformat(),
+        "is_admin": is_admin(user),
     }
 
 
