@@ -74,6 +74,7 @@ export interface UserProfile {
   email: string | null
   display_name: string | null
   created_at: string
+  is_admin: boolean
 }
 
 export interface Ontology {
@@ -273,6 +274,45 @@ export interface WebhookDelivery {
   attempts: number
   http_status: number | null
   last_attempt_at: string | null
+}
+
+// ── Admin types ───────────────────────────────────────────────────────────────
+
+export interface AdminServiceStatus {
+  postgres: string
+  redis: string
+  minio: string
+  elk: string
+  celery_queue_depth: number
+}
+
+export interface AdminOntologyEntry {
+  id: string
+  iri: string
+  shortname: string | null
+  version_id: string
+  triple_count: number | null
+  ingestion_status: string
+  indexed: boolean
+  reasoning_status: 'ready' | 'running' | 'not_started'
+  version_created_at: string | null
+}
+
+export interface AdminJobEntry {
+  id: string
+  type: string
+  version_id: string
+  ontology_shortname: string | null
+  status: string
+  started_at: string | null
+  finished_at: string | null
+  error: string | null
+}
+
+export interface AdminOverview {
+  services: AdminServiceStatus
+  ontologies: AdminOntologyEntry[]
+  jobs: AdminJobEntry[]
 }
 
 // ── Predicate constants ───────────────────────────────────────────────────────
@@ -521,5 +561,9 @@ export const api = {
       request<{ total_ontologies: number; total_classes: number; total_properties: number }>(
         '/stats/public'
       ),
+  },
+
+  admin: {
+    overview: () => request<AdminOverview>('/admin/overview'),
   },
 }
