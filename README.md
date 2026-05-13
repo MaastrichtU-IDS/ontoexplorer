@@ -181,6 +181,25 @@ When a push arrives, the endpoint:
 
 Only ontologies whose `source_url` was recorded at ingestion time (i.e., submitted by URL) are eligible for webhook-triggered sync.
 
+## Seeding a Catalog
+
+A curated list of 22 well-known ontologies is in [`seeds/catalog.yaml`](seeds/catalog.yaml), covering upper ontologies (BFO, CCO, DUL), FAIR vocabulary (DCAT, PROV-O, schema.org, SKOS, …), OBO Foundry core (GO, CHEBI, HP, DOID, …), and biomedical/clinical ontologies (NCIt, ORDO, Mondo, OBI).
+
+Bulk-submit them with the seed script:
+
+```bash
+# Dry run — see what would be submitted
+uv run scripts/seed_ontologies.py --dry-run
+
+# Submit all groups
+uv run scripts/seed_ontologies.py --api-key oe_...
+
+# Submit only FAIR vocabulary and upper ontologies (lighter, good starting point)
+uv run scripts/seed_ontologies.py --api-key oe_... --group fair --group upper
+```
+
+The script prints `✓ queued`, `~ already registered`, or `✗ error` per entry and exits non-zero if any submission failed. Large ontologies (CHEBI, NCIt, GO) will take several minutes to ingest and are noted in the catalog. The API key must have write scope — create one via `POST /api/v1/api-keys` or `scripts/create_dev_user.py`.
+
 ## Using the Browser
 
 ### Navigating hierarchies

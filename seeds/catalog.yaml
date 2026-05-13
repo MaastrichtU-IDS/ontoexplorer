@@ -1,0 +1,115 @@
+# OntoExplorer ontology seed catalog
+#
+# Each entry requires exactly one of:
+#   iri: canonical ontology IRI  — fetched with RDF content negotiation
+#   url: direct file URL         — fetched without negotiation
+#
+# Optional fields:
+#   label:     human-readable name (informational only)
+#   group:     category tag, used with --group filter in seed script
+#   note:      shown during seeding; useful for size/time warnings
+#   auto_sync: whether to enable hourly polling after ingestion (default: false)
+
+ontologies:
+
+  # ── Upper ontologies ─────────────────────────────────────────────────────────
+
+  - group: upper
+    iri: http://purl.obolibrary.org/obo/bfo.owl
+    label: Basic Formal Ontology (BFO 2020)
+
+  - group: upper
+    url: https://raw.githubusercontent.com/CommonCoreOntologies/CommonCoreOntologies/master/cco-merged.ttl
+    label: Common Core Ontologies (CCO)
+    auto_sync: true
+
+  - group: upper
+    url: http://www.ontologydesignpatterns.org/ont/dul/DUL.owl
+    label: DOLCE+DnS Ultralite (DUL)
+
+  # ── FAIR / provenance vocabulary ─────────────────────────────────────────────
+
+  - group: fair
+    iri: http://purl.org/dc/terms/
+    label: Dublin Core Terms (dcterms)
+
+  - group: fair
+    url: https://www.w3.org/ns/dcat2.ttl
+    label: DCAT 2
+
+  - group: fair
+    url: https://www.w3.org/ns/prov.ttl
+    label: PROV-O
+
+  - group: fair
+    iri: http://purl.org/pav/
+    label: PAV Provenance, Authoring and Versioning
+
+  - group: fair
+    url: https://schema.org/version/latest/schemaorg-current-https.ttl
+    label: schema.org
+    note: ~2500 classes + properties; ~1 min to ingest
+
+  - group: fair
+    url: https://www.w3.org/2004/02/skos/core.rdf
+    label: SKOS Core
+
+  - group: fair
+    url: http://rdfs.org/ns/void.ttl
+    label: VoID — Vocabulary of Interlinked Datasets
+
+  # ── OBO Foundry core ─────────────────────────────────────────────────────────
+
+  - group: obo
+    iri: http://purl.obolibrary.org/obo/ro.owl
+    label: Relations Ontology (RO)
+
+  - group: obo
+    iri: http://purl.obolibrary.org/obo/cl.owl
+    label: Cell Ontology (CL)
+
+  - group: obo
+    iri: http://purl.obolibrary.org/obo/go.owl
+    label: Gene Ontology (GO)
+    note: ~45k classes; ELK reasoning takes ~7 min
+
+  - group: obo
+    iri: http://purl.obolibrary.org/obo/doid.owl
+    label: Human Disease Ontology (DOID)
+
+  - group: obo
+    iri: http://purl.obolibrary.org/obo/hp.owl
+    label: Human Phenotype Ontology (HP)
+
+  - group: obo
+    iri: http://purl.obolibrary.org/obo/mp.owl
+    label: Mammalian Phenotype Ontology (MP)
+
+  - group: obo
+    iri: http://purl.obolibrary.org/obo/uberon.owl
+    label: Uberon Multi-Species Anatomy Ontology
+    note: ~80k classes; large ingestion
+
+  - group: obo
+    iri: http://purl.obolibrary.org/obo/chebi.owl
+    label: Chemical Entities of Biological Interest (CHEBI)
+    note: ~170k classes; very large — may take 5–10 min to ingest
+
+  # ── Biomedical / clinical ─────────────────────────────────────────────────────
+
+  - group: biomedical
+    iri: http://purl.obolibrary.org/obo/ncit.owl
+    label: NCI Thesaurus (NCIt)
+    note: ~170k classes; very large — may take 5–10 min to ingest
+
+  - group: biomedical
+    iri: http://www.orpha.net/ontology/orphanet.owl
+    label: Orphanet Rare Disease Ontology (ORDO)
+
+  - group: biomedical
+    iri: http://purl.obolibrary.org/obo/mondo.owl
+    label: Mondo Disease Ontology
+
+  - group: biomedical
+    iri: http://purl.obolibrary.org/obo/obi.owl
+    label: Ontology for Biomedical Investigations (OBI)
