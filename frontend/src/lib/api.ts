@@ -89,6 +89,7 @@ export interface OntologyVersion {
   format: string
   status: string
   sha256: string
+  triple_count: number | null
   download_url: string
   created_at: string
 }
@@ -113,6 +114,12 @@ export interface PropertyUsage {
   filler_label: string | null
 }
 
+export interface InferredExprEntry {
+  expr: ClassExprNode
+  from_iri: string
+  from_label: string
+}
+
 export interface RawTermDetail {
   iri: string
   label: string
@@ -121,7 +128,12 @@ export interface RawTermDetail {
   is_inverse_target: boolean
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
   subclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
-  superclass_expressions?: string[]
+  superclass_expressions?: ClassExprNode[]
+  inferred_superclass_expressions?: InferredExprEntry[]
+  equivalent_to?: ClassExprNode[]
+  disjoint_with?: ClassExprNode[]
+  disjoint_union_of?: ClassExprNode[][]
+  general_class_axioms?: ClassExprNode[]
   usage: PropertyUsage[]
 }
 
@@ -135,7 +147,12 @@ export interface ParsedTerm {
   synonyms: { exact: string[]; related: string[]; broad: string[]; narrow: string[] }
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
   subclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
-  superclassExpressions: string[]
+  superclassExpressions: ClassExprNode[]
+  inferredSuperclassExpressions: InferredExprEntry[]
+  equivalentTo: ClassExprNode[]
+  disjointWith: ClassExprNode[]
+  disjointUnionOf: ClassExprNode[][]
+  generalClassAxioms: ClassExprNode[]
   domain: string[]
   range: string[]
   characteristics: string[]
@@ -155,6 +172,16 @@ export interface OntologyDocumentMetadata {
   predicates: Record<string, OntologyMetadataEntry[]>
 }
 
+export type ClassExprNode =
+  | { type: 'named'; iri: string; label: string }
+  | { type: 'literal'; value: string }
+  | { type: 'some' | 'only' | 'value'; property: ClassExprNode; filler: ClassExprNode }
+  | { type: 'not'; operand: ClassExprNode }
+  | { type: 'and' | 'or'; operands: ClassExprNode[] }
+  | { type: 'min' | 'max' | 'exactly'; property: ClassExprNode; n: string; filler?: ClassExprNode }
+  | { type: 'one_of'; individuals: ClassExprNode[] }
+  | { type: 'unknown' }
+
 export interface SearchResult {
   iri: string
   label: string
@@ -163,6 +190,18 @@ export interface SearchResult {
   match_type: 'entity' | 'elk' | 'sparql'
   version_id?: string
   ontology_id?: string
+}
+
+export interface JustificationAxiom {
+  sub: ClassExprNode
+  rel: 'subClassOf' | 'equivalentClass'
+  sup: ClassExprNode
+}
+
+export interface JustificationResult {
+  justifications: JustificationAxiom[][]
+  timed_out: boolean
+  reasoning_available: boolean
 }
 
 export interface AutocompleteCompletion {
@@ -287,7 +326,12 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
     },
     superclasses:         raw.superclasses         ?? { asserted: [], inferred: [] },
     subclasses:           raw.subclasses            ?? { asserted: [], inferred: [] },
-    superclassExpressions: raw.superclass_expressions ?? [],
+    superclassExpressions:          raw.superclass_expressions           ?? [],
+    inferredSuperclassExpressions:  raw.inferred_superclass_expressions  ?? [],
+    equivalentTo:                   raw.equivalent_to                    ?? [],
+    disjointWith:          raw.disjoint_with           ?? [],
+    disjointUnionOf:       raw.disjoint_union_of       ?? [],
+    generalClassAxioms:    raw.general_class_axioms    ?? [],
     domain:               p[P.domain]               ?? [],
     range:           p[P.range]       ?? [],
     characteristics,
@@ -362,6 +406,11 @@ export const api = {
         index_meta: { indexed_at?: string; class_count?: number; property_count?: number }
       }>(`/ontologies/${oid}/${vid}/stats`),
 
+    justification: (oid: string, vid: string, sub: string, sup: string, max = 3) =>
+      request<JustificationResult>(
+        `/ontologies/${oid}/${vid}/justification?sub=${encodeURIComponent(sub)}&sup=${encodeURIComponent(sup)}&max_justifications=${max}`
+      ),
+
     submitByIri: (iri: string) =>
       request<{ task_id: string; status: string }>('/ontologies', {
         method: 'POST',
@@ -380,6 +429,8 @@ export const api = {
         body: fd,
       })
     },
+    delete: (id: string) =>
+      request<void>(`/ontologies/${id}`, { method: 'DELETE' }),
   },
 
   globalSearch: {
