@@ -242,7 +242,9 @@ def build_index(version_id: str, ontology_id: str) -> IndexStats:
     for sol in sparql_query(q):
         iri = sol["entity"].value
         if iri in labels_by_iri:
-            labels_by_iri[iri].append(sol["label"].value)
+            val = sol["label"].value
+            if val not in labels_by_iri[iri]:
+                labels_by_iri[iri].append(val)
 
     # Invalidate root terms cache so API serves fresh data with the new source fields
     for key in r.scan_iter(f"terms_root:{version_id}:*"):
