@@ -13,6 +13,41 @@ OWL_THING    = str(OWL.Thing)
 OWL_NOTHING  = str(OWL.Nothing)
 
 
+def _nt(node) -> str:
+    """Format an rdflib node as N-Triples syntax (blank nodes as _:xxx, IRIs as <xxx>)."""
+    if isinstance(node, rdflib.BNode):
+        return f"_:{node}"
+    return f"<{node}>"
+
+
+def _nt_str(s: str) -> str:
+    """Format a string (already-converted node) as N-Triples syntax."""
+    if "://" in s or s.startswith("urn:"):
+        return f"<{s}>"
+    return f"_:{s}"
+
+
+def _serialize_list_axioms(graph: rdflib.Graph, node, lst) -> list[str]:
+    """Return N-Triple strings for `node owl:intersectionOf list` including the full RDF list."""
+    from rdflib.namespace import RDF as _RDF
+    sub_g = rdflib.Graph()
+    sub_g.add((node, OWL.intersectionOf, lst))
+    current = lst
+    for _ in range(200):
+        if not isinstance(current, rdflib.BNode):
+            break
+        first = graph.value(current, _RDF.first)
+        rest = graph.value(current, _RDF.rest)
+        if first is not None:
+            sub_g.add((current, _RDF.first, first))
+        if rest is not None:
+            sub_g.add((current, _RDF.rest, rest))
+        if rest is None or str(rest) == str(_RDF.nil):
+            break
+        current = rest
+    return [line.strip() for line in sub_g.serialize(format="nt").splitlines() if line.strip()]
+
+
 @dataclass
 class ClassificationResult:
     version_id: str
@@ -53,14 +88,15 @@ def classify(graph: rdflib.Graph, version_id: str) -> ClassificationResult:
             inferred[cls].add(equiv)
             inferred[equiv].add(cls)
 
-    # Handle A equivalentClass _:n where _:n is an anonymous (blank node) intersection or
-    # restriction — add the blank node IRI string to inferred[A] so that CR3 can fire when
-    # it finds the corresponding intersectionOf triple.
-    for s, _, o in graph.triples((None, OWL.equivalentClass, None)):
-        if isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.BNode):
-            cls_str = str(s)
-            if cls_str in classes:
-                inferred[cls_str].add(str(o))
+    # Handle A equivalentClass/subClassOf _:n where _:n is an anonymous intersection or
+    # restriction — add the blank node string to inferred[A] so CR3 can fire.
+    # subClassOf with BNode objects appears in reconstructed proof-trace graphs.
+    for pred in (OWL.equivalentClass, RDFS.subClassOf):
+        for s, _, o in graph.triples((None, pred, None)):
+            if isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.BNode):
+                cls_str = str(s)
+                if cls_str in classes:
+                    inferred[cls_str].add(str(o))
 
     # Proof trace: "sub|sup" -> list of steps (disabled for large ontologies)
     traces: dict[str, list[dict]] = {}
@@ -85,8 +121,8 @@ def classify(graph: rdflib.Graph, version_id: str) -> ClassificationResult:
                         inferred[cls].add(op_str)
                         _record(cls, op_str, "CR3",
                                 [f"{_short(cls)} ⊑ {_short(str(node))}", f"{_short(str(node))} = {' ⊓ '.join(_short(str(o)) for o in operands if isinstance(o, rdflib.URIRef))}"],
-                                [f"<{cls}> <{RDFS.subClassOf}> <{node}> .",
-                                 f"<{node}> <{OWL.intersectionOf}> _:list ."])
+                                [f"<{cls}> <{RDFS.subClassOf}> {_nt(node)} ."]
+                                + _serialize_list_axioms(graph, node, lst))
 
     # ── CR4: existential propagation — A ⊑ ∃r.B and ∃r.B ⊑ D → A ⊑ D ────────
     # Collect A → [(role, filler)] from owl:someValuesFrom restrictions.
@@ -150,9 +186,10 @@ def classify(graph: rdflib.Graph, version_id: str) -> ClassificationResult:
                     _record(cls, sup, "CR4",
                             [f"{_short(cls)} ⊑ ∃{_short(role)}.{_short(filler)}",
                              f"∃{_short(role)}.{_short(filler)} ⊑ {_short(sup)}"],
-                            [f"<{cls}> <{RDFS.subClassOf}> _:restr .",
-                             f"_:restr <{OWL.onProperty}> <{role}> ; <{OWL.someValuesFrom}> <{filler}> .",
-                             f"_:restr <{RDFS.subClassOf}> <{sup}> ."])
+                            [f"{_nt_str(cls)} <{RDFS.subClassOf}> _:restr .",
+                             f"_:restr <{OWL.onProperty}> {_nt_str(role)} .",
+                             f"_:restr <{OWL.someValuesFrom}> {_nt_str(filler)} .",
+                             f"_:restr <{RDFS.subClassOf}> {_nt_str(sup)} ."])
 
             # ── CR5: role hierarchy — r ⊑ s means ∃r.B ⊑ ∃s.B ───────────────
             for super_role in role_hier.get(role, set()):
@@ -179,8 +216,8 @@ def classify(graph: rdflib.Graph, version_id: str) -> ClassificationResult:
                         new_sups.add(sup2)
                         _record(cls, sup2, "CR2",
                                 [f"{_short(cls)} ⊑ {_short(sup)}", f"{_short(sup)} ⊑ {_short(sup2)}"],
-                                [f"<{cls}> <{RDFS.subClassOf}> <{sup}> .",
-                                 f"<{sup}> <{RDFS.subClassOf}> <{sup2}> ."])
+                                [f"{_nt_str(cls)} <{RDFS.subClassOf}> {_nt_str(sup)} .",
+                                 f"{_nt_str(sup)} <{RDFS.subClassOf}> {_nt_str(sup2)} ."])
             if new_sups:
                 inferred[cls].update(new_sups)
                 changed = True
@@ -197,9 +234,9 @@ def classify(graph: rdflib.Graph, version_id: str) -> ClassificationResult:
                     _record(cls, OWL_NOTHING, "CR6",
                             [f"{_short(cls)} ⊑ {_short(b)}", f"{_short(cls)} ⊑ {_short(c)}",
                              f"{_short(b)} disjointWith {_short(c)}"],
-                            [f"<{cls}> <{RDFS.subClassOf}> <{b}> .",
-                             f"<{cls}> <{RDFS.subClassOf}> <{c}> .",
-                             f"<{b}> <{OWL.disjointWith}> <{c}> ."])
+                            [f"{_nt_str(cls)} <{RDFS.subClassOf}> {_nt_str(b)} .",
+                             f"{_nt_str(cls)} <{RDFS.subClassOf}> {_nt_str(c)} .",
+                             f"{_nt_str(b)} <{OWL.disjointWith}> {_nt_str(c)} ."])
 
     # Build result — superclasses contains only inferred (not directly asserted)
     asserted_all: set[tuple[str, str]] = set()

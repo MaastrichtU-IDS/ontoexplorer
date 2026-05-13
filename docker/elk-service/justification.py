@@ -96,11 +96,14 @@ def _find_one_justification(
 def _entails(axioms: list[str], sub: str, sup: str) -> bool:
     """Return True if the given axiom set entails sub ⊑ sup."""
     g = rdflib.Graph()
-    for ax in axioms:
-        try:
-            g.parse(data=ax, format="nt")
-        except Exception:
-            pass
+    try:
+        g.parse(data="\n".join(axioms), format="nt")
+    except Exception:
+        for ax in axioms:
+            try:
+                g.parse(data=ax, format="nt")
+            except Exception:
+                pass
     if len(g) == 0:
         return False
     try:
@@ -114,12 +117,6 @@ def _entails(axioms: list[str], sub: str, sup: str) -> bool:
 
 
 def _extract_all_axioms(graph: rdflib.Graph) -> list[str]:
-    """Serialise every triple in the graph as a separate N-Triple string."""
-    axioms = []
-    for triple in graph:
-        g = rdflib.Graph()
-        g.add(triple)
-        nt = g.serialize(format="nt").strip()
-        if nt:
-            axioms.append(nt)
-    return axioms
+    """Serialise graph as N-Triples, one line per axiom, preserving blank node IDs."""
+    nt_text = graph.serialize(format="nt")
+    return [line.strip() for line in nt_text.splitlines() if line.strip()]
