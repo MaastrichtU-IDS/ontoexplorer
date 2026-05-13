@@ -1,6 +1,7 @@
 import { Route, Routes } from 'react-router-dom'
 import NavBar from './components/NavBar'
 import AuthGuard from './components/AuthGuard'
+import DashboardLayout from './components/DashboardLayout'
 import Home from './pages/Home'
 import Search from './pages/Search'
 import Ontologies from './pages/Ontologies'
@@ -32,10 +33,12 @@ export default function App() {
       <Route path="/login" element={<Shell><Login /></Shell>} />
       <Route path="/auth/:provider/callback" element={<AuthCallback />} />
       <Route element={<Shell><AuthGuard /></Shell>}>
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/dashboard/keys" element={<ApiKeys />} />
-        <Route path="/dashboard/webhooks" element={<Webhooks />} />
-        <Route path="/dashboard/stats" element={<Stats />} />
+        <Route element={<DashboardLayout />}>
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/dashboard/keys" element={<ApiKeys />} />
+          <Route path="/dashboard/webhooks" element={<Webhooks />} />
+          <Route path="/dashboard/stats" element={<Stats />} />
+        </Route>
       </Route>
     </Routes>
   )
