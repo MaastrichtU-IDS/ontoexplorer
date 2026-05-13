@@ -143,17 +143,6 @@ function KeywordSearch() {
 
 // ── Query tab (MOS) ───────────────────────────────────────────────────────────
 
-function useAllLatestVersions(ontologyIds: string[]) {
-  return useQueries({
-    queries: ontologyIds.map(oid => ({
-      queryKey: ['versions', oid],
-      queryFn: () => api.ontologies.versions(oid),
-      staleTime: 30_000,
-      enabled: !!oid,
-    })),
-  })
-}
-
 function useMOSFanout(pairs: { oid: string; vid: string }[], query: string) {
   return useQueries({
     queries: pairs.map(({ oid, vid }) => ({
@@ -171,10 +160,9 @@ function MOSQuery() {
   const [selectedOids, setSelectedOids] = useState<string[]>([])
   const [mosQuery, setMosQuery] = useState('')
 
-  // Latest version for every ontology (for fan-out search)
-  const versionQueries = useAllLatestVersions(ontologies.map(o => o.id))
-  const allPairs: { oid: string; vid: string }[] = ontologies.flatMap((o, i) => {
-    const vid = versionQueries[i]?.data?.versions[0]?.id
+  // latest_version is now returned inline by the list endpoint — no extra calls needed
+  const allPairs: { oid: string; vid: string }[] = ontologies.flatMap(o => {
+    const vid = o.latest_version?.id
     return vid ? [{ oid: o.id, vid }] : []
   })
 

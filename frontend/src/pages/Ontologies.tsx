@@ -1,54 +1,111 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOntologySearch } from '../hooks/useOntologySearch'
-import { useVersions } from '../hooks/useVersions'
 import { Ontology, slugFromIri } from '../lib/api'
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fmtCount(n: number | null | undefined): string {
+  if (n == null) return '—'
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`
+  return String(n)
+}
+
+function displayName(o: Ontology): string {
+  if (o.shortname) return o.shortname
+  const last = o.iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? o.iri
+  return last.replace(/\.(owl|ttl|rdf|obo|json|xml|nt)$/i, '')
+}
+
+function IriChip({ iri }: { iri: string }) {
+  const [copied, setCopied] = useState(false)
+  function copy(e: React.MouseEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    navigator.clipboard.writeText(iri).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+  return (
+    <button
+      onClick={copy}
+      title={iri}
+      style={{
+        fontSize: 10, padding: '1px 7px', borderRadius: 3,
+        border: '1px solid var(--border)',
+        background: copied ? 'rgba(100,200,100,0.1)' : 'transparent',
+        color: copied ? 'var(--accent)' : 'var(--text-dim)',
+        cursor: 'pointer', fontFamily: 'monospace', flexShrink: 0,
+      }}
+    >
+      {copied ? '✓ copied' : 'IRI'}
+    </button>
+  )
+}
+
+// ── Row ───────────────────────────────────────────────────────────────────────
 
 function OntologyRow({ o }: { o: Ontology }) {
   const navigate = useNavigate()
-  const { data: versionsData } = useVersions(o.id)
-  const versions = versionsData?.versions ?? []
-  const latest = versions[0]
-  const shortName = o.shortname ?? o.iri.split(/[/#]/).filter(Boolean).pop() ?? o.iri
+  const latest = o.latest_version
+  const hasStats = o.class_count != null || o.property_count != null || o.triple_count != null
 
   return (
     <tr
-      onClick={() => latest && navigate(`/ontologies/${slugFromIri(o.iri)}`)}
-      style={{ cursor: latest ? 'pointer' : 'default' }}
+      onClick={() => latest && navigate(`/ontologies/${o.shortname ?? slugFromIri(o.iri)}`)}
+      style={{ cursor: latest ? 'pointer' : 'default', borderBottom: '1px solid var(--border)' }}
       onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
       onMouseLeave={e => (e.currentTarget.style.background = '')}
     >
-      <td style={{ padding: '10px 12px', color: 'var(--accent)', fontWeight: 500 }}>
-        {shortName}
+      {/* Name */}
+      <td style={{ padding: '10px 12px' }}>
+        <span style={{ color: 'var(--accent)', fontWeight: 500 }}>{displayName(o)}</span>
       </td>
-      <td style={{ padding: '10px 12px', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', wordBreak: 'break-all' }}>
-        {o.iri}
+
+      {/* IRI chip */}
+      <td style={{ padding: '10px 12px' }}>
+        <IriChip iri={o.iri} />
       </td>
-      <td style={{ padding: '10px 12px', color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', whiteSpace: 'nowrap' }}>
-        {versions.length > 0 ? (
+
+      {/* Status */}
+      <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+        {latest ? (
           <span style={{
-            background: latest?.status === 'ingested' ? 'rgba(80,200,120,0.12)' : 'var(--bg-secondary)',
-            color: latest?.status === 'ingested' ? '#50c878' : 'var(--text-dim)',
+            background: latest.status === 'ingested' ? 'rgba(80,200,120,0.12)' : 'var(--bg-secondary)',
+            color: latest.status === 'ingested' ? '#50c878' : 'var(--text-dim)',
             borderRadius: 3, padding: '2px 7px', fontSize: 10,
           }}>
-            {latest?.status ?? '—'}
+            {latest.status}
           </span>
         ) : (
           <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>—</span>
         )}
       </td>
-      <td style={{ padding: '10px 12px', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', whiteSpace: 'nowrap' }}>
-        {versions.length}
+
+      {/* Classes · props · axioms */}
+      <td style={{ padding: '10px 12px', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+        {hasStats ? (
+          <>
+            {fmtCount(o.class_count)} cls
+            <span style={{ color: 'var(--border)', margin: '0 4px' }}>·</span>
+            {fmtCount(o.property_count)} props
+            <span style={{ color: 'var(--border)', margin: '0 4px' }}>·</span>
+            {fmtCount(o.triple_count)} axioms
+          </>
+        ) : '—'}
       </td>
-      <td style={{ padding: '10px 12px', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', whiteSpace: 'nowrap' }}>
-        {latest?.format?.toUpperCase() ?? '—'}
-      </td>
+
+      {/* Added */}
       <td style={{ padding: '10px 12px', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', whiteSpace: 'nowrap' }}>
         {new Date(o.created_at).toLocaleDateString()}
       </td>
     </tr>
   )
 }
+
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function Ontologies() {
   const [query, setQuery] = useState('')
@@ -61,7 +118,6 @@ export default function Ontologies() {
         Ontologies
       </h1>
 
-      {/* Search bar */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
         background: 'var(--bg-secondary)', border: '1px solid var(--border)',
@@ -98,7 +154,7 @@ export default function Ontologies() {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border)' }}>
-              {['Name', 'IRI', 'Status', 'Versions', 'Format', 'Added'].map(h => (
+              {['Name', 'IRI', 'Status', 'Stats', 'Added'].map(h => (
                 <th key={h} style={{
                   padding: '8px 12px', textAlign: 'left',
                   color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,

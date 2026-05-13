@@ -25,23 +25,29 @@ router = APIRouter(prefix="/api/v1/stats", tags=["stats"])
 @router.get("/public", summary="Public aggregate statistics (no auth required)")
 async def get_public_stats(db: AsyncSession = Depends(get_db)):
     import json
-    from ontoexplorer.modules.search.indexer import _get_redis
+    from ontoexplorer.modules.search.indexer import _get_redis, _meta_key
 
-    total_ontologies = (await db.execute(select(func.count(Ontology.id)))).scalar_one()
+    total_ontologies = await db.scalar(select(func.count(Ontology.id)))
+    version_ids = list(await db.scalars(select(OntologyVersion.id)))
 
-    r = _get_redis()
-    total_classes = 0
-    total_properties = 0
-    for key in r.scan_iter("search:meta:*"):
-        raw = r.get(key)
-        if not raw:
-            continue
-        try:
-            meta = json.loads(raw)
-            total_classes += int(meta.get("class_count", 0))
-            total_properties += int(meta.get("property_count", 0))
-        except (ValueError, TypeError, json.JSONDecodeError):
-            pass
+    def _sum_stats(vids: list[str]) -> tuple[int, int]:
+        if not vids:
+            return 0, 0
+        r = _get_redis()
+        values = r.mget([_meta_key(vid) for vid in vids])
+        classes = properties = 0
+        for raw in values:
+            if not raw:
+                continue
+            try:
+                meta = json.loads(raw)
+                classes += int(meta.get("class_count", 0))
+                properties += int(meta.get("property_count", 0))
+            except (ValueError, TypeError, json.JSONDecodeError):
+                pass
+        return classes, properties
+
+    total_classes, total_properties = await asyncio.to_thread(_sum_stats, version_ids)
 
     return {
         "total_ontologies": total_ontologies,

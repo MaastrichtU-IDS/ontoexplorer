@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, type Ontology, type OntologyVersion } from '../lib/api'
+import { api, slugFromIri, type Ontology, type OntologyVersion, type OntologyDocumentMetadata } from '../lib/api'
 
 // ── Status dot ────────────────────────────────────────────────────────────────
 
@@ -29,6 +29,62 @@ function fmtCount(n: number | null): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`
   return String(n)
+}
+
+// ── Display name (strip file extension) ──────────────────────────────────────
+
+function displayName(ontology: Ontology): string {
+  if (ontology.shortname) return ontology.shortname
+  const last = ontology.iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? ontology.iri
+  return last.replace(/\.(owl|ttl|rdf|obo|json|xml|nt)$/i, '')
+}
+
+// ── Extract title from ontology document metadata ─────────────────────────────
+
+const TITLE_PREDICATES = [
+  'http://purl.org/dc/terms/title',
+  'http://purl.org/dc/elements/1.1/title',
+  'http://www.w3.org/2000/01/rdf-schema#label',
+]
+
+function extractTitle(metadata: OntologyDocumentMetadata | undefined): string | null {
+  if (!metadata) return null
+  for (const p of TITLE_PREDICATES) {
+    const vals = metadata.predicates[p]
+    if (vals && vals.length > 0) {
+      const en = vals.find(v => v.language === 'en' || v.language === null)
+      return (en ?? vals[0]).value
+    }
+  }
+  return null
+}
+
+// ── Copyable IRI chip ─────────────────────────────────────────────────────────
+
+function IriChip({ iri }: { iri: string }) {
+  const [copied, setCopied] = useState(false)
+  function copy(e: React.MouseEvent) {
+    e.preventDefault()
+    navigator.clipboard.writeText(iri).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+  return (
+    <button
+      onClick={copy}
+      title={iri}
+      style={{
+        fontSize: 10, padding: '1px 7px', borderRadius: 3,
+        border: '1px solid var(--border)',
+        background: copied ? 'rgba(100,200,100,0.1)' : 'transparent',
+        color: copied ? 'var(--accent)' : 'var(--text-dim)',
+        cursor: 'pointer', fontFamily: 'monospace', flexShrink: 0,
+      }}
+    >
+      {copied ? '✓ copied' : 'IRI'}
+    </button>
+  )
 }
 
 // ── Single ontology row ───────────────────────────────────────────────────────
@@ -64,8 +120,6 @@ function ShortnameEditor({ ontology }: { ontology: Ontology }) {
         style={{
           fontSize: 'var(--font-size-sm)',
           color: ontology.shortname ? 'var(--accent-blue)' : 'var(--text-dim)',
-          display: 'block',
-          marginTop: '0.15rem',
         }}
       >
         {ontology.shortname ?? '+ shortname'}
@@ -74,7 +128,7 @@ function ShortnameEditor({ ontology }: { ontology: Ontology }) {
   }
 
   return (
-    <span style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', marginTop: '0.15rem' }}>
+    <span style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
       <span style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
         <input
           autoFocus
@@ -115,10 +169,25 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
 
   const latest: OntologyVersion | undefined = versionsData?.versions[0]
 
+  const { data: statsData } = useQuery({
+    queryKey: ['version-stats', ontology.id, latest?.id],
+    queryFn: () => api.ontologies.stats(ontology.id, latest!.id),
+    enabled: !!latest,
+    staleTime: 120_000,
+  })
+
+  const { data: metaData } = useQuery({
+    queryKey: ['onto-doc-meta', ontology.id, latest?.id],
+    queryFn: () => api.ontologies.ontologyMetadata(ontology.id, latest!.id),
+    enabled: !!latest,
+    staleTime: 300_000,
+  })
+
   const del = useMutation({
     mutationFn: () => api.ontologies.delete(ontology.id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['ontologies'] })
+      qc.invalidateQueries({ queryKey: ['stats'] })
     },
     onError: (err: unknown) => {
       setConfirming(false)
@@ -126,33 +195,35 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
     },
   })
 
-  const shortVersion = latest?.version_iri
-    ? latest.version_iri.replace(/.*[/#]/, '')
-    : '—'
+  const name = displayName(ontology)
+  const title = extractTitle(metaData)
+  const showTitle = title && title.toLowerCase() !== name.toLowerCase()
 
   return (
     <tr style={{ borderBottom: '1px solid var(--border)' }}>
-      {/* Name + IRI + shortname + date + triple count */}
+      {/* Name + title + IRI + shortname + stats */}
       <td style={{ padding: '0.6rem 1rem', verticalAlign: 'top' }}>
         <Link
-          to={`/ontologies/${ontology.id}`}
+          to={`/ontologies/${ontology.shortname ?? slugFromIri(ontology.iri)}`}
           style={{ color: 'var(--accent-blue)', fontSize: 'var(--font-size-base)', display: 'block', fontWeight: 500 }}
         >
-          {ontology.shortname ?? ontology.iri.split(/[/#]/).filter(Boolean).pop() ?? ontology.iri}
+          {name}
         </Link>
-        <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', display: 'block', wordBreak: 'break-all' }}>
-          {ontology.iri}
+        {showTitle && (
+          <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', display: 'block' }}>
+            {title}
+          </span>
+        )}
+        <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.2rem', flexWrap: 'wrap' }}>
+          <IriChip iri={ontology.iri} />
+          <ShortnameEditor ontology={ontology} />
         </span>
-        <ShortnameEditor ontology={ontology} />
-        <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', display: 'block', marginTop: '0.15rem' }}>
+        <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', display: 'block', marginTop: '0.2rem' }}>
           added {new Date(ontology.created_at).toLocaleDateString()}
-          {latest?.triple_count != null && ` · ${fmtCount(latest.triple_count)} triples`}
+          {statsData?.class_count != null && ` · ${fmtCount(statsData.class_count)} classes`}
+          {statsData?.property_count != null && ` · ${fmtCount(statsData.property_count)} props`}
+          {statsData?.triple_count != null && ` · ${fmtCount(statsData.triple_count)} axioms`}
         </span>
-      </td>
-
-      {/* Version */}
-      <td style={{ padding: '0.6rem 1rem', color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
-        {shortVersion}
       </td>
 
       {/* Status */}
@@ -163,7 +234,7 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
       {/* Actions */}
       <td style={{ padding: '0.6rem 1rem', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
         <Link
-          to={`/ontologies/${ontology.id}`}
+          to={`/ontologies/${ontology.shortname ?? slugFromIri(ontology.iri)}`}
           style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginRight: '0.75rem' }}
         >
           view
@@ -388,6 +459,7 @@ export default function Dashboard() {
 
   function handleAdded() {
     qc.invalidateQueries({ queryKey: ['ontologies'] })
+    qc.invalidateQueries({ queryKey: ['stats'] })
     setShowForm(false)
   }
 
@@ -424,7 +496,7 @@ export default function Dashboard() {
         <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
           <thead>
             <tr style={{ background: 'var(--bg-secondary)' }}>
-              {['Ontology', 'Version', 'Status', ''].map(h => (
+              {['Ontology', 'Status', ''].map(h => (
                 <th
                   key={h}
                   style={{
@@ -450,7 +522,7 @@ export default function Dashboard() {
             {ontologies.length === 0 && (
               <tr>
                 <td
-                  colSpan={4}
+                  colSpan={3}
                   style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}
                 >
                   No ontologies yet. Use "+ Add Ontology" above to get started.

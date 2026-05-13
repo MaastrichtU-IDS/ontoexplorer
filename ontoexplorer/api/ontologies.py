@@ -307,17 +307,72 @@ async def list_ontologies(
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
+    import json as _json
+    from sqlalchemy import func
+
     stmt = select(Ontology)
     if q:
         pattern = f"%{q.lower()}%"
-        from sqlalchemy import func
         stmt = stmt.where(
             func.lower(Ontology.id).like(pattern) | func.lower(Ontology.iri).like(pattern)
         )
     stmt = stmt.order_by(Ontology.created_at.desc()).offset(offset).limit(limit)
     result = await db.execute(stmt)
     ontologies = result.scalars().all()
-    return {"ontologies": [_ontology_dict(o) for o in ontologies], "offset": offset, "limit": limit}
+
+    # Batch-load the latest version per ontology in one SQL query
+    ontology_ids = [o.id for o in ontologies]
+    latest_by_oid: dict = {}
+    if ontology_ids:
+        subq = (
+            select(
+                OntologyVersion.ontology_id,
+                func.max(OntologyVersion.created_at).label("max_created"),
+            )
+            .where(OntologyVersion.ontology_id.in_(ontology_ids))
+            .group_by(OntologyVersion.ontology_id)
+            .subquery()
+        )
+        vr = await db.execute(
+            select(OntologyVersion).join(
+                subq,
+                (OntologyVersion.ontology_id == subq.c.ontology_id)
+                & (OntologyVersion.created_at == subq.c.max_created),
+            )
+        )
+        for v in vr.scalars().all():
+            latest_by_oid[v.ontology_id] = v
+
+    # Batch-load cached stats from Redis (no Oxigraph queries)
+    stats_by_vid: dict = {}
+    try:
+        from ontoexplorer.modules.search.indexer import _get_redis, _stats_cache_key
+        r = _get_redis()
+        for v in latest_by_oid.values():
+            raw = r.get(_stats_cache_key(v.id))
+            if raw:
+                stats_by_vid[v.id] = _json.loads(raw)
+    except Exception:
+        pass
+
+    rows = []
+    for o in ontologies:
+        d = _ontology_dict(o)
+        v = latest_by_oid.get(o.id)
+        if v:
+            d["latest_version"] = _version_dict(v)
+            s = stats_by_vid.get(v.id, {})
+            d["class_count"] = s.get("class_count")
+            d["property_count"] = s.get("property_count")
+            d["triple_count"] = s.get("triple_count") or v.triple_count
+        else:
+            d["latest_version"] = None
+            d["class_count"] = None
+            d["property_count"] = None
+            d["triple_count"] = None
+        rows.append(d)
+
+    return {"ontologies": rows, "offset": offset, "limit": limit}
 
 
 # ── Single ontology metadata ───────────────────────────────────────────────────
@@ -1194,9 +1249,12 @@ async def get_term(
     term_detail = r.hgetall(_iri_key(version_id, term_iri))
     source = term_detail.get("source", "") if term_detail else ""
 
+    _RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
+    top_label = (properties.get(_RDFS_LABEL) or [None])[0] or _label(term_iri)
+
     return {
         "iri": term_iri,
-        "label": _label(term_iri),
+        "label": top_label,
         "source": source,
         "properties": properties,
         "is_inverse_target": is_inverse_target,

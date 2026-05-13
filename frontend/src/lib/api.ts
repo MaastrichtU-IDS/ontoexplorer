@@ -81,6 +81,10 @@ export interface Ontology {
   iri: string
   shortname: string | null
   created_at: string
+  latest_version?: OntologyVersion | null
+  class_count?: number | null
+  property_count?: number | null
+  triple_count?: number | null
 }
 
 export interface OntologyVersion {
