@@ -191,6 +191,7 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
         format=fmt.value,
         status="ingested",
         triple_count=triple_count,
+        source_url=source.final_url or request.url or request.iri,
     )
     db.add(version)
 
