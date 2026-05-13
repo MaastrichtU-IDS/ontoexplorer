@@ -12,6 +12,7 @@ from ontoexplorer.clients.reasoning import (
     ClassNotFoundError,
     ReasoningNotReadyError,
     consistency as elk_consistency,
+    request_justification as elk_request_justification,
     subclasses as elk_subclasses,
     superclasses as elk_superclasses,
 )
@@ -28,11 +29,6 @@ _RDF_FORMATS = {"text/turtle": "turtle", "application/rdf+xml": "xml", "applicat
 
 _OWL = "http://www.w3.org/2002/07/owl#"
 _RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-
-
-def _ms_name(s: str) -> str:
-    """Quote a name in Manchester Syntax if it contains spaces."""
-    return f"'{s}'" if " " in s else s
 
 
 def _rdf_list_items(store, graph_node, list_node) -> list:
@@ -55,18 +51,17 @@ def _rdf_list_items(store, graph_node, list_node) -> list:
     return items
 
 
-def _resolve_class_expr(store, graph_node, node, label_fn, depth: int = 0) -> str:
-    """Recursively render a pyoxigraph node as a Manchester-Syntax class expression."""
+def _build_class_expr(store, graph_node, node, label_fn, depth: int = 0) -> dict:
+    """Recursively build an AST dict for a pyoxigraph node (OWL class expression)."""
     import pyoxigraph
     if depth > 10:
-        return "…"
+        return {"type": "unknown"}
 
     if isinstance(node, pyoxigraph.NamedNode):
-        return _ms_name(label_fn(node.value))
+        return {"type": "named", "iri": node.value, "label": label_fn(node.value)}
 
     if not isinstance(node, pyoxigraph.BlankNode):
-        # Literal
-        return node.value if hasattr(node, "value") else str(node)
+        return {"type": "literal", "value": node.value if hasattr(node, "value") else str(node)}
 
     # Collect all predicates of this blank node
     props: dict[str, list] = {}
@@ -76,20 +71,18 @@ def _resolve_class_expr(store, graph_node, node, label_fn, depth: int = 0) -> st
     # Restriction (owl:onProperty present)
     on_prop_list = props.get(_OWL + "onProperty", [])
     if on_prop_list:
-        on_prop = on_prop_list[0]
-        prop_name = _ms_name(label_fn(on_prop.value) if isinstance(on_prop, pyoxigraph.NamedNode) else str(on_prop))
+        prop_ast = _build_class_expr(store, graph_node, on_prop_list[0], label_fn, depth + 1)
 
         for owl_pred, kw in [(_OWL + "someValuesFrom", "some"), (_OWL + "allValuesFrom", "only")]:
             fl = props.get(owl_pred, [])
             if fl:
-                filler = _resolve_class_expr(store, graph_node, fl[0], label_fn, depth + 1)
-                return f"{prop_name} {kw} {_ms_name(filler) if ' ' not in filler else f'({filler})'}"
+                return {"type": kw, "property": prop_ast,
+                        "filler": _build_class_expr(store, graph_node, fl[0], label_fn, depth + 1)}
 
         hv = props.get(_OWL + "hasValue", [])
         if hv:
-            v = hv[0]
-            val = label_fn(v.value) if isinstance(v, pyoxigraph.NamedNode) and v.value.startswith("http") else (v.value if hasattr(v, "value") else str(v))
-            return f"{prop_name} value {_ms_name(val)}"
+            return {"type": "value", "property": prop_ast,
+                    "filler": _build_class_expr(store, graph_node, hv[0], label_fn, depth + 1)}
 
         for owl_pred, kw in [
             (_OWL + "minCardinality", "min"), (_OWL + "maxCardinality", "max"),
@@ -100,38 +93,108 @@ def _resolve_class_expr(store, graph_node, node, label_fn, depth: int = 0) -> st
             cl = props.get(owl_pred, [])
             if cl:
                 n = cl[0].value if hasattr(cl[0], "value") else str(cl[0])
+                result: dict = {"type": kw, "property": prop_ast, "n": n}
                 on_cls = props.get(_OWL + "onClass", [])
                 if on_cls:
-                    cls_expr = _resolve_class_expr(store, graph_node, on_cls[0], label_fn, depth + 1)
-                    return f"{prop_name} {kw} {n} ({cls_expr})"
-                return f"{prop_name} {kw} {n}"
+                    result["filler"] = _build_class_expr(store, graph_node, on_cls[0], label_fn, depth + 1)
+                return result
 
-        return f"{prop_name} ?"
+        return {"type": "unknown"}
 
     # Complement
     comp = props.get(_OWL + "complementOf", [])
     if comp:
-        inner = _resolve_class_expr(store, graph_node, comp[0], label_fn, depth + 1)
-        return f"not ({inner})" if " " in inner else f"not {inner}"
+        return {"type": "not", "operand": _build_class_expr(store, graph_node, comp[0], label_fn, depth + 1)}
 
     # Intersection / Union
     for owl_pred, kw in [(_OWL + "intersectionOf", "and"), (_OWL + "unionOf", "or")]:
         ll = props.get(owl_pred, [])
         if ll:
             items = _rdf_list_items(store, graph_node, ll[0])
-            parts = [_resolve_class_expr(store, graph_node, it, label_fn, depth + 1) for it in items]
-            joined = f" {kw} ".join(f"({p})" if " " in p else p for p in parts)
-            return joined
+            return {"type": kw, "operands": [
+                _build_class_expr(store, graph_node, it, label_fn, depth + 1) for it in items
+            ]}
 
     # OneOf
     oo = props.get(_OWL + "oneOf", [])
     if oo:
         items = _rdf_list_items(store, graph_node, oo[0])
-        parts = [_resolve_class_expr(store, graph_node, it, label_fn, depth + 1) for it in items]
-        return "{" + ", ".join(parts) + "}"
+        return {"type": "one_of", "individuals": [
+            _build_class_expr(store, graph_node, it, label_fn, depth + 1) for it in items
+        ]}
 
-    return "?"
+    return {"type": "unknown"}
 
+
+def _find_subclass_path(store, g_iri: str, sub_iri: str, sup_iri: str, label_fn) -> list[list[dict]]:
+    """BFS over asserted rdfs:subClassOf edges to find a minimal named-class path sub → sup."""
+    import pyoxigraph as ox
+    from collections import deque
+
+    RDFS_SC   = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
+    graph_node = ox.NamedNode(g_iri)
+
+    queue: deque[tuple[str, list[str]]] = deque([(sub_iri, [sub_iri])])
+    visited: set[str] = {sub_iri}
+
+    while queue:
+        current, path = queue.popleft()
+        if len(path) > 20:
+            continue
+        for quad in store.quads_for_pattern(ox.NamedNode(current), RDFS_SC, None, graph_node):
+            if not isinstance(quad.object, ox.NamedNode):
+                continue
+            nxt = quad.object.value
+            if nxt == sup_iri:
+                full = path + [sup_iri]
+                return [[
+                    {
+                        "sub": {"type": "named", "iri": full[i],     "label": label_fn(full[i])},
+                        "rel": "subClassOf",
+                        "sup": {"type": "named", "iri": full[i + 1], "label": label_fn(full[i + 1])},
+                    }
+                    for i in range(len(full) - 1)
+                ]]
+            if nxt not in visited and len(visited) < 10_000:
+                visited.add(nxt)
+                queue.append((nxt, path + [nxt]))
+    return []
+
+
+def _render_justification(ntriples_list: list[str], label_fn) -> list[dict]:
+    """Parse a list of N-Triple strings and render each OWL axiom as a ClassExprNode AST dict."""
+    import io
+    import pyoxigraph
+    JUST_GRAPH = pyoxigraph.NamedNode("urn:just")
+    temp_store = pyoxigraph.Store()
+    all_nt = "\n".join(ntriples_list)
+    try:
+        temp_store.bulk_load(io.BytesIO(all_nt.encode()), "application/n-triples", to_graph=JUST_GRAPH)
+    except Exception:
+        for nt in ntriples_list:
+            try:
+                temp_store.bulk_load(io.BytesIO(nt.strip().encode()), "application/n-triples", to_graph=JUST_GRAPH)
+            except Exception:
+                pass
+
+    RDFS_SC = pyoxigraph.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
+    OWL_EC  = pyoxigraph.NamedNode("http://www.w3.org/2002/07/owl#equivalentClass")
+
+    axioms: list[dict] = []
+    seen: set[str] = set()
+    for pred, rel in [(RDFS_SC, "subClassOf"), (OWL_EC, "equivalentClass")]:
+        for quad in temp_store.quads_for_pattern(None, pred, None, JUST_GRAPH):
+            s_key = quad.subject.value if isinstance(quad.subject, pyoxigraph.NamedNode) else str(quad.subject)
+            o_key = quad.object.value  if isinstance(quad.object,  pyoxigraph.NamedNode) else str(quad.object)
+            dedup = f"{s_key}|{rel}|{o_key}"
+            if dedup in seen:
+                continue
+            seen.add(dedup)
+            sub_ast = _build_class_expr(temp_store, JUST_GRAPH, quad.subject, label_fn)
+            sup_ast = _build_class_expr(temp_store, JUST_GRAPH, quad.object,  label_fn)
+            if sub_ast.get("type") != "unknown" and sup_ast.get("type") != "unknown":
+                axioms.append({"sub": sub_ast, "rel": rel, "sup": sup_ast})
+    return axioms
 
 
 # ── Submit ─────────────────────────────────────────────────────────────────────
@@ -816,16 +879,71 @@ async def get_term(
 
     # Superclass expressions — blank-node targets of rdfs:subClassOf (complex class expressions)
     import pyoxigraph as _ox
+    import json as _json_mod
     _graph_node   = _ox.NamedNode(g_iri)
     _term_node    = _ox.NamedNode(term_iri)
     _RDFS_SC_NODE = _ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
-    superclass_expressions: list[str] = []
+    superclass_expressions: list[dict] = []
     for _quad in store.quads_for_pattern(_term_node, _RDFS_SC_NODE, None, _graph_node):
         if isinstance(_quad.object, _ox.BlankNode):
-            _expr = _resolve_class_expr(store, _graph_node, _quad.object, _label)
-            if _expr and _expr != "?":
+            _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
+            if _expr.get("type") != "unknown":
                 superclass_expressions.append(_expr)
-    superclass_expressions.sort()
+
+    # Inferred superclass expressions — anonymous subClassOf expressions inherited via inferred named superclasses
+    _seen_expr_keys: set[str] = {_json_mod.dumps(_e, sort_keys=True) for _e in superclass_expressions}
+    inferred_superclass_expressions: list[dict] = []
+    for _sup_iri in inferred_sup_iris[:20]:
+        _sup_node = _ox.NamedNode(_sup_iri)
+        for _quad in store.quads_for_pattern(_sup_node, _RDFS_SC_NODE, None, _graph_node):
+            if isinstance(_quad.object, _ox.BlankNode):
+                _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
+                if _expr.get("type") != "unknown":
+                    _key = _json_mod.dumps(_expr, sort_keys=True)
+                    if _key not in _seen_expr_keys:
+                        _seen_expr_keys.add(_key)
+                        inferred_superclass_expressions.append({
+                            "expr": _expr,
+                            "from_iri": _sup_iri,
+                            "from_label": _label(_sup_iri),
+                        })
+        if len(inferred_superclass_expressions) >= 50:
+            break
+
+    # Equivalent classes (owl:equivalentClass)
+    equivalent_to: list[dict] = []
+    _OWL_EQ_CLASS = _ox.NamedNode(_OWL + "equivalentClass")
+    for _quad in store.quads_for_pattern(_term_node, _OWL_EQ_CLASS, None, _graph_node):
+        _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
+        if _expr.get("type") != "unknown":
+            equivalent_to.append(_expr)
+
+    # Disjoint with (owl:disjointWith)
+    disjoint_with: list[dict] = []
+    _OWL_DISJOINT = _ox.NamedNode(_OWL + "disjointWith")
+    for _quad in store.quads_for_pattern(_term_node, _OWL_DISJOINT, None, _graph_node):
+        _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
+        if _expr.get("type") != "unknown":
+            disjoint_with.append(_expr)
+
+    # Disjoint union of (owl:disjointUnionOf) — each value is an rdf:List of members
+    disjoint_union_of: list[list[dict]] = []
+    _OWL_DISJOINT_UNION = _ox.NamedNode(_OWL + "disjointUnionOf")
+    for _quad in store.quads_for_pattern(_term_node, _OWL_DISJOINT_UNION, None, _graph_node):
+        _members = [
+            _build_class_expr(store, _graph_node, _item, _label)
+            for _item in _rdf_list_items(store, _graph_node, _quad.object)
+        ]
+        if _members:
+            disjoint_union_of.append(_members)
+
+    # General class axioms — blank nodes whose rdfs:subClassOf target is this term
+    general_class_axioms: list[dict] = []
+    for _quad in store.quads_for_pattern(None, _RDFS_SC_NODE, _term_node, _graph_node):
+        if isinstance(_quad.subject, _ox.BlankNode):
+            _expr = _build_class_expr(store, _graph_node, _quad.subject, _label)
+            if _expr.get("type") != "unknown":
+                general_class_axioms.append(_expr)
 
     # Property usage — classes that reference this term via owl:onProperty restrictions
     _OWL_PROP_TYPES = {
@@ -923,6 +1041,11 @@ async def get_term(
             "inferred": _term_list(inferred_sub_iris),
         },
         "superclass_expressions": superclass_expressions,
+        "inferred_superclass_expressions": inferred_superclass_expressions,
+        "equivalent_to": equivalent_to,
+        "disjoint_with": disjoint_with,
+        "disjoint_union_of": disjoint_union_of,
+        "general_class_axioms": general_class_axioms,
         "usage": usage,
     }
 
@@ -1195,6 +1318,57 @@ class JustificationRequest(BaseModel):
     max_justifications: int = 1     # 0 = find all
 
 
+@router.get("/{ontology_id}/{version_id}/justification", summary="Justifications for a subclass inference")
+async def get_justification(
+    ontology_id: str,
+    version_id: str,
+    sub: str = Query(..., description="Subclass IRI"),
+    sup: str = Query(..., description="Superclass IRI"),
+    max_justifications: int = Query(3, ge=1, le=5),
+    db: AsyncSession = Depends(get_db),
+):
+    import asyncio
+    from ontoexplorer.clients.oxigraph import get_store, graph_iri
+    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
+
+    await _get_version_or_404(db, ontology_id, version_id)
+
+    r = _get_redis()
+
+    def _label(iri: str) -> str:
+        detail = r.hgetall(_iri_key(version_id, iri))
+        if detail and detail.get("label"):
+            return detail["label"]
+        fragment = iri.rstrip("/")
+        return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
+
+    # Try ELK first — uses proof traces, handles complex inferences (CR3/CR4/CR5)
+    rendered: list[list[dict]] = []
+    try:
+        elk_result = await asyncio.wait_for(
+            elk_request_justification(version_id, sub, sup, max_justifications),
+            timeout=60.0,
+        )
+        if elk_result.get("timed_out"):
+            return {"justifications": [], "timed_out": True, "reasoning_available": True}
+        rendered = [
+            _render_justification(just_ntriples, _label)
+            for just_ntriples in elk_result.get("justifications", [])
+            if just_ntriples
+        ]
+    except Exception:
+        pass  # Fall through to BFS
+
+    # Fallback: BFS over asserted subClassOf edges in Oxigraph
+    # Covers transitive chains even when ELK proof traces are unavailable.
+    if not rendered:
+        store  = get_store()
+        g_iri  = graph_iri(ontology_id, version_id)
+        rendered = await asyncio.to_thread(_find_subclass_path, store, g_iri, sub, sup, _label)
+
+    return {"justifications": rendered, "timed_out": False, "reasoning_available": True}
+
+
 @router.post("/{ontology_id}/{version_id}/justification", summary="Request async justification computation")
 async def request_justification(
     ontology_id: str,
@@ -1283,6 +1457,18 @@ async def deprecate_version(
     return {"detail": f"Version {version_id} deprecated"}
 
 
+@router.delete("/{ontology_id}", summary="Delete an ontology and all its versions")
+async def delete_ontology(
+    ontology_id: str,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    ontology = await _get_ontology_or_404(db, ontology_id)
+    await db.delete(ontology)
+    await db.commit()
+    return Response(status_code=204)
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 async def _get_ontology_or_404(db: AsyncSession, ontology_id: str) -> Ontology:
@@ -1318,6 +1504,7 @@ def _version_dict(v: OntologyVersion) -> dict:
         "format": v.format,
         "status": v.status,
         "sha256": v.sha256,
+        "triple_count": v.triple_count,
         "download_url": f"/api/v1/ontologies/{v.ontology_id}/{v.id}/download",
         "created_at": v.created_at.isoformat(),
     }

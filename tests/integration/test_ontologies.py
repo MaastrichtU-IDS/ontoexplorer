@@ -87,6 +87,59 @@ async def test_submit_ontology_by_url_mocked(client, user_and_key):
 
 
 @pytest.mark.anyio
+async def test_delete_ontology(client, user_and_key, db_session):
+    """DELETE /api/v1/ontologies/{id} removes the ontology and returns 204."""
+    from ontoexplorer.models.db import Ontology
+    _, raw_key = user_and_key
+    auth = {"Authorization": f"Bearer {raw_key}"}
+
+    ont = Ontology(iri="http://example.org/to-delete.owl")
+    db_session.add(ont)
+    await db_session.commit()
+
+    resp = await client.delete(f"/api/v1/ontologies/{ont.id}", headers=auth)
+    assert resp.status_code == 204
+
+    resp2 = await client.get(f"/api/v1/ontologies/{ont.id}", headers=auth)
+    assert resp2.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_delete_ontology_not_found(client, user_and_key):
+    _, raw_key = user_and_key
+    auth = {"Authorization": f"Bearer {raw_key}"}
+    resp = await client.delete("/api/v1/ontologies/does-not-exist", headers=auth)
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_versions_include_triple_count(client, user_and_key, db_session):
+    """GET /api/v1/ontologies/{id}/versions includes triple_count field."""
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    _, raw_key = user_and_key
+    auth = {"Authorization": f"Bearer {raw_key}"}
+
+    ont = Ontology(iri="http://example.org/triple-count.owl")
+    db_session.add(ont)
+    await db_session.flush()
+    ver = OntologyVersion(
+        ontology_id=ont.id,
+        minio_key="test/key.ttl",
+        sha256="abc123",
+        format="turtle",
+        status="ready",
+        triple_count=42000,
+    )
+    db_session.add(ver)
+    await db_session.commit()
+
+    resp = await client.get(f"/api/v1/ontologies/{ont.id}/versions", headers=auth)
+    assert resp.status_code == 200
+    versions = resp.json()["versions"]
+    assert versions[0]["triple_count"] == 42000
+
+
+@pytest.mark.anyio
 async def test_get_nonexistent_ontology(client, user_and_key):
     _, raw_key = user_and_key
     resp = await client.get(
