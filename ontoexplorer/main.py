@@ -11,6 +11,7 @@ from ontoexplorer.api.jobs import router as jobs_router
 from ontoexplorer.api.ontologies import router as ontologies_router
 from ontoexplorer.api.search import router as search_router
 from ontoexplorer.api.sparql import router as sparql_router
+from ontoexplorer.api.admin import router as admin_router
 from ontoexplorer.api.stats import router as stats_router
 from ontoexplorer.api.inbound import router as inbound_router
 from ontoexplorer.api.webhooks import router as webhooks_router
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
     app.include_router(inbound_router)
     app.include_router(api_keys_router)
     app.include_router(stats_router)
+    app.include_router(admin_router)
 
     log.info("OntoExplorer API ready", version="0.1.0")
     return app
