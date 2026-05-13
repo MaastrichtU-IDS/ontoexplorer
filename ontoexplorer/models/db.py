@@ -71,6 +71,7 @@ class Ontology(Base):
     iri: Mapped[str] = mapped_column(String, unique=True)
     shortname: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
     owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    auto_sync: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     owner: Mapped[User | None] = relationship(back_populates="ontologies")
@@ -87,6 +88,7 @@ class OntologyVersion(Base):
     sha256: Mapped[str] = mapped_column(String, unique=True) # content hash for dedup
     format: Mapped[str] = mapped_column(String)              # "owl", "turtle", "obo", etc.
     status: Mapped[str] = mapped_column(String, default="ingested")  # ingested | reasoning | ready | deprecated
+    source_url: Mapped[str | None] = mapped_column(String, nullable=True)
     triple_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
