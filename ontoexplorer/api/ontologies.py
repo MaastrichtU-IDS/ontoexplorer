@@ -272,6 +272,9 @@ async def patch_ontology(
     body = await request.json()
     ontology = await _get_ontology_or_404(db, ontology_id)
 
+    if ontology.owner_id is not None and ontology.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="Not the owner")
+
     if "shortname" in body:
         shortname = body["shortname"]
         if shortname is not None:
@@ -286,6 +289,9 @@ async def patch_ontology(
             if conflict.scalar_one_or_none():
                 raise HTTPException(status_code=409, detail="Shortname already taken")
         ontology.shortname = shortname
+
+    if "auto_sync" in body and body["auto_sync"] is not None:
+        ontology.auto_sync = bool(body["auto_sync"])
 
     await db.commit()
     await db.refresh(ontology)
@@ -1657,7 +1663,7 @@ async def _get_version_or_404(db: AsyncSession, ontology_id: str, version_id: st
 
 
 def _ontology_dict(o: Ontology) -> dict:
-    return {"id": o.id, "iri": o.iri, "shortname": o.shortname, "created_at": o.created_at.isoformat()}
+    return {"id": o.id, "iri": o.iri, "shortname": o.shortname, "auto_sync": o.auto_sync, "created_at": o.created_at.isoformat()}
 
 
 def _version_dict(v: OntologyVersion) -> dict:

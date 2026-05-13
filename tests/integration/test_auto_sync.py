@@ -83,3 +83,49 @@ async def test_ingestion_stores_source_url(db_session):
     )
     ver = ver_row.scalar_one()
     assert ver.source_url == _SOURCE_URL
+
+
+@pytest.mark.anyio
+async def test_patch_auto_sync_on(client, user_and_key, db_session):
+    """PATCH /ontologies/{id} sets auto_sync=True for the owner."""
+    user, raw_key = user_and_key
+    auth = {"Authorization": f"Bearer {raw_key}"}
+
+    ont = Ontology(iri="http://example.org/patch-test.owl")
+    db_session.add(ont)
+    await db_session.commit()
+
+    resp = await client.patch(
+        f"/api/v1/ontologies/{ont.id}",
+        json={"auto_sync": True},
+        headers=auth,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["auto_sync"] is True
+
+    await db_session.refresh(ont)
+    assert ont.auto_sync is True
+
+
+@pytest.mark.anyio
+async def test_patch_auto_sync_wrong_user(client, db_session):
+    """PATCH by a different user returns 403."""
+    import hashlib
+    import uuid as _uuid
+    from ontoexplorer.models.db import ApiKey, User
+
+    other_user = User(id=str(_uuid.uuid4()), email="other@example.com")
+    raw_key2 = f"oe_test_{_uuid.uuid4().hex}"
+    key_hash2 = hashlib.sha256(raw_key2.encode()).hexdigest()
+    api_key2 = ApiKey(id=str(_uuid.uuid4()), user_id=other_user.id,
+                      key_hash=key_hash2, name="k2", scopes=["read", "write"])
+    ont = Ontology(iri="http://example.org/other-owner.owl", owner_id="some-other-id")
+    db_session.add_all([other_user, api_key2, ont])
+    await db_session.commit()
+
+    resp = await client.patch(
+        f"/api/v1/ontologies/{ont.id}",
+        json={"auto_sync": True},
+        headers={"Authorization": f"Bearer {raw_key2}"},
+    )
+    assert resp.status_code == 403
