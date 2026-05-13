@@ -7,6 +7,8 @@ Options:
     --api-url URL       Base API URL (default: http://localhost:8000)
     --api-key KEY       API key with write scope (or set ONTOEXPLORER_API_KEY env var)
     --group GROUP       Only submit entries with this group tag (repeatable)
+    --include-large     Also submit entries marked large:true (>40k classes; may OOM on
+                        hosts with <16 GB RAM — submit one at a time on WSL)
     --dry-run           Print what would be submitted without sending requests
     --catalog PATH      Path to catalog YAML (default: seeds/catalog.yaml)
 """
@@ -27,6 +29,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--api-key", default=os.getenv("ONTOEXPLORER_API_KEY", ""), help="API key")
     p.add_argument("--group", action="append", dest="groups", metavar="GROUP",
                    help="Filter by group tag (repeatable; default: all groups)")
+    p.add_argument("--include-large", action="store_true",
+                   help="Include entries marked large:true (skipped by default to prevent OOM)")
     p.add_argument("--dry-run", action="store_true", help="Print plan without submitting")
     p.add_argument("--catalog", default=str(Path(__file__).parent.parent / "seeds" / "catalog.yaml"),
                    help="Path to catalog YAML")
@@ -74,12 +78,20 @@ def main() -> None:
     if args.groups:
         entries = [e for e in entries if e.get("group") in args.groups]
 
-    if not entries:
+    large_skipped = []
+    if not args.include_large:
+        large_skipped = [e for e in entries if e.get("large")]
+        entries = [e for e in entries if not e.get("large")]
+
+    if not entries and not large_skipped:
         print("No entries match the given filters.")
         return
 
     print(f"Catalog: {args.catalog}")
-    print(f"Entries: {len(entries)}")
+    print(f"Entries: {len(entries)}", end="")
+    if large_skipped:
+        print(f"  ({len(large_skipped)} large skipped — pass --include-large to include)", end="")
+    print()
     if args.groups:
         print(f"Groups:  {', '.join(args.groups)}")
     if args.dry_run:
@@ -87,8 +99,16 @@ def main() -> None:
     else:
         print(f"API:     {args.api_url}\n")
 
-    counts = {"queued": 0, "exists": 0, "skip": 0, "error": 0}
+    if large_skipped:
+        print("Skipped (large — submit individually when ready):")
+        for e in large_skipped:
+            print(f"  - {e.get('label', e.get('iri', e.get('url', '?')))}  [{e.get('note', '')}]")
+        print()
 
+    if not entries:
+        return
+
+    counts = {"queued": 0, "exists": 0, "skip": 0, "error": 0}
     headers = {"Authorization": f"Bearer {args.api_key}"} if args.api_key else {}
 
     with httpx.Client(headers=headers, follow_redirects=True) as client:

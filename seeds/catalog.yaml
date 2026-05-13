@@ -8,6 +8,7 @@
 #   label:     human-readable name (informational only)
 #   group:     category tag, used with --group filter in seed script
 #   note:      shown during seeding; useful for size/time warnings
+#   large:     true = skip unless --include-large is passed (protects against OOM on WSL/low-RAM hosts)
 #   auto_sync: whether to enable hourly polling after ingestion (default: false)
 
 ontologies:
@@ -72,6 +73,7 @@ ontologies:
     iri: http://purl.obolibrary.org/obo/go.owl
     label: Gene Ontology (GO)
     note: ~45k classes; ELK reasoning takes ~7 min
+    large: true
 
   - group: obo
     iri: http://purl.obolibrary.org/obo/doid.owl
@@ -89,11 +91,13 @@ ontologies:
     iri: http://purl.obolibrary.org/obo/uberon.owl
     label: Uberon Multi-Species Anatomy Ontology
     note: ~80k classes; large ingestion
+    large: true
 
   - group: obo
     iri: http://purl.obolibrary.org/obo/chebi.owl
     label: Chemical Entities of Biological Interest (CHEBI)
     note: ~170k classes; very large — may take 5–10 min to ingest
+    large: true
 
   # ── Biomedical / clinical ─────────────────────────────────────────────────────
 
@@ -101,6 +105,7 @@ ontologies:
     iri: http://purl.obolibrary.org/obo/ncit.owl
     label: NCI Thesaurus (NCIt)
     note: ~170k classes; very large — may take 5–10 min to ingest
+    large: true
 
   - group: biomedical
     iri: http://www.orpha.net/ontology/orphanet.owl
