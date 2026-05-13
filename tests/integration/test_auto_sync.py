@@ -129,3 +129,97 @@ async def test_patch_auto_sync_wrong_user(client, db_session):
         headers={"Authorization": f"Bearer {raw_key2}"},
     )
     assert resp.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_poll_queues_ingest_when_content_changes(db_session):
+    """poll_for_updates queues ingest when fetched SHA-256 differs from stored."""
+    from sqlalchemy import update as _update
+    from unittest.mock import MagicMock, patch
+    from ontoexplorer.modules.jobs.tasks import _run_poll
+
+    # Disable auto_sync on all prior ontologies to isolate this test
+    await db_session.execute(_update(Ontology).values(auto_sync=False))
+    await db_session.flush()
+
+    _NEW_CONTENT = b"new-content-bytes"
+    _OLD_SHA256 = "aaaa1111"
+
+    ont = Ontology(iri="http://example.org/poll-test.owl", auto_sync=True)
+    db_session.add(ont)
+    await db_session.flush()
+    ver = OntologyVersion(
+        ontology_id=ont.id,
+        minio_key="test/key.ttl",
+        sha256=_OLD_SHA256,
+        format="turtle",
+        status="ready",
+        source_url="https://raw.githubusercontent.com/owner/repo/main/onto.ttl",
+    )
+    db_session.add(ver)
+    await db_session.commit()
+
+    mock_ingest = MagicMock()
+    mock_ingest.delay = MagicMock()
+
+    mock_resp = MagicMock()
+    mock_resp.content = _NEW_CONTENT
+    mock_resp.raise_for_status = MagicMock()
+
+    with (
+        patch("ontoexplorer.modules.jobs.tasks.ingest_ontology", mock_ingest),
+        patch("httpx.Client") as mock_client_cls,
+    ):
+        mock_client_cls.return_value.__enter__.return_value.get.return_value = mock_resp
+        await _run_poll(db_session)
+
+    mock_ingest.delay.assert_called_once_with(
+        url="https://raw.githubusercontent.com/owner/repo/main/onto.ttl",
+        owner_id=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_poll_skips_when_content_unchanged(db_session):
+    """poll_for_updates does NOT queue ingest when SHA-256 matches."""
+    import hashlib
+    from sqlalchemy import update as _update
+    from unittest.mock import MagicMock, patch
+    from ontoexplorer.modules.jobs.tasks import _run_poll
+
+    # Disable auto_sync on all prior ontologies to isolate this test
+    await db_session.execute(_update(Ontology).values(auto_sync=False))
+    await db_session.flush()
+
+    _CONTENT = b"unchanged-content"
+    _SHA256 = hashlib.sha256(_CONTENT).hexdigest()
+
+    ont = Ontology(iri="http://example.org/poll-noop.owl", auto_sync=True)
+    db_session.add(ont)
+    await db_session.flush()
+    ver = OntologyVersion(
+        ontology_id=ont.id,
+        minio_key="test/key2.ttl",
+        sha256=_SHA256,
+        format="turtle",
+        status="ready",
+        source_url="https://raw.githubusercontent.com/owner/repo/main/onto2.ttl",
+    )
+    db_session.add(ver)
+    await db_session.commit()
+
+    mock_ingest = MagicMock()
+    mock_ingest.delay = MagicMock()
+
+    mock_resp = MagicMock()
+    mock_resp.content = _CONTENT
+    mock_resp.raise_for_status = MagicMock()
+
+    with (
+        patch("ontoexplorer.modules.jobs.tasks.ingest_ontology", mock_ingest),
+        patch("httpx.Client") as mock_client_cls,
+    ):
+        mock_client_cls.return_value.__enter__.return_value.get.return_value = mock_resp
+        await _run_poll(db_session)
+
+    mock_ingest.delay.assert_not_called()

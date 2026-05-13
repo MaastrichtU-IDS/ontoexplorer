@@ -28,6 +28,12 @@ celery_app.conf.update(
     task_acks_late=True,
     worker_prefetch_multiplier=1,
     task_ignore_result=True,  # use Postgres jobs table for status; avoid blocking on Redis result backend
+    beat_schedule={
+        "poll-for-updates-hourly": {
+            "task": "ontoexplorer.poll_for_updates",
+            "schedule": 3600.0,
+        },
+    },
 )
 
 
@@ -324,3 +330,60 @@ def compute_justification(
     except Exception as exc:
         log.error("justification_task_failed", version_id=version_id, sub=sub, error=str(exc))
         raise self.retry(exc=exc, countdown=30) from exc
+
+
+async def _run_poll(db) -> None:
+    """Async body of poll_for_updates: check each auto_sync ontology for changes."""
+    import hashlib
+    import httpx as _httpx
+
+    from sqlalchemy import select
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+
+    result = await db.execute(
+        select(Ontology).where(Ontology.auto_sync.is_(True))
+    )
+    ontologies = result.scalars().all()
+
+    for ont in ontologies:
+        ver_result = await db.execute(
+            select(OntologyVersion)
+            .where(OntologyVersion.ontology_id == ont.id)
+            .where(OntologyVersion.status != "deprecated")
+            .where(OntologyVersion.source_url.is_not(None))
+            .order_by(OntologyVersion.created_at.desc())
+            .limit(1)
+        )
+        version = ver_result.scalar_one_or_none()
+        if not version:
+            continue
+
+        try:
+            with _httpx.Client(timeout=_httpx.Timeout(60.0), follow_redirects=True) as client:
+                resp = client.get(version.source_url)
+                resp.raise_for_status()
+                new_sha256 = hashlib.sha256(resp.content).hexdigest()
+        except Exception as exc:
+            log.warning("poll_fetch_failed", ontology_id=ont.id,
+                        source_url=version.source_url, error=str(exc))
+            continue
+
+        if new_sha256 == version.sha256:
+            log.info("poll_no_change", ontology_id=ont.id, source_url=version.source_url)
+            continue
+
+        log.info("poll_change_detected", ontology_id=ont.id,
+                 source_url=version.source_url, old_sha256=version.sha256, new_sha256=new_sha256)
+        ingest_ontology.delay(url=version.source_url, owner_id=ont.owner_id)
+
+
+@celery_app.task(name="ontoexplorer.poll_for_updates")
+def poll_for_updates() -> None:
+    """Periodic task: re-fetch all auto_sync ontologies and queue re-ingestion if changed."""
+    from ontoexplorer.database import make_celery_db_session
+
+    async def _run():
+        async with make_celery_db_session()() as db:
+            await _run_poll(db)
+
+    asyncio.run(_run())
