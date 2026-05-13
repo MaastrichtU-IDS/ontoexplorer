@@ -20,7 +20,7 @@ ontologies:
     label: Basic Formal Ontology (BFO 2020)
 
   - group: upper
-    url: https://raw.githubusercontent.com/CommonCoreOntologies/CommonCoreOntologies/master/cco-merged.ttl
+    url: https://raw.githubusercontent.com/CommonCoreOntology/CommonCoreOntologies/develop/src/cco-merged/CommonCoreOntologiesMerged.ttl
     label: Common Core Ontologies (CCO)
     auto_sync: true
 
@@ -56,8 +56,9 @@ ontologies:
     label: SKOS Core
 
   - group: fair
-    url: http://rdfs.org/ns/void.ttl
+    iri: http://rdfs.org/ns/void
     label: VoID — Vocabulary of Interlinked Datasets
+    note: rdfs.org was unreliable as of 2026-05; use iri mode for content negotiation
 
   # ── OBO Foundry core ─────────────────────────────────────────────────────────
 
@@ -96,7 +97,7 @@ ontologies:
   - group: obo
     iri: http://purl.obolibrary.org/obo/chebi.owl
     label: Chemical Entities of Biological Interest (CHEBI)
-    note: ~170k classes; very large — may take 5–10 min to ingest
+    note: ~170k classes; >512 MB OWL file — exceeds default size limit; raise _MAX_SIZE in source_resolver.py first
     large: true
 
   # ── Biomedical / clinical ─────────────────────────────────────────────────────
@@ -104,7 +105,7 @@ ontologies:
   - group: biomedical
     iri: http://purl.obolibrary.org/obo/ncit.owl
     label: NCI Thesaurus (NCIt)
-    note: ~170k classes; very large — may take 5–10 min to ingest
+    note: ~170k classes; >512 MB OWL file — exceeds default size limit; raise _MAX_SIZE in source_resolver.py first
     large: true
 
   - group: biomedical
