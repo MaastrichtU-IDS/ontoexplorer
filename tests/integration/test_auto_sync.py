@@ -223,3 +223,130 @@ async def test_poll_skips_when_content_unchanged(db_session):
         await _run_poll(db_session)
 
     mock_ingest.delay.assert_not_called()
+
+
+import hashlib as _hashlib
+import hmac as _hmac
+import json as _json
+
+
+def _gh_sig(secret: str, body: bytes) -> str:
+    return "sha256=" + _hmac.new(secret.encode(), body, _hashlib.sha256).hexdigest()
+
+
+@pytest.mark.anyio
+async def test_github_inbound_queues_ingest(client, db_session):
+    """Valid GitHub push event queues ingest for matching source_url."""
+    from unittest.mock import MagicMock, patch
+
+    ont = Ontology(iri="http://example.org/gh-sync.owl")
+    db_session.add(ont)
+    await db_session.flush()
+    ver = OntologyVersion(
+        ontology_id=ont.id,
+        minio_key="test/gh.ttl",
+        sha256="deadbeef",
+        format="turtle",
+        status="ready",
+        source_url="https://raw.githubusercontent.com/owner/repo/main/ontology.owl",
+    )
+    db_session.add(ver)
+    await db_session.commit()
+
+    payload = {
+        "ref": "refs/heads/main",
+        "repository": {"full_name": "owner/repo"},
+        "commits": [{"added": [], "modified": ["ontology.owl"], "removed": []}],
+    }
+    body = _json.dumps(payload).encode()
+    secret = "test-gh-secret"
+    sig = _gh_sig(secret, body)
+
+    mock_ingest = MagicMock()
+    mock_ingest.delay = MagicMock()
+
+    with (
+        patch("ontoexplorer.api.inbound.get_settings",
+              return_value=MagicMock(github_webhook_secret=secret)),
+        patch("ontoexplorer.api.inbound.ingest_ontology", mock_ingest),
+    ):
+        resp = await client.post(
+            "/api/v1/inbound/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-GitHub-Event": "push",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+
+    assert resp.status_code == 200
+    result = resp.json()
+    assert result["queued"] == 1
+    mock_ingest.delay.assert_called_once_with(
+        url="https://raw.githubusercontent.com/owner/repo/main/ontology.owl"
+    )
+
+
+@pytest.mark.anyio
+async def test_github_inbound_rejects_bad_signature(client):
+    """Invalid HMAC signature returns 401."""
+    from unittest.mock import MagicMock, patch
+
+    body = b'{"ref": "refs/heads/main"}'
+    with patch("ontoexplorer.api.inbound.get_settings",
+               return_value=MagicMock(github_webhook_secret="real-secret")):
+        resp = await client.post(
+            "/api/v1/inbound/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-GitHub-Event": "push",
+                "X-Hub-Signature-256": "sha256=badhex",
+            },
+        )
+    assert resp.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_github_inbound_ignores_non_push_events(client):
+    """Non-push events return 200 with queued=0 without error."""
+    from unittest.mock import MagicMock, patch
+
+    body = b'{}'
+    secret = "test-secret"
+    sig = _gh_sig(secret, body)
+
+    with patch("ontoexplorer.api.inbound.get_settings",
+               return_value=MagicMock(github_webhook_secret=secret)):
+        resp = await client.post(
+            "/api/v1/inbound/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-GitHub-Event": "pull_request",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+    assert resp.status_code == 200
+    assert resp.json()["queued"] == 0
+
+
+@pytest.mark.anyio
+async def test_github_inbound_no_secret_configured(client):
+    """Returns 501 when GITHUB_WEBHOOK_SECRET is not configured."""
+    from unittest.mock import MagicMock, patch
+
+    body = b'{}'
+    with patch("ontoexplorer.api.inbound.get_settings",
+               return_value=MagicMock(github_webhook_secret="")):
+        resp = await client.post(
+            "/api/v1/inbound/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-GitHub-Event": "push",
+                "X-Hub-Signature-256": "sha256=anything",
+            },
+        )
+    assert resp.status_code == 501

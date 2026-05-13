@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
 
+    # Inbound GitHub webhook — set to the secret configured in the GitHub repo's webhook settings
+    github_webhook_secret: str = ""
+
     # Development auth bypass — set AUTH_BYPASS=true to skip OAuth for local dev
     auth_bypass: bool = False
 

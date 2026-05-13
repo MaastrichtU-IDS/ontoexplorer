@@ -28,6 +28,18 @@ services:
       - ./ontoexplorer:/app/ontoexplorer
       - oxigraph-data:/data/oxigraph
 
+  beat:
+    build: .
+    command: celery -A ontoexplorer.modules.jobs.tasks beat --loglevel=info
+    env_file: .env
+    depends_on:
+      - postgres
+      - redis
+      - minio
+    volumes:
+      - ./ontoexplorer:/app/ontoexplorer
+      - oxigraph-data:/data/oxigraph
+
   minio:
     image: minio/minio
     command: server /data --console-address ":9001"
