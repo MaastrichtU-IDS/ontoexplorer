@@ -81,11 +81,15 @@ export interface Ontology {
   id: string
   iri: string
   shortname: string | null
+  groups?: string[]
   created_at: string
   latest_version?: OntologyVersion | null
   class_count?: number | null
   property_count?: number | null
   triple_count?: number | null
+  individual_count?: number | null
+  label?: string | null
+  description?: string | null
 }
 
 export interface OntologyVersion {
@@ -139,6 +143,7 @@ export interface RawTermDetail {
   label: string
   source?: string
   properties: Record<string, string[]>
+  type_of?: ClassRef[]
   is_inverse_target: boolean
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
   subclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
@@ -160,6 +165,8 @@ export interface ParsedTerm {
   definition: string | null
   entityType: 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' | 'individual'
   isInverseTarget: boolean
+  typeOf: ClassRef[]
+  rawProperties: Record<string, string[]>
   synonyms: { exact: string[]; related: string[]; broad: string[]; narrow: string[] }
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
   subclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
@@ -204,6 +211,7 @@ export interface SearchResult {
   iri: string
   label: string
   short: string
+  type?: string
   source?: string
   match_type: 'entity' | 'elk' | 'sparql'
   version_id?: string
@@ -276,6 +284,46 @@ export interface WebhookDelivery {
   last_attempt_at: string | null
 }
 
+// ── Profile types ─────────────────────────────────────────────────────────────
+
+export interface OntologyProfileData {
+  version_id: string
+  label_props: string[]
+  definition_props: string[]
+  synonym_props: string[]
+  deprecated_props: string[]
+  status: 'auto_detected' | 'user_confirmed'
+  updated_at: string | null
+}
+
+export interface ProfileCandidate {
+  iri: string
+  count: number
+  mod_declared: boolean
+}
+
+export interface ProfileUnknown {
+  iri: string
+  count: number
+  pct_of_classes: number
+}
+
+export interface ProfileCandidates {
+  version_id: string
+  label: ProfileCandidate[]
+  definition: ProfileCandidate[]
+  synonym: ProfileCandidate[]
+  deprecated: ProfileCandidate[]
+  unknown: ProfileUnknown[]
+}
+
+export interface ProfilePatch {
+  label_props?: string[]
+  definition_props?: string[]
+  synonym_props?: string[]
+  deprecated_props?: string[]
+}
+
 // ── Admin types ───────────────────────────────────────────────────────────────
 
 export interface AdminServiceStatus {
@@ -303,6 +351,7 @@ export interface AdminJobEntry {
   type: string
   version_id: string
   ontology_shortname: string | null
+  ontology_iri: string | null
   status: string
   started_at: string | null
   finished_at: string | null
@@ -375,6 +424,8 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
     definition,
     entityType,
     isInverseTarget: raw.is_inverse_target ?? false,
+    typeOf: raw.type_of ?? [],
+    rawProperties: raw.properties,
     synonyms: {
       exact:   p[P.exactSyn]   ?? [],
       related: p[P.relatedSyn] ?? [],
@@ -407,9 +458,10 @@ export const api = {
   },
 
   ontologies: {
-    list: (offset = 0, limit = 50, q?: string) => {
+    list: (offset = 0, limit = 50, q?: string, group?: string) => {
       const params = new URLSearchParams({ offset: String(offset), limit: String(limit) })
       if (q) params.set('q', q)
+      if (group) params.set('group', group)   // single group filter sent to API
       return request<{ ontologies: Ontology[]; offset: number; limit: number }>(
         `/ontologies?${params}`
       )
@@ -422,10 +474,11 @@ export const api = {
       }),
     versions: (id: string) =>
       request<{ versions: OntologyVersion[] }>(`/ontologies/${id}/versions`),
-    terms: (oid: string, vid: string, parent?: string | null, entityType: 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' = 'class', hideInverse = false) => {
-      const params = new URLSearchParams({ limit: '200', entity_type: entityType })
+    terms: (oid: string, vid: string, parent?: string | null, entityType: 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' | 'individual' = 'class', hideInverse = false, hideObsolete = true, limit = 200, offset = 0) => {
+      const params = new URLSearchParams({ limit: String(limit), offset: String(offset), entity_type: entityType })
       params.set('parent', parent ?? 'root')
       if (hideInverse) params.set('hide_inverse', 'true')
+      if (!hideObsolete) params.set('hide_obsolete', 'false')
       return request<{ terms: Term[]; offset: number; limit: number; parent: string | null }>(
         `/ontologies/${oid}/${vid}/terms?${params}`
       )
@@ -500,6 +553,23 @@ export const api = {
       }),
     delete: (id: string) =>
       request<void>(`/ontologies/${id}`, { method: 'DELETE' }),
+
+    profile: {
+      get: (ontologyId: string, versionId: string) =>
+        request<OntologyProfileData>(`/ontologies/${ontologyId}/${versionId}/profile`),
+      patch: (ontologyId: string, versionId: string, body: ProfilePatch) =>
+        request<OntologyProfileData>(`/ontologies/${ontologyId}/${versionId}/profile`, {
+          method: 'PATCH',
+          body: JSON.stringify(body),
+        }),
+      detect: (ontologyId: string, versionId: string) =>
+        request<{ task_id: string; status: string }>(
+          `/ontologies/${ontologyId}/${versionId}/profile/detect`,
+          { method: 'POST' }
+        ),
+      candidates: (ontologyId: string, versionId: string) =>
+        request<ProfileCandidates>(`/ontologies/${ontologyId}/${versionId}/profile/candidates`),
+    },
   },
 
   globalSearch: {
@@ -558,7 +628,7 @@ export const api = {
         job_durations: Array<{ month: string; avg_seconds: number }>
       }>('/stats'),
     public: () =>
-      request<{ total_ontologies: number; total_classes: number; total_properties: number }>(
+      request<{ total_ontologies: number; total_classes: number; total_properties: number; total_individuals: number }>(
         '/stats/public'
       ),
   },
