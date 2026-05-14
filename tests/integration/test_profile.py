@@ -134,3 +134,23 @@ def test_detect_profile_task_enqueues_index_on_failure():
         from ontoexplorer.modules.jobs.tasks import detect_profile
         detect_profile("vid-1", ontology_id="oid-1")
         mock_index.delay.assert_called_once_with("vid-1", ontology_id="oid-1")
+
+
+@pytest.mark.anyio
+async def test_get_profile_returns_404_when_missing(client, user_and_key):
+    _, key = user_and_key
+    resp = await client.get(
+        "/api/v1/ontologies/oid-1/vid-1/profile",
+        headers={"Authorization": f"Bearer {key}"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_get_profile_candidates_returns_404_when_missing(client, user_and_key):
+    _, key = user_and_key
+    resp = await client.get(
+        "/api/v1/ontologies/oid-1/vid-1/profile/candidates",
+        headers={"Authorization": f"Bearer {key}"},
+    )
+    assert resp.status_code == 404
