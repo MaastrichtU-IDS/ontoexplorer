@@ -166,3 +166,26 @@ class ApiKey(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped[User] = relationship(back_populates="api_keys")
+
+
+class OntologyProfile(Base):
+    __tablename__ = "ontology_profiles"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    version_id: Mapped[str] = mapped_column(
+        ForeignKey("versions.id", ondelete="CASCADE"), unique=True
+    )
+    label_props: Mapped[list] = mapped_column(JSON, default=list)
+    definition_props: Mapped[list] = mapped_column(JSON, default=list)
+    synonym_props: Mapped[list] = mapped_column(JSON, default=list)
+    deprecated_props: Mapped[list] = mapped_column(JSON, default=list)
+    candidates_data: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String, default="auto_detected")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    version: Mapped["OntologyVersion"] = relationship(passive_deletes=True)
