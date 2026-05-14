@@ -37,6 +37,21 @@ export default function NavBar() {
       <div style={{ marginLeft: 'auto' }}>
         {isAuthenticated ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            {user?.is_admin && (
+              <NavLink
+                to="/admin"
+                style={({ isActive }) => ({
+                  color: isActive ? '#f0883e' : 'var(--text-dim)',
+                  fontSize: 'var(--font-size-sm)',
+                  border: '1px solid',
+                  borderColor: isActive ? '#f0883e' : 'var(--border)',
+                  borderRadius: 4,
+                  padding: '2px 8px',
+                })}
+              >
+                Admin
+              </NavLink>
+            )}
             <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>
               {user?.display_name}
             </span>

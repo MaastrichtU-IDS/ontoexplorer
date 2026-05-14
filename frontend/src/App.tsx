@@ -12,6 +12,7 @@ import Stats from './pages/Stats'
 import OntologyPage from './pages/OntologyPage'
 import Login from './pages/Login'
 import AuthCallback from './pages/AuthCallback'
+import AdminPage from './pages/AdminPage'
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -39,6 +40,7 @@ export default function App() {
           <Route path="/dashboard/webhooks" element={<Webhooks />} />
           <Route path="/dashboard/stats" element={<Stats />} />
         </Route>
+        <Route path="/admin" element={<AdminPage />} />
       </Route>
     </Routes>
   )
