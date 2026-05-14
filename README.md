@@ -11,6 +11,7 @@ A next-generation FAIR ontology repository — ingest, browse, query, and reason
 - **Inspect** ontology document metadata (dcterms, pav, vann, schema.org, etc.) and VoID statistics
 - **Query** via SPARQL 1.1 endpoints over both metadata (Fuseki) and content (Oxigraph)
 - **Authenticate** via ORCID, GitHub, or Google OAuth 2.0
+- **Profile** annotation properties per version — auto-detect which IRIs carry labels, definitions, synonyms, and deprecated flags; confirm or adjust via a Profile tab; the search index rebuilds automatically
 - **Sync** ontologies automatically — hourly polling and GitHub push webhooks trigger re-ingestion when content changes
 - **Track** ingestion jobs, register webhooks, and manage API keys
 
@@ -49,7 +50,7 @@ A next-generation FAIR ontology repository — ingest, browse, query, and reason
 | MinIO | Raw ontology files and cached `owl:imports` |
 | Oxigraph (embedded) | Asserted + inferred RDF triples, SPARQL content queries |
 | Fuseki | DCAT/VoID/PROV-O metadata, federation-ready SPARQL endpoint |
-| Postgres | Users, versions, jobs, webhooks, API keys |
+| Postgres | Users, versions, jobs, webhooks, API keys, annotation profiles |
 | Redis | Celery broker, search index, stats cache, ELK classification cache |
 
 ## Quickstart
@@ -226,6 +227,43 @@ Use the search bar at the top of the left panel to find classes and properties b
 
 The Classes tree has an **Asserted / Inferred** toggle. The inferred view requires ELK reasoning to have completed for that ontology version (status shown on the ontology page).
 
+## Annotation Profiles
+
+Different ontologies use different annotation properties to express the same concepts — one uses `rdfs:label`, another `skos:prefLabel`; one uses `IAO:0000115` for definitions, another `rdfs:comment`. Without knowing which properties an ontology actually uses, search indexing, rendering, and synonym lookup will silently miss data.
+
+After each ingest, a `detect_profile` Celery task scans the ontology's named graph in Oxigraph to count how many OWL classes carry each annotation property from a curated registry. The best-matching properties are written to an `ontology_profiles` row and passed to the search indexer — no hardcoded predicate list.
+
+### What's detected
+
+| Role | Curated candidates |
+|------|--------------------|
+| Labels | `rdfs:label`, `skos:prefLabel`, `dcterms:title`, `dc:title`, `schema:name` |
+| Definitions | `IAO:0000115`, `skos:definition`, `rdfs:comment`, `dcterms:description` |
+| Synonyms | `skos:altLabel`, `oboInOwl:hasExactSynonym`, `hasRelatedSynonym`, `hasBroadSynonym`, `hasNarrowSynonym` |
+| Deprecated | `owl:deprecated` |
+
+If the ontology header declares `mod:prefLabelProperty` or `mod:definitionProperty`, those IRIs are promoted to first position. Properties used on > 5 % of classes that aren't in the registry are surfaced as **unknown** for manual role assignment.
+
+### Reviewing and editing
+
+Once detection completes, a banner appears on the ontology page:
+
+- **Blue** — profile auto-detected, summary shown.
+- **Amber** — unknown properties need role assignment.
+- **Green** — user-confirmed.
+
+Click **Review →** (or the **Profile** tab) to open the editor. You can add, remove, and reassign properties to roles, then click **Save and re-index** to rebuild the search index with the updated mapping.
+
+### Pipeline
+
+```
+ingest → detect_profile → index_ontology → (reason)
+                ↑
+   PATCH /profile → re-index
+```
+
+`detect_profile` always enqueues `index_ontology` — even if detection fails, indexing proceeds using the curated registry defaults.
+
 ## API Reference
 
 Base path: `/api/v1/`
@@ -252,6 +290,12 @@ GET    /ontologies/{id}/{vid}/justification/{jid} Retrieve justification result
 PATCH  /ontologies/{id}                          Update ontology (e.g. auto_sync)
 DELETE /ontologies/{id}                          Delete ontology and all versions
 DELETE /ontologies/{id}/{vid}                    Deprecate version
+
+# Annotation profiles
+GET    /ontologies/{id}/{vid}/profile            Get annotation property profile
+PATCH  /ontologies/{id}/{vid}/profile            Update profile (triggers re-index)
+POST   /ontologies/{id}/{vid}/profile/detect     Re-run auto-detection
+GET    /ontologies/{id}/{vid}/profile/candidates All annotation properties with usage counts
 
 # SPARQL
 GET/POST /sparql                                 SPARQL over Fuseki (FAIR metadata)
@@ -290,6 +334,7 @@ GET    /metrics                                  Prometheus metrics
 ontoexplorer/                    Python package
   api/                           FastAPI routers
     ontologies.py                Ontology, version, term, reasoning endpoints
+    profile.py                   Annotation profile CRUD + detection endpoints
     auth.py                      OAuth + JWT endpoints
     search.py                    Per-ontology search + autocomplete
     global_search.py             Cross-ontology search
@@ -305,7 +350,8 @@ ontoexplorer/                    Python package
     storage/                     MinIO client
     content/                     Oxigraph named-graph management
     auth/                        OAuth providers, JWT sessions, FastAPI deps
-    jobs/                        Celery tasks (ingest, index, reason, justify, poll)
+    jobs/                        Celery tasks (ingest, detect_profile, index, reason, justify, poll)
+    profile/                     Annotation property registry + SPARQL-based detector
     search/                      Redis entity index (build_index, entity_lookup)
     webhooks/                    HMAC-signed outbound delivery
   clients/
@@ -348,6 +394,7 @@ tests/
 | Stats caching | Redis, pre-populated at index time | COUNT(*) over millions of triples is slow; 30-day TTL, invalidated on deprecation |
 | Auto-sync dedup | SHA-256 comparison before re-queue | Polling fetches the full file; comparing hash avoids spurious ingestion when nothing changed |
 | GitHub sync | HMAC-SHA256 on `X-Hub-Signature-256` | Standard GitHub webhook verification; 401 on mismatch prevents replay attacks |
+| Annotation profiles | SPARQL COUNT per curated IRI, stored in `ontology_profiles` table | Different ontologies use different predicates for labels/definitions; auto-detection + user override avoids hardcoding |
 | Search index | Redis sorted set (lexicographic) | Sub-millisecond prefix search over 100k+ terms |
 | Mobile layout | Single-pane, tree ↔ detail toggle | Two-pane layout unusable below 768px |
 
