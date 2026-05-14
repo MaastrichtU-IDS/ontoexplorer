@@ -12,15 +12,7 @@ from ontoexplorer.clients.oxigraph import graph_iri, sparql_query
 from ontoexplorer.config import get_settings
 
 _SEARCH_TTL = 30 * 24 * 3600  # 30 days, same as ELK classification TTL
-
-_LABEL_PREDICATES = [
-    "http://www.w3.org/2000/01/rdf-schema#label",
-    "http://www.geneontology.org/formats/oboInOwl#hasExactSynonym",
-    "http://www.geneontology.org/formats/oboInOwl#hasRelatedSynonym",
-    "http://www.w3.org/2004/02/skos/core#prefLabel",
-    "http://www.w3.org/2004/02/skos/core#altLabel",
-    "http://schema.org/name",
-]
+IND_INDEX_THRESHOLD = 50_000  # skip individual indexing above this count to prevent OOM
 
 
 @dataclass
@@ -173,9 +165,17 @@ def entity_lookup(
     return candidates[:limit]
 
 
-def build_index(version_id: str, ontology_id: str) -> IndexStats:
+def build_index(version_id: str, ontology_id: str = "", profile: dict | None = None) -> IndexStats:
     """Extract all entities and labels from Oxigraph and write the Redis entity index."""
     from datetime import datetime, timezone
+
+    if profile is None:
+        from ontoexplorer.modules.profile.registry import default_profile
+        profile = default_profile()
+    label_props = profile["label_props"]
+    synonym_props = profile["synonym_props"]
+    definition_props = profile["definition_props"]
+    deprecated_props = profile["deprecated_props"]
 
     r = _get_redis()
     named_graph = graph_iri(ontology_id, version_id)
@@ -227,24 +227,98 @@ def build_index(version_id: str, ontology_id: str) -> IndexStats:
             if iri not in entities:
                 entities[iri] = entity_type
 
-    # Collect labels per entity
-    labels_by_iri: dict[str, list[str]] = {iri: [] for iri in entities}
-    pred_filter = " ".join(f"<{p}>" for p in _LABEL_PREDICATES)
-    q = f"""
-        SELECT ?entity ?label WHERE {{
-            GRAPH <{named_graph}> {{
-                VALUES ?pred {{ {pred_filter} }}
-                ?entity ?pred ?label .
-                FILTER(isIRI(?entity) && isLiteral(?label))
-            }}
+    # Collect individuals — gated by threshold to prevent OOM on large ontologies
+    individual_count = 0
+    ind_total_q = f"""
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        SELECT (COUNT(DISTINCT ?entity) AS ?n) WHERE {{
+            GRAPH <{named_graph}> {{ ?entity a owl:NamedIndividual . FILTER(isIRI(?entity)) }}
         }}
     """
-    for sol in sparql_query(q):
-        iri = sol["entity"].value
-        if iri in labels_by_iri:
-            val = sol["label"].value
-            if val not in labels_by_iri[iri]:
-                labels_by_iri[iri].append(val)
+    ind_total_rows = list(sparql_query(ind_total_q))
+    ind_total = int(ind_total_rows[0]["n"].value) if ind_total_rows else 0
+    if ind_total <= IND_INDEX_THRESHOLD:
+        ind_iri_q = f"""
+            PREFIX owl: <http://www.w3.org/2002/07/owl#>
+            SELECT DISTINCT ?entity WHERE {{
+                GRAPH <{named_graph}> {{ ?entity a owl:NamedIndividual . FILTER(isIRI(?entity)) }}
+            }}
+        """
+        for sol in sparql_query(ind_iri_q):
+            iri = sol["entity"].value
+            if iri not in entities:
+                entities[iri] = "individual"
+                individual_count += 1
+
+    # Collect deprecated entities
+    deprecated_iris: set[str] = set()
+    for dep_prop in deprecated_props:
+        dep_q = f"""
+            SELECT ?entity WHERE {{
+                GRAPH <{named_graph}> {{
+                    ?entity <{dep_prop}> "true"^^<http://www.w3.org/2001/XMLSchema#boolean> .
+                    FILTER(isIRI(?entity))
+                }}
+            }}
+        """
+        for sol in sparql_query(dep_q):
+            deprecated_iris.add(sol["entity"].value)
+
+    # Collect labels per entity
+    labels_by_iri: dict[str, list[str]] = {iri: [] for iri in entities}
+    if label_props:
+        label_pred_filter = " ".join(f"<{p}>" for p in label_props)
+        label_q = f"""
+            SELECT ?entity ?label WHERE {{
+                GRAPH <{named_graph}> {{
+                    VALUES ?pred {{ {label_pred_filter} }}
+                    ?entity ?pred ?label .
+                    FILTER(isIRI(?entity) && isLiteral(?label))
+                }}
+            }}
+        """
+        for sol in sparql_query(label_q):
+            iri = sol["entity"].value
+            if iri in labels_by_iri:
+                val = sol["label"].value
+                if val not in labels_by_iri[iri]:
+                    labels_by_iri[iri].append(val)
+
+    # Collect synonyms per entity
+    synonyms_by_iri: dict[str, list[str]] = {iri: [] for iri in entities}
+    if synonym_props:
+        syn_pred_filter = " ".join(f"<{p}>" for p in synonym_props)
+        syn_q = f"""
+            SELECT ?entity ?syn WHERE {{
+                GRAPH <{named_graph}> {{
+                    VALUES ?pred {{ {syn_pred_filter} }}
+                    ?entity ?pred ?syn .
+                    FILTER(isIRI(?entity) && isLiteral(?syn))
+                }}
+            }}
+        """
+        for sol in sparql_query(syn_q):
+            iri = sol["entity"].value
+            if iri in synonyms_by_iri:
+                val = sol["syn"].value
+                if val not in synonyms_by_iri[iri]:
+                    synonyms_by_iri[iri].append(val)
+
+    # Collect definitions per entity (first-match across definition_props)
+    defs_by_iri: dict[str, str] = {}
+    for def_prop in definition_props:
+        def_q = f"""
+            SELECT ?entity ?def WHERE {{
+                GRAPH <{named_graph}> {{
+                    ?entity <{def_prop}> ?def .
+                    FILTER(isIRI(?entity) && isLiteral(?def))
+                }}
+            }}
+        """
+        for sol in sparql_query(def_q):
+            iri = sol["entity"].value
+            if iri in entities and iri not in defs_by_iri:
+                defs_by_iri[iri] = sol["def"].value
 
     # Invalidate root terms cache so API serves fresh data with the new source fields
     for key in r.scan_iter(f"terms_root:{version_id}:*"):
@@ -256,32 +330,40 @@ def build_index(version_id: str, ontology_id: str) -> IndexStats:
 
     pipe = r.pipeline(transaction=False)
     class_count = property_count = 0
+    # individual_count was set above during threshold-gated collection
 
     for iri, entity_type in entities.items():
+        if iri in deprecated_iris:
+            continue
+
         labels = labels_by_iri.get(iri, [])
+        syns = synonyms_by_iri.get(iri, [])
+        deduped_syns = [v for v in syns if v not in labels]
         short = _short_iri(iri)
         primary_label = labels[0] if labels else short
-        all_labels = labels + ([short] if short not in labels else [])
+        hash_synonyms = labels[1:] + deduped_syns
+        definition = defs_by_iri.get(iri, "")
+        all_search_texts = labels + deduped_syns + (
+            [short] if short not in labels and short not in deduped_syns else []
+        )
 
         pipe.hset(_iri_key(version_id, iri), mapping={
-            "label":  primary_label,
-            "type":   entity_type,
-            "iri":    iri,
-            "short":  short,
-            "source": _get_source(iri),
-            "synonyms": "|".join(labels[1:]) if len(labels) > 1 else "",
+            "label":      primary_label,
+            "type":       entity_type,
+            "iri":        iri,
+            "short":      short,
+            "source":     _get_source(iri),
+            "synonyms":   "|".join(hash_synonyms),
+            "definition": definition,
         })
         pipe.expire(_iri_key(version_id, iri), _SEARCH_TTL)
         pipe.sadd(_type_key(version_id, entity_type), iri)
 
-        for label_text in all_labels:
+        for label_text in all_search_texts:
             norm = normalise_label(label_text)
             if not norm:
                 continue
-            # Full-label prefix entry (matches from the start)
             pipe.zadd(prefix_key, {f"{norm}|{entity_type}|{iri}": 0})
-            # Word-suffix entries so mid-label words are searchable
-            # e.g. "cell death" also gets "death|..." so "death" matches it
             words = norm.split()
             for i in range(1, len(words)):
                 suffix = " ".join(words[i:])
@@ -289,7 +371,7 @@ def build_index(version_id: str, ontology_id: str) -> IndexStats:
 
         if entity_type == "class":
             class_count += 1
-        else:
+        elif entity_type != "individual":
             property_count += 1
 
     pipe.expire(prefix_key, _SEARCH_TTL)
@@ -297,11 +379,12 @@ def build_index(version_id: str, ontology_id: str) -> IndexStats:
     pipe.expire(_type_key(version_id, "object_property"),     _SEARCH_TTL)
     pipe.expire(_type_key(version_id, "data_property"),       _SEARCH_TTL)
     pipe.expire(_type_key(version_id, "annotation_property"), _SEARCH_TTL)
+    pipe.expire(_type_key(version_id, "individual"),          _SEARCH_TTL)
     pipe.setex(_meta_key(version_id), _SEARCH_TTL, json.dumps({
         "indexed_at":      datetime.now(timezone.utc).isoformat(),
         "class_count":     class_count,
         "property_count":  property_count,
-        "individual_count": 0,
+        "individual_count": individual_count,
     }))
     pipe.execute()
 
@@ -312,7 +395,7 @@ def build_index(version_id: str, ontology_id: str) -> IndexStats:
         version_id=version_id,
         class_count=class_count,
         property_count=property_count,
-        individual_count=0,
+        individual_count=individual_count,
     )
 
 
@@ -446,6 +529,67 @@ def _build_tree_cache(
         )
 
 
+_DESC_PREDS = [
+    "http://purl.org/dc/terms/description",
+    "http://purl.org/dc/elements/1.1/description",
+    "http://www.w3.org/2000/01/rdf-schema#comment",
+]
+_TITLE_PREDS = [
+    "http://purl.org/dc/terms/title",
+    "http://purl.org/dc/elements/1.1/title",
+    "http://www.w3.org/2000/01/rdf-schema#label",
+    "http://www.w3.org/2004/02/skos/core#prefLabel",
+]
+
+
+def _onto_meta_from_graph(named_graph: str) -> tuple[str, str]:
+    """Return (label, description) for the primary owl:Ontology IRI in the graph.
+
+    Returns ('', '') if the ontology declaration is absent or has no matching predicates.
+    """
+    # Discover the ontology IRI
+    onto_rows = list(sparql_query(f"""
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        SELECT ?onto WHERE {{
+            GRAPH <{named_graph}> {{ ?onto a owl:Ontology . FILTER(isIRI(?onto)) }}
+        }} LIMIT 1
+    """))
+    if not onto_rows:
+        return "", ""
+    onto_iri = onto_rows[0]["onto"].value
+
+    # Fetch all title + description literals for the ontology IRI
+    all_preds = _TITLE_PREDS + _DESC_PREDS
+    pred_filter = " ".join(f"<{p}>" for p in all_preds)
+    rows = list(sparql_query(f"""
+        SELECT ?pred ?val WHERE {{
+            GRAPH <{named_graph}> {{
+                VALUES ?pred {{ {pred_filter} }}
+                <{onto_iri}> ?pred ?val .
+                FILTER(isLiteral(?val))
+                FILTER(lang(?val) = "" || langMatches(lang(?val), "en"))
+            }}
+        }}
+    """))
+
+    # Collect per-predicate values; prefer longest non-empty for each role
+    by_pred: dict[str, list[str]] = {}
+    for row in rows:
+        pred = row["pred"].value
+        val = row["val"].value.strip()
+        if val:
+            by_pred.setdefault(pred, []).append(val)
+
+    def _pick(preds: list[str]) -> str:
+        for p in preds:
+            vals = by_pred.get(p, [])
+            if vals:
+                return max(vals, key=len)
+        return ""
+
+    return _pick(_TITLE_PREDS), _pick(_DESC_PREDS)
+
+
 def _populate_stats_cache(
     version_id: str,
     ontology_id: str,
@@ -479,6 +623,8 @@ def _populate_stats_cache(
         }}
     """)
 
+    onto_label, onto_description = _onto_meta_from_graph(named_graph)
+
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
     prop_count = obj_prop_count + data_prop_count + ann_prop_count
@@ -491,6 +637,8 @@ def _populate_stats_cache(
         "datatype_property_count":   data_prop_count,
         "annotation_property_count": ann_prop_count,
         "individual_count":          ind_count,
+        "label":                     onto_label,
+        "description":               onto_description,
         "index_meta": {
             "indexed_at":     now,
             "class_count":    class_count,

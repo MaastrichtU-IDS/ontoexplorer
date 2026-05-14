@@ -154,3 +154,10 @@ async def test_get_profile_candidates_returns_404_when_missing(client, user_and_
         headers={"Authorization": f"Bearer {key}"},
     )
     assert resp.status_code == 404
+
+
+def test_build_index_accepts_profile_parameter():
+    from ontoexplorer.modules.search.indexer import build_index
+    import inspect
+    sig = inspect.signature(build_index)
+    assert "profile" in sig.parameters
