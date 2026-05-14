@@ -116,3 +116,21 @@ async def test_load_profile_returns_stored_profile():
     mock_db.execute = AsyncMock(return_value=mock_result)
     result = await load_profile(mock_db, "vid-1")
     assert result["label_props"] == ["http://www.w3.org/2004/02/skos/core#prefLabel"]
+
+
+def test_detect_profile_task_enqueues_index_on_success():
+    with patch("ontoexplorer.modules.jobs.tasks.asyncio") as mock_asyncio, \
+         patch("ontoexplorer.modules.jobs.tasks.index_ontology") as mock_index:
+        mock_asyncio.run.return_value = None
+        from ontoexplorer.modules.jobs.tasks import detect_profile
+        detect_profile("vid-1", ontology_id="oid-1")
+        mock_index.delay.assert_called_once_with("vid-1", ontology_id="oid-1")
+
+
+def test_detect_profile_task_enqueues_index_on_failure():
+    with patch("ontoexplorer.modules.jobs.tasks.asyncio") as mock_asyncio, \
+         patch("ontoexplorer.modules.jobs.tasks.index_ontology") as mock_index:
+        mock_asyncio.run.side_effect = RuntimeError("oxigraph unavailable")
+        from ontoexplorer.modules.jobs.tasks import detect_profile
+        detect_profile("vid-1", ontology_id="oid-1")
+        mock_index.delay.assert_called_once_with("vid-1", ontology_id="oid-1")

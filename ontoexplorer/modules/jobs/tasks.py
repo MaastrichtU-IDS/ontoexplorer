@@ -37,6 +37,57 @@ celery_app.conf.update(
 )
 
 
+@celery_app.on_after_finalize.connect
+def setup_signals(sender, **kwargs):
+    from celery.signals import worker_ready
+    worker_ready.connect(_reset_orphaned_jobs)
+
+
+def _reset_orphaned_jobs(sender=None, **kwargs):
+    """Mark any jobs stuck in 'running' as failed — they were interrupted by a worker restart."""
+    import asyncio
+    from sqlalchemy import text
+    from ontoexplorer.database import make_celery_db_session
+    Session = make_celery_db_session()
+
+    async def _reset():
+        async with Session() as db:
+            result = await db.execute(
+                text("""
+                    UPDATE jobs SET status='failed', finished_at=now(),
+                        error='Interrupted: worker restarted'
+                    WHERE status='running'
+                    RETURNING id
+                """)
+            )
+            ids = [r[0] for r in result.fetchall()]
+            await db.commit()
+            if ids:
+                log.warning("orphaned_jobs_reset", count=len(ids), job_ids=ids)
+
+    asyncio.run(_reset())
+
+
+@celery_app.task(name="ontoexplorer.detect_profile")
+def detect_profile(version_id: str, ontology_id: str = "") -> dict:
+    """Detect annotation profile from Oxigraph, write to DB, then enqueue indexing."""
+    try:
+        from ontoexplorer.database import make_celery_db_session
+        from ontoexplorer.modules.profile.detector import run_detection
+
+        async def _run():
+            async with make_celery_db_session()() as db:
+                await run_detection(db, version_id, ontology_id)
+
+        asyncio.run(_run())
+        log.info("detect_profile_done", version_id=version_id)
+    except Exception as exc:
+        log.error("detect_profile_failed", version_id=version_id, error=str(exc))
+    finally:
+        index_ontology.delay(version_id, ontology_id=ontology_id)
+    return {"status": "done", "version_id": version_id}
+
+
 @celery_app.task(bind=True, name="ontoexplorer.ingest_ontology", max_retries=3)
 def ingest_ontology(
     self,
@@ -263,8 +314,16 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
     """Build the Redis entity search index for a version."""
     log.info("index_ontology_start", version_id=version_id)
     try:
+        from ontoexplorer.database import make_celery_db_session
+        from ontoexplorer.modules.profile.detector import load_profile
+
+        async def _fetch_profile():
+            async with make_celery_db_session()() as db:
+                return await load_profile(db, version_id)
+
+        profile = asyncio.run(_fetch_profile())
         from ontoexplorer.modules.search.indexer import build_index
-        stats = build_index(version_id, ontology_id)
+        stats = build_index(version_id, ontology_id, profile=profile)
         log.info("index_ontology_done", version_id=version_id,
                  class_count=stats.class_count, property_count=stats.property_count)
         return {"status": "done", "version_id": version_id,

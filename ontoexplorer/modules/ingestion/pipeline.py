@@ -219,9 +219,9 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     from ontoexplorer.modules.jobs.tasks import reason_ontology
     reason_ontology.delay(version_id)
 
-    # ── Step 9: Queue search indexing ─────────────────────────────────────────
-    from ontoexplorer.modules.jobs.tasks import index_ontology
-    index_ontology.delay(version_id, ontology_id=ontology_id)
+    # ── Step 9: Queue profile detection (chains to indexing on completion) ────
+    from ontoexplorer.modules.jobs.tasks import detect_profile
+    detect_profile.delay(version_id, ontology_id=ontology_id)
 
     elapsed = time.monotonic() - _t0
     metrics.ontologies_ingested_total.labels(format=fmt.value, duplicate="false").inc()
