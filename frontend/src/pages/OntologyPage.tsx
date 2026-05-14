@@ -9,6 +9,7 @@ import { slugFromIri, OntologyVersion, OntologyMetadataEntry, SearchResult, Term
 import ClassTree from '../components/ClassTree'
 import TermPanel from '../components/TermPanel'
 import ResizeHandle from '../components/ResizeHandle'
+import ProfileEditor from '../components/ProfileEditor'
 
 const IND_PAGE_SIZE = 50
 
@@ -662,7 +663,6 @@ export default function OntologyPage() {
   const [classMode, setClassMode] = useState<HierarchyMode>('asserted')
   const [mobilePane, setMobilePane] = useState<'tree' | 'detail'>('tree')
   const [detailTab, setDetailTab] = useState<'info' | 'profile'>('info')
-  void detailTab // consumed by future tab UI
 
   const [hideInverseProps, setHideInverseProps] = useState(true)
   const [hideObsolete, setHideObsolete] = useState(true)
@@ -901,11 +901,43 @@ export default function OntologyPage() {
           termIri={selectedTermIri} slug={slug!} singlePane={true}
         />
       ) : (
-        <OntologyMeta
-          iri={ontology?.iri ?? ''}
-          version={activeVersion}
-          onProfileReview={() => setDetailTab('profile')}
-        />
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+          {/* Tab bar */}
+          <div style={{
+            display: 'flex', borderBottom: '1px solid var(--border)',
+            background: 'var(--bg-secondary)', flexShrink: 0,
+          }}>
+            {(['info', 'profile'] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setDetailTab(tab)}
+                style={{
+                  padding: '8px 16px', border: 'none', cursor: 'pointer', fontSize: 12,
+                  background: detailTab === tab ? 'var(--bg)' : 'transparent',
+                  color: detailTab === tab ? 'var(--text)' : 'var(--text-dim)',
+                  borderBottom: detailTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
+                  textTransform: 'capitalize',
+                }}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+          {/* Tab content */}
+          <div style={{ flex: 1, overflow: 'auto' }}>
+            {detailTab === 'info' ? (
+              <OntologyMeta
+                iri={ontology?.iri ?? ''}
+                version={activeVersion}
+                onProfileReview={() => setDetailTab('profile')}
+              />
+            ) : (
+              oid && activeVid
+                ? <ProfileEditor ontologyId={oid} versionId={activeVid} />
+                : null
+            )}
+          </div>
+        </div>
       )}
     </>
   )
