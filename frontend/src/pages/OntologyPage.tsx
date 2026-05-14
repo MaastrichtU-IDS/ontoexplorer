@@ -1,13 +1,91 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
 import { useOntologies } from '../hooks/useOntologies'
 import { useVersions } from '../hooks/useVersions'
 import { useTerm } from '../hooks/useTerm'
-import { slugFromIri, OntologyVersion, OntologyMetadataEntry, SearchResult, api } from '../lib/api'
+import { useOntologyProfile } from '../hooks/useOntologyProfile'
+import { slugFromIri, OntologyVersion, OntologyMetadataEntry, SearchResult, Term, api } from '../lib/api'
 import ClassTree from '../components/ClassTree'
 import TermPanel from '../components/TermPanel'
 import ResizeHandle from '../components/ResizeHandle'
+
+const IND_PAGE_SIZE = 50
+
+function IndividualList({ ontologyId, versionId, selectedIri, onSelect }: {
+  ontologyId: string
+  versionId: string
+  selectedIri: string | null
+  onSelect: (iri: string) => void
+}) {
+  const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading } = useInfiniteQuery({
+    queryKey: ['individuals', ontologyId, versionId],
+    queryFn: ({ pageParam = 0 }) =>
+      api.ontologies.terms(ontologyId, versionId, null, 'individual', false, true, IND_PAGE_SIZE, pageParam as number),
+    getNextPageParam: (last, pages) => {
+      const loaded = pages.reduce((n, p) => n + p.terms.length, 0)
+      return last.terms.length === IND_PAGE_SIZE ? loaded : undefined
+    },
+    initialPageParam: 0,
+    staleTime: 60_000,
+  })
+
+  const terms: Term[] = data?.pages.flatMap(p => p.terms) ?? []
+
+  if (isLoading) return (
+    <div style={{ padding: '6px 12px', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</div>
+  )
+  if (terms.length === 0) return (
+    <div style={{ padding: '6px 12px', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>No individuals found</div>
+  )
+
+  return (
+    <div>
+      <ul style={{ listStyle: 'none' }}>
+        {terms.map(t => {
+          const label = t.label ?? t.iri.split(/[#/]/).pop() ?? t.iri
+          const isSelected = selectedIri === t.iri
+          return (
+            <li key={t.iri}>
+              <div
+                onClick={() => onSelect(t.iri)}
+                style={{
+                  padding: '4px 8px 4px 20px',
+                  cursor: 'pointer',
+                  background: isSelected ? 'var(--bg-hover)' : 'transparent',
+                  borderRadius: 'var(--radius-sm)',
+                  color: isSelected ? 'var(--accent)' : 'var(--text)',
+                  fontSize: 'var(--font-size-sm)',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}
+                onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}
+                onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = '' }}
+                title={t.iri}
+              >
+                {label}
+              </div>
+            </li>
+          )
+        })}
+      </ul>
+      {hasNextPage && (
+        <button
+          onClick={() => fetchNextPage()}
+          disabled={isFetchingNextPage}
+          style={{
+            display: 'block', width: '100%', padding: '6px',
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--text-dim)', fontSize: 11, textAlign: 'center',
+          }}
+          onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent)')}
+          onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-dim)')}
+        >
+          {isFetchingNextPage ? 'Loading…' : `Load more (${terms.length} loaded)`}
+        </button>
+      )}
+    </div>
+  )
+}
 
 const PANE_MIN = 220
 const PANE_MAX = 640
@@ -245,9 +323,69 @@ function OntologyDocMeta({ ontologyId, versionId }: { ontologyId: string; versio
   )
 }
 
+// ── Profile banner ────────────────────────────────────────────────────────────
+
+function ProfileBanner({ ontologyId, versionId, onReview }: {
+  ontologyId: string
+  versionId: string
+  onReview: () => void
+}) {
+  const { data: profile, isLoading } = useOntologyProfile(ontologyId, versionId)
+
+  if (isLoading || !profile) return null
+
+  const hasUnknown = Array.isArray((profile as any).candidates_data?.unknown) && (profile as any).candidates_data.unknown.length > 0
+  const isConfirmed = profile.status === 'user_confirmed'
+
+  if (isConfirmed) {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '6px 12px', marginBottom: 12,
+        background: 'rgba(63,185,80,0.06)', border: '1px solid rgba(63,185,80,0.2)',
+        borderRadius: 6, fontSize: 11,
+      }}>
+        <span style={{ color: '#3fb950' }}>● Profile confirmed</span>
+        <button
+          onClick={onReview}
+          style={{ marginLeft: 'auto', color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11 }}
+        >
+          Edit
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8,
+      padding: '6px 12px', marginBottom: 12,
+      background: hasUnknown ? 'rgba(210,153,34,0.08)' : 'rgba(88,166,255,0.06)',
+      border: `1px solid ${hasUnknown ? 'rgba(210,153,34,0.3)' : 'rgba(88,166,255,0.2)'}`,
+      borderRadius: 6, fontSize: 11,
+    }}>
+      <span style={{ color: hasUnknown ? '#d29922' : 'var(--accent)' }}>
+        {hasUnknown
+          ? `⚠ Profile auto-detected · unknown properties need role assignment`
+          : `Profile auto-detected · labels: ${profile.label_props[0]?.split(/[/#]/).pop() ?? '?'}`}
+      </span>
+      <button
+        onClick={onReview}
+        style={{ marginLeft: 'auto', color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11 }}
+      >
+        Review →
+      </button>
+    </div>
+  )
+}
+
 // ── Metadata + stats panel ────────────────────────────────────────────────────
 
-function OntologyMeta({ iri, version }: { iri: string; version: OntologyVersion | undefined }) {
+function OntologyMeta({ iri, version, onProfileReview }: {
+  iri: string
+  version: OntologyVersion | undefined
+  onProfileReview?: () => void
+}) {
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['version-stats', version?.ontology_id, version?.id],
     queryFn: () => api.ontologies.stats(version!.ontology_id, version!.id),
@@ -282,6 +420,15 @@ function OntologyMeta({ iri, version }: { iri: string; version: OntologyVersion 
           )}
         </div>
       ) : null}
+
+      {/* ── Profile banner ── */}
+        {onProfileReview && version && (
+          <ProfileBanner
+            ontologyId={version.ontology_id}
+            versionId={version.id}
+            onReview={onProfileReview}
+          />
+        )}
 
       {/* ── Document metadata ── */}
       <h3 style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
@@ -430,7 +577,7 @@ function OntologySearchBar({
         onChange={e => { setQuery(e.target.value); setOpen(true) }}
         onFocus={() => { if (query) setOpen(true) }}
         onKeyDown={handleKey}
-        placeholder="Search classes & properties…"
+        placeholder="Search classes, properties & individuals…"
         style={{
           width: '100%', boxSizing: 'border-box',
           padding: '5px 8px', fontSize: 'var(--font-size-sm)',
@@ -447,30 +594,35 @@ function OntologySearchBar({
           borderRadius: 'var(--radius-sm)', boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
           maxHeight: 260, overflowY: 'auto',
         }}>
-          {results.map((r, i) => (
-            <li
-              key={r.iri}
-              onMouseDown={() => pick(r)}
-              onMouseEnter={() => setActiveIdx(i)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: '5px 10px', cursor: 'pointer', fontSize: 'var(--font-size-sm)',
-                background: i === activeIdx ? 'var(--bg-hover)' : 'transparent',
-                color: 'var(--text)',
-              }}
-            >
-              <span style={{
-                fontSize: 9, fontWeight: 700, padding: '1px 4px',
-                borderRadius: 3, background: 'var(--bg)', color: 'var(--text-dim)',
-                flexShrink: 0,
-              }}>
-                {r.short}
-              </span>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {r.label}
-              </span>
-            </li>
-          ))}
+          {results.map((r, i) => {
+            const isInd = r.type === 'individual'
+            const isProp = r.type?.endsWith('_property')
+            const typeColor = isInd ? 'var(--accent-blue, #61afef)' : isProp ? 'var(--accent-purple, #c678dd)' : 'var(--text-dim)'
+            return (
+              <li
+                key={r.iri}
+                onMouseDown={() => pick(r)}
+                onMouseEnter={() => setActiveIdx(i)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '5px 10px', cursor: 'pointer', fontSize: 'var(--font-size-sm)',
+                  background: i === activeIdx ? 'var(--bg-hover)' : 'transparent',
+                  color: 'var(--text)',
+                }}
+              >
+                <span style={{
+                  fontSize: 9, fontWeight: 700, padding: '1px 4px',
+                  borderRadius: 3, background: 'var(--bg)', color: typeColor,
+                  flexShrink: 0,
+                }}>
+                  {isInd ? 'ind' : r.short}
+                </span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {r.label}
+                </span>
+              </li>
+            )
+          })}
         </ul>
       )}
     </div>
@@ -488,7 +640,7 @@ export default function OntologyPage() {
   const isMobile = useIsMobile()
   const { ontologies, isLoading: ontologiesLoading } = useOntologies()
 
-  const ontology = ontologies.find(o => slugFromIri(o.iri) === slug)
+  const ontology = ontologies.find(o => slugFromIri(o.iri) === slug || o.shortname === slug)
   const { data: versionsData, isLoading: versionsLoading } = useVersions(ontology?.id)
   const versions = versionsData?.versions ?? []
 
@@ -499,10 +651,21 @@ export default function OntologyPage() {
   const oid = ontology?.id
 
   const selectedTermIri = searchParams.get('term')
+  const { data: versionStats } = useQuery({
+    queryKey: ['version-stats', oid, activeVid],
+    queryFn: () => api.ontologies.stats(oid!, activeVid!),
+    enabled: !!oid && !!activeVid,
+    staleTime: 120_000,
+  })
+  const individualCount = versionStats?.individual_count ?? 0
+
   const [classMode, setClassMode] = useState<HierarchyMode>('asserted')
   const [mobilePane, setMobilePane] = useState<'tree' | 'detail'>('tree')
+  const [detailTab, setDetailTab] = useState<'info' | 'profile'>('info')
+  void detailTab // consumed by future tab UI
 
   const [hideInverseProps, setHideInverseProps] = useState(true)
+  const [hideObsolete, setHideObsolete] = useState(true)
   const [classExpand,   setClassExpand]   = useState(0)
   const [classCollapse, setClassCollapse] = useState(0)
   const [objExpand,     setObjExpand]     = useState(0)
@@ -592,6 +755,20 @@ export default function OntologyPage() {
               <span style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, flex: 1 }}>
                 Classes
               </span>
+              <button
+                onClick={() => setHideObsolete(v => !v)}
+                title={hideObsolete ? 'Show obsolete terms' : 'Hide obsolete terms'}
+                style={{
+                  fontSize: 9, padding: '2px 6px', borderRadius: 3,
+                  border: '1px solid var(--border)', background: 'none',
+                  color: hideObsolete ? 'var(--text-dim)' : 'var(--accent)',
+                  cursor: 'pointer', textTransform: 'uppercase', letterSpacing: 0.5,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--text-muted)' }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
+              >
+                {hideObsolete ? 'Show Obs' : 'Hide Obs'}
+              </button>
               <ExpandToggleBtn
                 onExpand={() => setClassExpand(v => v + 1)}
                 onCollapse={() => setClassCollapse(v => v + 1)}
@@ -617,6 +794,7 @@ export default function OntologyPage() {
               ontologyId={oid} versionId={activeVid}
               selectedIri={selectedTermIri} onSelect={selectTerm}
               entityType="class" mode={classMode} revealIri={selectedTermIri}
+              hideObsolete={hideObsolete}
               expandSignal={classExpand} collapseSignal={classCollapse}
             />
           </div>
@@ -644,7 +822,7 @@ export default function OntologyPage() {
               ontologyId={oid} versionId={activeVid}
               selectedIri={selectedTermIri} onSelect={selectTerm}
               entityType="object_property" revealIri={selectedTermIri}
-              hideInverse={hideInverseProps}
+              hideInverse={hideInverseProps} hideObsolete={hideObsolete}
               expandSignal={objExpand} collapseSignal={objCollapse}
             />
           </CollapsibleSection>
@@ -659,6 +837,7 @@ export default function OntologyPage() {
               ontologyId={oid} versionId={activeVid}
               selectedIri={selectedTermIri} onSelect={selectTerm}
               entityType="data_property" revealIri={selectedTermIri}
+              hideObsolete={hideObsolete}
               expandSignal={dataExpand} collapseSignal={dataCollapse}
             />
           </CollapsibleSection>
@@ -667,8 +846,17 @@ export default function OntologyPage() {
               ontologyId={oid} versionId={activeVid}
               selectedIri={selectedTermIri} onSelect={selectTerm}
               entityType="annotation_property" revealIri={selectedTermIri}
+              hideObsolete={hideObsolete}
             />
           </CollapsibleSection>
+          {individualCount > 0 && (
+            <CollapsibleSection label={`Individuals (${individualCount.toLocaleString()})`} defaultOpen={false}>
+              <IndividualList
+                ontologyId={oid} versionId={activeVid}
+                selectedIri={selectedTermIri} onSelect={selectTerm}
+              />
+            </CollapsibleSection>
+          )}
         </div>
       ) : (
         <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
@@ -713,7 +901,11 @@ export default function OntologyPage() {
           termIri={selectedTermIri} slug={slug!} singlePane={true}
         />
       ) : (
-        <OntologyMeta iri={ontology?.iri ?? ''} version={activeVersion} />
+        <OntologyMeta
+          iri={ontology?.iri ?? ''}
+          version={activeVersion}
+          onProfileReview={() => setDetailTab('profile')}
+        />
       )}
     </>
   )
