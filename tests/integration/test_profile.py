@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import patch, MagicMock, AsyncMock
 from ontoexplorer.models.db import OntologyProfile
 
 
@@ -40,3 +41,78 @@ def test_default_profile_returns_all_roles():
     assert "synonym_props" in p
     assert "deprecated_props" in p
     assert len(p["label_props"]) > 0
+
+
+from ontoexplorer.modules.profile.detector import (
+    _count_property_usage,
+    _count_classes,
+    _build_role_list,
+    load_profile,
+)
+
+
+def test_count_property_usage_returns_int():
+    mock_rows = [{"n": MagicMock(value="42")}]
+    with patch("ontoexplorer.modules.profile.detector.sparql_query", return_value=mock_rows):
+        result = _count_property_usage("urn:graph", "http://example.org/prop")
+    assert result == 42
+
+
+def test_count_property_usage_returns_zero_on_empty():
+    with patch("ontoexplorer.modules.profile.detector.sparql_query", return_value=[]):
+        result = _count_property_usage("urn:graph", "http://example.org/prop")
+    assert result == 0
+
+
+def test_build_role_list_orders_by_count():
+    counts = {
+        "http://www.w3.org/2004/02/skos/core#prefLabel": 100,
+        "http://www.w3.org/2000/01/rdf-schema#label": 50,
+    }
+    result = _build_role_list(
+        ["http://www.w3.org/2000/01/rdf-schema#label",
+         "http://www.w3.org/2004/02/skos/core#prefLabel"],
+        counts,
+        mod_override=None,
+    )
+    assert result[0] == "http://www.w3.org/2004/02/skos/core#prefLabel"
+
+
+def test_build_role_list_mod_override_goes_first():
+    counts = {
+        "http://www.w3.org/2004/02/skos/core#prefLabel": 100,
+        "http://www.w3.org/2000/01/rdf-schema#label": 50,
+    }
+    result = _build_role_list(
+        ["http://www.w3.org/2000/01/rdf-schema#label",
+         "http://www.w3.org/2004/02/skos/core#prefLabel"],
+        counts,
+        mod_override="http://www.w3.org/2000/01/rdf-schema#label",
+    )
+    assert result[0] == "http://www.w3.org/2000/01/rdf-schema#label"
+
+
+@pytest.mark.anyio
+async def test_load_profile_returns_defaults_when_no_row():
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=mock_result)
+    from ontoexplorer.modules.profile.registry import default_profile
+    result = await load_profile(mock_db, "vid-1")
+    assert result == default_profile()
+
+
+@pytest.mark.anyio
+async def test_load_profile_returns_stored_profile():
+    mock_profile = MagicMock()
+    mock_profile.label_props = ["http://www.w3.org/2004/02/skos/core#prefLabel"]
+    mock_profile.definition_props = ["http://purl.obolibrary.org/obo/IAO_0000115"]
+    mock_profile.synonym_props = []
+    mock_profile.deprecated_props = ["http://www.w3.org/2002/07/owl#deprecated"]
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = mock_profile
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(return_value=mock_result)
+    result = await load_profile(mock_db, "vid-1")
+    assert result["label_props"] == ["http://www.w3.org/2004/02/skos/core#prefLabel"]
