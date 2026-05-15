@@ -19,6 +19,8 @@ RUN uv sync --no-install-project --no-dev
 
 # Copy source code
 COPY ontoexplorer/ ./ontoexplorer/
+COPY alembic/ ./alembic/
+COPY alembic.ini .
 
 # Install the project
 RUN uv sync --no-dev
