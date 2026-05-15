@@ -1,9 +1,8 @@
 """OAuth 2.0 / OIDC authentication endpoints."""
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.database import get_db
@@ -98,22 +97,23 @@ async def oauth_callback(
     return resp
 
 
-class RefreshRequest(BaseModel):
-    refresh_token: str
-
-
 @router.post("/refresh", summary="Refresh access token")
-async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
+async def refresh(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    token = request.cookies.get("refresh_token", "")
     try:
-        access_token, new_refresh = await refresh_session(db, body.refresh_token)
+        access_token, new_refresh = await refresh_session(db, token)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=str(exc))
-    return {"access_token": access_token, "refresh_token": new_refresh, "token_type": "bearer"}
+    response.set_cookie("refresh_token", new_refresh, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
+    return {"access_token": access_token, "token_type": "bearer"}
 
 
 @router.post("/logout", summary="Invalidate session")
-async def logout(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
-    await revoke_session(db, body.refresh_token)
+async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    token = request.cookies.get("refresh_token", "")
+    if token:
+        await revoke_session(db, token)
+    response.delete_cookie("refresh_token")
     return {"detail": "Logged out"}
 
 
