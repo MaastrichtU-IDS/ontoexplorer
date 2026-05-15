@@ -1146,7 +1146,9 @@ async def get_term(
     ontology_id: str,
     version_id: str,
     term_iri: str,
+    lang: str | None = Query(None, description="BCP-47 language tag"),
     db: AsyncSession = Depends(get_db),
+    _user=Depends(get_current_user),
 ):
     import asyncio
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
@@ -1161,7 +1163,7 @@ async def get_term(
     props_query = f"""
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-        SELECT ?pred ?obj WHERE {{
+        SELECT ?pred ?obj (lang(?obj) AS ?lang) WHERE {{
             GRAPH <{g_iri}> {{
                 <{term_iri}> ?pred ?obj .
                 FILTER(isIRI(?obj) || isLiteral(?obj))
@@ -1184,10 +1186,14 @@ async def get_term(
         raise HTTPException(status_code=404, detail="Term not found in this ontology version")
 
     properties: dict[str, list] = {}
+    properties_typed: dict[str, list] = {}
     for row in prop_rows:
         pred = row["pred"].value
-        obj = row["obj"].value
-        properties.setdefault(pred, []).append(obj)
+        obj_node = row["obj"]
+        obj_val = obj_node.value
+        lang_tag = row["lang"].value if row.get("lang") and row["lang"] and row["lang"].value else None
+        properties.setdefault(pred, []).append(obj_val)
+        properties_typed.setdefault(pred, []).append({"value": obj_val, "lang": lang_tag})
 
     # Inferred sub/superclasses from ELK — run concurrently, ignore if not ready
     async def _elk_subclasses():
@@ -1467,6 +1473,50 @@ async def get_term(
     _RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
     top_label = (properties.get(_RDFS_LABEL) or [None])[0] or _label(term_iri)
 
+    # Language resolution and typed arrays
+    from ontoexplorer.modules.search.lang import resolve_lang
+    from ontoexplorer.models.db import Ontology as _Ontology
+    from sqlalchemy import select as _select
+
+    _ontology_row = (await db.execute(
+        _select(_Ontology).where(_Ontology.id == ontology_id)
+    )).scalar_one_or_none()
+    effective_lang = resolve_lang(lang, _ontology_row, _user if isinstance(_user, type(None)) is False else None)
+
+    # Predicate sets for label/definition/synonym extraction
+    _LABEL_PREDS = {
+        "http://www.w3.org/2000/01/rdf-schema#label",
+        "http://www.w3.org/2004/02/skos/core#prefLabel",
+        "http://www.w3.org/2004/02/skos/core#altLabel",
+    }
+    _DEFINITION_PREDS = {
+        "http://purl.obolibrary.org/obo/IAO_0000115",
+        "http://www.w3.org/2004/02/skos/core#definition",
+        "http://www.w3.org/2000/01/rdf-schema#comment",
+    }
+    _SYNONYM_PREDS = {
+        "http://www.geneontology.org/formats/oboInOwl#hasExactSynonym",
+        "http://www.geneontology.org/formats/oboInOwl#hasRelatedSynonym",
+        "http://www.geneontology.org/formats/oboInOwl#hasBroadSynonym",
+        "http://www.geneontology.org/formats/oboInOwl#hasNarrowSynonym",
+    }
+
+    term_labels      = [v for p in _LABEL_PREDS      for v in properties_typed.get(p, [])]
+    term_definitions = [v for p in _DEFINITION_PREDS  for v in properties_typed.get(p, [])]
+    term_synonyms    = [v for p in _SYNONYM_PREDS     for v in properties_typed.get(p, [])]
+
+    # Primary label: prefer effective_lang if set
+    def _typed_primary_label(entries):
+        if not entries:
+            return term_iri.split("/")[-1]
+        if effective_lang:
+            found = next((e["value"] for e in entries if e.get("lang") == effective_lang), None)
+            if found:
+                return found
+        return entries[0]["value"]
+
+    typed_label = _typed_primary_label(term_labels)
+
     # For individuals: resolve rdf:type classes (excluding OWL meta-types) with labels
     _OWL_META = {
         "http://www.w3.org/2002/07/owl#NamedIndividual",
@@ -1485,9 +1535,13 @@ async def get_term(
 
     return {
         "iri": term_iri,
-        "label": top_label,
+        "label": typed_label if term_labels else top_label,
+        "labels": term_labels,
+        "definitions": term_definitions,
+        "synonyms": term_synonyms,
+        "lang": effective_lang,
         "source": source,
-        "properties": properties,
+        "properties": properties_typed,
         "type_of": type_of,
         "is_inverse_target": is_inverse_target,
         "superclasses": {
