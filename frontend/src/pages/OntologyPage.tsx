@@ -10,6 +10,9 @@ import ClassTree from '../components/ClassTree'
 import TermPanel from '../components/TermPanel'
 import ResizeHandle from '../components/ResizeHandle'
 import ProfileEditor from '../components/ProfileEditor'
+import MetaProfileEditor from '../components/MetaProfileEditor'
+import SearchBar from '../components/SearchBar'
+import { useOntologyMeta } from '../hooks/useOntologyMeta'
 
 const IND_PAGE_SIZE = 50
 
@@ -380,12 +383,47 @@ function ProfileBanner({ ontologyId, versionId, onReview }: {
   )
 }
 
+// ── Metadata banner ───────────────────────────────────────────────────────────
+
+function MetaBanner({ ontologyId, versionId, onReview }: {
+  ontologyId: string
+  versionId: string
+  onReview: () => void
+}) {
+  const { data: meta, isLoading } = useOntologyMeta(ontologyId, versionId)
+  if (isLoading || !meta) return null
+
+  const isConfirmed = meta.status === 'user_confirmed'
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8,
+      padding: '6px 12px', marginBottom: 8,
+      background: isConfirmed ? 'rgba(63,185,80,0.06)' : 'rgba(88,166,255,0.06)',
+      border: `1px solid ${isConfirmed ? 'rgba(63,185,80,0.2)' : 'rgba(88,166,255,0.2)'}`,
+      borderRadius: 6, fontSize: 11,
+    }}>
+      <span style={{ color: isConfirmed ? '#3fb950' : 'var(--accent)' }}>
+        {isConfirmed
+          ? `● Metadata confirmed · ${meta.resolved?.title ?? ''}`
+          : `Metadata auto-detected · title: ${meta.resolved?.title ?? '?'}`}
+      </span>
+      <button
+        onClick={onReview}
+        style={{ marginLeft: 'auto', color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11 }}
+      >
+        {isConfirmed ? 'Edit' : 'Review →'}
+      </button>
+    </div>
+  )
+}
+
 // ── Metadata + stats panel ────────────────────────────────────────────────────
 
-function OntologyMeta({ iri, version, onProfileReview }: {
+function OntologyMeta({ iri, version, onProfileReview, onMetaReview }: {
   iri: string
   version: OntologyVersion | undefined
   onProfileReview?: () => void
+  onMetaReview?: () => void
 }) {
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['version-stats', version?.ontology_id, version?.id],
@@ -421,6 +459,15 @@ function OntologyMeta({ iri, version, onProfileReview }: {
           )}
         </div>
       ) : null}
+
+      {/* ── Metadata banner ── */}
+        {onMetaReview && version && (
+          <MetaBanner
+            ontologyId={version.ontology_id}
+            versionId={version.id}
+            onReview={onMetaReview}
+          />
+        )}
 
       {/* ── Profile banner ── */}
         {onProfileReview && version && (
@@ -630,6 +677,107 @@ function OntologySearchBar({
   )
 }
 
+function MOSQueryPane({
+  ontologyId, versionId, onSelect,
+}: {
+  ontologyId: string
+  versionId: string
+  onSelect: (iri: string) => void
+}) {
+  const [mosQuery, setMosQuery] = useState('')
+
+  const { data, error, isFetching } = useQuery({
+    queryKey: ['onto-mos', ontologyId, versionId, mosQuery],
+    queryFn: () => api.ontologies.search(ontologyId, versionId, mosQuery),
+    enabled: mosQuery.length >= 2,
+    staleTime: 10_000,
+    retry: false,
+  })
+
+  const results = data?.results ?? []
+  const errBody = (error as (Error & { body?: { error?: string; detail?: string } }) | null)?.body
+  const errMsg = !error ? null
+    : errBody?.error === 'not_classified' ? 'Reasoning not ready — try again in a few minutes.'
+    : errBody?.error === 'ambiguous_label' ? 'Ambiguous label — use a CURIE or be more specific.'
+    : errBody?.error === 'unresolved_term' ? (errBody.detail ?? 'Term not found in this ontology.')
+    : (errBody?.detail ?? errBody?.error ?? (error as Error).message)
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+      <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        <SearchBar
+          ontologyId={ontologyId}
+          versionId={versionId}
+          onSearch={setMosQuery}
+          placeholder="cell, 'cell death', GO:0008150"
+        />
+        <p style={{ color: 'var(--text-dim)', fontSize: 10, margin: '4px 2px 0', lineHeight: 1.4 }}>
+          Use <code>and</code>, <code>or</code>, <code>some</code>, <code>only</code>, <code>not</code>
+          {' · '}quote multi-word names: <code>'cell death'</code>
+        </p>
+      </div>
+      <div style={{ flex: 1, overflow: 'auto' }}>
+        {!mosQuery && (
+          <p style={{ padding: '8px 12px', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
+            Type a MOS expression and press Enter.
+          </p>
+        )}
+        {isFetching && (
+          <p style={{ padding: '8px 12px', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Searching…</p>
+        )}
+        {!isFetching && errMsg && (
+          <p style={{ padding: '8px 12px', color: 'var(--error, #e06c75)', fontSize: 'var(--font-size-sm)', lineHeight: 1.5 }}>
+            {errMsg}
+          </p>
+        )}
+        {!isFetching && !error && mosQuery.length >= 2 && results.length === 0 && (
+          <p style={{ padding: '8px 12px', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
+            No results for "{mosQuery}"
+          </p>
+        )}
+        {results.length > 0 && (
+          <div style={{ padding: '4px 10px', fontSize: 10, color: 'var(--text-dim)', borderBottom: '1px solid var(--border)' }}>
+            {results.length}{data?.truncated ? '+' : ''} result{results.length !== 1 ? 's' : ''}
+          </div>
+        )}
+        <ul style={{ listStyle: 'none' }}>
+          {results.map(r => {
+            const isProp = r.type?.endsWith('_property')
+            const isInd  = r.type === 'individual'
+            const typeColor = isInd ? 'var(--accent-blue, #61afef)' : isProp ? 'var(--accent-purple, #c678dd)' : 'var(--text-dim)'
+            return (
+              <li key={r.iri}>
+                <div
+                  role="button"
+                  onClick={() => onSelect(r.iri)}
+                  style={{
+                    padding: '5px 10px', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    borderBottom: '1px solid var(--border)',
+                    fontSize: 'var(--font-size-sm)',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = '' }}
+                >
+                  <span style={{
+                    fontSize: 9, fontWeight: 700, padding: '1px 4px', borderRadius: 3,
+                    background: 'var(--bg)', color: typeColor, flexShrink: 0,
+                  }}>
+                    {isInd ? 'ind' : r.short}
+                  </span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {r.label}
+                  </span>
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      </div>
+    </div>
+  )
+}
+
 type HierarchyMode = 'asserted' | 'inferred'
 
 // ── Main page ─────────────────────────────────────────────────────────────────
@@ -662,7 +810,8 @@ export default function OntologyPage() {
 
   const [classMode, setClassMode] = useState<HierarchyMode>('asserted')
   const [mobilePane, setMobilePane] = useState<'tree' | 'detail'>('tree')
-  const [detailTab, setDetailTab] = useState<'info' | 'profile'>('info')
+  const [detailTab, setDetailTab] = useState<'info' | 'metadata' | 'profile'>('info')
+  const [leftTab, setLeftTab] = useState<'browse' | 'query'>('browse')
 
   const [hideInverseProps, setHideInverseProps] = useState(true)
   const [hideObsolete, setHideObsolete] = useState(true)
@@ -726,6 +875,27 @@ export default function OntologyPage() {
           {slug}
         </button>
       </div>
+
+      {/* Left pane tabs: Browse | Query */}
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        {(['browse', 'query'] as const).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setLeftTab(tab)}
+            style={{
+              flex: 1, padding: '6px 0', border: 'none', cursor: 'pointer',
+              fontSize: 11, fontWeight: 500,
+              background: leftTab === tab ? 'var(--bg)' : 'transparent',
+              color: leftTab === tab ? 'var(--text)' : 'var(--text-dim)',
+              borderBottom: leftTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
+            }}
+          >
+            {tab === 'browse' ? 'Browse' : 'Query'}
+          </button>
+        ))}
+      </div>
+
+      {leftTab === 'browse' ? (<>
 
       {/* Search bar */}
       {oid && activeVid && (
@@ -863,6 +1033,15 @@ export default function OntologyPage() {
           {versionsLoading ? 'Loading…' : 'No versions available'}
         </div>
       )}
+      </>) : (
+        oid && activeVid
+          ? <MOSQueryPane
+              ontologyId={oid}
+              versionId={activeVid}
+              onSelect={iri => { selectTerm(iri); setLeftTab('browse') }}
+            />
+          : null
+      )}
     </>
   )
 
@@ -907,7 +1086,7 @@ export default function OntologyPage() {
             display: 'flex', borderBottom: '1px solid var(--border)',
             background: 'var(--bg-secondary)', flexShrink: 0,
           }}>
-            {(['info', 'profile'] as const).map(tab => (
+            {(['info', 'metadata', 'profile'] as const).map(tab => (
               <button
                 key={tab}
                 onClick={() => setDetailTab(tab)}
@@ -930,7 +1109,12 @@ export default function OntologyPage() {
                 iri={ontology?.iri ?? ''}
                 version={activeVersion}
                 onProfileReview={() => setDetailTab('profile')}
+                onMetaReview={() => setDetailTab('metadata')}
               />
+            ) : detailTab === 'metadata' ? (
+              oid && activeVid
+                ? <MetaProfileEditor ontologyId={oid} versionId={activeVid} />
+                : null
             ) : (
               oid && activeVid
                 ? <ProfileEditor ontologyId={oid} versionId={activeVid} />
