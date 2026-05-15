@@ -19,7 +19,7 @@ from ontoexplorer.clients.reasoning import (
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Ontology, OntologyVersion, User
 from ontoexplorer.modules.auth.dependencies import get_current_user, require_auth
-from ontoexplorer.modules.storage.minio_client import ontology_download_url
+from ontoexplorer.modules.storage.minio_client import fetch_ontology, ontology_download_url
 
 router = APIRouter(prefix="/api/v1/ontologies", tags=["ontologies"])
 
@@ -235,10 +235,11 @@ async def submit_ontology(
         return {"task_id": task.id, "status": "queued"}
 
     body = await request.json()
+    groups = [g for g in (body.get("groups") or []) if g] or None
     if "iri" in body:
-        task = await loop.run_in_executor(None, lambda: ingest_ontology.delay(iri=body["iri"], owner_id=owner_id))
+        task = await loop.run_in_executor(None, lambda: ingest_ontology.delay(iri=body["iri"], owner_id=owner_id, groups=groups))
     elif "url" in body:
-        task = await loop.run_in_executor(None, lambda: ingest_ontology.delay(url=body["url"], owner_id=owner_id))
+        task = await loop.run_in_executor(None, lambda: ingest_ontology.delay(url=body["url"], owner_id=owner_id, groups=groups))
     elif "content" in body:
         raw = body["content"].encode()
         task = await loop.run_in_executor(
@@ -247,6 +248,7 @@ async def submit_ontology(
                 raw_bytes_hex=raw.hex(),
                 content_type=body.get("format"),
                 owner_id=owner_id,
+                groups=groups,
             ),
         )
     else:
@@ -293,6 +295,10 @@ async def patch_ontology(
     if "auto_sync" in body and body["auto_sync"] is not None:
         ontology.auto_sync = bool(body["auto_sync"])
 
+    if "groups" in body:
+        raw = body["groups"]
+        ontology.groups = [g for g in (raw if isinstance(raw, list) else []) if g]
+
     await db.commit()
     await db.refresh(ontology)
     return _ontology_dict(ontology)
@@ -302,7 +308,8 @@ async def patch_ontology(
 
 @router.get("", summary="List ontologies")
 async def list_ontologies(
-    q: str | None = Query(None, description="Keyword filter on ontology ID or IRI"),
+    q: str | None = Query(None, description="Keyword filter on ontology name, IRI, or description"),
+    group: str | None = Query(None, description="Filter by group tag (upper, obo, fair, biomedical)"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -310,13 +317,17 @@ async def list_ontologies(
     import json as _json
     from sqlalchemy import func
 
-    stmt = select(Ontology)
-    if q:
-        pattern = f"%{q.lower()}%"
-        stmt = stmt.where(
-            func.lower(Ontology.id).like(pattern) | func.lower(Ontology.iri).like(pattern)
-        )
-    stmt = stmt.order_by(Ontology.created_at.desc()).offset(offset).limit(limit)
+    # When filtering by q we must include description (from Redis), so load all and filter in Python.
+    # At current scale (~24 ontologies) this is negligible; revisit if catalog grows large.
+    stmt = select(Ontology).order_by(Ontology.created_at.desc())
+    if group:
+        from sqlalchemy import text, bindparam
+        if group == "other":
+            stmt = stmt.where(func.cardinality(Ontology.groups) == 0)
+        else:
+            stmt = stmt.where(text(":grp = ANY(groups)").bindparams(grp=group))
+    if not q:
+        stmt = stmt.offset(offset).limit(limit)
     result = await db.execute(stmt)
     ontologies = result.scalars().all()
 
@@ -355,6 +366,34 @@ async def list_ontologies(
     except Exception:
         pass
 
+    # Batch-load resolved metadata from ontology_meta_profiles
+    from ontoexplorer.models.db import OntologyMetaProfile
+    meta_by_oid: dict[str, dict] = {}
+    if ontology_ids:
+        subq2 = (
+            select(
+                OntologyVersion.ontology_id,
+                func.max(OntologyVersion.created_at).label("max_created"),
+            )
+            .where(
+                OntologyVersion.ontology_id.in_(ontology_ids),
+                OntologyVersion.status == "ready",
+            )
+            .group_by(OntologyVersion.ontology_id)
+            .subquery()
+        )
+        mr = await db.execute(
+            select(OntologyVersion.ontology_id, OntologyMetaProfile.resolved)
+            .join(
+                subq2,
+                (OntologyVersion.ontology_id == subq2.c.ontology_id)
+                & (OntologyVersion.created_at == subq2.c.max_created),
+            )
+            .join(OntologyMetaProfile, OntologyMetaProfile.version_id == OntologyVersion.id)
+        )
+        for row in mr.all():
+            meta_by_oid[row.ontology_id] = row.resolved or {}
+
     rows = []
     for o in ontologies:
         d = _ontology_dict(o)
@@ -365,12 +404,52 @@ async def list_ontologies(
             d["class_count"] = s.get("class_count")
             d["property_count"] = s.get("property_count")
             d["triple_count"] = s.get("triple_count") or v.triple_count
+            d["individual_count"] = s.get("individual_count")
+            meta = meta_by_oid.get(o.id, {})
+            d["label"] = meta.get("title") or s.get("label") or ""
+            d["description"] = meta.get("description") or s.get("description") or ""
         else:
             d["latest_version"] = None
             d["class_count"] = None
             d["property_count"] = None
             d["triple_count"] = None
+            d["individual_count"] = None
+            meta = meta_by_oid.get(o.id, {})
+            d["label"] = meta.get("title") or ""
+            d["description"] = meta.get("description") or ""
         rows.append(d)
+
+    # Python-side filter + ranked sort when q is present.
+    # Primary rank:
+    #   0 → exact match on derived short name or IRI
+    #   1 → substring in short name or IRI  (canonical identifiers)
+    #   2 → substring in label              (ontology's own title metadata)
+    #   3 → substring in description only
+    # Within rank 1, secondary sort is match-target length (shorter = tighter match).
+    if q:
+        ql = q.lower()
+
+        def _rank_score(r: dict) -> tuple[int, int]:
+            shortname = (r.get("shortname") or "").lower()
+            iri       = (r.get("iri") or "").lower()
+            label     = (r.get("label") or "").lower()
+            desc      = (r.get("description") or "").lower()
+            # Prefer explicit shortname; fall back to last IRI path segment
+            seg  = iri.rstrip("/").rsplit("/", 1)[-1] if iri else ""
+            name = shortname or seg
+            if name == ql or iri == ql:
+                return (0, 0)
+            if ql in name or ql in iri:
+                return (1, len(name))   # shorter name → tighter match → sorts first
+            if ql in label:
+                return (2, len(label))
+            if ql in desc:
+                return (3, 0)
+            return (99, 0)
+
+        ranked = [(r, _rank_score(r)) for r in rows]
+        rows = [r for r, score in sorted(ranked, key=lambda x: x[1]) if score[0] < 99]
+        rows = rows[offset: offset + limit]
 
     return {"ontologies": rows, "offset": offset, "limit": limit}
 
@@ -407,9 +486,22 @@ async def get_version(ontology_id: str, version_id: str, request: Request, db: A
 
 @router.get("/{ontology_id}/{version_id}/download", summary="Download ontology artifact")
 async def download_version(ontology_id: str, version_id: str, db: AsyncSession = Depends(get_db)):
+    import asyncio
     version = await _get_version_or_404(db, ontology_id, version_id)
-    url = ontology_download_url(version.minio_key)
-    return RedirectResponse(url=url)
+    data = await asyncio.to_thread(fetch_ontology, version.minio_key)
+    ext = version.minio_key.rsplit(".", 1)[-1] if "." in version.minio_key else "owl"
+    content_types = {
+        "owl": "application/rdf+xml", "ttl": "text/turtle",
+        "nt": "application/n-triples", "jsonld": "application/ld+json",
+        "obo": "text/plain", "omn": "text/plain",
+    }
+    media_type = content_types.get(ext.lower(), "application/octet-stream")
+    filename = version.minio_key.rsplit("/", 1)[-1]
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{ontology_id}/{version_id}/stats", summary="VoID statistics for a version")
@@ -596,6 +688,7 @@ async def list_terms(
     parent: str | None = Query(None, description="'root' for top-level, or an IRI for direct children"),
     entity_type: str = Query("class", description="'class', 'property', 'object_property', 'data_property', or 'annotation_property'"),
     hide_inverse: bool = Query(False, description="Exclude object properties that are the object of owl:inverseOf"),
+    hide_obsolete: bool = Query(True, description="Exclude owl:deprecated terms"),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -607,15 +700,73 @@ async def list_terms(
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
 
     is_root = parent is None or parent == "root"
+    g = graph_iri(ontology_id, version_id)
     is_prop_subtype = entity_type in _PROP_SUBTYPE_FILTER
     is_any_property = entity_type == "property" or is_prop_subtype
+    is_individual = entity_type == "individual"
 
-    # Serve root requests from Redis cache when available (skip for hide_inverse — different result set)
+    # Individuals: flat paginated list, never a tree
+    if is_individual:
+        _NOT_DEPRECATED_IND = (
+            'FILTER NOT EXISTS { ?entity owl:deprecated ?_d . FILTER(str(?_d) = "true") }'
+            if hide_obsolete else ""
+        )
+        if is_root:
+            ind_q = f"""
+                PREFIX owl: <http://www.w3.org/2002/07/owl#>
+                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+                SELECT DISTINCT ?entity ?label WHERE {{
+                    GRAPH <{g}> {{
+                        ?entity a owl:NamedIndividual .
+                        FILTER(isIRI(?entity))
+                        {_NOT_DEPRECATED_IND}
+                        OPTIONAL {{
+                            ?entity rdfs:label ?label .
+                            FILTER(lang(?label) = '' || lang(?label) = 'en')
+                        }}
+                    }}
+                }}
+                ORDER BY ?label ?entity
+                LIMIT {limit} OFFSET {offset}
+            """
+        else:
+            ind_q = f"""
+                PREFIX owl: <http://www.w3.org/2002/07/owl#>
+                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+                SELECT DISTINCT ?entity ?label WHERE {{
+                    GRAPH <{g}> {{
+                        ?entity a owl:NamedIndividual .
+                        ?entity a <{parent}> .
+                        FILTER(isIRI(?entity))
+                        {_NOT_DEPRECATED_IND}
+                        OPTIONAL {{
+                            ?entity rdfs:label ?label .
+                            FILTER(lang(?label) = '' || lang(?label) = 'en')
+                        }}
+                    }}
+                }}
+                ORDER BY ?label ?entity
+                LIMIT {limit} OFFSET {offset}
+            """
+
+        def _run_individuals(s, q):
+            rows = []
+            for row in s.query(q):
+                iri = row["entity"].value
+                lbl = row["label"]
+                label = lbl.value if (lbl is not None and hasattr(lbl, "value")) else None
+                rows.append({"iri": iri, "label": label, "has_children": False})
+            return rows
+
+        terms = await asyncio.to_thread(_run_individuals, get_store(), ind_q)
+        return {"terms": terms, "offset": offset, "limit": limit, "parent": parent}
+
+    # Serve root requests from Redis cache when available
     if is_root and offset == 0 and not hide_inverse:
         try:
             from ontoexplorer.modules.search.indexer import _get_redis
             _r = _get_redis()
-            _cache_key = f"terms_root:{version_id}:{entity_type}:{limit}"
+            _cache_key = f"terms_root:{version_id}:{entity_type}:{limit}:{int(hide_obsolete)}"
             _cached = _r.get(_cache_key)
             if _cached:
                 return _json.loads(_cached)
@@ -623,7 +774,6 @@ async def list_terms(
             pass
 
     store = get_store()
-    g = graph_iri(ontology_id, version_id)
 
     _OWL_THING_STR = "http://www.w3.org/2002/07/owl#Thing"
 
@@ -631,10 +781,19 @@ async def list_terms(
         lbl = row["label"]
         return lbl.value if (lbl is not None and hasattr(lbl, "value")) else None
 
+    _NOT_DEPRECATED_CLASS = (
+        'FILTER NOT EXISTS { ?class owl:deprecated ?_d . FILTER(str(?_d) = "true") }'
+        if hide_obsolete else ""
+    )
+    _NOT_DEPRECATED_ENTITY = (
+        'FILTER NOT EXISTS { ?entity owl:deprecated ?_d . FILTER(str(?_d) = "true") }'
+        if hide_obsolete else ""
+    )
+
     if is_root:
         # Two-pass root detection avoids correlated FILTER NOT EXISTS (O(n²) on large ontologies).
         # Pass 1: all entities with labels. Pass 2: entities that have a named parent. Subtract in Python.
-        _NOT_DEPRECATED = f"FILTER NOT EXISTS {{ ?class owl:deprecated ?_d . FILTER(str(?_d) = \"true\") }}"
+        _NOT_DEPRECATED = _NOT_DEPRECATED_CLASS
 
         if is_any_property:
             prop_filter = _PROP_SUBTYPE_FILTER.get(entity_type, _PROP_UNION)
@@ -647,7 +806,7 @@ async def list_terms(
                         {{ {prop_filter} }}
                         BIND(?entity AS ?class)
                         FILTER(isIRI(?class))
-                        {_NOT_DEPRECATED}
+                        {_NOT_DEPRECATED_ENTITY}
                         OPTIONAL {{ ?class rdfs:label ?label }}
                     }}
                 }}
@@ -714,6 +873,7 @@ async def list_terms(
                         {{ {prop_filter} }}
                         BIND(?entity AS ?class)
                         FILTER(isIRI(?class))
+                        {_NOT_DEPRECATED_ENTITY}
                         ?class rdfs:subPropertyOf <{parent}> .
                         OPTIONAL {{ ?class rdfs:label ?label }}
                     }}
@@ -730,6 +890,7 @@ async def list_terms(
                         {{ {prop_filter} }}
                         BIND(?entity AS ?class)
                         FILTER(isIRI(?class))
+                        {_NOT_DEPRECATED_ENTITY}
                         OPTIONAL {{ ?class rdfs:label ?label }}
                     }}
                 }}
@@ -753,6 +914,7 @@ async def list_terms(
                 GRAPH <{g}> {{
                     ?class a owl:Class .
                     FILTER(isIRI(?class))
+                    {_NOT_DEPRECATED_CLASS}
                     ?class rdfs:subClassOf <{parent}> .
                     OPTIONAL {{ ?class rdfs:label ?label }}
                 }}
@@ -777,6 +939,7 @@ async def list_terms(
                 GRAPH <{g}> {{
                     ?class a owl:Class .
                     FILTER(isIRI(?class))
+                    {_NOT_DEPRECATED_CLASS}
                     OPTIONAL {{ ?class rdfs:label ?label }}
                 }}
             }}
@@ -1252,11 +1415,28 @@ async def get_term(
     _RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
     top_label = (properties.get(_RDFS_LABEL) or [None])[0] or _label(term_iri)
 
+    # For individuals: resolve rdf:type classes (excluding OWL meta-types) with labels
+    _OWL_META = {
+        "http://www.w3.org/2002/07/owl#NamedIndividual",
+        "http://www.w3.org/2002/07/owl#Class",
+        "http://www.w3.org/2002/07/owl#ObjectProperty",
+        "http://www.w3.org/2002/07/owl#DatatypeProperty",
+        "http://www.w3.org/2002/07/owl#AnnotationProperty",
+        "http://www.w3.org/2002/07/owl#Ontology",
+        "http://www.w3.org/1999/02/22-rdf-syntax-ns#Property",
+        "http://www.w3.org/2000/01/rdf-schema#Class",
+    }
+    _RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+    type_of = []
+    if "http://www.w3.org/2002/07/owl#NamedIndividual" in properties.get(_RDF_TYPE, []):
+        type_of = _term_list([iri for iri in properties.get(_RDF_TYPE, []) if iri not in _OWL_META])
+
     return {
         "iri": term_iri,
         "label": top_label,
         "source": source,
         "properties": properties,
+        "type_of": type_of,
         "is_inverse_target": is_inverse_target,
         "superclasses": {
             "asserted": _term_list(asserted_sup_iris),
@@ -1721,7 +1901,7 @@ async def _get_version_or_404(db: AsyncSession, ontology_id: str, version_id: st
 
 
 def _ontology_dict(o: Ontology) -> dict:
-    return {"id": o.id, "iri": o.iri, "shortname": o.shortname, "auto_sync": o.auto_sync, "created_at": o.created_at.isoformat()}
+    return {"id": o.id, "iri": o.iri, "shortname": o.shortname, "groups": o.groups or [], "auto_sync": o.auto_sync, "created_at": o.created_at.isoformat()}
 
 
 def _version_dict(v: OntologyVersion) -> dict:

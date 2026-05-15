@@ -219,3 +219,17 @@ async def test_post_detect_meta_returns_404_for_unknown_version(client, user_and
         headers={"Authorization": f"Bearer {key}"},
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_list_ontologies_includes_label_field(client, user_and_key):
+    _, key = user_and_key
+    resp = await client.get(
+        "/api/v1/ontologies",
+        headers={"Authorization": f"Bearer {key}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    for ont in data.get("ontologies", []):
+        assert "label" in ont
+        assert "description" in ont
