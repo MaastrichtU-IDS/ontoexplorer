@@ -360,13 +360,32 @@ async def list_ontologies(
 
     # Batch-load cached stats from Redis (no Oxigraph queries)
     stats_by_vid: dict = {}
+    langs_by_vid: dict[str, list[dict]] = {}
     try:
-        from ontoexplorer.modules.search.indexer import _get_redis, _stats_cache_key
+        from ontoexplorer.modules.search.indexer import _get_redis, _stats_cache_key, _langs_key
         r = _get_redis()
-        for v in latest_by_oid.values():
-            raw = r.get(_stats_cache_key(v.id))
+        pipe = r.pipeline(transaction=False)
+        vid_list = [v.id for v in latest_by_oid.values()]
+        for vid in vid_list:
+            pipe.get(_stats_cache_key(vid))
+        stats_raws = pipe.execute()
+        for vid, raw in zip(vid_list, stats_raws):
             if raw:
-                stats_by_vid[v.id] = _json.loads(raw)
+                stats_by_vid[vid] = _json.loads(raw)
+        # Batch-load language counts for indexed versions
+        pipe2 = r.pipeline(transaction=False)
+        for vid in vid_list:
+            pipe2.hgetall(_langs_key(vid))
+        langs_raws = pipe2.execute()
+        for vid, mapping in zip(vid_list, langs_raws):
+            if mapping:
+                entries = [
+                    {"lang": lang, "label_count": int(cnt)}
+                    for lang, cnt in mapping.items()
+                    if lang  # skip empty-string untagged entries
+                ]
+                if entries:
+                    langs_by_vid[vid] = sorted(entries, key=lambda x: -x["label_count"])
     except Exception:
         pass
 
@@ -409,6 +428,7 @@ async def list_ontologies(
             d["property_count"] = s.get("property_count")
             d["triple_count"] = s.get("triple_count") or v.triple_count
             d["individual_count"] = s.get("individual_count")
+            d["languages"] = langs_by_vid.get(v.id, [])
             meta = meta_by_oid.get(o.id, {})
             d["label"] = meta.get("title") or s.get("label") or ""
             d["description"] = meta.get("description") or s.get("description") or ""
@@ -418,6 +438,7 @@ async def list_ontologies(
             d["property_count"] = None
             d["triple_count"] = None
             d["individual_count"] = None
+            d["languages"] = []
             meta = meta_by_oid.get(o.id, {})
             d["label"] = meta.get("title") or ""
             d["description"] = meta.get("description") or ""

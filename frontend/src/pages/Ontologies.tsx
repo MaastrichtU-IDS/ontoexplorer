@@ -99,6 +99,15 @@ function OntologyRow({ o }: { o: Ontology }) {
               </span>
             )
           })}
+          {(o.languages ?? []).map(l => (
+            <span key={l.lang} title={`${l.label_count} labels in ${l.lang}`} style={{
+              fontSize: 9, padding: '1px 6px', borderRadius: 10,
+              background: 'rgba(86,182,194,0.10)', border: '1px solid rgba(86,182,194,0.35)',
+              color: '#56b6c2', fontWeight: 600, letterSpacing: 0.3, flexShrink: 0,
+            }}>
+              {l.lang}
+            </span>
+          ))}
         </div>
         {o.description && (
           <div style={{ marginTop: 3, maxWidth: 520 }}>

@@ -104,6 +104,7 @@ export interface Ontology {
   label?: string | null
   description?: string | null
   preferred_lang?: string | null
+  languages?: OntologyLanguage[]
 }
 
 export interface OntologyVersion {
