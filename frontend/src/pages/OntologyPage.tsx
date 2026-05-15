@@ -272,7 +272,17 @@ const SKIP_PREDICATES = new Set([
   'http://www.w3.org/2002/07/owl#imports',
 ])
 
-function OntologyDocMeta({ ontologyId, versionId }: { ontologyId: string; versionId: string }) {
+function filterByLang(values: OntologyMetadataEntry[], lang: string | null): OntologyMetadataEntry[] {
+  if (!lang) return values
+  const iris = values.filter(v => v.type === 'iri')
+  const literals = values.filter(v => v.type === 'literal')
+  const preferred = literals.filter(v => v.language === lang)
+  if (preferred.length > 0) return [...iris, ...preferred]
+  const untagged = literals.filter(v => !v.language)
+  return [...iris, ...(untagged.length > 0 ? untagged : literals)]
+}
+
+function OntologyDocMeta({ ontologyId, versionId, lang }: { ontologyId: string; versionId: string; lang?: string | null }) {
   const { data, isLoading } = useQuery({
     queryKey: ['onto-doc-meta', ontologyId, versionId],
     queryFn: () => api.ontologies.ontologyMetadata(ontologyId, versionId),
@@ -316,7 +326,7 @@ function OntologyDocMeta({ ontologyId, versionId }: { ontologyId: string; versio
               {predLabel(pred)}
             </td>
             <td style={{ padding: '5px 0', fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}>
-              {values.map((v, i) => (
+              {filterByLang(values, lang ?? null).map((v, i) => (
                 <div key={i} style={{ marginBottom: values.length > 1 ? 2 : 0 }}>
                   <MetaValue entry={v} />
                 </div>
@@ -421,9 +431,10 @@ function MetaBanner({ ontologyId, versionId, onReview }: {
 
 // ── Metadata + stats panel ────────────────────────────────────────────────────
 
-function OntologyMeta({ iri, version, onProfileReview, onMetaReview }: {
+function OntologyMeta({ iri, version, lang, onProfileReview, onMetaReview }: {
   iri: string
   version: OntologyVersion | undefined
+  lang?: string | null
   onProfileReview?: () => void
   onMetaReview?: () => void
 }) {
@@ -485,7 +496,7 @@ function OntologyMeta({ iri, version, onProfileReview, onMetaReview }: {
         Document Metadata
       </h3>
       <div style={{ marginBottom: 28 }}>
-        <OntologyDocMeta ontologyId={version.ontology_id} versionId={version.id} />
+        <OntologyDocMeta ontologyId={version.ontology_id} versionId={version.id} lang={lang} />
       </div>
 
       {/* ── Repository metadata ── */}
@@ -1143,6 +1154,7 @@ export default function OntologyPage() {
               <OntologyMeta
                 iri={ontology?.iri ?? ''}
                 version={activeVersion}
+                lang={effectiveLang}
                 onProfileReview={() => setDetailTab('profile')}
                 onMetaReview={() => setDetailTab('metadata')}
               />
