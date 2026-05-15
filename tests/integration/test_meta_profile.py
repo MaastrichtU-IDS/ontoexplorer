@@ -1,4 +1,3 @@
-import pytest
 from ontoexplorer.models.db import OntologyMetaProfile
 
 
