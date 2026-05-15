@@ -39,6 +39,20 @@ interface Props {
   termIri: string
   slug: string
   singlePane?: boolean
+  lang?: string | null
+}
+
+function LangBadge({ lang }: { lang: string | null | undefined }) {
+  if (!lang) return null
+  return (
+    <span style={{
+      fontSize: 9, padding: '1px 5px', borderRadius: 3,
+      background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+      color: 'var(--text-dim)', fontWeight: 600, letterSpacing: 0.3, flexShrink: 0,
+    }}>
+      {lang}
+    </span>
+  )
 }
 
 function IriLink({ iri, label, slug, vid }: { iri: string; label: string; slug: string; vid: string }) {
@@ -524,11 +538,22 @@ function IndividualBody({ data, slug, versionId }: {
 
   return (
     <div style={{ flex: 1, padding: '10px 16px', overflow: 'auto' }}>
-      {data.definition && (
+      {data.rawDefinitions.length > 0 ? (
+        <div style={{ marginBottom: 14 }}>
+          {data.rawDefinitions.map((d, i) => (
+            <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: data.rawDefinitions.length > 1 ? 6 : 0 }}>
+              <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', lineHeight: 1.6, margin: 0, flex: 1 }}>
+                {d.value}
+              </p>
+              {data.rawDefinitions.length > 1 && <LangBadge lang={d.lang} />}
+            </div>
+          ))}
+        </div>
+      ) : data.definition ? (
         <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: 14, lineHeight: 1.6 }}>
           {data.definition}
         </p>
-      )}
+      ) : null}
 
       {data.typeOf.length > 0 && (
         <Section label="Instance of">
@@ -551,10 +576,11 @@ function IndividualBody({ data, slug, versionId }: {
                     {values.map((entry, i) => {
                       const v = entry.value
                       return (
-                        <div key={i}>
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
                           {v.startsWith('http://') || v.startsWith('https://') ? (
                             <IriLink iri={v} label={v.split(/[#/]/).pop() ?? v} slug={slug} vid={versionId} />
-                          ) : v}
+                          ) : <span>{v}</span>}
+                          <LangBadge lang={entry.lang} />
                         </div>
                       )
                     })}
@@ -578,11 +604,22 @@ function PropertyBody({ data, slug, versionId }: {
 
   return (
     <div style={{ flex: 1, padding: '10px 16px', overflow: 'auto' }}>
-      {data.definition && (
+      {data.rawDefinitions.length > 0 ? (
+        <div style={{ marginBottom: 14 }}>
+          {data.rawDefinitions.map((d, i) => (
+            <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: data.rawDefinitions.length > 1 ? 6 : 0 }}>
+              <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', lineHeight: 1.6, margin: 0, flex: 1 }}>
+                {d.value}
+              </p>
+              {data.rawDefinitions.length > 1 && <LangBadge lang={d.lang} />}
+            </div>
+          ))}
+        </div>
+      ) : data.definition ? (
         <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: 14, lineHeight: 1.6 }}>
           {data.definition}
         </p>
-      )}
+      ) : null}
 
       {data.characteristics.length > 0 && (
         <Section label="Characteristics">
@@ -631,11 +668,21 @@ function PropertyBody({ data, slug, versionId }: {
         </Section>
       )}
 
-      {(data.synonyms.exact.length > 0 || data.synonyms.related.length > 0) && (
+      {(data.rawSynonyms.length > 0 || data.synonyms.exact.length > 0 || data.synonyms.related.length > 0) && (
         <Section label="Synonyms">
-          <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>
-            {[...data.synonyms.exact, ...data.synonyms.related].join(' · ')}
-          </div>
+          {data.rawSynonyms.length > 0 ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {data.rawSynonyms.map((s, i) => (
+                <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}>
+                  {s.value}{data.rawSynonyms.length > 1 && <LangBadge lang={s.lang} />}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>
+              {[...data.synonyms.exact, ...data.synonyms.related].join(' · ')}
+            </div>
+          )}
         </Section>
       )}
 
@@ -646,8 +693,8 @@ function PropertyBody({ data, slug, versionId }: {
   )
 }
 
-export default function TermPanel({ ontologyId, versionId, termIri, slug, singlePane = false }: Props) {
-  const { data, isLoading, error } = useTerm(ontologyId, versionId, termIri)
+export default function TermPanel({ ontologyId, versionId, termIri, slug, singlePane = false, lang }: Props) {
+  const { data, isLoading, error } = useTerm(ontologyId, versionId, termIri, lang)
 
   if (isLoading) return <div style={{ padding: '1rem', color: 'var(--text-dim)' }}>Loading…</div>
   if (error || !data) return <div style={{ padding: '1rem', color: 'var(--text-dim)' }}>Term not found</div>
@@ -688,19 +735,40 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
   } else {
     body = (
       <div style={{ flex: 1, padding: pad, overflow: 'auto' }}>
-        {data.definition && (
+        {data.rawDefinitions.length > 0 ? (
+          <div style={{ marginBottom: 14 }}>
+            {data.rawDefinitions.map((d, i) => (
+              <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: data.rawDefinitions.length > 1 ? 6 : 0 }}>
+                <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', lineHeight: 1.6, margin: 0, flex: 1 }}>
+                  {d.value}
+                </p>
+                {data.rawDefinitions.length > 1 && <LangBadge lang={d.lang} />}
+              </div>
+            ))}
+          </div>
+        ) : data.definition ? (
           <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: 14, lineHeight: 1.6 }}>
             {data.definition}
           </p>
-        )}
+        ) : null}
 
-        {(data.synonyms.exact.length > 0 || data.synonyms.related.length > 0 ||
+        {(data.rawSynonyms.length > 0 || data.synonyms.exact.length > 0 || data.synonyms.related.length > 0 ||
           data.synonyms.broad.length > 0 || data.synonyms.narrow.length > 0) && (
           <Section label="Synonyms">
-            <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>
-              {[...data.synonyms.exact, ...data.synonyms.related,
-                ...data.synonyms.broad, ...data.synonyms.narrow].join(' · ')}
-            </div>
+            {data.rawSynonyms.length > 0 ? (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {data.rawSynonyms.map((s, i) => (
+                  <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}>
+                    {s.value}{data.rawSynonyms.length > 1 && <LangBadge lang={s.lang} />}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>
+                {[...data.synonyms.exact, ...data.synonyms.related,
+                  ...data.synonyms.broad, ...data.synonyms.narrow].join(' · ')}
+              </div>
+            )}
           </Section>
         )}
 
@@ -768,6 +836,15 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
         display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
       }}>
         <span style={{ fontWeight: 600, color: 'var(--accent)', flex: 1 }}>{data.label}</span>
+        {data.rawLabels.length > 1 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, flex: '1 1 100%' }}>
+            {data.rawLabels.map((l, i) => (
+              <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-muted)' }}>
+                {l.value} <LangBadge lang={l.lang} />
+              </span>
+            ))}
+          </div>
+        )}
         <span style={{
           fontSize: 10, background: 'var(--bg)', color: typeColor,
           borderRadius: 3, padding: '1px 5px', textTransform: 'uppercase', flexShrink: 0,

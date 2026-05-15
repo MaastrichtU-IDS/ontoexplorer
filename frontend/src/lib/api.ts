@@ -185,6 +185,9 @@ export interface ParsedTerm {
   isInverseTarget: boolean
   typeOf: ClassRef[]
   rawProperties: Record<string, LangLabel[]>
+  rawLabels: LangLabel[]
+  rawDefinitions: LangLabel[]
+  rawSynonyms: LangLabel[]
   synonyms: { exact: string[]; related: string[]; broad: string[]; narrow: string[] }
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
   subclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
@@ -528,6 +531,9 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
     isInverseTarget: raw.is_inverse_target ?? false,
     typeOf: raw.type_of ?? [],
     rawProperties: raw.properties,
+    rawLabels: raw.labels ?? [],
+    rawDefinitions: raw.definitions ?? [],
+    rawSynonyms: raw.synonyms ?? [],
     synonyms: {
       exact:   getValues(P.exactSyn),
       related: getValues(P.relatedSyn),

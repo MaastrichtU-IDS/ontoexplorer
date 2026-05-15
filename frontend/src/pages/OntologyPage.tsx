@@ -1112,6 +1112,7 @@ export default function OntologyPage() {
         <TermPanel
           ontologyId={oid} versionId={activeVid}
           termIri={selectedTermIri} slug={slug!} singlePane={true}
+          lang={effectiveLang}
         />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
