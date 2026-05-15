@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
+import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { useOntologies } from '../hooks/useOntologies'
 import { useVersions } from '../hooks/useVersions'
 import { useTerm } from '../hooks/useTerm'
@@ -829,6 +829,7 @@ export default function OntologyPage() {
     ontologyPreferredLang: ontology?.preferred_lang ?? null,
   })
   const availableLangs = useOntologyLanguages(oid, activeVid)
+  const queryClient = useQueryClient()
 
   // Auto-reveal inverses when navigating to a term that is itself an inverse target
   const { data: selectedTermData } = useTerm(oid ?? null, activeVid ?? null, selectedTermIri, effectiveLang)
@@ -885,8 +886,11 @@ export default function OntologyPage() {
         {availableLangs.length > 1 && (
           <select
             value={ontology?.preferred_lang ?? ''}
-            onChange={e => {
-              if (oid) setOntologyLang(oid, e.target.value || null)
+            onChange={async e => {
+              if (oid) {
+                await setOntologyLang(oid, e.target.value || null)
+                queryClient.invalidateQueries({ queryKey: ['ontologies'] })
+              }
             }}
             style={{
               fontSize: 11, background: 'var(--bg-secondary)',
