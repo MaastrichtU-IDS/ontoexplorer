@@ -808,7 +808,7 @@ async def list_terms(
             """
 
         def _run_individuals(s, q):
-            seen: dict[str, tuple[str | None, int]] = {}
+            seen: dict[str, tuple[str | None, int, str | None]] = {}
             for row in s.query(q):
                 iri = row["entity"].value
                 lbl_node = row["label"]
@@ -817,8 +817,8 @@ async def list_terms(
                 score = _label_score(lang_tag)
                 prev = seen.get(iri)
                 if prev is None or score > prev[1]:
-                    seen[iri] = (label, score)
-            return [{"iri": iri, "label": lbl, "has_children": False} for iri, (lbl, _) in seen.items()]
+                    seen[iri] = (label, score, lang_tag)
+            return [{"iri": iri, "label": lbl, "lang": lt, "has_children": False} for iri, (lbl, _, lt) in seen.items()]
 
         terms = await asyncio.to_thread(_run_individuals, get_store(), ind_q)
         return {"terms": terms, "offset": offset, "limit": limit, "parent": parent}
@@ -858,15 +858,16 @@ async def list_terms(
 
     def _deduped_terms(s, q) -> list[dict]:
         """Run query and deduplicate by IRI, picking the best-language label."""
-        seen: dict[str, tuple[str | None, int]] = {}
+        seen: dict[str, tuple[str | None, int, str | None]] = {}
         for row in s.query(q):
             iri = row["class"].value
             lbl = _row_label(row)
-            score = _label_score(_row_lang(row))
+            lt = _row_lang(row)
+            score = _label_score(lt)
             prev = seen.get(iri)
             if prev is None or score > prev[1]:
-                seen[iri] = (lbl, score)
-        rows = [{"iri": iri, "label": lbl} for iri, (lbl, _) in seen.items()]
+                seen[iri] = (lbl, score, lt)
+        rows = [{"iri": iri, "label": lbl, "lang": lt} for iri, (lbl, _, lt) in seen.items()]
         rows.sort(key=lambda t: (t["label"] or t["iri"]).lower())
         return rows
 
@@ -940,21 +941,22 @@ async def list_terms(
             """
 
         def _run_root_two_pass(s, aq, nrq, off, lim):
-            seen: dict[str, tuple[str | None, int]] = {}
+            seen: dict[str, tuple[str | None, int, str | None]] = {}
             for row in s.query(aq):
                 iri = row["class"].value
                 lbl = _row_label(row)
-                score = _label_score(_row_lang(row))
+                lt = _row_lang(row)
+                score = _label_score(lt)
                 prev = seen.get(iri)
                 if prev is None or score > prev[1]:
-                    seen[iri] = (lbl, score)
+                    seen[iri] = (lbl, score, lt)
             non_roots = {row["class"].value for row in s.query(nrq)}
-            roots = [(iri, lbl) for iri, (lbl, _) in seen.items() if iri not in non_roots]
+            roots = [(iri, lbl, lt) for iri, (lbl, _, lt) in seen.items() if iri not in non_roots]
             roots.sort(key=lambda x: (x[1] or x[0]).lower())
             return roots[off: off + lim]
 
         page = await asyncio.to_thread(_run_root_two_pass, store, all_q, non_root_q, offset, limit)
-        terms = [{"iri": iri, "label": lbl} for iri, lbl in page]
+        terms = [{"iri": iri, "label": lbl, "lang": lt} for iri, lbl, lt in page]
 
     elif is_any_property:
         prop_filter = _PROP_SUBTYPE_FILTER.get(entity_type, _PROP_UNION)

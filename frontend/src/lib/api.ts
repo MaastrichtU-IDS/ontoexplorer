@@ -125,6 +125,7 @@ export interface Term {
   label: string | null
   has_children?: boolean
   source?: string
+  lang?: string | null
 }
 
 export interface ClassRef {
