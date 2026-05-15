@@ -1212,7 +1212,8 @@ async def get_term(
         pred = row["pred"].value
         obj_node = row["obj"]
         obj_val = obj_node.value
-        lang_tag = row["lang"].value if row.get("lang") and row["lang"] and row["lang"].value else None
+        _lang_node = row["lang"]
+        lang_tag = _lang_node.value if (_lang_node is not None and _lang_node.value) else None
         properties.setdefault(pred, []).append(obj_val)
         properties_typed.setdefault(pred, []).append({"value": obj_val, "lang": lang_tag})
 
