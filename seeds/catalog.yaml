@@ -27,11 +27,11 @@ ontologies:
     iri: http://www.ontologydesignpatterns.org/ont/dul/DUL.owl
     label: DOLCE+DnS Ultralite (DUL)
 
-  - group: upper
+  # ── SULO family ───────────────────────────────────────────────────────────────
+
+  - group: sulo_family
     iri: https://w3id.org/sulo/
     label: Simplified Upper Level Ontology (SULO)
-
-  # ── SULO family ───────────────────────────────────────────────────────────────
 
   - group: sulo_family
     iri: https://w3id.org/ontostart/pro/
@@ -43,31 +43,31 @@ ontologies:
     label: Pizza Ontology (OntoStart demo)
     note: tutorial ontology; extends SULO
 
-  # ── FAIR / provenance vocabulary ──────────────────────────────────────────────
+  # ── Metadata / provenance vocabulary ─────────────────────────────────────────
 
-  - group: fair
+  - group: metadata
     iri: http://purl.org/dc/terms/
     label: Dublin Core Terms (dcterms)
 
-  - group: fair
+  - group: metadata
     iri: http://www.w3.org/ns/dcat
     label: DCAT 2
 
-  - group: fair
+  - group: metadata
     iri: http://www.w3.org/ns/prov#
     label: PROV-O
 
-  - group: fair
+  - group: metadata
     iri: http://purl.org/pav/
     label: PAV Provenance, Authoring and Versioning
 
-  - group: fair
+  - group: metadata
     url: https://schema.org/version/latest/schemaorg-current-https.ttl
     shortname: sdo
     label: schema.org
     note: ~2500 classes + properties; ~1 min to ingest
 
-  - group: fair
+  - group: metadata
     iri: http://www.w3.org/2004/02/skos/core
     label: SKOS Core
 
