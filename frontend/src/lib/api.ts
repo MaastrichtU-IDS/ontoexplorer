@@ -75,6 +75,7 @@ export interface UserProfile {
   display_name: string | null
   created_at: string
   is_admin: boolean
+  connected_providers: string[]
 }
 
 export interface Ontology {
@@ -324,6 +325,81 @@ export interface ProfilePatch {
   deprecated_props?: string[]
 }
 
+// ── Meta-profile types ────────────────────────────────────────────────────────
+
+export interface OntologyMetaResolved {
+  title: string | null
+  shortname: string | null
+  description: string | null
+  creators: string[]
+  contributors: string[]
+  publishers: string[]
+  license: string | null
+  homepage: string | null
+  version_info: string | null
+  prefix: string | null
+  namespace_uri: string | null
+  created: string | null
+  modified: string | null
+  language: string | null
+  citation: string | null
+  funding: string | null
+  status: string | null
+  syntax: string | null
+}
+
+export interface OntologyMetaProfile {
+  version_id: string
+  title_props: string[]
+  shortname_props: string[]
+  description_props: string[]
+  creator_props: string[]
+  contributor_props: string[]
+  publisher_props: string[]
+  license_props: string[]
+  homepage_props: string[]
+  version_info_props: string[]
+  prefix_props: string[]
+  namespace_uri_props: string[]
+  created_props: string[]
+  modified_props: string[]
+  language_props: string[]
+  citation_props: string[]
+  funding_props: string[]
+  status_props: string[]
+  syntax_props: string[]
+  resolved: OntologyMetaResolved
+  status: 'auto_detected' | 'user_confirmed'
+  updated_at: string | null
+}
+
+export interface MetaProfilePatch {
+  title_props?: string[]
+  shortname_props?: string[]
+  description_props?: string[]
+  creator_props?: string[]
+  contributor_props?: string[]
+  publisher_props?: string[]
+  license_props?: string[]
+  homepage_props?: string[]
+  version_info_props?: string[]
+  prefix_props?: string[]
+  namespace_uri_props?: string[]
+  created_props?: string[]
+  modified_props?: string[]
+  language_props?: string[]
+  citation_props?: string[]
+  funding_props?: string[]
+  status_props?: string[]
+  syntax_props?: string[]
+}
+
+export interface BulkMetaItem extends OntologyMetaResolved {
+  ontology_id: string
+  version_id: string
+  profile_status: string
+}
+
 // ── Admin types ───────────────────────────────────────────────────────────────
 
 export interface AdminServiceStatus {
@@ -570,6 +646,25 @@ export const api = {
       candidates: (ontologyId: string, versionId: string) =>
         request<ProfileCandidates>(`/ontologies/${ontologyId}/${versionId}/profile/candidates`),
     },
+
+    meta: {
+      get: (ontologyId: string, versionId: string) =>
+        request<OntologyMetaProfile>(`/ontologies/${ontologyId}/${versionId}/meta`),
+      patch: (ontologyId: string, versionId: string, body: MetaProfilePatch) =>
+        request<OntologyMetaProfile>(`/ontologies/${ontologyId}/${versionId}/meta`, {
+          method: 'PATCH',
+          body: JSON.stringify(body),
+        }),
+      detect: (ontologyId: string, versionId: string) =>
+        request<{ task_id: string; status: string }>(
+          `/ontologies/${ontologyId}/${versionId}/meta/detect`,
+          { method: 'POST' }
+        ),
+      candidates: (ontologyId: string, versionId: string) =>
+        request<{ version_id: string; [key: string]: unknown }>(
+          `/ontologies/${ontologyId}/${versionId}/meta/candidates`
+        ),
+    },
   },
 
   globalSearch: {
@@ -635,5 +730,10 @@ export const api = {
 
   admin: {
     overview: () => request<AdminOverview>('/admin/overview'),
+  },
+
+  meta: {
+    bulk: (ids: string[]) =>
+      request<BulkMetaItem[]>(`/meta?ids=${ids.join(',')}`),
   },
 }
