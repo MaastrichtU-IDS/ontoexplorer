@@ -330,7 +330,7 @@ def load_imports(self, version_id: str, ontology_id: str) -> dict:
 
 @celery_app.task(name="ontoexplorer.index_ontology", bind=True, max_retries=2)
 def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
-    """Build the Redis entity search index for a version."""
+    """Build the Redis entity search index for a version and mark it ready."""
     log.info("index_ontology_start", version_id=version_id)
     try:
         from ontoexplorer.database import make_celery_db_session
@@ -343,6 +343,20 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         profile = asyncio.run(_fetch_profile())
         from ontoexplorer.modules.search.indexer import build_index
         stats = build_index(version_id, ontology_id, profile=profile)
+
+        from sqlalchemy import update as _sa_update
+        from ontoexplorer.models.db import OntologyVersion as _OV
+
+        async def _mark_ready():
+            async with make_celery_db_session()() as db:
+                await db.execute(
+                    _sa_update(_OV)
+                    .where(_OV.id == version_id, _OV.status != "deprecated")
+                    .values(status="ready")
+                )
+                await db.commit()
+
+        asyncio.run(_mark_ready())
         log.info("index_ontology_done", version_id=version_id,
                  class_count=stats.class_count, property_count=stats.property_count)
         return {"status": "done", "version_id": version_id,
@@ -452,7 +466,7 @@ async def _run_poll(db) -> None:
 
         log.info("poll_change_detected", ontology_id=ont.id,
                  source_url=version.source_url, old_sha256=version.sha256, new_sha256=new_sha256)
-        ingest_ontology.delay(url=version.source_url, owner_id=ont.owner_id)
+        ingest_ontology.delay(url=version.source_url, owner_id=ont.owner_id, groups=list(ont.groups or []))
 
 
 @celery_app.task(name="ontoexplorer.poll_for_updates")

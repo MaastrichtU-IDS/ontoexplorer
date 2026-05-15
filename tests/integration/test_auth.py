@@ -11,11 +11,11 @@ async def test_me_unauthenticated(client):
 
 @pytest.mark.anyio
 async def test_me_with_api_key(client, user_and_key):
-    _, raw_key = user_and_key
+    user, raw_key = user_and_key
     resp = await client.get("/auth/me", headers={"Authorization": f"Bearer {raw_key}"})
     assert resp.status_code == 200
     body = resp.json()
-    assert body["email"] == "test@example.com"
+    assert body["email"] == user.email
 
 
 @pytest.mark.anyio

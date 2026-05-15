@@ -38,7 +38,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        allow_credentials=False,  # credentials require explicit origin list, not wildcard
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -67,6 +67,9 @@ def create_app() -> FastAPI:
     app.include_router(api_keys_router)
     app.include_router(stats_router)
     app.include_router(admin_router)
+
+    if settings.jwt_secret_key == "change-me-in-production":
+        log.warning("SECURITY: jwt_secret_key is set to the default value — set JWT_SECRET_KEY in production")
 
     log.info("OntoExplorer API ready", version="0.1.0")
     return app

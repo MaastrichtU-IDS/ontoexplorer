@@ -321,11 +321,12 @@ async def list_ontologies(
     # At current scale (~24 ontologies) this is negligible; revisit if catalog grows large.
     stmt = select(Ontology).order_by(Ontology.created_at.desc())
     if group:
-        from sqlalchemy import text, bindparam
+        import json as _json_grp
+        from sqlalchemy import text
         if group == "other":
-            stmt = stmt.where(func.cardinality(Ontology.groups) == 0)
+            stmt = stmt.where(func.jsonb_array_length(Ontology.groups) == 0)
         else:
-            stmt = stmt.where(text(":grp = ANY(groups)").bindparams(grp=group))
+            stmt = stmt.where(text("groups @> :grp::jsonb").bindparams(grp=_json_grp.dumps([group])))
     if not q:
         stmt = stmt.offset(offset).limit(limit)
     result = await db.execute(stmt)
@@ -1028,12 +1029,85 @@ async def list_terms(
         try:
             from ontoexplorer.modules.search.indexer import _get_redis
             _r = _get_redis()
-            _cache_key = f"terms_root:{version_id}:{entity_type}:{limit}"
+            _cache_key = f"terms_root:{version_id}:{entity_type}:{limit}:{int(hide_obsolete)}"
             _r.setex(_cache_key, 300, _json.dumps(response))
         except Exception:
             pass
 
     return response
+
+
+def _sparql_term_props(store, props_q: str, sub_q: str) -> tuple[list, list[str]]:
+    """Run two SPARQL queries for term detail synchronously (called via asyncio.to_thread)."""
+    prop_rows = list(store.query(props_q))
+    sub_iris = [r["sub"].value for r in store.query(sub_q)] if prop_rows else []
+    return prop_rows, sub_iris
+
+
+def _sparql_usage(store, q: str, label_fn) -> list[dict]:
+    """Run property-usage SPARQL query and assemble rows (called via asyncio.to_thread)."""
+    result = []
+    for row in store.query(q):
+        cls_iri = row["class"].value
+        rtype = row["restrictType"].value if row["restrictType"] else "?"
+        filler = row["filler"]
+        filler_val = filler.value if filler is not None else None
+        filler_label: str | None = None
+        if filler_val and (filler_val.startswith("http") or filler_val.startswith("urn:")):
+            filler_label = label_fn(filler_val)
+        result.append({
+            "class_iri":    cls_iri,
+            "class_label":  label_fn(cls_iri),
+            "restriction":  rtype,
+            "filler_iri":   filler_val if filler_val and filler_val.startswith("http") else None,
+            "filler_label": filler_label or filler_val,
+        })
+    return result
+
+
+def _sparql_class_usage(store, cu_q: str, disj_q: str, label_fn, adc_map: dict, term_iri: str) -> list[dict]:
+    """Run class-usage SPARQL queries and assemble rows (called via asyncio.to_thread)."""
+    seen: set[str] = set()
+    result: list[dict] = []
+    for row in store.query(cu_q):
+        cls_iri = row["class"].value
+        prop_iri = row["prop"].value if row["prop"] else None
+        rtype = row["restrictType"].value if row["restrictType"] else "?"
+        key = f"{cls_iri}||{prop_iri}||{rtype}"
+        if key not in seen:
+            seen.add(key)
+            result.append({
+                "class_iri":      cls_iri,
+                "class_label":    label_fn(cls_iri),
+                "property_iri":   prop_iri,
+                "property_label": label_fn(prop_iri) if prop_iri else None,
+                "restriction":    rtype,
+            })
+    for row in store.query(disj_q):
+        cls_iri = row["class"].value
+        key = f"{cls_iri}||disjointWith"
+        if key not in seen:
+            seen.add(key)
+            result.append({
+                "class_iri":      cls_iri,
+                "class_label":    label_fn(cls_iri),
+                "property_iri":   None,
+                "property_label": None,
+                "restriction":    "disjointWith",
+            })
+    for co_iri in adc_map.get(term_iri, []):
+        key = f"{co_iri}||disjointWith"
+        if key not in seen:
+            seen.add(key)
+            result.append({
+                "class_iri":      co_iri,
+                "class_label":    label_fn(co_iri),
+                "property_iri":   None,
+                "property_label": None,
+                "restriction":    "disjointWith",
+            })
+    result.sort(key=lambda x: (x["class_label"] or x["class_iri"]).lower())
+    return result
 
 
 @router.get("/{ontology_id}/{version_id}/terms/{term_iri:path}", summary="Term detail")
@@ -1052,7 +1126,7 @@ async def get_term(
     store = get_store()
     g_iri = graph_iri(ontology_id, version_id)
 
-    # Fetch raw asserted properties
+    # Fetch raw asserted properties + asserted subclasses (both blocking — run in thread)
     props_query = f"""
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -1063,17 +1137,6 @@ async def get_term(
             }}
         }}
     """
-    prop_rows = list(store.query(props_query))
-    if not prop_rows:
-        raise HTTPException(status_code=404, detail="Term not found in this ontology version")
-
-    properties: dict[str, list] = {}
-    for row in prop_rows:
-        pred = row["pred"].value
-        obj = row["obj"].value
-        properties.setdefault(pred, []).append(obj)
-
-    # Asserted subclasses — named classes that declare subClassOf this term
     asserted_sub_query = f"""
         SELECT ?sub WHERE {{
             GRAPH <{g_iri}> {{
@@ -1083,7 +1146,17 @@ async def get_term(
         }}
         ORDER BY ?sub
     """
-    asserted_sub_iris = [r["sub"].value for r in store.query(asserted_sub_query)]
+    prop_rows, asserted_sub_iris = await asyncio.to_thread(
+        _sparql_term_props, store, props_query, asserted_sub_query
+    )
+    if not prop_rows:
+        raise HTTPException(status_code=404, detail="Term not found in this ontology version")
+
+    properties: dict[str, list] = {}
+    for row in prop_rows:
+        pred = row["pred"].value
+        obj = row["obj"].value
+        properties.setdefault(pred, []).append(obj)
 
     # Inferred sub/superclasses from ELK — run concurrently, ignore if not ready
     async def _elk_subclasses():
@@ -1305,21 +1378,7 @@ async def get_term(
             ORDER BY ?class ?restrictType
             LIMIT 200
         """
-        for row in store.query(usage_query):
-            cls_iri   = row["class"].value
-            rtype     = row["restrictType"].value if row["restrictType"] else "?"
-            filler    = row["filler"]
-            filler_val = filler.value if filler is not None else None
-            filler_label: str | None = None
-            if filler_val and (filler_val.startswith("http") or filler_val.startswith("urn:")):
-                filler_label = _label(filler_val)
-            usage.append({
-                "class_iri":    cls_iri,
-                "class_label":  _label(cls_iri),
-                "restriction":  rtype,
-                "filler_iri":   filler_val if filler_val and filler_val.startswith("http") else None,
-                "filler_label": filler_label or filler_val,
-            })
+        usage = await asyncio.to_thread(_sparql_usage, store, usage_query, _label)
 
     # Class usage — axioms in other classes that reference this term as a filler or disjointWith target
     class_usage: list[dict] = []
@@ -1346,22 +1405,6 @@ async def get_term(
             ORDER BY ?class ?prop
             LIMIT 200
         """
-        _seen_cu: set[str] = set()
-        for _row in store.query(_cu_query):
-            _cls_iri = _row["class"].value
-            _prop_iri = _row["prop"].value if _row["prop"] else None
-            _rtype = _row["restrictType"].value if _row["restrictType"] else "?"
-            _cu_key = f"{_cls_iri}||{_prop_iri}||{_rtype}"
-            if _cu_key not in _seen_cu:
-                _seen_cu.add(_cu_key)
-                class_usage.append({
-                    "class_iri":      _cls_iri,
-                    "class_label":    _label(_cls_iri),
-                    "property_iri":   _prop_iri,
-                    "property_label": _label(_prop_iri) if _prop_iri else None,
-                    "restriction":    _rtype,
-                })
-        # Pairwise owl:disjointWith: ?class owl:disjointWith <term>
         _disj_query = f"""
             PREFIX owl: <http://www.w3.org/2002/07/owl#>
             SELECT ?class WHERE {{
@@ -1373,31 +1416,9 @@ async def get_term(
             ORDER BY ?class
             LIMIT 100
         """
-        for _row in store.query(_disj_query):
-            _cls_iri = _row["class"].value
-            _cu_key = f"{_cls_iri}||disjointWith"
-            if _cu_key not in _seen_cu:
-                _seen_cu.add(_cu_key)
-                class_usage.append({
-                    "class_iri":      _cls_iri,
-                    "class_label":    _label(_cls_iri),
-                    "property_iri":   None,
-                    "property_label": None,
-                    "restriction":    "disjointWith",
-                })
-        # owl:AllDisjointClasses co-members
-        for _co_iri in _adc_map.get(term_iri, []):
-            _cu_key = f"{_co_iri}||disjointWith"
-            if _cu_key not in _seen_cu:
-                _seen_cu.add(_cu_key)
-                class_usage.append({
-                    "class_iri":      _co_iri,
-                    "class_label":    _label(_co_iri),
-                    "property_iri":   None,
-                    "property_label": None,
-                    "restriction":    "disjointWith",
-                })
-        class_usage.sort(key=lambda x: (x["class_label"] or x["class_iri"]).lower())
+        class_usage = await asyncio.to_thread(
+            _sparql_class_usage, store, _cu_query, _disj_query, _label, _adc_map, term_iri
+        )
 
     # Is this term the object of owl:inverseOf declared by another property?
     def _check_is_inverse_target(s) -> bool:
