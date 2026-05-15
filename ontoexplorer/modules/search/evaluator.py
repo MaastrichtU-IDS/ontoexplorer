@@ -1,6 +1,7 @@
 """MOS expression evaluator: AST → matching class IRIs via hybrid ELK + Oxigraph SPARQL."""
 from __future__ import annotations
 
+import json as _json
 import re
 import urllib.parse
 from dataclasses import dataclass
@@ -29,12 +30,36 @@ from ontoexplorer.modules.search.mos_parser import (
 )
 
 
+def _pick_label(detail: dict, lang: str | None) -> tuple[str, str | None]:
+    """Return (label_string, lang_tag) for the given lang preference.
+
+    Falls back to primary_label when the preferred lang is not available.
+    """
+    labels_raw = detail.get("labels")
+    if labels_raw:
+        try:
+            labels = _json.loads(labels_raw)
+        except (ValueError, TypeError):
+            labels = []
+        if lang and labels:
+            for entry in labels:
+                if entry.get("lang") == lang:
+                    return entry["value"], lang
+        if labels:
+            first = labels[0]
+            return first["value"], first.get("lang") or None
+    # v1 schema fallback or empty labels
+    return detail.get("primary_label") or detail.get("label", ""), None
+
+
 @dataclass
 class SearchResult:
     iri: str
     label: str
     short: str
-    match_type: str   # "elk" | "sparql" | "entity"
+    match_type: str       # "elk" | "sparql" | "entity"
+    lang: str | None = None
+    cross_language: bool = False
 
 
 class AmbiguousLabelError(ValueError):
@@ -75,14 +100,18 @@ def _resolve_label(
         key = _prefix_key(version_id)
         members = r.zrangebylex(key, f"[{norm}", f"[{norm}\xff")
         for m in members:
-            parts = m.split("|", 2)
-            if len(parts) == 3:
+            parts = m.split("|", 3)
+            if len(parts) == 4:
+                etype, iri = parts[2], parts[3]
+            elif len(parts) == 3:
                 etype, iri = parts[1], parts[2]
-                if allowed_types and etype not in allowed_types:
-                    continue
-                detail = r.hgetall(_iri_key(version_id, iri))
-                if detail.get("short") == node.curie:
-                    return iri
+            else:
+                continue
+            if allowed_types and etype not in allowed_types:
+                continue
+            detail = r.hgetall(_iri_key(version_id, iri))
+            if detail.get("short") == node.curie:
+                return iri
         # Fallback: if CURIE is itself an IRI fragment
         return node.ref
 
@@ -98,12 +127,16 @@ def _resolve_label(
         key = _prefix_key(version_id)
         members = r.zrangebylex(key, f"[{norm}", f"[{norm}\xff")
         for m in members:
-            parts = m.split("|", 2)
-            if len(parts) == 3:
+            parts = m.split("|", 3)
+            if len(parts) == 4:
+                etype, iri = parts[2], parts[3]
+            elif len(parts) == 3:
                 etype, iri = parts[1], parts[2]
-                if allowed_types and etype not in allowed_types:
-                    continue
-                return iri
+            else:
+                continue
+            if allowed_types and etype not in allowed_types:
+                continue
+            return iri
         return node.ref  # treat as IRI directly
 
     # Plain label — look up in prefix index
@@ -118,10 +151,13 @@ def _resolve_label(
     matched: list[dict] = []
     seen_iris: set[str] = set()
     for m in members:
-        parts = m.split("|", 2)
-        if len(parts) != 3:
+        parts = m.split("|", 3)
+        if len(parts) == 4:
+            norm_lbl, _lang_tag, etype, iri = parts
+        elif len(parts) == 3:
+            norm_lbl, etype, iri = parts
+        else:
             continue
-        norm_lbl, etype, iri = parts
         if norm_lbl != norm:
             continue
         if allowed_types and etype not in allowed_types:
@@ -158,7 +194,7 @@ def _needs_elk(node) -> bool:
     return False
 
 
-async def evaluate(node, version_id: str, ontology_id: str) -> list[SearchResult]:
+async def evaluate(node, version_id: str, ontology_id: str, lang: str | None = None) -> list[SearchResult]:
     """Evaluate a MOS AST node against the given version, returning matching classes."""
     r = _get_redis()
 
@@ -205,12 +241,24 @@ async def evaluate(node, version_id: str, ontology_id: str) -> list[SearchResult
     results: list[SearchResult] = []
     for iri in iris:
         detail = r.hgetall(_iri_key(version_id, iri))
-        label = detail.get("label", iri.split("/")[-1]) if detail else iri.split("/")[-1]
-        short = detail.get("short", "") if detail else ""
+        if detail:
+            label, result_lang = _pick_label(detail, lang)
+            cross_language = bool(lang) and result_lang != lang
+            short = detail.get("short", "")
+        else:
+            label, result_lang, cross_language = iri.split("/")[-1], None, False
+            short = ""
         match_type = "elk" if not isinstance(node, (SomeValuesFrom, AllValuesFrom, HasValue,
                                                       HasSelf, MinCardinality, MaxCardinality,
                                                       ExactCardinality)) else "sparql"
-        results.append(SearchResult(iri=iri, label=label, short=short, match_type=match_type))
+        results.append(SearchResult(
+            iri=iri,
+            label=label,
+            short=short,
+            match_type=match_type,
+            lang=result_lang,
+            cross_language=cross_language,
+        ))
 
     return results
 
