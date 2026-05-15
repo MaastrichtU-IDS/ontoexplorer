@@ -18,6 +18,18 @@ function displayName(o: Ontology): string {
   return last.replace(/\.(owl|ttl|rdf|obo|json|xml|nt)$/i, '')
 }
 
+const GROUP_LABELS: Record<string, string> = {
+  upper:       'Upper Ontology',
+  obo:         'OBO Foundry',
+  sulo_family: 'SULO Family',
+}
+
+const GROUP_COLORS: Record<string, { bg: string; border: string; color: string }> = {
+  upper:       { bg: 'rgba(97,175,239,0.12)',  border: 'rgba(97,175,239,0.4)',  color: '#61afef' },
+  obo:         { bg: 'rgba(152,195,121,0.12)', border: 'rgba(152,195,121,0.4)', color: '#98c379' },
+  sulo_family: { bg: 'rgba(229,192,123,0.12)', border: 'rgba(229,192,123,0.4)', color: '#e5c07b' },
+}
+
 function IriChip({ iri }: { iri: string }) {
   const [copied, setCopied] = useState(false)
   function copy(e: React.MouseEvent) {
@@ -49,8 +61,10 @@ function IriChip({ iri }: { iri: string }) {
 
 function OntologyRow({ o }: { o: Ontology }) {
   const navigate = useNavigate()
+  const [descExpanded, setDescExpanded] = useState(false)
   const latest = o.latest_version
-  const hasStats = o.class_count != null || o.property_count != null || o.triple_count != null
+  const hasStats = o.class_count != null || o.property_count != null || o.triple_count != null || o.individual_count != null
+  const knownGroups = (o.groups ?? []).filter(g => g in GROUP_LABELS)
 
   return (
     <tr
@@ -59,28 +73,51 @@ function OntologyRow({ o }: { o: Ontology }) {
       onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
       onMouseLeave={e => (e.currentTarget.style.background = '')}
     >
-      {/* Name */}
+      {/* Name · IRI chip · group badges · description */}
       <td style={{ padding: '10px 12px' }}>
-        <span style={{ color: 'var(--accent)', fontWeight: 500 }}>{displayName(o)}</span>
-      </td>
-
-      {/* IRI chip */}
-      <td style={{ padding: '10px 12px' }}>
-        <IriChip iri={o.iri} />
-      </td>
-
-      {/* Status */}
-      <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
-        {latest ? (
-          <span style={{
-            background: latest.status === 'ingested' ? 'rgba(80,200,120,0.12)' : 'var(--bg-secondary)',
-            color: latest.status === 'ingested' ? '#50c878' : 'var(--text-dim)',
-            borderRadius: 3, padding: '2px 7px', fontSize: 10,
-          }}>
-            {latest.status}
-          </span>
-        ) : (
-          <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>—</span>
+        {o.label && (
+          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', marginBottom: 2 }}>
+            {o.label}
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ color: 'var(--accent)', fontWeight: 500 }}>{displayName(o)}</span>
+          <IriChip iri={o.iri} />
+          {knownGroups.map(g => {
+            const c = GROUP_COLORS[g]
+            return (
+              <span key={g} style={{
+                fontSize: 9, padding: '1px 6px', borderRadius: 10,
+                background: c.bg, border: `1px solid ${c.border}`,
+                color: c.color, fontWeight: 600, letterSpacing: 0.3, flexShrink: 0,
+              }}>
+                {GROUP_LABELS[g]}
+              </span>
+            )
+          })}
+        </div>
+        {o.description && (
+          <div style={{ marginTop: 3, maxWidth: 520 }}>
+            <div style={{
+              color: 'var(--text-dim)', fontSize: 11, lineHeight: 1.4,
+              ...(!descExpanded && {
+                display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+              }),
+            }}>
+              {o.description}
+            </div>
+            {(descExpanded || o.description.length > 200) && (
+              <button
+                onClick={e => { e.stopPropagation(); setDescExpanded(v => !v) }}
+                style={{
+                  fontSize: 10, color: 'var(--accent)', background: 'none',
+                  border: 'none', padding: '2px 0', cursor: 'pointer',
+                }}
+              >
+                {descExpanded ? 'less' : 'more…'}
+              </button>
+            )}
+          </div>
         )}
       </td>
 
@@ -91,6 +128,9 @@ function OntologyRow({ o }: { o: Ontology }) {
             {fmtCount(o.class_count)} cls
             <span style={{ color: 'var(--border)', margin: '0 4px' }}>·</span>
             {fmtCount(o.property_count)} props
+            {o.individual_count != null && o.individual_count > 0 && (
+              <><span style={{ color: 'var(--border)', margin: '0 4px' }}>·</span>{fmtCount(o.individual_count)} ind</>
+            )}
             <span style={{ color: 'var(--border)', margin: '0 4px' }}>·</span>
             {fmtCount(o.triple_count)} axioms
           </>
@@ -105,11 +145,21 @@ function OntologyRow({ o }: { o: Ontology }) {
   )
 }
 
+// ── Group filter ─────────────────────────────────────────────────────────────
+
+const GROUPS: { value: string; label: string }[] = [
+  { value: '',            label: 'All' },
+  { value: 'upper',       label: 'Upper Ontology' },
+  { value: 'sulo_family', label: 'SULO Family' },
+  { value: 'obo',         label: 'OBO Foundry' },
+]
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function Ontologies() {
   const [query, setQuery] = useState('')
-  const { data, isLoading } = useOntologySearch(query)
+  const [group, setGroup] = useState('')
+  const { data, isLoading } = useOntologySearch(query, group || undefined)
   const ontologies = data?.ontologies ?? []
 
   return (
@@ -117,6 +167,25 @@ export default function Ontologies() {
       <h1 style={{ color: 'var(--text)', fontSize: 20, fontWeight: 700, marginBottom: '1.5rem' }}>
         Ontologies
       </h1>
+
+      {/* Group filter chips */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: '1rem' }}>
+        {GROUPS.map(g => (
+          <button
+            key={g.value}
+            onClick={() => setGroup(g.value)}
+            style={{
+              fontSize: 12, padding: '4px 12px', borderRadius: 20,
+              border: '1px solid var(--border)', cursor: 'pointer',
+              background: group === g.value ? 'var(--accent)' : 'var(--bg-secondary)',
+              color: group === g.value ? '#000' : 'var(--text-dim)',
+              fontWeight: group === g.value ? 600 : 400,
+            }}
+          >
+            {g.label}
+          </button>
+        ))}
+      </div>
 
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
@@ -128,7 +197,7 @@ export default function Ontologies() {
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Filter by IRI or name…"
+          placeholder="Filter by name, IRI, or description…"
           style={{
             flex: 1, background: 'none', border: 'none',
             color: 'var(--text)', fontSize: 'var(--font-size-base)', outline: 'none',
@@ -148,13 +217,13 @@ export default function Ontologies() {
         <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</p>
       ) : ontologies.length === 0 ? (
         <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
-          {query ? 'No ontologies match your filter.' : 'No ontologies loaded yet.'}
+          {(query || group) ? 'No ontologies match your filter.' : 'No ontologies loaded yet.'}
         </p>
       ) : (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border)' }}>
-              {['Name', 'IRI', 'Status', 'Stats', 'Added'].map(h => (
+              {['Name', 'Stats', 'Added'].map(h => (
                 <th key={h} style={{
                   padding: '8px 12px', textAlign: 'left',
                   color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
@@ -173,7 +242,7 @@ export default function Ontologies() {
 
       <p style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: '1rem' }}>
         {ontologies.length} ontolog{ontologies.length === 1 ? 'y' : 'ies'}
-        {query && ' matching filter'}
+        {(query || group) && ' matching filter'}
       </p>
     </div>
   )

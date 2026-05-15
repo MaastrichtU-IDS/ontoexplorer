@@ -414,6 +414,7 @@ export interface AdminOntologyEntry {
   id: string
   iri: string
   shortname: string | null
+  label: string | null
   version_id: string
   triple_count: number | null
   ingestion_status: string

@@ -129,12 +129,14 @@ async def admin_overview(
         text("""
             SELECT o.id, o.iri, o.shortname,
                    v.id AS version_id, v.triple_count, v.status AS ingestion_status,
-                   v.created_at AS version_created_at
+                   v.created_at AS version_created_at,
+                   mp.resolved AS meta_resolved
             FROM ontologies o
             JOIN versions v ON v.id = (
                 SELECT id FROM versions WHERE ontology_id = o.id
                 ORDER BY created_at DESC LIMIT 1
             )
+            LEFT JOIN ontology_meta_profiles mp ON mp.version_id = v.id
             ORDER BY o.shortname NULLS LAST, o.iri
         """)
     )).mappings().all()
@@ -148,10 +150,13 @@ async def admin_overview(
         )
         reasoning = await _reasoning_status(vid)
         created = row["version_created_at"]
+        meta_resolved = row["meta_resolved"] or {}
+        label = meta_resolved.get("title") or None
         return {
             "id": row["id"],
             "iri": row["iri"],
             "shortname": row["shortname"],
+            "label": label,
             "version_id": vid,
             "triple_count": row["triple_count"],
             "ingestion_status": row["ingestion_status"],
@@ -167,7 +172,7 @@ async def admin_overview(
         text("""
             SELECT j.id, j.type, j.version_id, j.status,
                    j.started_at, j.finished_at, j.error, j.created_at,
-                   o.shortname AS ontology_shortname
+                   o.shortname AS ontology_shortname, o.iri AS ontology_iri
             FROM jobs j
             JOIN versions v ON v.id = j.version_id
             JOIN ontologies o ON o.id = v.ontology_id
@@ -185,6 +190,7 @@ async def admin_overview(
             "type": r["type"],
             "version_id": r["version_id"],
             "ontology_shortname": r["ontology_shortname"],
+            "ontology_iri": r["ontology_iri"],
             "status": r["status"],
             "started_at": _fmt(r["started_at"]),
             "finished_at": _fmt(r["finished_at"]),
@@ -204,3 +210,29 @@ async def admin_overview(
         "ontologies": list(ontologies),
         "jobs": jobs,
     }
+
+
+@router.post("/reindex", summary="Queue search re-index for all ingested versions")
+async def admin_reindex(
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue index_ontology tasks for every ingested version. Safe to run multiple times."""
+    from ontoexplorer.modules.jobs.tasks import index_ontology
+    from sqlalchemy.orm import joinedload
+    from ontoexplorer.models.db import OntologyVersion
+
+    result = await db.execute(
+        text("""
+            SELECT v.id AS version_id, v.ontology_id
+            FROM versions v
+            WHERE v.status = 'ingested'
+            ORDER BY v.created_at DESC
+        """)
+    )
+    rows = result.mappings().all()
+    queued = 0
+    for row in rows:
+        index_ontology.delay(str(row["version_id"]), str(row["ontology_id"]))
+        queued += 1
+    return {"queued": queued, "message": f"Queued {queued} index_ontology tasks"}

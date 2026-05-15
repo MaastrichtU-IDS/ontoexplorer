@@ -41,7 +41,10 @@ function StatusDot({ status, label }: { status: string; label?: string }) {
   if (status === 'running') {
     return <span style={{ color: 'var(--accent-blue, #58a6ff)', fontSize: 11 }}>⟳ {text}</span>
   }
-  if (status === 'not_started' || status === 'queued' || status === 'pending') {
+  if (status === 'pending' || status === 'queued') {
+    return <span style={{ color: '#d29922', fontSize: 11 }}>⏳ {text}</span>
+  }
+  if (status === 'not_started') {
     return <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>— {text}</span>
   }
   if (status === 'failed' || status.startsWith('error')) {
@@ -110,7 +113,7 @@ function OntologyTable({ rows }: { rows: AdminOntologyEntry[] }) {
           {sorted.map(row => (
             <tr key={row.version_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
               <td style={{ padding: '6px 10px', color: 'var(--text)' }}>
-                {row.shortname ?? row.iri.split(/[/#]/).pop()}
+                {row.label || row.shortname || row.iri.split(/[/#]/).pop()}
               </td>
               <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-muted)' }}>
                 {fmtTriples(row.triple_count)}
@@ -169,7 +172,7 @@ function JobsTable({ jobs }: { jobs: AdminJobEntry[] }) {
                 {job.type}
               </td>
               <td style={{ padding: '6px 10px', color: 'var(--text)' }}>
-                {job.ontology_shortname ?? '—'}
+                {job.ontology_shortname ?? job.ontology_iri?.split(/[/#]/).pop() ?? '—'}
               </td>
               <td style={{ padding: '6px 10px', textAlign: 'center' }}>
                 <StatusDot status={job.status} />
