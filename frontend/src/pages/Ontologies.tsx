@@ -20,14 +20,18 @@ function displayName(o: Ontology): string {
 
 const GROUP_LABELS: Record<string, string> = {
   upper:       'Upper Ontology',
-  obo:         'OBO Foundry',
   sulo_family: 'SULO Family',
+  metadata:    'Metadata',
+  obo:         'OBO Foundry',
+  biomedical:  'Biomedical',
 }
 
 const GROUP_COLORS: Record<string, { bg: string; border: string; color: string }> = {
   upper:       { bg: 'rgba(97,175,239,0.12)',  border: 'rgba(97,175,239,0.4)',  color: '#61afef' },
-  obo:         { bg: 'rgba(152,195,121,0.12)', border: 'rgba(152,195,121,0.4)', color: '#98c379' },
   sulo_family: { bg: 'rgba(229,192,123,0.12)', border: 'rgba(229,192,123,0.4)', color: '#e5c07b' },
+  metadata:    { bg: 'rgba(198,120,221,0.12)', border: 'rgba(198,120,221,0.4)', color: '#c678dd' },
+  obo:         { bg: 'rgba(152,195,121,0.12)', border: 'rgba(152,195,121,0.4)', color: '#98c379' },
+  biomedical:  { bg: 'rgba(224,108,117,0.12)', border: 'rgba(224,108,117,0.4)', color: '#e06c75' },
 }
 
 function IriChip({ iri }: { iri: string }) {
@@ -151,7 +155,9 @@ const GROUPS: { value: string; label: string }[] = [
   { value: '',            label: 'All' },
   { value: 'upper',       label: 'Upper Ontology' },
   { value: 'sulo_family', label: 'SULO Family' },
+  { value: 'metadata',    label: 'Metadata' },
   { value: 'obo',         label: 'OBO Foundry' },
+  { value: 'biomedical',  label: 'Biomedical' },
 ]
 
 // ── Page ──────────────────────────────────────────────────────────────────────
