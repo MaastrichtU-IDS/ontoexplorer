@@ -6,6 +6,16 @@ from dataclasses import dataclass
 from ontoexplorer.modules.search.indexer import _get_redis, _prefix_key, _iri_key, normalise_label
 from ontoexplorer.modules.search.mos_parser import partial_parse
 
+def _parse_lang_from_member(member: str) -> tuple[str, str, str, str]:
+    """Split a v2 sorted-set key into (norm, lang, entity_type, iri)."""
+    parts = member.split("|", 3)
+    if len(parts) == 4:
+        return parts[0], parts[1], parts[2], parts[3]
+    # Graceful fallback for v1 keys: norm|type|iri
+    p = member.split("|", 2)
+    return (p[0], "", p[1], p[2]) if len(p) == 3 else ("", "", "", "")
+
+
 _RESTRICTION_KEYWORDS = ["some", "only", "value", "Self", "min", "max", "exactly"]
 _BOOLEAN_KEYWORDS = ["and", "or", "not", "(", ")"]
 
@@ -17,6 +27,8 @@ class Completion:
     iri: str | None
     short: str | None
     insert: str         # text to splice at cursor (includes closing ' for labels)
+    lang: str | None = None
+    cross_language: bool = False
 
 
 # Built-in OWL classes injected into autocomplete when they match the partial.
@@ -37,19 +49,20 @@ def get_completions(
     cursor: int,
     version_id: str,
     limit: int = 10,
+    lang: str | None = None,
 ) -> list[Completion]:
     result = partial_parse(q, cursor)
     r = _get_redis()
 
     if result.token_type == "OPEN_QUOTE":
         return _entity_completions(r, version_id, result.partial, entity_type=None, limit=limit,
-                                   excluded_types=frozenset({"annotation_property"}))
+                                   excluded_types=frozenset({"annotation_property"}), lang=lang)
 
     if result.token_type == "EXPECT_ENTITY":
         if result.partial:
             # User is typing a bare word (no opening quote) — show entity completions directly.
             raw = _entity_completions(r, version_id, result.partial, entity_type=None, limit=limit,
-                                      excluded_types=frozenset({"annotation_property"}))
+                                      excluded_types=frozenset({"annotation_property"}), lang=lang)
             # Single-word labels don't need quotes; multi-word must be quoted.
             return [
                 Completion(
@@ -84,18 +97,28 @@ def _entity_completions(
     entity_type: str | None,
     limit: int,
     excluded_types: frozenset[str] | None = None,
+    lang: str | None = None,
 ) -> list[Completion]:
     norm = normalise_label(partial) if partial else ""
     key = _prefix_key(version_id)
 
     if norm:
-        # Two-scan: exact-label entries first, then all prefix entries.
-        # Space (0x20) < pipe (0x7C) in Redis lex order, so "cell adhesion|..."
-        # sorts BEFORE "cell|..." (exact) in a single prefix scan.
-        exact_members = r.zrangebylex(key, f"[{norm}|", f"[{norm}|\xff", start=0, num=max(limit, 20))
-        all_members   = r.zrangebylex(key, f"[{norm}",  f"[{norm}\xff",  start=0, num=limit * 8)
-        exact_set = set(exact_members)
-        members = list(exact_members) + [m for m in all_members if m not in exact_set]
+        if lang:
+            # Preferred-lang scan first, then all-lang fallback
+            pref_members = r.zrangebylex(key, f"[{norm}|{lang}|", f"[{norm}|{lang}|\xff",
+                                          start=0, num=max(limit, 20))
+            all_members = r.zrangebylex(key, f"[{norm}|", f"[{norm}|\xff",
+                                         start=0, num=limit * 8)
+            pref_set = set(pref_members)
+            members = list(pref_members) + [m for m in all_members if m not in pref_set]
+        else:
+            # Original two-scan for no-lang case
+            # Space (0x20) < pipe (0x7C) in Redis lex order, so "cell adhesion|..."
+            # sorts BEFORE "cell|..." (exact) in a single prefix scan.
+            exact_members = r.zrangebylex(key, f"[{norm}|", f"[{norm}|\xff", start=0, num=max(limit, 20))
+            all_members   = r.zrangebylex(key, f"[{norm}",  f"[{norm}\xff",  start=0, num=limit * 8)
+            exact_set = set(exact_members)
+            members = list(exact_members) + [m for m in all_members if m not in exact_set]
     else:
         members = r.zrange(key, 0, limit * 4 - 1)
 
@@ -109,10 +132,9 @@ def _entity_completions(
     tier_b: dict[str, list[dict]] = {}
 
     for member in members:
-        parts = member.split("|", 2)
-        if len(parts) != 3:
+        norm_lbl, lang_tag, etype, iri = _parse_lang_from_member(member)
+        if not iri:
             continue
-        norm_lbl, etype, iri = parts
         if entity_type and etype != entity_type:
             continue
         if excluded_types and etype in excluded_types:
@@ -123,7 +145,11 @@ def _entity_completions(
         detail = r.hgetall(_iri_key(version_id, iri))
         if not detail:
             continue
+        is_cross = bool(lang) and lang_tag != lang
         primary_norm = normalise_label(detail.get("label", ""))
+        # Attach lang metadata to the detail dict for use in _build
+        detail["_lang_tag"] = lang_tag
+        detail["_cross_language"] = is_cross
         if not norm or primary_norm.startswith(norm):
             tier_a.setdefault(primary_norm, []).append(detail)
         else:
@@ -139,6 +165,8 @@ def _entity_completions(
                     iri=e["iri"],
                     short=e["short"],
                     insert=f"{e['label']}'",
+                    lang=e.get("_lang_tag") or None,
+                    cross_language=bool(e.get("_cross_language")),
                 ))
             else:
                 for e in entities:
@@ -148,6 +176,8 @@ def _entity_completions(
                         iri=e["iri"],
                         short=e["short"],
                         insert=f"{e['label']} ({e['short']})'",
+                        lang=e.get("_lang_tag") or None,
+                        cross_language=bool(e.get("_cross_language")),
                     ))
             if len(out) >= limit:
                 return
