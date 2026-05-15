@@ -299,6 +299,9 @@ async def patch_ontology(
         raw = body["groups"]
         ontology.groups = [g for g in (raw if isinstance(raw, list) else []) if g]
 
+    if "preferred_lang" in body:
+        ontology.preferred_lang = body["preferred_lang"] or None
+
     await db.commit()
     await db.refresh(ontology)
     return _ontology_dict(ontology)
@@ -605,6 +608,30 @@ async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = De
         pass
 
     return result
+
+
+@router.get("/{ontology_id}/{version_id}/languages", summary="Languages present in the search index")
+async def get_languages(
+    ontology_id: str,
+    version_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    import asyncio
+    await _get_version_or_404(db, ontology_id, version_id)
+
+    def _read_langs():
+        from ontoexplorer.modules.search.indexer import _get_redis, _langs_key, _meta_key
+        r = _get_redis()
+        meta = r.hgetall(_meta_key(version_id))
+        if meta.get("schema_version") != "v2":
+            return []
+        counts = r.hgetall(_langs_key(version_id))
+        return sorted(
+            [{"lang": k or "", "label_count": int(v)} for k, v in counts.items()],
+            key=lambda x: -x["label_count"],
+        )
+
+    return await asyncio.to_thread(_read_langs)
 
 
 # ── Ontology document metadata ────────────────────────────────────────────────

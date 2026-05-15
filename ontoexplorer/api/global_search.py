@@ -8,11 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.clients.reasoning import ReasoningNotReadyError
 from ontoexplorer.database import get_db
-from ontoexplorer.models.db import Ontology, OntologyVersion
+from ontoexplorer.models.db import Ontology, OntologyVersion, User
 from ontoexplorer.modules.auth.dependencies import get_current_user
 from ontoexplorer.modules.search.autocomplete import get_completions
 from ontoexplorer.modules.search.evaluator import AmbiguousLabelError, evaluate
 from ontoexplorer.modules.search.indexer import entity_lookup, normalise_label
+from ontoexplorer.modules.search.lang import resolve_lang
 from ontoexplorer.modules.search.mos_parser import ParseError, NamedClass, parse
 
 router = APIRouter(prefix="/api/v1", tags=["search"])
@@ -60,9 +61,11 @@ async def global_search(
     q: str = Query(..., min_length=1, description="Entity label, CURIE, IRI, or MOS expression"),
     mode: str = Query("auto", description="auto | entity | expression"),
     limit: int = Query(20, ge=1, le=200),
+    lang: str | None = Query(None, description="BCP-47 language tag for preferred results"),
     _user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    effective_lang = lang or (getattr(_user, 'preferred_lang', None) if isinstance(_user, User) else None)
     versions = await _latest_ingested_versions(db)
     if not versions:
         return {"mode": "entity", "query": q, "results": [], "count": 0, "truncated": False}
@@ -128,10 +131,11 @@ async def global_search(
     # Expression mode — evaluate against each version separately
     async def search_one_expression(v: OntologyVersion) -> list[dict]:
         try:
-            results = await evaluate(ast, str(v.id), str(v.ontology_id))
+            results = await evaluate(ast, str(v.id), str(v.ontology_id), lang=effective_lang)
             return [
                 {"iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type,
-                 "version_id": str(v.id), "ontology_id": str(v.ontology_id)}
+                 "version_id": str(v.id), "ontology_id": str(v.ontology_id),
+                 "lang": r.lang, "cross_language": r.cross_language}
                 for r in results
             ]
         except (ReasoningNotReadyError, AmbiguousLabelError):
@@ -163,11 +167,16 @@ async def ontology_search(
     q: str = Query(..., description="Entity label, CURIE, IRI, or MOS expression"),
     mode: str = Query("auto", description="auto | entity | expression"),
     limit: int = Query(20, ge=1, le=200),
+    lang: str | None = Query(None, description="BCP-47 language tag"),
     _user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     version = await _get_latest_version_or_404(db, ontology_id)
     version_id = str(version.id)
+    ontology_row = (await db.execute(
+        select(Ontology).where(Ontology.id == ontology_id)
+    )).scalar_one_or_none()
+    effective_lang = resolve_lang(lang, ontology_row, _user if isinstance(_user, User) else None)
 
     q_stripped = q.strip()
     if q_stripped.startswith("http://") or q_stripped.startswith("https://"):
@@ -199,7 +208,7 @@ async def ontology_search(
         }
 
     try:
-        search_results = await evaluate(ast, version_id, ontology_id)
+        search_results = await evaluate(ast, version_id, ontology_id, lang=effective_lang)
     except AmbiguousLabelError as exc:
         return JSONResponse(status_code=422, content={
             "error": "ambiguous_label", "label": exc.label, "candidates": exc.candidates,
@@ -211,7 +220,8 @@ async def ontology_search(
     return {
         "mode": "expression", "query": q, "version_id": version_id,
         "results": [
-            {"iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type}
+            {"iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type,
+             "lang": r.lang, "cross_language": r.cross_language}
             for r in trimmed
         ],
         "count": len(trimmed), "truncated": len(search_results) > limit,
@@ -227,19 +237,25 @@ async def ontology_autocomplete(
     q: str = Query(..., description="Partial MOS expression text"),
     cursor: int = Query(-1, description="Byte offset of cursor (-1 = end of q)"),
     limit: int = Query(10, ge=1, le=50),
+    lang: str | None = Query(None, description="BCP-47 language tag"),
     _user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     version = await _get_latest_version_or_404(db, ontology_id)
     version_id = str(version.id)
+    ontology_row = (await db.execute(
+        select(Ontology).where(Ontology.id == ontology_id)
+    )).scalar_one_or_none()
+    effective_lang = resolve_lang(lang, ontology_row, _user if isinstance(_user, User) else None)
     effective_cursor = cursor if cursor >= 0 else len(q)
-    completions = await asyncio.to_thread(get_completions, q, effective_cursor, version_id, limit)
+    completions = await asyncio.to_thread(get_completions, q, effective_cursor, version_id, limit, effective_lang)
     from ontoexplorer.modules.search.mos_parser import partial_parse
     ctx = partial_parse(q, effective_cursor)
     return {
         "version_id": version_id,
         "completions": [
-            {"text": c.text, "type": c.type, "iri": c.iri, "short": c.short, "insert": c.insert}
+            {"text": c.text, "type": c.type, "iri": c.iri, "short": c.short, "insert": c.insert,
+             "lang": c.lang, "cross_language": c.cross_language}
             for c in completions
         ],
         "context": ctx.token_type.lower(),

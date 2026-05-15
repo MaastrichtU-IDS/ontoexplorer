@@ -3,15 +3,18 @@ import asyncio
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.api.ontologies import _get_version_or_404
 from ontoexplorer.clients.reasoning import ReasoningNotReadyError
 from ontoexplorer.database import get_db
+from ontoexplorer.models.db import Ontology, User
 from ontoexplorer.modules.auth.dependencies import get_current_user
 from ontoexplorer.modules.search.autocomplete import get_completions
 from ontoexplorer.modules.search.evaluator import AmbiguousLabelError, evaluate
 from ontoexplorer.modules.search.indexer import entity_lookup
+from ontoexplorer.modules.search.lang import resolve_lang
 from ontoexplorer.modules.search.mos_parser import ParseError, parse, NamedClass, And, Or, Not
 
 router = APIRouter(
@@ -34,10 +37,15 @@ async def search(
     q: str = Query(..., description="Entity label, CURIE, IRI, or MOS expression"),
     mode: str = Query("auto", description="auto | entity | expression"),
     limit: int = Query(20, ge=1, le=200),
+    lang: str | None = Query(None, description="BCP-47 language tag for preferred results"),
     _user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     await _get_version_or_404(db, ontology_id, version_id)
+    ontology_row = (await db.execute(
+        select(Ontology).where(Ontology.id == ontology_id)
+    )).scalar_one_or_none()
+    effective_lang = resolve_lang(lang, ontology_row, _user if isinstance(_user, User) else None)
 
     # Bare IRIs (no angle brackets) go straight to entity lookup — skip the parser
     q_stripped = q.strip()
@@ -77,7 +85,7 @@ async def search(
 
     # Expression mode
     try:
-        search_results = await evaluate(ast, version_id, ontology_id)
+        search_results = await evaluate(ast, version_id, ontology_id, lang=effective_lang)
     except AmbiguousLabelError as exc:
         return JSONResponse(
             status_code=422,
@@ -108,6 +116,8 @@ async def search(
             {
                 "iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type,
                 "source": (_r.hget(_iri_key(version_id, r.iri), "source") or ""),
+                "lang": r.lang,
+                "cross_language": r.cross_language,
             }
             for r in trimmed
         ],
@@ -123,19 +133,25 @@ async def autocomplete(
     q: str = Query(..., description="Partial MOS expression text"),
     cursor: int = Query(-1, description="Byte offset of cursor (-1 = end of q)"),
     limit: int = Query(10, ge=1, le=50),
+    lang: str | None = Query(None, description="BCP-47 language tag"),
     _user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     await _get_version_or_404(db, ontology_id, version_id)
+    ontology_row = (await db.execute(
+        select(Ontology).where(Ontology.id == ontology_id)
+    )).scalar_one_or_none()
+    effective_lang = resolve_lang(lang, ontology_row, _user if isinstance(_user, User) else None)
     effective_cursor = cursor if cursor >= 0 else len(q)
     completions = await asyncio.to_thread(
-        get_completions, q, effective_cursor, version_id, limit
+        get_completions, q, effective_cursor, version_id, limit, effective_lang
     )
     from ontoexplorer.modules.search.mos_parser import partial_parse
     ctx = partial_parse(q, effective_cursor)
     return {
         "completions": [
-            {"text": c.text, "type": c.type, "iri": c.iri, "short": c.short, "insert": c.insert}
+            {"text": c.text, "type": c.type, "iri": c.iri, "short": c.short, "insert": c.insert,
+             "lang": c.lang, "cross_language": c.cross_language}
             for c in completions
         ],
         "context": ctx.token_type.lower(),
