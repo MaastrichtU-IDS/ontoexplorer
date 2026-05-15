@@ -717,6 +717,10 @@ export const api = {
     },
   },
 
+  languages: {
+    list: () => request<OntologyLanguage[]>('/languages'),
+  },
+
   jobs: {
     list: (params?: { type?: string; status?: string; limit?: number }) => {
       const q = new URLSearchParams()

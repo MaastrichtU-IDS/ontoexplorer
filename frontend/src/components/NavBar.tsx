@@ -2,26 +2,24 @@ import { useState } from 'react'
 import { NavLink, Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useLang } from '../hooks/useLang'
+import { useRepositoryLanguages } from '../hooks/useRepositoryLanguages'
 import { logout } from '../lib/auth'
 
 const navLinks = [
   { to: '/ontologies', label: 'Ontologies' },
 ]
 
+const LANG_NAMES: Record<string, string> = {
+  en: 'English', fr: 'French', de: 'German', nl: 'Dutch', es: 'Spanish',
+  it: 'Italian', pt: 'Portuguese', ru: 'Russian', zh: 'Chinese', ja: 'Japanese',
+  ko: 'Korean', ar: 'Arabic', pl: 'Polish', sv: 'Swedish', da: 'Danish',
+  fi: 'Finnish', no: 'Norwegian', cs: 'Czech', hu: 'Hungarian', ro: 'Romanian',
+}
+
 function LangPicker() {
   const { sessionLang, setSessionLang } = useLang()
+  const repoLangs = useRepositoryLanguages()
   const [open, setOpen] = useState(false)
-
-  const COMMON = [
-    { tag: null as string | null, label: 'All languages' },
-    { tag: 'en', label: 'English' },
-    { tag: 'fr', label: 'French' },
-    { tag: 'de', label: 'German' },
-    { tag: 'nl', label: 'Dutch' },
-    { tag: 'es', label: 'Spanish' },
-    { tag: 'ja', label: 'Japanese' },
-    { tag: 'zh', label: 'Chinese' },
-  ]
 
   return (
     <div style={{ position: 'relative' }}>
@@ -39,20 +37,34 @@ function LangPicker() {
         <div style={{
           position: 'absolute', right: 0, top: '110%', zIndex: 100,
           background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-          borderRadius: 'var(--radius)', minWidth: 140, boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          borderRadius: 'var(--radius)', minWidth: 160, boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          maxHeight: 320, overflowY: 'auto',
         }}>
-          {COMMON.map(({ tag, label }) => (
+          <button
+            onClick={() => { setSessionLang(null); setOpen(false) }}
+            style={{
+              display: 'block', width: '100%', textAlign: 'left',
+              padding: '6px 12px', background: 'none', border: 'none',
+              color: sessionLang === null ? 'var(--accent)' : 'var(--text)',
+              fontSize: 12, cursor: 'pointer',
+            }}
+          >
+            All languages
+          </button>
+          {repoLangs.map(({ lang }) => (
             <button
-              key={tag ?? '_all'}
-              onClick={() => { setSessionLang(tag); setOpen(false) }}
+              key={lang}
+              onClick={() => { setSessionLang(lang || null); setOpen(false) }}
               style={{
-                display: 'block', width: '100%', textAlign: 'left',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                width: '100%', textAlign: 'left',
                 padding: '6px 12px', background: 'none', border: 'none',
-                color: sessionLang === tag ? 'var(--accent)' : 'var(--text)',
-                fontSize: 12, cursor: 'pointer',
+                color: sessionLang === (lang ? lang : null) ? 'var(--accent)' : 'var(--text)',
+                fontSize: 12, cursor: 'pointer', gap: 8,
               }}
             >
-              {label}
+              <span>{LANG_NAMES[lang] ?? (lang || 'untagged')}</span>
+              <span style={{ fontSize: 10, color: 'var(--text-dim)', flexShrink: 0 }}>{lang || '—'}</span>
             </button>
           ))}
         </div>

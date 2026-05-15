@@ -54,6 +54,33 @@ async def _get_latest_version_or_404(db: AsyncSession, ontology_id: str) -> Onto
     return v
 
 
+# ── Repository-wide languages ─────────────────────────────────────────────────
+
+@router.get("/languages", summary="All languages present across indexed ontologies")
+async def get_repository_languages():
+    """Aggregate language tags from every indexed ontology version in Redis."""
+    import asyncio
+
+    def _aggregate() -> list[dict]:
+        from ontoexplorer.modules.search.indexer import _get_redis, _langs_key
+        r = _get_redis()
+        counts: dict[str, int] = {}
+        prefix = "search:meta:"
+        for meta_key in r.scan_iter(f"{prefix}*"):
+            meta = r.hgetall(meta_key)
+            if meta.get("schema_version") != "v2":
+                continue
+            version_id = meta_key[len(prefix):]
+            for lang, count in r.hgetall(_langs_key(version_id)).items():
+                counts[lang] = counts.get(lang, 0) + int(count)
+        return sorted(
+            [{"lang": k, "label_count": v} for k, v in counts.items()],
+            key=lambda x: -x["label_count"],
+        )
+
+    return await asyncio.to_thread(_aggregate)
+
+
 # ── Global search ─────────────────────────────────────────────────────────────
 
 @router.get("/search", summary="Cross-ontology entity or MOS expression search")
