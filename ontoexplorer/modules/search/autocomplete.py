@@ -71,6 +71,8 @@ def get_completions(
                     iri=c.iri,
                     short=c.short,
                     insert=c.text + " " if " " not in c.text else f"'{c.text}' ",
+                    lang=c.lang,
+                    cross_language=c.cross_language,
                 )
                 for c in raw
             ]
@@ -104,10 +106,12 @@ def _entity_completions(
 
     if norm:
         if lang:
-            # Preferred-lang scan first, then all-lang fallback
+            # Preferred-lang exact scan first, then broad prefix fallback (same as no-lang path).
+            # The broad scan uses "[{norm}" (no pipe) so multi-word entries like
+            # "at time|en|..." are captured when searching "at".
             pref_members = r.zrangebylex(key, f"[{norm}|{lang}|", f"[{norm}|{lang}|\xff",
                                           start=0, num=max(limit, 20))
-            all_members = r.zrangebylex(key, f"[{norm}|", f"[{norm}|\xff",
+            all_members = r.zrangebylex(key, f"[{norm}", f"[{norm}\xff",
                                          start=0, num=limit * 8)
             pref_set = set(pref_members)
             members = list(pref_members) + [m for m in all_members if m not in pref_set]
