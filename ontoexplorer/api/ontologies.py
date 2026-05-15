@@ -834,6 +834,32 @@ async def list_terms(
         lbl = row["label"]
         return lbl.value if (lbl is not None and hasattr(lbl, "value")) else None
 
+    def _row_lang(row) -> str | None:
+        lbl = row["label"]
+        if lbl is None or not hasattr(lbl, "language"):
+            return None
+        return lbl.language  # None for untagged literals, str for lang-tagged
+
+    def _label_score(lang: str | None) -> int:
+        """Prefer English > untagged > any other language."""
+        if lang == "en": return 2
+        if lang is None or lang == "": return 1
+        return 0
+
+    def _deduped_terms(s, q) -> list[dict]:
+        """Run query and deduplicate by IRI, picking the best-language label."""
+        seen: dict[str, tuple[str | None, int]] = {}
+        for row in s.query(q):
+            iri = row["class"].value
+            lbl = _row_label(row)
+            score = _label_score(_row_lang(row))
+            prev = seen.get(iri)
+            if prev is None or score > prev[1]:
+                seen[iri] = (lbl, score)
+        rows = [{"iri": iri, "label": lbl} for iri, (lbl, _) in seen.items()]
+        rows.sort(key=lambda t: (t["label"] or t["iri"]).lower())
+        return rows
+
     _NOT_DEPRECATED_CLASS = (
         'FILTER NOT EXISTS { ?class owl:deprecated ?_d . FILTER(str(?_d) = "true") }'
         if hide_obsolete else ""
@@ -904,11 +930,16 @@ async def list_terms(
             """
 
         def _run_root_two_pass(s, aq, nrq, off, lim):
-            all_rows = []
+            seen: dict[str, tuple[str | None, int]] = {}
             for row in s.query(aq):
-                all_rows.append((row["class"].value, _row_label(row)))
+                iri = row["class"].value
+                lbl = _row_label(row)
+                score = _label_score(_row_lang(row))
+                prev = seen.get(iri)
+                if prev is None or score > prev[1]:
+                    seen[iri] = (lbl, score)
             non_roots = {row["class"].value for row in s.query(nrq)}
-            roots = [(iri, lbl) for iri, lbl in all_rows if iri not in non_roots]
+            roots = [(iri, lbl) for iri, (lbl, _) in seen.items() if iri not in non_roots]
             roots.sort(key=lambda x: (x[1] or x[0]).lower())
             return roots[off: off + lim]
 
@@ -951,12 +982,7 @@ async def list_terms(
                 LIMIT {limit} OFFSET {offset}
             """
 
-        def _run_terms(s, q):
-            rows = [{"iri": row["class"].value, "label": _row_label(row)} for row in s.query(q)]
-            rows.sort(key=lambda t: (t["label"] or t["iri"]).lower())
-            return rows
-
-        terms = await asyncio.to_thread(_run_terms, store, query)
+        terms = await asyncio.to_thread(_deduped_terms, store, query)
 
     elif parent.startswith("http"):
         # Direct subclasses of the given parent IRI
@@ -976,12 +1002,7 @@ async def list_terms(
             LIMIT {limit} OFFSET {offset}
         """
 
-        def _run_terms(s, q):
-            rows = [{"iri": row["class"].value, "label": _row_label(row)} for row in s.query(q)]
-            rows.sort(key=lambda t: (t["label"] or t["iri"]).lower())
-            return rows
-
-        terms = await asyncio.to_thread(_run_terms, store, query)
+        terms = await asyncio.to_thread(_deduped_terms, store, query)
 
     else:
         # Fallback: all named classes
@@ -1000,12 +1021,7 @@ async def list_terms(
             LIMIT {limit} OFFSET {offset}
         """
 
-        def _run_terms(s, q):
-            rows = [{"iri": row["class"].value, "label": _row_label(row)} for row in s.query(q)]
-            rows.sort(key=lambda t: (t["label"] or t["iri"]).lower())
-            return rows
-
-        terms = await asyncio.to_thread(_run_terms, store, query)
+        terms = await asyncio.to_thread(_deduped_terms, store, query)
 
     # Filter out inverse object properties when requested
     if hide_inverse and is_any_property and terms:
