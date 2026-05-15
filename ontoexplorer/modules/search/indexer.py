@@ -273,6 +273,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
 
     # Collect labels per entity
     labels_by_iri: dict[str, list[dict]] = {iri: [] for iri in entities}
+    label_seen: dict[str, set[str]] = {iri: set() for iri in entities}
     lang_counts: dict[str, int] = {}
     if label_props:
         label_pred_filter = " ".join(f"<{p}>" for p in label_props)
@@ -291,13 +292,15 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
                 val = sol["label"].value
                 lang_tag = sol["lang"].value if sol.get("lang") and sol["lang"] else ""
                 entry = {"value": val, "lang": lang_tag}
-                # Dedup by value
-                if not any(e["value"] == val for e in labels_by_iri[iri]):
+                # O(1) dedup by value using tracking set
+                if val not in label_seen[iri]:
+                    label_seen[iri].add(val)
                     labels_by_iri[iri].append(entry)
                 lang_counts[lang_tag] = lang_counts.get(lang_tag, 0) + 1
 
     # Collect synonyms per entity
     synonyms_by_iri: dict[str, list[dict]] = {iri: [] for iri in entities}
+    syn_seen: dict[str, set[str]] = {iri: set() for iri in entities}
     if synonym_props:
         syn_pred_filter = " ".join(f"<{p}>" for p in synonym_props)
         syn_q = f"""
@@ -315,8 +318,11 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
                 val = sol["syn"].value
                 lang_tag = sol["lang"].value if sol.get("lang") and sol["lang"] else ""
                 entry = {"value": val, "lang": lang_tag}
-                if not any(e["value"] == val for e in synonyms_by_iri[iri]):
+                # O(1) dedup by value using tracking set
+                if val not in syn_seen[iri]:
+                    syn_seen[iri].add(val)
                     synonyms_by_iri[iri].append(entry)
+                lang_counts[lang_tag] = lang_counts.get(lang_tag, 0) + 1
 
     # Collect definitions per entity (first-match across definition_props)
     defs_by_iri: dict[str, list[dict]] = {}
@@ -335,6 +341,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
                 val = sol["def"].value
                 lang_tag = sol["lang"].value if sol.get("lang") and sol["lang"] else ""
                 defs_by_iri[iri] = [{"value": val, "lang": lang_tag}]
+                lang_counts[lang_tag] = lang_counts.get(lang_tag, 0) + 1
 
     # Invalidate root terms cache so API serves fresh data with the new source fields
     for key in r.scan_iter(f"terms_root:{version_id}:*"):
