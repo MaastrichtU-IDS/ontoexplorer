@@ -156,17 +156,22 @@ def test_build_role_props_only_detected():
 
 
 def test_detect_meta_profile_task_runs_and_returns_done():
+    from ontoexplorer.modules.jobs.tasks import detect_meta_profile
     with patch("ontoexplorer.modules.jobs.tasks.asyncio") as mock_asyncio:
-        mock_asyncio.run.return_value = None
-        from ontoexplorer.modules.jobs.tasks import detect_meta_profile
+        mock_asyncio.run.side_effect = lambda coro: coro.close()
         result = detect_meta_profile("vid-1", ontology_id="oid-1")
     assert result["status"] == "done"
     assert result["version_id"] == "vid-1"
 
 
 def test_detect_meta_profile_task_handles_exception_gracefully():
+    from ontoexplorer.modules.jobs.tasks import detect_meta_profile
+
+    def _close_and_raise(coro):
+        coro.close()
+        raise RuntimeError("oxigraph down")
+
     with patch("ontoexplorer.modules.jobs.tasks.asyncio") as mock_asyncio:
-        mock_asyncio.run.side_effect = RuntimeError("oxigraph down")
-        from ontoexplorer.modules.jobs.tasks import detect_meta_profile
+        mock_asyncio.run.side_effect = _close_and_raise
         result = detect_meta_profile("vid-1", ontology_id="oid-1")
     assert result["status"] == "done"
