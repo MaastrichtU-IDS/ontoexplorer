@@ -12,7 +12,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ontoexplorer.database import Base
@@ -70,6 +70,7 @@ class Ontology(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     iri: Mapped[str] = mapped_column(String, unique=True)
     shortname: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    groups: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, server_default="{}")
     owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     auto_sync: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -179,6 +180,44 @@ class OntologyProfile(Base):
     definition_props: Mapped[list] = mapped_column(JSON, default=list)
     synonym_props: Mapped[list] = mapped_column(JSON, default=list)
     deprecated_props: Mapped[list] = mapped_column(JSON, default=list)
+    candidates_data: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String, default="auto_detected")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    version: Mapped["OntologyVersion"] = relationship(passive_deletes=True)
+
+
+class OntologyMetaProfile(Base):
+    __tablename__ = "ontology_meta_profiles"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    version_id: Mapped[str] = mapped_column(
+        ForeignKey("versions.id", ondelete="CASCADE"), unique=True
+    )
+    title_props: Mapped[list] = mapped_column(JSON, default=list)
+    shortname_props: Mapped[list] = mapped_column(JSON, default=list)
+    description_props: Mapped[list] = mapped_column(JSON, default=list)
+    creator_props: Mapped[list] = mapped_column(JSON, default=list)
+    contributor_props: Mapped[list] = mapped_column(JSON, default=list)
+    publisher_props: Mapped[list] = mapped_column(JSON, default=list)
+    license_props: Mapped[list] = mapped_column(JSON, default=list)
+    homepage_props: Mapped[list] = mapped_column(JSON, default=list)
+    version_info_props: Mapped[list] = mapped_column(JSON, default=list)
+    prefix_props: Mapped[list] = mapped_column(JSON, default=list)
+    namespace_uri_props: Mapped[list] = mapped_column(JSON, default=list)
+    created_props: Mapped[list] = mapped_column(JSON, default=list)
+    modified_props: Mapped[list] = mapped_column(JSON, default=list)
+    language_props: Mapped[list] = mapped_column(JSON, default=list)
+    citation_props: Mapped[list] = mapped_column(JSON, default=list)
+    funding_props: Mapped[list] = mapped_column(JSON, default=list)
+    status_props: Mapped[list] = mapped_column(JSON, default=list)
+    syntax_props: Mapped[list] = mapped_column(JSON, default=list)
+    resolved: Mapped[dict] = mapped_column(JSON, default=dict)
     candidates_data: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String, default="auto_detected")
     created_at: Mapped[datetime] = mapped_column(
