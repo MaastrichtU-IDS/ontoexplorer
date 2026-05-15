@@ -104,6 +104,10 @@ def _make_sparql_rows(rows):
     class FakeRow:
         def __init__(self, d): self._d = d
         def __getitem__(self, k): return FakeNode(self._d[k])
+        def get(self, k, default=None):
+            if k in self._d:
+                return FakeNode(self._d[k])
+            return default
         def __iter__(self): return iter(self._d)
     return [FakeRow(r) for r in rows]
 
@@ -116,8 +120,8 @@ def test_build_index_populates_prefix_set():
         {"entity": "http://ex.org/Nucleus"},
     ])
     label_rows = _make_sparql_rows([
-        {"entity": "http://ex.org/CellDeath", "label": "cell death"},
-        {"entity": "http://ex.org/Nucleus", "label": "nucleus"},
+        {"entity": "http://ex.org/CellDeath", "label": "cell death", "lang": "en"},
+        {"entity": "http://ex.org/Nucleus", "label": "nucleus", "lang": "en"},
     ])
 
     call_count = 0
@@ -126,7 +130,7 @@ def test_build_index_populates_prefix_set():
         call_count += 1
         if "owl#Class" in q:
             return entity_rows
-        if "label" in q.lower():
+        if "?label" in q:
             return label_rows
         return []
 
@@ -143,11 +147,11 @@ def test_build_index_populates_prefix_set():
 def test_build_index_writes_entity_hash():
     r = _make_redis()
     entity_rows = _make_sparql_rows([{"entity": "http://ex.org/Cell"}])
-    label_rows = _make_sparql_rows([{"entity": "http://ex.org/Cell", "label": "cell"}])
+    label_rows = _make_sparql_rows([{"entity": "http://ex.org/Cell", "label": "cell", "lang": "en"}])
 
     with patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r), \
          patch("ontoexplorer.modules.search.indexer.sparql_query",
-               side_effect=lambda q: entity_rows if "owl#Class" in q else label_rows if "label" in q.lower() else []), \
+               side_effect=lambda q: entity_rows if "owl#Class" in q else label_rows if "?label" in q else []), \
          patch("ontoexplorer.modules.search.indexer.graph_iri", return_value="urn:test"):
         build_index("v1", "o1")
 

@@ -49,6 +49,10 @@ def _meta_key(version_id: str) -> str:
     return f"search:meta:{version_id}"
 
 
+def _langs_key(version_id: str) -> str:
+    return f"search:entities:{version_id}:langs"
+
+
 def _stats_cache_key(version_id: str) -> str:
     return f"version_stats:{version_id}"
 
@@ -143,10 +147,13 @@ def entity_lookup(
 
     def _collect(members: list[str]) -> None:
         for member in members:
-            parts = member.split("|", 2)
-            if len(parts) != 3:
+            parts = member.split("|", 3)
+            if len(parts) == 4:
+                _, _lang, etype, iri = parts
+            elif len(parts) == 3:
+                _, etype, iri = parts  # v1 backward compat
+            else:
                 continue
-            _, etype, iri = parts
             if not _type_matches(etype):
                 continue
             if iri in seen_iris:
@@ -265,11 +272,12 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
             deprecated_iris.add(sol["entity"].value)
 
     # Collect labels per entity
-    labels_by_iri: dict[str, list[str]] = {iri: [] for iri in entities}
+    labels_by_iri: dict[str, list[dict]] = {iri: [] for iri in entities}
+    lang_counts: dict[str, int] = {}
     if label_props:
         label_pred_filter = " ".join(f"<{p}>" for p in label_props)
         label_q = f"""
-            SELECT ?entity ?label WHERE {{
+            SELECT ?entity ?label (lang(?label) AS ?lang) WHERE {{
                 GRAPH <{named_graph}> {{
                     VALUES ?pred {{ {label_pred_filter} }}
                     ?entity ?pred ?label .
@@ -281,15 +289,19 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
             iri = sol["entity"].value
             if iri in labels_by_iri:
                 val = sol["label"].value
-                if val not in labels_by_iri[iri]:
-                    labels_by_iri[iri].append(val)
+                lang_tag = sol["lang"].value if sol.get("lang") and sol["lang"] else ""
+                entry = {"value": val, "lang": lang_tag}
+                # Dedup by value
+                if not any(e["value"] == val for e in labels_by_iri[iri]):
+                    labels_by_iri[iri].append(entry)
+                lang_counts[lang_tag] = lang_counts.get(lang_tag, 0) + 1
 
     # Collect synonyms per entity
-    synonyms_by_iri: dict[str, list[str]] = {iri: [] for iri in entities}
+    synonyms_by_iri: dict[str, list[dict]] = {iri: [] for iri in entities}
     if synonym_props:
         syn_pred_filter = " ".join(f"<{p}>" for p in synonym_props)
         syn_q = f"""
-            SELECT ?entity ?syn WHERE {{
+            SELECT ?entity ?syn (lang(?syn) AS ?lang) WHERE {{
                 GRAPH <{named_graph}> {{
                     VALUES ?pred {{ {syn_pred_filter} }}
                     ?entity ?pred ?syn .
@@ -301,14 +313,16 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
             iri = sol["entity"].value
             if iri in synonyms_by_iri:
                 val = sol["syn"].value
-                if val not in synonyms_by_iri[iri]:
-                    synonyms_by_iri[iri].append(val)
+                lang_tag = sol["lang"].value if sol.get("lang") and sol["lang"] else ""
+                entry = {"value": val, "lang": lang_tag}
+                if not any(e["value"] == val for e in synonyms_by_iri[iri]):
+                    synonyms_by_iri[iri].append(entry)
 
     # Collect definitions per entity (first-match across definition_props)
-    defs_by_iri: dict[str, str] = {}
+    defs_by_iri: dict[str, list[dict]] = {}
     for def_prop in definition_props:
         def_q = f"""
-            SELECT ?entity ?def WHERE {{
+            SELECT ?entity ?def (lang(?def) AS ?lang) WHERE {{
                 GRAPH <{named_graph}> {{
                     ?entity <{def_prop}> ?def .
                     FILTER(isIRI(?entity) && isLiteral(?def))
@@ -318,7 +332,9 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         for sol in sparql_query(def_q):
             iri = sol["entity"].value
             if iri in entities and iri not in defs_by_iri:
-                defs_by_iri[iri] = sol["def"].value
+                val = sol["def"].value
+                lang_tag = sol["lang"].value if sol.get("lang") and sol["lang"] else ""
+                defs_by_iri[iri] = [{"value": val, "lang": lang_tag}]
 
     # Invalidate root terms cache so API serves fresh data with the new source fields
     for key in r.scan_iter(f"terms_root:{version_id}:*"):
@@ -336,38 +352,53 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         if iri in deprecated_iris:
             continue
 
-        labels = labels_by_iri.get(iri, [])
-        syns = synonyms_by_iri.get(iri, [])
-        deduped_syns = [v for v in syns if v not in labels]
+        labels_list = labels_by_iri.get(iri, [])
+        syns_list = synonyms_by_iri.get(iri, [])
+        defs_list = defs_by_iri.get(iri, [])
+
+        # Dedup synonyms: remove entries whose value appears in labels
+        label_values = {e["value"] for e in labels_list}
+        deduped_syns = [e for e in syns_list if e["value"] not in label_values]
+
         short = _short_iri(iri)
-        primary_label = labels[0] if labels else short
-        hash_synonyms = labels[1:] + deduped_syns
-        definition = defs_by_iri.get(iri, "")
-        all_search_texts = labels + deduped_syns + (
-            [short] if short not in labels and short not in deduped_syns else []
+
+        # primary_label: first English label, or first label of any lang, or short IRI
+        primary_label = next(
+            (e["value"] for e in labels_list if e["lang"] == "en"),
+            labels_list[0]["value"] if labels_list else short,
         )
 
         pipe.hset(_iri_key(version_id, iri), mapping={
-            "label":      primary_label,
-            "type":       entity_type,
-            "iri":        iri,
-            "short":      short,
-            "source":     _get_source(iri),
-            "synonyms":   "|".join(hash_synonyms),
-            "definition": definition,
+            "label":         primary_label,   # backward compat
+            "primary_label": primary_label,
+            "type":          entity_type,
+            "iri":           iri,
+            "short":         short,
+            "source":        _get_source(iri),
+            "labels":        json.dumps(labels_list),
+            "synonyms":      json.dumps(deduped_syns),
+            "definitions":   json.dumps(defs_list),
         })
         pipe.expire(_iri_key(version_id, iri), _SEARCH_TTL)
         pipe.sadd(_type_key(version_id, entity_type), iri)
 
-        for label_text in all_search_texts:
-            norm = normalise_label(label_text)
+        # All search texts: all labels + all synonyms + short IRI if not already covered
+        all_search_texts = list(labels_list) + list(deduped_syns)
+        short_entry = {"value": short, "lang": ""}
+        if short not in label_values and not any(e["value"] == short for e in deduped_syns):
+            all_search_texts.append(short_entry)
+
+        for entry in all_search_texts:
+            val = entry["value"]
+            lang_tag = entry["lang"]
+            norm = normalise_label(val)
             if not norm:
                 continue
-            pipe.zadd(prefix_key, {f"{norm}|{entity_type}|{iri}": 0})
+            pipe.zadd(prefix_key, {f"{norm}|{lang_tag}|{entity_type}|{iri}": 0})
             words = norm.split()
             for i in range(1, len(words)):
                 suffix = " ".join(words[i:])
-                pipe.zadd(prefix_key, {f"{suffix}|{entity_type}|{iri}": 0})
+                pipe.zadd(prefix_key, {f"{suffix}|{lang_tag}|{entity_type}|{iri}": 0})
 
         if entity_type == "class":
             class_count += 1
@@ -380,18 +411,20 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         _OWL_THING_IRI = "http://www.w3.org/2002/07/owl#Thing"
         _owl_thing_key = _iri_key(version_id, _OWL_THING_IRI)
         pipe.hset(_owl_thing_key, mapping={
-            "label":      "Thing",
-            "type":       "class",
-            "iri":        _OWL_THING_IRI,
-            "short":      "owl:Thing",
-            "source":     "",
-            "synonyms":   "",
-            "definition": "",
+            "label":         "Thing",
+            "primary_label": "Thing",
+            "type":          "class",
+            "iri":           _OWL_THING_IRI,
+            "short":         "owl:Thing",
+            "source":        "",
+            "labels":        json.dumps([{"value": "Thing", "lang": "en"}]),
+            "synonyms":      json.dumps([]),
+            "definitions":   json.dumps([]),
         })
         pipe.expire(_owl_thing_key, _SEARCH_TTL)
         # Index under both "thing" (label) and "owl:thing" (short CURIE)
-        pipe.zadd(prefix_key, {f"thing|class|{_OWL_THING_IRI}": 0})
-        pipe.zadd(prefix_key, {f"owl:thing|class|{_OWL_THING_IRI}": 0})
+        pipe.zadd(prefix_key, {f"thing||class|{_OWL_THING_IRI}": 0})
+        pipe.zadd(prefix_key, {f"owl:thing||class|{_OWL_THING_IRI}": 0})
 
     pipe.expire(prefix_key, _SEARCH_TTL)
     pipe.expire(_type_key(version_id, "class"),               _SEARCH_TTL)
@@ -399,13 +432,25 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
     pipe.expire(_type_key(version_id, "data_property"),       _SEARCH_TTL)
     pipe.expire(_type_key(version_id, "annotation_property"), _SEARCH_TTL)
     pipe.expire(_type_key(version_id, "individual"),          _SEARCH_TTL)
-    pipe.setex(_meta_key(version_id), _SEARCH_TTL, json.dumps({
-        "indexed_at":      datetime.now(timezone.utc).isoformat(),
-        "class_count":     class_count,
-        "property_count":  property_count,
-        "individual_count": individual_count,
-    }))
+    pipe.hset(_meta_key(version_id), mapping={
+        "indexed_at":       datetime.now(timezone.utc).isoformat(),
+        "class_count":      str(class_count),
+        "property_count":   str(property_count),
+        "individual_count": str(individual_count),
+    })
+    pipe.expire(_meta_key(version_id), _SEARCH_TTL)
     pipe.execute()
+
+    # Write per-language label counts
+    langs_key = _langs_key(version_id)
+    r.delete(langs_key)
+    if lang_counts:
+        r.hset(langs_key, mapping={k: str(v) for k, v in lang_counts.items()})
+        r.expire(langs_key, _SEARCH_TTL)
+
+    # Mark index as schema v2
+    r.hset(_meta_key(version_id), "schema_version", "v2")
+    r.expire(_meta_key(version_id), _SEARCH_TTL)
 
     _build_tree_cache(version_id, ontology_id, entities, labels_by_iri, r)
     _populate_stats_cache(version_id, ontology_id, entities, r)
@@ -422,7 +467,7 @@ def _build_tree_cache(
     version_id: str,
     ontology_id: str,
     entities: dict[str, str],
-    labels_by_iri: dict[str, list[str]],
+    labels_by_iri: dict[str, list[dict]],
     r: redis.Redis,
 ) -> None:
     """Pre-compute root class/property lists and cache in Redis.
@@ -508,7 +553,11 @@ def _build_tree_cache(
 
     def _primary_label(iri: str) -> str | None:
         labels = labels_by_iri.get(iri, [])
-        return labels[0] if labels else None
+        if not labels:
+            return None
+        # prefer English, fall back to first
+        en = next((e["value"] for e in labels if e["lang"] == "en"), None)
+        return en or labels[0]["value"]
 
     _DEFAULT_LIMIT = 100
 
@@ -561,30 +610,32 @@ _TITLE_PREDS = [
 ]
 
 
+_OWL_ONTOLOGY_IRI = "http://www.w3.org/2002/07/owl#Ontology"
+_OWL_IMPORTS_IRI = "http://www.w3.org/2002/07/owl#imports"
+
+
 def _onto_meta_from_graph(named_graph: str) -> tuple[str, str]:
-    """Return (label, description) for the primary owl:Ontology IRI in the graph.
+    """Return (label, description) for the primary owl:Ontology node in the graph.
+
+    Handles both named-IRI and blank-node ontology declarations.  When imports are
+    loaded into the same named graph, only the non-imported node is considered so
+    we don't accidentally pick up a dependency's title.
 
     Returns ('', '') if the ontology declaration is absent or has no matching predicates.
     """
-    # Discover the ontology IRI
-    onto_rows = list(sparql_query(f"""
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
-        SELECT ?onto WHERE {{
-            GRAPH <{named_graph}> {{ ?onto a owl:Ontology . FILTER(isIRI(?onto)) }}
-        }} LIMIT 1
-    """))
-    if not onto_rows:
-        return "", ""
-    onto_iri = onto_rows[0]["onto"].value
-
-    # Fetch all title + description literals for the ontology IRI
     all_preds = _TITLE_PREDS + _DESC_PREDS
     pred_filter = " ".join(f"<{p}>" for p in all_preds)
+    # Single query: find any owl:Ontology subject (named or blank) that is not an
+    # owl:imports target, then fetch its title/description literals in one pass.
     rows = list(sparql_query(f"""
         SELECT ?pred ?val WHERE {{
             GRAPH <{named_graph}> {{
+                ?onto a <{_OWL_ONTOLOGY_IRI}> .
+                FILTER NOT EXISTS {{
+                    GRAPH <{named_graph}> {{ ?other <{_OWL_IMPORTS_IRI}> ?onto . }}
+                }}
                 VALUES ?pred {{ {pred_filter} }}
-                <{onto_iri}> ?pred ?val .
+                ?onto ?pred ?val .
                 FILTER(isLiteral(?val))
                 FILTER(lang(?val) = "" || langMatches(lang(?val), "en"))
             }}

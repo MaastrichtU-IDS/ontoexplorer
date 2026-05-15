@@ -577,9 +577,13 @@ async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = De
 
     index_meta: dict = {}
     try:
-        raw = r.get(_meta_key(version_id))
+        raw = r.hgetall(_meta_key(version_id))
         if raw:
-            index_meta = _json.loads(raw)
+            # Convert string values to int where possible (schema v2 stores as strings)
+            index_meta = {
+                k: (int(v) if v.isdigit() else v)
+                for k, v in raw.items()
+            }
     except Exception:
         pass
 
