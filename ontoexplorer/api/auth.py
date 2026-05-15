@@ -130,6 +130,34 @@ async def me(user: User = Depends(require_auth), db: AsyncSession = Depends(get_
         "created_at": user.created_at.isoformat(),
         "is_admin": is_admin(user),
         "connected_providers": [a.provider for a in accounts],
+        "preferred_lang": user.preferred_lang,
+        "lang_fallback_strategy": user.lang_fallback_strategy,
+    }
+
+
+@router.patch("/me", summary="Update user preferences")
+async def update_me(
+    request: Request,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    body = await request.json()
+    allowed = {"preferred_lang", "lang_fallback_strategy", "display_name"}
+    updates = {k: v for k, v in body.items() if k in allowed}
+
+    if "lang_fallback_strategy" in updates:
+        valid = {"silent", "show_all", "indicate_missing"}
+        if updates["lang_fallback_strategy"] not in valid:
+            raise HTTPException(status_code=422, detail=f"lang_fallback_strategy must be one of {valid}")
+
+    for k, v in updates.items():
+        setattr(user, k, v)
+    await db.commit()
+    await db.refresh(user)
+    return {
+        "id": user.id,
+        "preferred_lang": user.preferred_lang,
+        "lang_fallback_strategy": user.lang_fallback_strategy,
     }
 
 
