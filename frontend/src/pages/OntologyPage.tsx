@@ -445,6 +445,7 @@ function OntologyMeta({ iri, version, lang, onProfileReview, onMetaReview }: {
     enabled: !!version,
     staleTime: 120_000,
   })
+  const langs = useOntologyLanguages(version?.ontology_id, version?.id)
 
   if (!version) {
     return <div style={{ padding: '2rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</div>
@@ -470,6 +471,9 @@ function OntologyMeta({ iri, version, lang, onProfileReview, onMetaReview }: {
           <StatCard label="Annotation Properties" value={stats.annotation_property_count} />
           {stats.individual_count > 0 && (
             <StatCard label="Individuals" value={stats.individual_count} />
+          )}
+          {langs.length > 0 && (
+            <StatCard label="Languages" value={langs.length} />
           )}
         </div>
       ) : null}
