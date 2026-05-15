@@ -108,9 +108,12 @@ async def patch_meta_profile(
     r = await db.execute(
         select(Ontology.iri).join(
             OntologyVersion, OntologyVersion.ontology_id == Ontology.id
-        ).where(OntologyVersion.id == version_id)
+        ).where(OntologyVersion.id == version_id, Ontology.id == ontology_id)
     )
-    onto_iri = r.scalar_one()
+    onto_iri = r.scalar_one_or_none()
+    if not onto_iri:
+        raise HTTPException(status_code=404, detail="Version not found for this ontology")
+
 
     from ontoexplorer.clients.oxigraph import graph_iri
     from ontoexplorer.modules.meta_profile.detector import _fetch_onto_triples, _resolve_values
@@ -147,7 +150,7 @@ async def get_meta_candidates(
     _user: User = Depends(require_auth),
 ):
     profile = await _get_meta_profile_or_404(version_id, db)
-    return {"version_id": version_id, **profile.candidates_data}
+    return {"version_id": version_id, **(profile.candidates_data or {})}
 
 
 @router.get("/meta")
