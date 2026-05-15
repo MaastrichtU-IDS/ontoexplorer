@@ -94,6 +94,7 @@ export interface Ontology {
   id: string
   iri: string
   shortname: string | null
+  title: string | null
   groups?: string[]
   created_at: string
   latest_version?: OntologyVersion | null
@@ -581,18 +582,19 @@ export const api = {
       )
     },
     get: (id: string) => request<Ontology>(`/ontologies/${id}`),
-    patch: (id: string, body: { shortname?: string | null; preferred_lang?: string | null }) =>
+    patch: (id: string, body: { shortname?: string | null; title?: string | null; preferred_lang?: string | null }) =>
       request<Ontology>(`/ontologies/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(body),
       }),
     versions: (id: string) =>
       request<{ versions: OntologyVersion[] }>(`/ontologies/${id}/versions`),
-    terms: (oid: string, vid: string, parent?: string | null, entityType: 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' | 'individual' = 'class', hideInverse = false, hideObsolete = true, limit = 200, offset = 0) => {
+    terms: (oid: string, vid: string, parent?: string | null, entityType: 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' | 'individual' = 'class', hideInverse = false, hideObsolete = true, limit = 200, offset = 0, lang?: string | null) => {
       const params = new URLSearchParams({ limit: String(limit), offset: String(offset), entity_type: entityType })
       params.set('parent', parent ?? 'root')
       if (hideInverse) params.set('hide_inverse', 'true')
       if (!hideObsolete) params.set('hide_obsolete', 'false')
+      if (lang) params.set('lang', lang)
       return request<{ terms: Term[]; offset: number; limit: number; parent: string | null }>(
         `/ontologies/${oid}/${vid}/terms?${params}`
       )

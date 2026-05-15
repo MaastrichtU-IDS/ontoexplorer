@@ -18,16 +18,17 @@ import { useOntologyLanguages } from '../hooks/useOntologyLanguages'
 
 const IND_PAGE_SIZE = 50
 
-function IndividualList({ ontologyId, versionId, selectedIri, onSelect }: {
+function IndividualList({ ontologyId, versionId, selectedIri, onSelect, lang }: {
   ontologyId: string
   versionId: string
   selectedIri: string | null
   onSelect: (iri: string) => void
+  lang?: string | null
 }) {
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading } = useInfiniteQuery({
-    queryKey: ['individuals', ontologyId, versionId],
+    queryKey: ['individuals', ontologyId, versionId, lang ?? ''],
     queryFn: ({ pageParam = 0 }) =>
-      api.ontologies.terms(ontologyId, versionId, null, 'individual', false, true, IND_PAGE_SIZE, pageParam as number),
+      api.ontologies.terms(ontologyId, versionId, null, 'individual', false, true, IND_PAGE_SIZE, pageParam as number, lang),
     getNextPageParam: (last, pages) => {
       const loaded = pages.reduce((n, p) => n + p.terms.length, 0)
       return last.terms.length === IND_PAGE_SIZE ? loaded : undefined
@@ -1010,6 +1011,7 @@ export default function OntologyPage() {
               entityType="class" mode={classMode} revealIri={selectedTermIri}
               hideObsolete={hideObsolete}
               expandSignal={classExpand} collapseSignal={classCollapse}
+              lang={effectiveLang}
             />
           </div>
           <CollapsibleSection label="Object Properties" defaultOpen={true}>
@@ -1038,6 +1040,7 @@ export default function OntologyPage() {
               entityType="object_property" revealIri={selectedTermIri}
               hideInverse={hideInverseProps} hideObsolete={hideObsolete}
               expandSignal={objExpand} collapseSignal={objCollapse}
+              lang={effectiveLang}
             />
           </CollapsibleSection>
           <CollapsibleSection label="Data Properties" defaultOpen={true}>
@@ -1053,6 +1056,7 @@ export default function OntologyPage() {
               entityType="data_property" revealIri={selectedTermIri}
               hideObsolete={hideObsolete}
               expandSignal={dataExpand} collapseSignal={dataCollapse}
+              lang={effectiveLang}
             />
           </CollapsibleSection>
           <CollapsibleSection label="Annotation Properties" defaultOpen={false}>
@@ -1061,6 +1065,7 @@ export default function OntologyPage() {
               selectedIri={selectedTermIri} onSelect={selectTerm}
               entityType="annotation_property" revealIri={selectedTermIri}
               hideObsolete={hideObsolete}
+              lang={effectiveLang}
             />
           </CollapsibleSection>
           {individualCount > 0 && (
@@ -1068,6 +1073,7 @@ export default function OntologyPage() {
               <IndividualList
                 ontologyId={oid} versionId={activeVid}
                 selectedIri={selectedTermIri} onSelect={selectTerm}
+                lang={effectiveLang}
               />
             </CollapsibleSection>
           )}
