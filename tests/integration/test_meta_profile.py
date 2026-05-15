@@ -72,3 +72,84 @@ def test_default_meta_profile_returns_copies():
     p = default_meta_profile()
     p["title_props"].clear()
     assert len(TITLE_PROPS) > 0
+
+
+from unittest.mock import MagicMock, patch
+from ontoexplorer.modules.meta_profile.detector import (
+    _build_role_props,
+    _fetch_onto_triples,
+    _resolve_values,
+)
+
+
+def test_fetch_onto_triples_returns_dict():
+    mock_rows = [
+        {
+            "pred": MagicMock(value="http://purl.org/dc/terms/title"),
+            "obj": MagicMock(value="My Ontology", language="en", spec=["value", "language"]),
+        }
+    ]
+    with patch("ontoexplorer.modules.meta_profile.detector.sparql_query", return_value=mock_rows):
+        result = _fetch_onto_triples("urn:graph:test", "http://example.org/onto")
+    assert "http://purl.org/dc/terms/title" in result
+    assert result["http://purl.org/dc/terms/title"][0]["value"] == "My Ontology"
+    assert result["http://purl.org/dc/terms/title"][0]["language"] == "en"
+
+
+def test_fetch_onto_triples_empty_graph():
+    with patch("ontoexplorer.modules.meta_profile.detector.sparql_query", return_value=[]):
+        result = _fetch_onto_triples("urn:graph:empty", "http://example.org/onto")
+    assert result == {}
+
+
+def test_resolve_values_single_role():
+    triples = {
+        "http://purl.org/dc/terms/title": [
+            {"value": "My Ontology", "is_iri": False, "language": "en"}
+        ]
+    }
+    role_props = {"title": ["http://purl.org/dc/terms/title"]}
+    result = _resolve_values(triples, role_props)
+    assert result["title"] == "My Ontology"
+
+
+def test_resolve_values_multi_role_collects_all():
+    triples = {
+        "http://purl.org/dc/terms/creator": [
+            {"value": "https://orcid.org/0000-0001", "is_iri": True, "language": None},
+            {"value": "https://orcid.org/0000-0002", "is_iri": True, "language": None},
+        ]
+    }
+    role_props = {"creator": ["http://purl.org/dc/terms/creator"]}
+    result = _resolve_values(triples, role_props)
+    assert result["creators"] == ["https://orcid.org/0000-0001", "https://orcid.org/0000-0002"]
+
+
+def test_resolve_values_prefers_english():
+    triples = {
+        "http://purl.org/dc/terms/title": [
+            {"value": "Mon Ontologie", "is_iri": False, "language": "fr"},
+            {"value": "My Ontology", "is_iri": False, "language": "en"},
+        ]
+    }
+    role_props = {"title": ["http://purl.org/dc/terms/title"]}
+    result = _resolve_values(triples, role_props)
+    assert result["title"] == "My Ontology"
+
+
+def test_resolve_values_missing_role_returns_none():
+    triples = {}
+    role_props = {"title": ["http://purl.org/dc/terms/title"]}
+    result = _resolve_values(triples, role_props)
+    assert result["title"] is None
+
+
+def test_build_role_props_only_detected():
+    triples = {
+        "http://purl.org/dc/terms/title": [{"value": "X", "is_iri": False, "language": None}],
+    }
+    result = _build_role_props(
+        ["http://purl.org/dc/terms/title", "http://www.w3.org/2000/01/rdf-schema#label"],
+        triples,
+    )
+    assert result == ["http://purl.org/dc/terms/title"]
