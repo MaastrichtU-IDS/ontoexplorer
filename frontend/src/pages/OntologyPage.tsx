@@ -13,6 +13,8 @@ import ProfileEditor from '../components/ProfileEditor'
 import MetaProfileEditor from '../components/MetaProfileEditor'
 import SearchBar from '../components/SearchBar'
 import { useOntologyMeta } from '../hooks/useOntologyMeta'
+import { useLang } from '../hooks/useLang'
+import { useOntologyLanguages } from '../hooks/useOntologyLanguages'
 
 const IND_PAGE_SIZE = 50
 
@@ -579,8 +581,8 @@ function useDebounce<T>(value: T, ms: number): T {
 }
 
 function OntologySearchBar({
-  ontologyId, versionId, onSelect,
-}: { ontologyId: string; versionId: string; onSelect: (iri: string) => void }) {
+  ontologyId, versionId, onSelect, lang,
+}: { ontologyId: string; versionId: string; onSelect: (iri: string) => void; lang?: string | null }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [activeIdx, setActiveIdx] = useState(-1)
@@ -588,8 +590,8 @@ function OntologySearchBar({
   const containerRef = useRef<HTMLDivElement>(null)
 
   const { data } = useQuery({
-    queryKey: ['onto-search', ontologyId, versionId, dq],
-    queryFn: () => api.ontologies.search(ontologyId, versionId, dq),
+    queryKey: ['onto-search', ontologyId, versionId, dq, lang],
+    queryFn: () => api.ontologies.search(ontologyId, versionId, dq, 'auto', lang ?? undefined),
     enabled: dq.length >= 2,
     staleTime: 30_000,
   })
@@ -678,17 +680,18 @@ function OntologySearchBar({
 }
 
 function MOSQueryPane({
-  ontologyId, versionId, onSelect,
+  ontologyId, versionId, onSelect, lang,
 }: {
   ontologyId: string
   versionId: string
   onSelect: (iri: string) => void
+  lang?: string | null
 }) {
   const [mosQuery, setMosQuery] = useState('')
 
   const { data, error, isFetching } = useQuery({
-    queryKey: ['onto-mos', ontologyId, versionId, mosQuery],
-    queryFn: () => api.ontologies.search(ontologyId, versionId, mosQuery, 'expression'),
+    queryKey: ['onto-mos', ontologyId, versionId, mosQuery, lang],
+    queryFn: () => api.ontologies.search(ontologyId, versionId, mosQuery, 'expression', lang ?? undefined),
     enabled: mosQuery.length >= 2,
     staleTime: 10_000,
     retry: false,
@@ -822,8 +825,13 @@ export default function OntologyPage() {
   const [dataExpand,    setDataExpand]    = useState(0)
   const [dataCollapse,  setDataCollapse]  = useState(0)
 
+  const { effectiveLang, setOntologyLang } = useLang({
+    ontologyPreferredLang: ontology?.preferred_lang ?? null,
+  })
+  const availableLangs = useOntologyLanguages(oid, activeVid)
+
   // Auto-reveal inverses when navigating to a term that is itself an inverse target
-  const { data: selectedTermData } = useTerm(oid ?? null, activeVid ?? null, selectedTermIri)
+  const { data: selectedTermData } = useTerm(oid ?? null, activeVid ?? null, selectedTermIri, effectiveLang)
   useEffect(() => {
     if (selectedTermData?.isInverseTarget && hideInverseProps) {
       setHideInverseProps(false)
@@ -874,6 +882,27 @@ export default function OntologyPage() {
         >
           {slug}
         </button>
+        {availableLangs.length > 1 && (
+          <select
+            value={ontology?.preferred_lang ?? ''}
+            onChange={e => {
+              if (oid) setOntologyLang(oid, e.target.value || null)
+            }}
+            style={{
+              fontSize: 11, background: 'var(--bg-secondary)',
+              border: '1px solid var(--border)', borderRadius: 4,
+              color: 'var(--text)', padding: '2px 4px', maxWidth: 80,
+            }}
+            title="Per-ontology language"
+          >
+            <option value=''>All</option>
+            {availableLangs.map(l => (
+              <option key={l.lang} value={l.lang}>
+                {l.lang || 'untagged'}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Left pane tabs: Browse | Query */}
@@ -899,7 +928,7 @@ export default function OntologyPage() {
 
       {/* Search bar */}
       {oid && activeVid && (
-        <OntologySearchBar ontologyId={oid} versionId={activeVid} onSelect={selectTerm} />
+        <OntologySearchBar ontologyId={oid} versionId={activeVid} onSelect={selectTerm} lang={effectiveLang} />
       )}
 
       {/* Version selector */}
@@ -1039,6 +1068,7 @@ export default function OntologyPage() {
               ontologyId={oid}
               versionId={activeVid}
               onSelect={iri => { selectTerm(iri); setLeftTab('browse') }}
+              lang={effectiveLang}
             />
           : null
       )}

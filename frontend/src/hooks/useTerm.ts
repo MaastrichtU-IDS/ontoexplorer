@@ -1,11 +1,16 @@
 import { useQuery } from '@tanstack/react-query'
 import { api, parseTerm, ParsedTerm } from '../lib/api'
 
-export function useTerm(ontologyId: string | null, versionId: string | null, termIri: string | null) {
+export function useTerm(
+  ontologyId: string | null,
+  versionId: string | null,
+  termIri: string | null,
+  lang?: string | null,
+) {
   return useQuery<ParsedTerm>({
-    queryKey: ['term', ontologyId, versionId, termIri],
+    queryKey: ['term', ontologyId, versionId, termIri, lang],
     queryFn: async () => {
-      const raw = await api.ontologies.termDetail(ontologyId!, versionId!, termIri!)
+      const raw = await api.ontologies.termDetail(ontologyId!, versionId!, termIri!, lang ?? undefined)
       return parseTerm(raw)
     },
     enabled: !!ontologyId && !!versionId && !!termIri,

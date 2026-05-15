@@ -103,6 +103,7 @@ export interface Ontology {
   individual_count?: number | null
   label?: string | null
   description?: string | null
+  preferred_lang?: string | null
 }
 
 export interface OntologyVersion {
