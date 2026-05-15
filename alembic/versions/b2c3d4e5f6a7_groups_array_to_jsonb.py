@@ -15,13 +15,19 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.execute("ALTER TABLE ontologies ALTER COLUMN groups DROP DEFAULT")
     op.execute(
         "ALTER TABLE ontologies ALTER COLUMN groups TYPE jsonb USING to_jsonb(groups)"
     )
+    op.execute("ALTER TABLE ontologies ALTER COLUMN groups SET DEFAULT '[]'::jsonb")
 
 
 def downgrade() -> None:
+    op.execute("ALTER TABLE ontologies ALTER COLUMN groups DROP DEFAULT")
     op.execute(
         "ALTER TABLE ontologies ALTER COLUMN groups TYPE varchar[] "
-        "USING array(SELECT jsonb_array_elements_text(groups))"
+        "USING ARRAY(SELECT jsonb_array_elements_text(groups))"
+    )
+    op.execute(
+        "ALTER TABLE ontologies ALTER COLUMN groups SET DEFAULT '{}'::character varying[]"
     )
