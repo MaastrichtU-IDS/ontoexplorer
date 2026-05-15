@@ -1549,9 +1549,18 @@ async def get_term(
         "http://www.geneontology.org/formats/oboInOwl#hasNarrowSynonym",
     }
 
-    term_labels      = [v for p in _LABEL_PREDS      for v in properties_typed.get(p, [])]
-    term_definitions = [v for p in _DEFINITION_PREDS  for v in properties_typed.get(p, [])]
-    term_synonyms    = [v for p in _SYNONYM_PREDS     for v in properties_typed.get(p, [])]
+    def _dedup_by_value(entries: list[dict]) -> list[dict]:
+        seen: set[str] = set()
+        out = []
+        for e in entries:
+            if e["value"] not in seen:
+                seen.add(e["value"])
+                out.append(e)
+        return out
+
+    term_labels      = _dedup_by_value([v for p in _LABEL_PREDS      for v in properties_typed.get(p, [])])
+    term_definitions = _dedup_by_value([v for p in _DEFINITION_PREDS  for v in properties_typed.get(p, [])])
+    term_synonyms    = _dedup_by_value([v for p in _SYNONYM_PREDS     for v in properties_typed.get(p, [])])
 
     # Primary label: prefer effective_lang if set
     def _typed_primary_label(entries):

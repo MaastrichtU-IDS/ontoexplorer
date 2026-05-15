@@ -43,14 +43,18 @@ interface Props {
 }
 
 function filterLangLabels(entries: { value: string; lang: string | null }[], lang: string | null) {
-  if (!lang || entries.length === 0) return entries
+  const dedup = (arr: typeof entries) => {
+    const seen = new Set<string>()
+    return arr.filter(e => { const k = e.value; return seen.has(k) ? false : (seen.add(k), true) })
+  }
+  if (!lang) return dedup(entries)
   const preferred = entries.filter(e => e.lang === lang)
-  if (preferred.length > 0) return preferred
+  if (preferred.length > 0) return dedup(preferred)
   const untagged = entries.filter(e => !e.lang)
-  if (untagged.length > 0) return untagged
+  if (untagged.length > 0) return dedup(untagged)
   const english = entries.filter(e => e.lang === 'en')
-  if (english.length > 0) return english
-  return entries
+  if (english.length > 0) return dedup(english)
+  return dedup(entries)
 }
 
 function LangBadge({ lang }: { lang: string | null | undefined }) {
