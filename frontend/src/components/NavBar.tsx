@@ -20,6 +20,27 @@ function LangPicker() {
   const { sessionLang, setSessionLang } = useLang()
   const repoLangs = useRepositoryLanguages()
   const [open, setOpen] = useState(false)
+  const [filter, setFilter] = useState('')
+
+  const sorted = [...repoLangs].sort((a, b) => {
+    const na = LANG_NAMES[a.lang] ?? (a.lang || 'untagged')
+    const nb = LANG_NAMES[b.lang] ?? (b.lang || 'untagged')
+    return na.localeCompare(nb)
+  })
+
+  const q = filter.trim().toLowerCase()
+  const visible = q
+    ? sorted.filter(({ lang }) => {
+        const name = (LANG_NAMES[lang] ?? lang).toLowerCase()
+        return name.includes(q) || lang.toLowerCase().includes(q)
+      })
+    : sorted
+
+  function pick(lang: string | null) {
+    setSessionLang(lang)
+    setOpen(false)
+    setFilter('')
+  }
 
   return (
     <div style={{ position: 'relative' }}>
@@ -37,36 +58,57 @@ function LangPicker() {
         <div style={{
           position: 'absolute', right: 0, top: '110%', zIndex: 100,
           background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-          borderRadius: 'var(--radius)', minWidth: 160, boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-          maxHeight: 320, overflowY: 'auto',
+          borderRadius: 'var(--radius)', minWidth: 190, boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          display: 'flex', flexDirection: 'column',
         }}>
-          <button
-            onClick={() => { setSessionLang(null); setOpen(false) }}
-            style={{
-              display: 'block', width: '100%', textAlign: 'left',
-              padding: '6px 12px', background: 'none', border: 'none',
-              color: sessionLang === null ? 'var(--accent)' : 'var(--text)',
-              fontSize: 12, cursor: 'pointer',
-            }}
-          >
-            All languages
-          </button>
-          {repoLangs.map(({ lang }) => (
-            <button
-              key={lang}
-              onClick={() => { setSessionLang(lang || null); setOpen(false) }}
+          <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+            <input
+              autoFocus
+              value={filter}
+              onChange={e => setFilter(e.target.value)}
+              placeholder="Search…"
               style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                width: '100%', textAlign: 'left',
-                padding: '6px 12px', background: 'none', border: 'none',
-                color: sessionLang === (lang ? lang : null) ? 'var(--accent)' : 'var(--text)',
-                fontSize: 12, cursor: 'pointer', gap: 8,
+                width: '100%', boxSizing: 'border-box',
+                padding: '4px 7px', fontSize: 12,
+                background: 'var(--bg)', border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-sm)', color: 'var(--text)', outline: 'none',
               }}
-            >
-              <span>{LANG_NAMES[lang] ?? (lang || 'untagged')}</span>
-              <span style={{ fontSize: 10, color: 'var(--text-dim)', flexShrink: 0 }}>{lang || '—'}</span>
-            </button>
-          ))}
+            />
+          </div>
+          <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+            {!q && (
+              <button
+                onClick={() => pick(null)}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left',
+                  padding: '6px 12px', background: 'none', border: 'none',
+                  color: sessionLang === null ? 'var(--accent)' : 'var(--text)',
+                  fontSize: 12, cursor: 'pointer',
+                }}
+              >
+                All languages
+              </button>
+            )}
+            {visible.map(({ lang }) => (
+              <button
+                key={lang}
+                onClick={() => pick(lang || null)}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  width: '100%', textAlign: 'left',
+                  padding: '6px 12px', background: 'none', border: 'none',
+                  color: sessionLang === (lang ? lang : null) ? 'var(--accent)' : 'var(--text)',
+                  fontSize: 12, cursor: 'pointer', gap: 8,
+                }}
+              >
+                <span>{LANG_NAMES[lang] ?? (lang || 'untagged')}</span>
+                <span style={{ fontSize: 10, color: 'var(--text-dim)', flexShrink: 0 }}>{lang || '—'}</span>
+              </button>
+            ))}
+            {visible.length === 0 && (
+              <div style={{ padding: '6px 12px', fontSize: 12, color: 'var(--text-dim)' }}>No match</div>
+            )}
+          </div>
         </div>
       )}
     </div>
