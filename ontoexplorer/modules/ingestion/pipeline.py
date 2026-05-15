@@ -73,6 +73,11 @@ class IngestionRequest:
     filename: str | None = None
     content_type: str | None = None
     owner_id: str | None = None
+    groups: list[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        if self.groups is None:
+            self.groups = []
 
 
 @dataclass
@@ -220,8 +225,9 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     reason_ontology.delay(version_id)
 
     # ── Step 9: Queue profile detection (chains to indexing on completion) ────
-    from ontoexplorer.modules.jobs.tasks import detect_profile
+    from ontoexplorer.modules.jobs.tasks import detect_profile, detect_meta_profile
     detect_profile.delay(version_id, ontology_id=ontology_id)
+    detect_meta_profile.delay(version_id, ontology_id=ontology_id)
 
     elapsed = time.monotonic() - _t0
     metrics.ontologies_ingested_total.labels(format=fmt.value, duplicate="false").inc()
@@ -248,7 +254,7 @@ async def _ensure_ontology(db: AsyncSession, ontology_iri: str, request: Ingesti
     existing = result.scalar_one_or_none()
     if existing:
         return existing.id
-    ontology = Ontology(id=str(uuid.uuid4()), iri=ontology_iri, owner_id=request.owner_id)
+    ontology = Ontology(id=str(uuid.uuid4()), iri=ontology_iri, owner_id=request.owner_id, groups=request.groups)
     db.add(ontology)
     await db.flush()
     return ontology.id

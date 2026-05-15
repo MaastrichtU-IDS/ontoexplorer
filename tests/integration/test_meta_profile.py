@@ -153,3 +153,20 @@ def test_build_role_props_only_detected():
         triples,
     )
     assert result == ["http://purl.org/dc/terms/title"]
+
+
+def test_detect_meta_profile_task_runs_and_returns_done():
+    with patch("ontoexplorer.modules.jobs.tasks.asyncio") as mock_asyncio:
+        mock_asyncio.run.return_value = None
+        from ontoexplorer.modules.jobs.tasks import detect_meta_profile
+        result = detect_meta_profile("vid-1", ontology_id="oid-1")
+    assert result["status"] == "done"
+    assert result["version_id"] == "vid-1"
+
+
+def test_detect_meta_profile_task_handles_exception_gracefully():
+    with patch("ontoexplorer.modules.jobs.tasks.asyncio") as mock_asyncio:
+        mock_asyncio.run.side_effect = RuntimeError("oxigraph down")
+        from ontoexplorer.modules.jobs.tasks import detect_meta_profile
+        result = detect_meta_profile("vid-1", ontology_id="oid-1")
+    assert result["status"] == "done"

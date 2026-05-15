@@ -88,6 +88,24 @@ def detect_profile(version_id: str, ontology_id: str = "") -> dict:
     return {"status": "done", "version_id": version_id}
 
 
+@celery_app.task(name="ontoexplorer.detect_meta_profile")
+def detect_meta_profile(version_id: str, ontology_id: str = "") -> dict:
+    """Detect ontology-level metadata profile from Oxigraph and write to DB."""
+    try:
+        from ontoexplorer.database import make_celery_db_session
+        from ontoexplorer.modules.meta_profile.detector import run_meta_detection
+
+        async def _run():
+            async with make_celery_db_session()() as db:
+                await run_meta_detection(db, version_id, ontology_id)
+
+        asyncio.run(_run())
+        log.info("detect_meta_profile_done", version_id=version_id)
+    except Exception as exc:
+        log.error("detect_meta_profile_failed", version_id=version_id, error=str(exc))
+    return {"status": "done", "version_id": version_id}
+
+
 @celery_app.task(bind=True, name="ontoexplorer.ingest_ontology", max_retries=3)
 def ingest_ontology(
     self,
@@ -98,6 +116,7 @@ def ingest_ontology(
     filename: str | None = None,
     content_type: str | None = None,
     owner_id: str | None = None,
+    groups: list[str] | None = None,
 ) -> dict:
     """Celery task: run the full ingestion pipeline for one ontology submission."""
     from ontoexplorer.database import make_celery_db_session
@@ -106,7 +125,7 @@ def ingest_ontology(
     raw_bytes = bytes.fromhex(raw_bytes_hex) if raw_bytes_hex else None
     request = IngestionRequest(
         iri=iri, url=url, raw_bytes=raw_bytes,
-        filename=filename, content_type=content_type, owner_id=owner_id,
+        filename=filename, content_type=content_type, owner_id=owner_id, groups=groups or [],
     )
 
     async def _run():
