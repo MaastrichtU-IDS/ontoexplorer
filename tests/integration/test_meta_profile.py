@@ -1,8 +1,10 @@
 from ontoexplorer.models.db import OntologyMetaProfile
 from ontoexplorer.modules.meta_profile.registry import (
+    ALL_KNOWN_IRIS,
     ALL_META_ROLES,
     MULTI_VALUE_ROLES,
     ROLE_RESOLVED_KEY,
+    TITLE_PROPS,
     default_meta_profile,
 )
 
@@ -59,3 +61,14 @@ def test_default_meta_profile_has_all_roles():
     p = default_meta_profile()
     for role in ALL_META_ROLES:
         assert f"{role}_props" in p
+
+
+def test_all_known_iris_is_union_of_all_props():
+    expected = {iri for iris in ALL_META_ROLES.values() for iri in iris}
+    assert ALL_KNOWN_IRIS == expected
+
+
+def test_default_meta_profile_returns_copies():
+    p = default_meta_profile()
+    p["title_props"].clear()
+    assert len(TITLE_PROPS) > 0
