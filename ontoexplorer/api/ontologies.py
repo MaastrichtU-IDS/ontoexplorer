@@ -302,6 +302,9 @@ async def patch_ontology(
     if "preferred_lang" in body:
         ontology.preferred_lang = body["preferred_lang"] or None
 
+    if "title" in body:
+        ontology.title = body["title"] or None
+
     await db.commit()
     await db.refresh(ontology)
     return _ontology_dict(ontology)
@@ -430,7 +433,7 @@ async def list_ontologies(
             d["individual_count"] = s.get("individual_count")
             d["languages"] = langs_by_vid.get(v.id, [])
             meta = meta_by_oid.get(o.id, {})
-            d["label"] = meta.get("title") or s.get("label") or ""
+            d["label"] = o.title or meta.get("title") or s.get("label") or ""
             d["description"] = meta.get("description") or s.get("description") or ""
         else:
             d["latest_version"] = None
@@ -440,7 +443,7 @@ async def list_ontologies(
             d["individual_count"] = None
             d["languages"] = []
             meta = meta_by_oid.get(o.id, {})
-            d["label"] = meta.get("title") or ""
+            d["label"] = o.title or meta.get("title") or ""
             d["description"] = meta.get("description") or ""
         rows.append(d)
 
@@ -744,6 +747,7 @@ async def list_terms(
     hide_obsolete: bool = Query(True, description="Exclude owl:deprecated terms"),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
+    lang: str | None = Query(None, description="Preferred BCP-47 language tag for labels"),
     db: AsyncSession = Depends(get_db),
 ):
     import asyncio
@@ -764,6 +768,7 @@ async def list_terms(
             'FILTER NOT EXISTS { ?entity owl:deprecated ?_d . FILTER(str(?_d) = "true") }'
             if hide_obsolete else ""
         )
+        _lang_filter = f"lang(?label) = '' || lang(?label) = 'en'" + (f" || lang(?label) = '{lang}'" if lang and lang != "en" else "")
         if is_root:
             ind_q = f"""
                 PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -775,7 +780,7 @@ async def list_terms(
                         {_NOT_DEPRECATED_IND}
                         OPTIONAL {{
                             ?entity rdfs:label ?label .
-                            FILTER(lang(?label) = '' || lang(?label) = 'en')
+                            FILTER({_lang_filter})
                         }}
                     }}
                 }}
@@ -794,7 +799,7 @@ async def list_terms(
                         {_NOT_DEPRECATED_IND}
                         OPTIONAL {{
                             ?entity rdfs:label ?label .
-                            FILTER(lang(?label) = '' || lang(?label) = 'en')
+                            FILTER({_lang_filter})
                         }}
                     }}
                 }}
@@ -808,8 +813,8 @@ async def list_terms(
                 iri = row["entity"].value
                 lbl_node = row["label"]
                 label = lbl_node.value if (lbl_node is not None and hasattr(lbl_node, "value")) else None
-                lang = (lbl_node.language if hasattr(lbl_node, "language") else None) if lbl_node is not None else None
-                score = 2 if lang == "en" else 1
+                lang_tag = (lbl_node.language if hasattr(lbl_node, "language") else None) if lbl_node is not None else None
+                score = _label_score(lang_tag)
                 prev = seen.get(iri)
                 if prev is None or score > prev[1]:
                     seen[iri] = (label, score)
@@ -823,7 +828,7 @@ async def list_terms(
         try:
             from ontoexplorer.modules.search.indexer import _get_redis
             _r = _get_redis()
-            _cache_key = f"terms_root:{version_id}:{entity_type}:{limit}:{int(hide_obsolete)}"
+            _cache_key = f"terms_root:{version_id}:{entity_type}:{limit}:{int(hide_obsolete)}:{lang or ''}"
             _cached = _r.get(_cache_key)
             if _cached:
                 return _json.loads(_cached)
@@ -844,10 +849,11 @@ async def list_terms(
             return None
         return lbl.language  # None for untagged literals, str for lang-tagged
 
-    def _label_score(lang: str | None) -> int:
-        """Prefer English > untagged > any other language."""
-        if lang == "en": return 2
-        if lang is None or lang == "": return 1
+    def _label_score(lang_tag: str | None) -> int:
+        """Prefer preferred lang > English > untagged > anything else."""
+        if lang and lang_tag == lang: return 3
+        if lang_tag == "en": return 2
+        if lang_tag is None or lang_tag == "": return 1
         return 0
 
     def _deduped_terms(s, q) -> list[dict]:
@@ -1101,7 +1107,7 @@ async def list_terms(
         try:
             from ontoexplorer.modules.search.indexer import _get_redis
             _r = _get_redis()
-            _cache_key = f"terms_root:{version_id}:{entity_type}:{limit}:{int(hide_obsolete)}"
+            _cache_key = f"terms_root:{version_id}:{entity_type}:{limit}:{int(hide_obsolete)}:{lang or ''}"
             _r.setex(_cache_key, 300, _json.dumps(response))
         except Exception:
             pass
@@ -2054,7 +2060,7 @@ async def _get_version_or_404(db: AsyncSession, ontology_id: str, version_id: st
 
 
 def _ontology_dict(o: Ontology) -> dict:
-    return {"id": o.id, "iri": o.iri, "shortname": o.shortname, "groups": o.groups or [], "auto_sync": o.auto_sync, "created_at": o.created_at.isoformat()}
+    return {"id": o.id, "iri": o.iri, "shortname": o.shortname, "title": o.title, "groups": o.groups or [], "auto_sync": o.auto_sync, "created_at": o.created_at.isoformat()}
 
 
 def _version_dict(v: OntologyVersion) -> dict:
