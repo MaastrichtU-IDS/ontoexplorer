@@ -96,7 +96,7 @@ function ShortnameEditor({ ontology }: { ontology: Ontology }) {
   const qc = useQueryClient()
 
   const save = useMutation({
-    mutationFn: (name: string) => api.ontologies.patch(ontology.id, name || null),
+    mutationFn: (name: string) => api.ontologies.patch(ontology.id, { shortname: name || null }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['ontologies'] })
       setEditing(false)

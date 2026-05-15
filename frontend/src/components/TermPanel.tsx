@@ -548,13 +548,16 @@ function IndividualBody({ data, slug, versionId }: {
                     {predShort(pred)}
                   </td>
                   <td style={{ padding: '4px 0', color: 'var(--text-muted)', wordBreak: 'break-word' }}>
-                    {values.map((v, i) => (
-                      <div key={i}>
-                        {v.startsWith('http://') || v.startsWith('https://') ? (
-                          <IriLink iri={v} label={v.split(/[#/]/).pop() ?? v} slug={slug} vid={versionId} />
-                        ) : v}
-                      </div>
-                    ))}
+                    {values.map((entry, i) => {
+                      const v = entry.value
+                      return (
+                        <div key={i}>
+                          {v.startsWith('http://') || v.startsWith('https://') ? (
+                            <IriLink iri={v} label={v.split(/[#/]/).pop() ?? v} slug={slug} vid={versionId} />
+                          ) : v}
+                        </div>
+                      )
+                    })}
                   </td>
                 </tr>
               ))}

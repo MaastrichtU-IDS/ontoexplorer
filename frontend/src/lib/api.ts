@@ -69,6 +69,16 @@ async function authFetch<T>(path: string): Promise<T> {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+export interface LangLabel {
+  value: string
+  lang: string | null
+}
+
+export interface OntologyLanguage {
+  lang: string
+  label_count: number
+}
+
 export interface UserProfile {
   id: string
   email: string | null
@@ -76,6 +86,8 @@ export interface UserProfile {
   created_at: string
   is_admin: boolean
   connected_providers: string[]
+  preferred_lang?: string | null
+  lang_fallback_strategy?: string
 }
 
 export interface Ontology {
@@ -143,7 +155,11 @@ export interface RawTermDetail {
   iri: string
   label: string
   source?: string
-  properties: Record<string, string[]>
+  properties: Record<string, LangLabel[]>
+  labels?: LangLabel[]
+  definitions?: LangLabel[]
+  synonyms?: LangLabel[]
+  lang?: string | null
   type_of?: ClassRef[]
   is_inverse_target: boolean
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
@@ -167,7 +183,7 @@ export interface ParsedTerm {
   entityType: 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' | 'individual'
   isInverseTarget: boolean
   typeOf: ClassRef[]
-  rawProperties: Record<string, string[]>
+  rawProperties: Record<string, LangLabel[]>
   synonyms: { exact: string[]; related: string[]; broad: string[]; narrow: string[] }
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
   subclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
@@ -217,6 +233,8 @@ export interface SearchResult {
   match_type: 'entity' | 'elk' | 'sparql'
   version_id?: string
   ontology_id?: string
+  lang?: string | null
+  cross_language?: boolean
 }
 
 export interface JustificationAxiom {
@@ -237,6 +255,8 @@ export interface AutocompleteCompletion {
   iri: string | null
   short: string | null
   insert: string
+  lang?: string | null
+  cross_language?: boolean
 }
 
 export interface AutocompleteResponse {
@@ -480,9 +500,13 @@ export function slugFromIri(iri: string): string {
 
 export function parseTerm(raw: RawTermDetail): ParsedTerm {
   const p = raw.properties
-  const label = p[P.label]?.[0] ?? raw.iri.split(/[#/]/).pop() ?? raw.iri
-  const definition = p[P.definition]?.[0] ?? p[P.comment]?.[0] ?? null
-  const types = p[P.type] ?? []
+  // Extract string value from LangLabel for backward compat
+  const getValues = (pred: string): string[] => (p[pred] ?? []).map(e => e.value)
+  const getFirst = (pred: string): string | null => p[pred]?.[0]?.value ?? null
+
+  const label = getFirst(P.label) ?? raw.iri.split(/[#/]/).pop() ?? raw.iri
+  const definition = getFirst(P.definition) ?? getFirst(P.comment)
+  const types = getValues(P.type)
   let entityType: ParsedTerm['entityType'] = 'class'
   if (types.includes(P.owlObjProp)) {
     entityType = 'object_property'
@@ -504,10 +528,10 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
     typeOf: raw.type_of ?? [],
     rawProperties: raw.properties,
     synonyms: {
-      exact:   p[P.exactSyn]   ?? [],
-      related: p[P.relatedSyn] ?? [],
-      broad:   p[P.broadSyn]   ?? [],
-      narrow:  p[P.narrowSyn]  ?? [],
+      exact:   getValues(P.exactSyn),
+      related: getValues(P.relatedSyn),
+      broad:   getValues(P.broadSyn),
+      narrow:  getValues(P.narrowSyn),
     },
     superclasses:         raw.superclasses         ?? { asserted: [], inferred: [] },
     subclasses:           raw.subclasses            ?? { asserted: [], inferred: [] },
@@ -518,10 +542,10 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
     inferredDisjointWith:  raw.inferred_disjoint_with   ?? [],
     disjointUnionOf:       raw.disjoint_union_of       ?? [],
     generalClassAxioms:    raw.general_class_axioms    ?? [],
-    domain:               p[P.domain]               ?? [],
-    range:           p[P.range]       ?? [],
+    domain:               getValues(P.domain),
+    range:                getValues(P.range),
     characteristics,
-    inverseOf:       p[P.inverseOf]   ?? [],
+    inverseOf:            getValues(P.inverseOf),
     usage:           raw.usage        ?? [],
     classUsage:      raw.class_usage  ?? [],
   }
@@ -532,6 +556,11 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
 export const api = {
   auth: {
     me: () => authFetch<UserProfile>('/auth/me'),
+    patchMe: (body: { preferred_lang?: string | null; lang_fallback_strategy?: string; display_name?: string }) =>
+      request<UserProfile>('/auth/me', {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
   },
 
   ontologies: {
@@ -544,10 +573,10 @@ export const api = {
       )
     },
     get: (id: string) => request<Ontology>(`/ontologies/${id}`),
-    patch: (id: string, shortname: string | null) =>
+    patch: (id: string, body: { shortname?: string | null; preferred_lang?: string | null }) =>
       request<Ontology>(`/ontologies/${id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ shortname }),
+        body: JSON.stringify(body),
       }),
     versions: (id: string) =>
       request<{ versions: OntologyVersion[] }>(`/ontologies/${id}/versions`),
@@ -560,18 +589,20 @@ export const api = {
         `/ontologies/${oid}/${vid}/terms?${params}`
       )
     },
-    termDetail: (oid: string, vid: string, iri: string) =>
+    termDetail: (oid: string, vid: string, iri: string, lang?: string) =>
       request<RawTermDetail>(
-        `/ontologies/${oid}/${vid}/terms/${encodeURIComponent(iri)}`
+        `/ontologies/${oid}/${vid}/terms/${encodeURIComponent(iri)}${lang ? `?lang=${lang}` : ''}`
       ),
-    search: (oid: string, vid: string, q: string, mode = 'auto') =>
+    search: (oid: string, vid: string, q: string, mode = 'auto', lang?: string) =>
       request<{ mode: string; results: SearchResult[]; count: number; truncated: boolean }>(
-        `/ontologies/${oid}/${vid}/search?q=${encodeURIComponent(q)}&mode=${mode}`
+        `/ontologies/${oid}/${vid}/search?q=${encodeURIComponent(q)}&mode=${mode}${lang ? `&lang=${lang}` : ''}`
       ),
-    autocomplete: (oid: string, vid: string, q: string, cursor = -1) =>
+    autocomplete: (oid: string, vid: string, q: string, cursor = -1, lang?: string) =>
       request<AutocompleteResponse>(
-        `/ontologies/${oid}/${vid}/autocomplete?q=${encodeURIComponent(q)}&cursor=${cursor}`
+        `/ontologies/${oid}/${vid}/autocomplete?q=${encodeURIComponent(q)}&cursor=${cursor}${lang ? `&lang=${lang}` : ''}`
       ),
+    languages: (oid: string, vid: string) =>
+      request<OntologyLanguage[]>(`/ontologies/${oid}/${vid}/languages`),
     autocompleteLatest: (oid: string, q: string, cursor = -1) =>
       request<AutocompleteResponse>(
         `/ontologies/${oid}/autocomplete?q=${encodeURIComponent(q)}&cursor=${cursor}`
