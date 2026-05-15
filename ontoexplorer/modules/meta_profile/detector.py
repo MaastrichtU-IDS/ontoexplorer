@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
 
+import pyoxigraph
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,7 +66,6 @@ async def run_meta_detection(
         existing.resolved = resolved
         existing.candidates_data = candidates
         existing.status = "auto_detected"
-        existing.updated_at = datetime.now(UTC)
     else:
         db.add(OntologyMetaProfile(
             version_id=version_id,
@@ -101,7 +100,7 @@ def _fetch_onto_triples(named_graph: str, onto_iri: str) -> dict[str, list[dict]
         obj = row["obj"]
         entry = {
             "value": obj.value,
-            "is_iri": not hasattr(obj, "language"),
+            "is_iri": isinstance(obj, pyoxigraph.NamedNode),
             "language": getattr(obj, "language", None),
         }
         triples.setdefault(pred, []).append(entry)
