@@ -95,18 +95,20 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, focusedIri,
         >
           {canExpand ? (isLoading ? '…' : expanded ? '▾' : '▸') : ''}
         </span>
-        <span style={{ fontSize: 'var(--font-size-sm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-          {label}
-        </span>
-        {term.lang && (
-          <span style={{
-            fontSize: 9, padding: '1px 4px', borderRadius: 3, flexShrink: 0,
-            background: 'var(--bg)', border: '1px solid var(--border)',
-            color: 'var(--text-dim)', fontFamily: 'monospace',
-          }}>
-            {term.lang}
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, overflow: 'hidden', minWidth: 0 }}>
+          <span style={{ fontSize: 'var(--font-size-sm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {label}
           </span>
-        )}
+          {term.lang && (
+            <span style={{
+              fontSize: 9, padding: '1px 4px', borderRadius: 3, flexShrink: 0,
+              background: 'var(--bg)', border: '1px solid var(--border)',
+              color: 'var(--text-dim)', fontFamily: 'monospace',
+            }}>
+              {term.lang}
+            </span>
+          )}
+        </span>
         {term.source && <SourceBadge source={term.source} />}
       </div>
       {expanded && children.length > 0 && (
