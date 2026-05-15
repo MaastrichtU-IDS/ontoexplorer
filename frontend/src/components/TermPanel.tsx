@@ -42,6 +42,17 @@ interface Props {
   lang?: string | null
 }
 
+function filterLangLabels(entries: { value: string; lang: string | null }[], lang: string | null) {
+  if (!lang || entries.length === 0) return entries
+  const preferred = entries.filter(e => e.lang === lang)
+  if (preferred.length > 0) return preferred
+  const untagged = entries.filter(e => !e.lang)
+  if (untagged.length > 0) return untagged
+  const english = entries.filter(e => e.lang === 'en')
+  if (english.length > 0) return english
+  return entries
+}
+
 function LangBadge({ lang }: { lang: string | null | undefined }) {
   if (!lang) return null
   return (
@@ -527,25 +538,28 @@ function predShort(iri: string): string {
   return frag.includes('#') ? frag.split('#').pop()! : frag.split('/').pop()!
 }
 
-function IndividualBody({ data, slug, versionId }: {
+function IndividualBody({ data, slug, versionId, lang }: {
   data: ReturnType<typeof useTerm>['data'] & {}
   slug: string
   versionId: string
+  lang?: string | null
 }) {
   const annotations = Object.entries(data.rawProperties)
     .filter(([pred]) => !HANDLED_PREDICATES.has(pred))
     .sort(([a], [b]) => predShort(a).localeCompare(predShort(b)))
 
+  const filteredDefs = filterLangLabels(data.rawDefinitions, lang ?? null)
+
   return (
     <div style={{ flex: 1, padding: '10px 16px', overflow: 'auto' }}>
-      {data.rawDefinitions.length > 0 ? (
+      {filteredDefs.length > 0 ? (
         <div style={{ marginBottom: 14 }}>
-          {data.rawDefinitions.map((d, i) => (
-            <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: data.rawDefinitions.length > 1 ? 6 : 0 }}>
+          {filteredDefs.map((d, i) => (
+            <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: filteredDefs.length > 1 ? 6 : 0 }}>
               <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', lineHeight: 1.6, margin: 0, flex: 1 }}>
                 {d.value}
               </p>
-              {data.rawDefinitions.length > 1 && <LangBadge lang={d.lang} />}
+              {filteredDefs.length > 1 && <LangBadge lang={d.lang} />}
             </div>
           ))}
         </div>
@@ -567,13 +581,18 @@ function IndividualBody({ data, slug, versionId }: {
         <Section label="Annotations">
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-size-sm)' }}>
             <tbody>
-              {annotations.map(([pred, values]) => (
+              {annotations.map(([pred, values]) => {
+                const iris = values.filter(v => v.value.startsWith('http://') || v.value.startsWith('https://'))
+                const literals = values.filter(v => !v.value.startsWith('http://') && !v.value.startsWith('https://'))
+                const filteredLiterals = filterLangLabels(literals, lang ?? null)
+                const displayVals = [...iris, ...filteredLiterals]
+                return (
                 <tr key={pred} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', verticalAlign: 'top' }}>
                   <td style={{ padding: '4px 10px 4px 0', color: 'var(--text-dim)', whiteSpace: 'nowrap', width: 1, fontSize: 11 }}>
                     {predShort(pred)}
                   </td>
                   <td style={{ padding: '4px 0', color: 'var(--text-muted)', wordBreak: 'break-word' }}>
-                    {values.map((entry, i) => {
+                    {displayVals.map((entry, i) => {
                       const v = entry.value
                       return (
                         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
@@ -586,7 +605,8 @@ function IndividualBody({ data, slug, versionId }: {
                     })}
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </Section>
@@ -595,23 +615,25 @@ function IndividualBody({ data, slug, versionId }: {
   )
 }
 
-function PropertyBody({ data, slug, versionId }: {
+function PropertyBody({ data, slug, versionId, lang }: {
   data: ReturnType<typeof useTerm>['data'] & {}
   slug: string
   versionId: string
+  lang?: string | null
 }) {
   const shortLabel = (iri: string) => iri.split(/[#/]/).pop() ?? iri
+  const filteredDefs = filterLangLabels(data.rawDefinitions, lang ?? null)
 
   return (
     <div style={{ flex: 1, padding: '10px 16px', overflow: 'auto' }}>
-      {data.rawDefinitions.length > 0 ? (
+      {filteredDefs.length > 0 ? (
         <div style={{ marginBottom: 14 }}>
-          {data.rawDefinitions.map((d, i) => (
-            <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: data.rawDefinitions.length > 1 ? 6 : 0 }}>
+          {filteredDefs.map((d, i) => (
+            <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: filteredDefs.length > 1 ? 6 : 0 }}>
               <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', lineHeight: 1.6, margin: 0, flex: 1 }}>
                 {d.value}
               </p>
-              {data.rawDefinitions.length > 1 && <LangBadge lang={d.lang} />}
+              {filteredDefs.length > 1 && <LangBadge lang={d.lang} />}
             </div>
           ))}
         </div>
@@ -668,13 +690,15 @@ function PropertyBody({ data, slug, versionId }: {
         </Section>
       )}
 
-      {(data.rawSynonyms.length > 0 || data.synonyms.exact.length > 0 || data.synonyms.related.length > 0) && (
+      {(data.rawSynonyms.length > 0 || data.synonyms.exact.length > 0 || data.synonyms.related.length > 0) && (() => {
+        const filteredSyns = filterLangLabels(data.rawSynonyms, lang ?? null)
+        return (
         <Section label="Synonyms">
-          {data.rawSynonyms.length > 0 ? (
+          {filteredSyns.length > 0 ? (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {data.rawSynonyms.map((s, i) => (
+              {filteredSyns.map((s, i) => (
                 <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}>
-                  {s.value}{data.rawSynonyms.length > 1 && <LangBadge lang={s.lang} />}
+                  {s.value}{filteredSyns.length > 1 && <LangBadge lang={s.lang} />}
                 </span>
               ))}
             </div>
@@ -684,7 +708,8 @@ function PropertyBody({ data, slug, versionId }: {
             </div>
           )}
         </Section>
-      )}
+        )
+      })()}
 
       <Section label={`Used in axioms${data.usage.length > 0 ? ` (${data.usage.length})` : ''}`}>
         <UsageTable usage={data.usage} slug={slug} vid={versionId} />
@@ -728,21 +753,24 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
 
   let body: React.ReactNode
 
+  const classDefsFiltered = filterLangLabels(data.rawDefinitions, lang ?? null)
+  const classSynsFiltered = filterLangLabels(data.rawSynonyms, lang ?? null)
+
   if (isIndividual) {
-    body = <IndividualBody data={data} slug={slug} versionId={versionId} />
+    body = <IndividualBody data={data} slug={slug} versionId={versionId} lang={lang} />
   } else if (isProperty) {
-    body = <PropertyBody data={data} slug={slug} versionId={versionId} />
+    body = <PropertyBody data={data} slug={slug} versionId={versionId} lang={lang} />
   } else {
     body = (
       <div style={{ flex: 1, padding: pad, overflow: 'auto' }}>
-        {data.rawDefinitions.length > 0 ? (
+        {classDefsFiltered.length > 0 ? (
           <div style={{ marginBottom: 14 }}>
-            {data.rawDefinitions.map((d, i) => (
-              <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: data.rawDefinitions.length > 1 ? 6 : 0 }}>
+            {classDefsFiltered.map((d, i) => (
+              <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: classDefsFiltered.length > 1 ? 6 : 0 }}>
                 <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', lineHeight: 1.6, margin: 0, flex: 1 }}>
                   {d.value}
                 </p>
-                {data.rawDefinitions.length > 1 && <LangBadge lang={d.lang} />}
+                {classDefsFiltered.length > 1 && <LangBadge lang={d.lang} />}
               </div>
             ))}
           </div>
@@ -752,14 +780,14 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
           </p>
         ) : null}
 
-        {(data.rawSynonyms.length > 0 || data.synonyms.exact.length > 0 || data.synonyms.related.length > 0 ||
+        {(classSynsFiltered.length > 0 || data.synonyms.exact.length > 0 || data.synonyms.related.length > 0 ||
           data.synonyms.broad.length > 0 || data.synonyms.narrow.length > 0) && (
           <Section label="Synonyms">
-            {data.rawSynonyms.length > 0 ? (
+            {classSynsFiltered.length > 0 ? (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {data.rawSynonyms.map((s, i) => (
+                {classSynsFiltered.map((s, i) => (
                   <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}>
-                    {s.value}{data.rawSynonyms.length > 1 && <LangBadge lang={s.lang} />}
+                    {s.value}{classSynsFiltered.length > 1 && <LangBadge lang={s.lang} />}
                   </span>
                 ))}
               </div>
