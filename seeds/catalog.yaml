@@ -1,45 +1,60 @@
 # OntoExplorer ontology seed catalog
 #
+# Reflects the ontologies currently registered in this OntoExplorer instance.
+# Re-submit all with: uv run scripts/seed_ontologies.py --api-key oe_...
+#
 # Each entry requires exactly one of:
 #   iri: canonical ontology IRI  — fetched with RDF content negotiation
 #   url: direct file URL         — fetched without negotiation
 #
 # Optional fields:
+#   shortname: short identifier used in the UI and API
 #   label:     human-readable name (informational only)
 #   group:     category tag, used with --group filter in seed script
 #   note:      shown during seeding; useful for size/time warnings
-#   large:     true = skip unless --include-large is passed (protects against OOM on WSL/low-RAM hosts)
+#   large:     true = skip unless --include-large is passed (protects low-RAM hosts)
 #   auto_sync: whether to enable hourly polling after ingestion (default: false)
 
 ontologies:
 
-  # ── Upper ontologies ─────────────────────────────────────────────────────────
+  # ── Upper ontologies ──────────────────────────────────────────────────────────
 
   - group: upper
     iri: http://purl.obolibrary.org/obo/bfo.owl
     label: Basic Formal Ontology (BFO 2020)
 
   - group: upper
-    url: https://raw.githubusercontent.com/CommonCoreOntology/CommonCoreOntologies/develop/src/cco-merged/CommonCoreOntologiesMerged.ttl
-    label: Common Core Ontologies (CCO)
-    auto_sync: true
-
-  - group: upper
-    url: http://www.ontologydesignpatterns.org/ont/dul/DUL.owl
+    iri: http://www.ontologydesignpatterns.org/ont/dul/DUL.owl
     label: DOLCE+DnS Ultralite (DUL)
 
-  # ── FAIR / provenance vocabulary ─────────────────────────────────────────────
+  - group: upper
+    iri: https://w3id.org/sulo/
+    label: Simplified Upper Level Ontology (SULO)
+
+  # ── SULO family ───────────────────────────────────────────────────────────────
+
+  - group: sulo_family
+    iri: https://w3id.org/ontostart/pro/
+    label: Process Roles Ontology (PRO)
+    note: extends SULO with agent, patient, instrument, location and related role classes
+
+  - group: sulo_family
+    iri: https://w3id.org/ontostart/pizza/
+    label: Pizza Ontology (OntoStart demo)
+    note: tutorial ontology; extends SULO
+
+  # ── FAIR / provenance vocabulary ──────────────────────────────────────────────
 
   - group: fair
     iri: http://purl.org/dc/terms/
     label: Dublin Core Terms (dcterms)
 
   - group: fair
-    url: https://www.w3.org/ns/dcat2.ttl
+    iri: http://www.w3.org/ns/dcat
     label: DCAT 2
 
   - group: fair
-    url: https://www.w3.org/ns/prov.ttl
+    iri: http://www.w3.org/ns/prov#
     label: PROV-O
 
   - group: fair
@@ -48,19 +63,15 @@ ontologies:
 
   - group: fair
     url: https://schema.org/version/latest/schemaorg-current-https.ttl
+    shortname: sdo
     label: schema.org
     note: ~2500 classes + properties; ~1 min to ingest
 
   - group: fair
-    url: https://www.w3.org/2004/02/skos/core.rdf
+    iri: http://www.w3.org/2004/02/skos/core
     label: SKOS Core
 
-  - group: fair
-    iri: http://rdfs.org/ns/void
-    label: VoID — Vocabulary of Interlinked Datasets
-    note: rdfs.org was unreliable as of 2026-05; use iri mode for content negotiation
-
-  # ── OBO Foundry core ─────────────────────────────────────────────────────────
+  # ── OBO Foundry core ──────────────────────────────────────────────────────────
 
   - group: obo
     iri: http://purl.obolibrary.org/obo/ro.owl
@@ -72,6 +83,7 @@ ontologies:
 
   - group: obo
     iri: http://purl.obolibrary.org/obo/go.owl
+    shortname: go
     label: Gene Ontology (GO)
     note: ~45k classes; ELK reasoning takes ~7 min
     large: true
@@ -94,22 +106,11 @@ ontologies:
     note: ~80k classes; large ingestion
     large: true
 
-  - group: obo
-    iri: http://purl.obolibrary.org/obo/chebi.owl
-    label: Chemical Entities of Biological Interest (CHEBI)
-    note: ~170k classes; >512 MB OWL file — exceeds default size limit; raise _MAX_SIZE in source_resolver.py first
-    large: true
-
   # ── Biomedical / clinical ─────────────────────────────────────────────────────
 
   - group: biomedical
-    iri: http://purl.obolibrary.org/obo/ncit.owl
-    label: NCI Thesaurus (NCIt)
-    note: ~170k classes; >512 MB OWL file — exceeds default size limit; raise _MAX_SIZE in source_resolver.py first
-    large: true
-
-  - group: biomedical
     url: https://www.orphadata.com/data/ontologies/ordo/last_version/ORDO_en_4.8.owl
+    shortname: ordo
     label: Orphanet Rare Disease Ontology (ORDO 4.8)
 
   - group: biomedical
@@ -119,3 +120,12 @@ ontologies:
   - group: biomedical
     iri: http://purl.obolibrary.org/obo/obi.owl
     label: Ontology for Biomedical Investigations (OBI)
+
+  # ── Demo / tutorial ───────────────────────────────────────────────────────────
+
+  - shortname: family
+    iri: http://www.w3.org/2000/01/rdf-schema#comment
+    label: Family Relationships Ontology (Robert Stevens demo)
+    note: >
+      tutorial ontology illustrating role chains, nominals and property hierarchies;
+      the ontology declaration uses rdfs:comment as its IRI (quirk of the source file)
