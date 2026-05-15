@@ -81,8 +81,11 @@ async def run_meta_detection(
         r3 = await db.execute(select(Ontology).where(Ontology.id == ontology_id))
         ont = r3.scalar_one_or_none()
         if ont and not ont.shortname:
-            ont.shortname = resolved["shortname"]
-            await db.commit()
+            try:
+                ont.shortname = resolved["shortname"]
+                await db.commit()
+            except Exception:
+                await db.rollback()
 
 
 def _fetch_onto_triples(named_graph: str, onto_iri: str) -> dict[str, list[dict]]:

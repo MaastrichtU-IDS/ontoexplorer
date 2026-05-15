@@ -9,7 +9,6 @@ TITLE_PROPS: list[str] = [
 SHORTNAME_PROPS: list[str] = [
     "http://purl.org/dc/terms/alternative",
     "http://www.w3.org/2002/07/owl#acronym",
-    "http://purl.org/vocab/vann/preferredNamespacePrefix",
 ]
 
 DESCRIPTION_PROPS: list[str] = [
