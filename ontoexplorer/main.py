@@ -16,6 +16,7 @@ from ontoexplorer.api.stats import router as stats_router
 from ontoexplorer.api.inbound import router as inbound_router
 from ontoexplorer.api.webhooks import router as webhooks_router
 from ontoexplorer.api.profile import router as profile_router
+from ontoexplorer.api.meta_profile import router as meta_profile_router
 from ontoexplorer.config import get_settings
 from ontoexplorer.logging_config import configure_logging
 
@@ -53,6 +54,9 @@ def create_app() -> FastAPI:
     # global_search_router before ontologies_router: static /search segment must match
     # before ontologies_router's /{ontology_id}/{version_id} parameterized route
     app.include_router(global_search_router)
+    # meta_profile_router before profile_router and ontologies_router: static /meta
+    # segments must match before ontologies_router's parameterized sub-routes
+    app.include_router(meta_profile_router)
     # profile_router before ontologies_router: /profile and /profile/candidates static
     # segments must match before ontologies_router's parameterized sub-routes
     app.include_router(profile_router)

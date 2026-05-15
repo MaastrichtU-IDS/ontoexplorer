@@ -175,3 +175,47 @@ def test_detect_meta_profile_task_handles_exception_gracefully():
         mock_asyncio.run.side_effect = _close_and_raise
         result = detect_meta_profile("vid-1", ontology_id="oid-1")
     assert result["status"] == "done"
+
+
+import pytest
+
+
+@pytest.mark.anyio
+async def test_get_meta_profile_returns_404_when_missing(client, user_and_key):
+    _, key = user_and_key
+    resp = await client.get(
+        "/api/v1/ontologies/oid-1/vid-1/meta",
+        headers={"Authorization": f"Bearer {key}"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_get_meta_candidates_returns_404_when_missing(client, user_and_key):
+    _, key = user_and_key
+    resp = await client.get(
+        "/api/v1/ontologies/oid-1/vid-1/meta/candidates",
+        headers={"Authorization": f"Bearer {key}"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_patch_meta_validates_empty_title_props(client, user_and_key):
+    _, key = user_and_key
+    resp = await client.patch(
+        "/api/v1/ontologies/oid-1/vid-1/meta",
+        json={"title_props": []},
+        headers={"Authorization": f"Bearer {key}"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_post_detect_meta_returns_404_for_unknown_version(client, user_and_key):
+    _, key = user_and_key
+    resp = await client.post(
+        "/api/v1/ontologies/oid-1/nonexistent-vid/meta/detect",
+        headers={"Authorization": f"Bearer {key}"},
+    )
+    assert resp.status_code == 404
