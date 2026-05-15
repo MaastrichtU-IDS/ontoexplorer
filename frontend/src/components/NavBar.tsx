@@ -40,6 +40,7 @@ function LangPicker() {
     setSessionLang(lang)
     setOpen(false)
     setFilter('')
+    window.location.reload()
   }
 
   return (
