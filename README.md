@@ -88,7 +88,7 @@ Backend services:
 |---------------|----------------------------|------------------------------|
 | API           | http://localhost:8000      | FastAPI backend              |
 | API Docs      | http://localhost:8000/api/docs | Swagger UI               |
-| MinIO Console | http://localhost:9001      | Object storage (admin/admin) |
+| MinIO Console | http://localhost:9001      | Object storage (minioadmin/minioadmin) |
 | Fuseki        | http://localhost:7001      | SPARQL metadata endpoint     |
 | Prometheus    | http://localhost:9090      | Metrics                      |
 | Grafana       | http://localhost:3000      | Dashboards                   |
@@ -209,13 +209,13 @@ The Ontologies page lists every registered ontology with its description, statis
 
 **Group filter chips** across the top narrow the list to a specific collection:
 
-| Chip | Group |
-|------|-------|
-| Upper Ontology | Foundational upper-level ontologies (BFO, DUL, SULO, …) |
-| SULO Family | Ontologies built on the SULO upper ontology |
-| OBO Foundry | OBO Foundry member ontologies (GO, CL, RO, HP, …) |
+| Chip | Catalog group tag | Content |
+|------|-------------------|---------|
+| Upper Ontology | `upper` | Foundational upper-level ontologies (BFO, CCO, DUL) |
+| OBO Foundry | `obo` | OBO Foundry member ontologies (GO, CL, RO, HP, MP, DOID, UBERON, CHEBI) |
+| SULO Family | `sulo_family` | Ontologies built on the SULO upper ontology (reserved; no catalog entries yet) |
 
-An ontology can belong to more than one group (e.g. BFO is both *Upper Ontology* and *OBO Foundry*). Colored badges on each row show all group memberships at a glance.
+Ontologies tagged `fair` (dcterms, DCAT, PROV-O, PAV, schema.org, SKOS, VoID) and `biomedical` (NCIt, ORDO, Mondo, OBI) appear in the full list but do not yet have dedicated filter chips in the browser. Colored badges on each row show all group memberships at a glance.
 
 **Search** (the filter bar below the chips) matches against name, IRI, and description with ranked results — exact name/IRI matches appear first, followed by partial name/IRI matches, then label matches, then description matches. Chip filter and text search compose: select a chip first, then type to narrow within that group.
 
@@ -315,12 +315,29 @@ PATCH  /ontologies/{id}/{vid}/profile            Update profile (triggers re-ind
 POST   /ontologies/{id}/{vid}/profile/detect     Re-run auto-detection
 GET    /ontologies/{id}/{vid}/profile/candidates All annotation properties with usage counts
 
+# Ontology-level metadata profile (document-level, not annotation roles)
+GET    /ontologies/{id}/{vid}/meta               Resolved metadata profile (title, description, …)
+PATCH  /ontologies/{id}/{vid}/meta               Update metadata profile
+POST   /ontologies/{id}/{vid}/meta/detect        Re-run metadata auto-detection
+GET    /ontologies/{id}/{vid}/meta/candidates    All candidate metadata values
+GET    /meta                                     Bulk metadata for all versions
+
+# Stats
+GET    /stats/public                             Aggregate counts (ontologies, classes, properties, individuals) — no auth
+GET    /stats                                    Usage statistics for the authenticated user
+
+# Admin
+GET    /admin/overview                           System overview (requires admin role)
+POST   /admin/reindex                            Queue re-index for all ingested versions (requires admin role)
+
 # SPARQL
 GET/POST /sparql                                 SPARQL over Fuseki (FAIR metadata)
 GET/POST /sparql/content                         SPARQL over Oxigraph (asserted triples)
 
 # Search
-GET    /search                                   Cross-ontology entity search
+GET    /search                                   Cross-ontology entity or MOS expression search
+GET    /ontologies/{id}/search                   Search within an ontology (latest version)
+GET    /ontologies/{id}/autocomplete             Autocomplete within an ontology (latest version)
 
 # Jobs / webhooks / API keys
 GET    /jobs                                     List jobs
@@ -353,13 +370,15 @@ ontoexplorer/                    Python package
   api/                           FastAPI routers
     ontologies.py                Ontology, version, term, reasoning endpoints
     profile.py                   Annotation profile CRUD + detection endpoints
+    meta_profile.py              Ontology document metadata profile endpoints
     auth.py                      OAuth + JWT endpoints
     search.py                    Per-ontology search + autocomplete
-    global_search.py             Cross-ontology search
+    global_search.py             Cross-ontology search and ontology-level convenience endpoints
     jobs.py                      Job tracking
     webhooks.py                  Webhook management
     api_keys.py                  API key management
-    stats.py                     Usage statistics
+    stats.py                     Aggregate and per-user usage statistics
+    admin.py                     Admin overview and bulk re-index endpoints
     sparql.py                    SPARQL proxy endpoints
     inbound.py                   Inbound webhook receivers (GitHub push events)
   modules/
@@ -370,6 +389,7 @@ ontoexplorer/                    Python package
     auth/                        OAuth providers, JWT sessions, FastAPI deps
     jobs/                        Celery tasks (ingest, detect_profile, index, reason, justify, poll)
     profile/                     Annotation property registry + SPARQL-based detector
+    meta_profile/                Ontology document metadata registry + auto-detector
     search/                      Redis entity index (build_index, entity_lookup)
     webhooks/                    HMAC-signed outbound delivery
   clients/
