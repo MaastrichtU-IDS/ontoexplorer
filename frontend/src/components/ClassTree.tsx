@@ -13,16 +13,18 @@ interface NodeProps {
   term: Term
   depth: number
   selectedIri: string | null
+  focusedIri: string | null
   onSelect: (iri: string) => void
   entityType: EntityType
   mode: Mode
   expandSet: Set<string>
   hideInverse: boolean
+  hideObsolete: boolean
   expandSignal: number
   collapseSignal: number
 }
 
-function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, entityType, mode, expandSet, hideInverse, expandSignal, collapseSignal }: NodeProps) {
+function TreeNode({ ontologyId, versionId, term, depth, selectedIri, focusedIri, onSelect, entityType, mode, expandSet, hideInverse, hideObsolete, expandSignal, collapseSignal }: NodeProps) {
   const shouldExpand = expandSet.has(term.iri)
   const [expanded, setExpanded] = useState(shouldExpand)
 
@@ -41,6 +43,7 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, e
     mode === 'asserted' && expanded ? term.iri : null,
     entityType,
     hideInverse,
+    hideObsolete,
   )
   const inferred = useInferredTreeNodes(
     mode === 'inferred' && expanded ? ontologyId : null,
@@ -52,6 +55,7 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, e
   const children: Term[] = (childData as any)?.terms ?? []
 
   const isSelected = selectedIri === term.iri
+  const isFocused = focusedIri === term.iri
   const label = term.label ?? term.iri.split(/[#/]/).pop() ?? term.iri
   // has_children undefined means unknown (e.g. root before first load) — show toggle optimistically
   const canExpand = term.has_children !== false
@@ -65,6 +69,8 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, e
     <li>
       <div
         data-iri={term.iri}
+        data-expandable={canExpand ? 'true' : 'false'}
+        data-expanded={expanded ? 'true' : 'false'}
         onClick={() => onSelect(term.iri)}
         style={{
           display: 'flex', alignItems: 'center', gap: 4,
@@ -73,11 +79,14 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, e
           background: isSelected ? 'var(--bg-hover)' : 'transparent',
           borderRadius: 'var(--radius-sm)',
           color: isSelected ? 'var(--accent)' : 'var(--text)',
+          outline: isFocused && !isSelected ? '1px solid var(--accent)' : 'none',
+          outlineOffset: -1,
         }}
         onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}
         onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = '' }}
       >
         <span
+          data-toggle="true"
           onClick={canExpand ? handleToggle : undefined}
           style={{ width: 14, fontSize: 10, color: 'var(--text-dim)', flexShrink: 0, userSelect: 'none',
             cursor: canExpand ? 'pointer' : 'default' }}
@@ -99,11 +108,13 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, onSelect, e
               term={child}
               depth={depth + 1}
               selectedIri={selectedIri}
+              focusedIri={focusedIri}
               onSelect={onSelect}
               entityType={entityType}
               mode={mode}
               expandSet={expandSet}
               hideInverse={hideInverse}
+              hideObsolete={hideObsolete}
               expandSignal={expandSignal}
               collapseSignal={collapseSignal}
             />
@@ -123,14 +134,15 @@ interface Props {
   mode?: Mode
   revealIri?: string | null
   hideInverse?: boolean
+  hideObsolete?: boolean
   expandSignal?: number
   collapseSignal?: number
 }
 
 const EMPTY_SET = new Set<string>()
 
-export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect, entityType = 'class', mode = 'asserted', revealIri, hideInverse = false, expandSignal = 0, collapseSignal = 0 }: Props) {
-  const asserted = useClassTreeNodes(mode === 'asserted' ? ontologyId : null, mode === 'asserted' ? versionId : null, null, entityType, hideInverse)
+export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect, entityType = 'class', mode = 'asserted', revealIri, hideInverse = false, hideObsolete = true, expandSignal = 0, collapseSignal = 0 }: Props) {
+  const asserted = useClassTreeNodes(mode === 'asserted' ? ontologyId : null, mode === 'asserted' ? versionId : null, null, entityType, hideInverse, hideObsolete)
   const inferred = useInferredTreeNodes(mode === 'inferred' ? ontologyId : null, mode === 'inferred' ? versionId : null, null)
 
   const { data, isLoading } = mode === 'asserted' ? asserted : inferred
@@ -183,6 +195,73 @@ export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect
     return () => { observer.disconnect(); clearTimeout(giveUp) }
   }, [revealIri, ancestorData])
 
+  const [focusedIri, setFocusedIri] = useState<string | null>(null)
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    const container = containerRef.current
+    if (!container) return
+
+    const navKeys = ['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', ' ', 'Enter']
+    if (!navKeys.includes(e.key)) return
+    e.preventDefault()
+
+    const visible = Array.from(container.querySelectorAll('[data-iri]'))
+      .map(el => (el as HTMLElement).dataset.iri!)
+      .filter(Boolean)
+    if (visible.length === 0) return
+
+    const currentIri = focusedIri ?? selectedIri
+    const idx = currentIri ? visible.indexOf(currentIri) : -1
+
+    if (e.key === 'ArrowDown') {
+      const next = idx === -1 ? visible[0] : visible[Math.min(idx + 1, visible.length - 1)]
+      setFocusedIri(next)
+      ;(container.querySelector(`[data-iri="${CSS.escape(next)}"]`) as HTMLElement | null)
+        ?.scrollIntoView({ block: 'nearest' })
+      return
+    }
+
+    if (e.key === 'ArrowUp') {
+      const prev = idx === -1 ? visible[visible.length - 1] : visible[Math.max(idx - 1, 0)]
+      setFocusedIri(prev)
+      ;(container.querySelector(`[data-iri="${CSS.escape(prev)}"]`) as HTMLElement | null)
+        ?.scrollIntoView({ block: 'nearest' })
+      return
+    }
+
+    if (!currentIri) return
+    const nodeDiv = container.querySelector(`[data-iri="${CSS.escape(currentIri)}"]`) as HTMLElement | null
+    if (!nodeDiv) return
+
+    if (e.key === 'ArrowRight') {
+      if (nodeDiv.dataset.expandable === 'true' && nodeDiv.dataset.expanded === 'false') {
+        ;(nodeDiv.querySelector('[data-toggle]') as HTMLElement | null)?.click()
+      }
+      return
+    }
+
+    if (e.key === ' ') {
+      if (nodeDiv.dataset.expandable === 'true' && nodeDiv.dataset.expanded === 'true') {
+        ;(nodeDiv.querySelector('[data-toggle]') as HTMLElement | null)?.click()
+      }
+      return
+    }
+
+    if (e.key === 'ArrowLeft') {
+      const parentLi = nodeDiv.closest('li')?.parentElement?.closest('li')
+      const parentDiv = parentLi?.querySelector(':scope > div[data-iri]') as HTMLElement | null
+      if (parentDiv?.dataset.iri) {
+        setFocusedIri(parentDiv.dataset.iri)
+        parentDiv.scrollIntoView({ block: 'nearest' })
+      }
+      return
+    }
+
+    if (e.key === 'Enter') {
+      onSelect(currentIri)
+    }
+  }
+
   if (isLoading) {
     return <div style={{ padding: '0.5rem 1rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</div>
   }
@@ -207,24 +286,28 @@ export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect
   }
 
   return (
-    <ul ref={containerRef} style={{ listStyle: 'none' }}>
-      {roots.map(term => (
-        <TreeNode
-          key={term.iri}
-          ontologyId={ontologyId}
-          versionId={versionId}
-          term={term}
-          depth={0}
-          selectedIri={selectedIri}
-          onSelect={onSelect}
-          entityType={entityType}
-          mode={mode}
-          expandSet={expandSet}
-          hideInverse={hideInverse}
-          expandSignal={expandSignal}
-          collapseSignal={collapseSignal}
-        />
-      ))}
-    </ul>
+    <div tabIndex={0} onKeyDown={handleKeyDown} style={{ outline: 'none' }}>
+      <ul ref={containerRef} style={{ listStyle: 'none' }}>
+        {roots.map(term => (
+          <TreeNode
+            key={term.iri}
+            ontologyId={ontologyId}
+            versionId={versionId}
+            term={term}
+            depth={0}
+            selectedIri={selectedIri}
+            focusedIri={focusedIri}
+            onSelect={onSelect}
+            entityType={entityType}
+            mode={mode}
+            expandSet={expandSet}
+            hideInverse={hideInverse}
+            hideObsolete={hideObsolete}
+            expandSignal={expandSignal}
+            collapseSignal={collapseSignal}
+          />
+        ))}
+      </ul>
+    </div>
   )
 }

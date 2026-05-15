@@ -118,14 +118,14 @@ uv run pytest
 ```bash
 curl -X POST http://localhost:8000/api/v1/ontologies \
   -H "Content-Type: application/json" \
-  -d '{"iri": "http://purl.obolibrary.org/obo/go.owl"}'
+  -d '{"iri": "http://purl.obolibrary.org/obo/go.owl", "groups": ["obo"]}'
 ```
 
 **By direct URL:**
 ```bash
 curl -X POST http://localhost:8000/api/v1/ontologies \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://raw.githubusercontent.com/.../ontology.ttl"}'
+  -d '{"url": "https://raw.githubusercontent.com/.../ontology.ttl", "groups": ["upper"]}'
 ```
 
 **File upload:**
@@ -184,7 +184,7 @@ Only ontologies whose `source_url` was recorded at ingestion time (i.e., submitt
 
 ## Seeding a Catalog
 
-A curated list of 22 well-known ontologies is in [`seeds/catalog.yaml`](seeds/catalog.yaml), covering upper ontologies (BFO, CCO, DUL), FAIR vocabulary (DCAT, PROV-O, schema.org, SKOS, …), OBO Foundry core (GO, CHEBI, HP, DOID, …), and biomedical/clinical ontologies (NCIt, ORDO, Mondo, OBI).
+A curated list of 22 well-known ontologies is in [`seeds/catalog.yaml`](seeds/catalog.yaml), covering upper ontologies (BFO, CCO, DUL), FAIR vocabulary (DCAT, PROV-O, schema.org, SKOS, …), OBO Foundry core (GO, CHEBI, HP, DOID, …), and biomedical/clinical ontologies (NCIt, ORDO, Mondo, OBI). Each entry carries a `group:` tag (`upper`, `obo`, `fair`, `biomedical`) that is forwarded to the API at submission time so ontologies appear in the correct filter group immediately after ingestion.
 
 Bulk-submit them with the seed script:
 
@@ -202,6 +202,24 @@ uv run scripts/seed_ontologies.py --api-key oe_... --group fair --group upper
 The script prints `✓ queued`, `~ already registered`, or `✗ error` per entry and exits non-zero if any submission failed. Large ontologies (CHEBI, NCIt, GO) will take several minutes to ingest and are noted in the catalog. The API key must have write scope — create one via `POST /api/v1/api-keys` or `scripts/create_dev_user.py`.
 
 ## Using the Browser
+
+### Browsing the catalog (`/ontologies`)
+
+The Ontologies page lists every registered ontology with its description, statistics, and group membership.
+
+**Group filter chips** across the top narrow the list to a specific collection:
+
+| Chip | Group |
+|------|-------|
+| Upper Ontology | Foundational upper-level ontologies (BFO, DUL, SULO, …) |
+| SULO Family | Ontologies built on the SULO upper ontology |
+| OBO Foundry | OBO Foundry member ontologies (GO, CL, RO, HP, …) |
+
+An ontology can belong to more than one group (e.g. BFO is both *Upper Ontology* and *OBO Foundry*). Colored badges on each row show all group memberships at a glance.
+
+**Search** (the filter bar below the chips) matches against name, IRI, and description with ranked results — exact name/IRI matches appear first, followed by partial name/IRI matches, then label matches, then description matches. Chip filter and text search compose: select a chip first, then type to narrow within that group.
+
+Long descriptions are clamped to three lines; click **more…** to expand.
 
 ### Navigating hierarchies
 
@@ -271,7 +289,7 @@ Base path: `/api/v1/`
 ```
 # Ontologies
 POST   /ontologies                               Submit (IRI, URL, or file)
-GET    /ontologies                               List (paginated, filterable)
+GET    /ontologies                               List (paginated; ?q= ranked text search; ?group= filter)
 GET    /ontologies/{id}                          Ontology metadata
 GET    /ontologies/{id}/versions                 All versions
 GET    /ontologies/{id}/{vid}                    Version metadata
@@ -287,7 +305,7 @@ GET    /ontologies/{id}/{vid}/ancestors          Ancestor chain for tree navigat
 GET    /ontologies/{id}/{vid}/consistency        OWL consistency check
 POST   /ontologies/{id}/{vid}/justification      Request justification (async)
 GET    /ontologies/{id}/{vid}/justification/{jid} Retrieve justification result
-PATCH  /ontologies/{id}                          Update ontology (e.g. auto_sync)
+PATCH  /ontologies/{id}                          Update ontology (shortname, auto_sync, groups)
 DELETE /ontologies/{id}                          Delete ontology and all versions
 DELETE /ontologies/{id}/{vid}                    Deprecate version
 

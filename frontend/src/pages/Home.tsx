@@ -12,20 +12,32 @@ const EXAMPLES = ['cell death', 'apoptosis', 'protein binding', 'nucleus', 'memb
 
 type Mode = 'search' | 'query'
 
-function StatCard({ label, value }: { label: string; value: number | string }) {
-  return (
-    <div style={{
-      flex: 1, textAlign: 'center',
-      background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-      borderRadius: 'var(--radius)', padding: '16px 12px',
-    }}>
+function StatCard({ label, value, to }: { label: string; value: number | string; to?: string }) {
+  const inner = (
+    <>
       <div style={{ fontSize: 26, fontWeight: 700, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
         {typeof value === 'number' ? value.toLocaleString() : value}
       </div>
       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
         {label}
       </div>
-    </div>
+    </>
+  )
+  const base: React.CSSProperties = {
+    flex: 1, textAlign: 'center',
+    background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+    borderRadius: 'var(--radius)', padding: '16px 12px',
+    display: 'block', textDecoration: 'none',
+  }
+  return to ? (
+    <Link to={to} style={base}
+      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)' }}
+      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)' }}
+    >
+      {inner}
+    </Link>
+  ) : (
+    <div style={base}>{inner}</div>
   )
 }
 
@@ -38,9 +50,17 @@ function ResultList({ results, pathFor }: {
     <ul style={{ listStyle: 'none', marginTop: '0.5rem' }}>
       {results.map(r => {
         const path = pathFor(r)
+        const isInd = r.type === 'individual'
         const inner = (
           <>
             <span style={{ color: 'var(--accent)', fontWeight: 500, flexShrink: 0 }}>{r.label}</span>
+            {isInd && (
+              <span style={{
+                fontSize: 9, padding: '1px 5px', borderRadius: 3,
+                background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                color: 'var(--accent-blue, #61afef)', flexShrink: 0, fontWeight: 600,
+              }}>ind</span>
+            )}
             {r.source && <SourceBadge source={r.source} />}
             <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{r.short}</span>
           </>
@@ -147,7 +167,7 @@ function useMOSFanout(pairs: { oid: string; vid: string }[], query: string) {
   return useQueries({
     queries: pairs.map(({ oid, vid }) => ({
       queryKey: ['mos-search', oid, vid, query],
-      queryFn: () => api.ontologies.search(oid, vid, query),
+      queryFn: () => api.ontologies.search(oid, vid, query, 'expression'),
       staleTime: 10_000,
       enabled: query.length >= 2,
       retry: false,
@@ -186,6 +206,29 @@ function MOSQuery() {
     }))
   )
 
+  // Re-rank merged results globally: exact label → prefix → substring, then alpha.
+  // Extract bare term from MOS syntax: "'cell'" or "'cell" (open quote) → "cell".
+  const _bareQuery = (() => {
+    const closed = mosQuery.match(/'([^']+)'/)
+    if (closed) return closed[1].toLowerCase().trim()
+    const open = mosQuery.match(/^'(.+)/)
+    if (open) return open[1].toLowerCase().trim()
+    return mosQuery.toLowerCase().trim()
+  })()
+  const _rank = (lbl: string): [number, string] => {
+    const l = lbl.toLowerCase()
+    if (l === _bareQuery) return [0, l]
+    if (l.startsWith(_bareQuery)) return [1, l]
+    return [2, l]
+  }
+  if (_bareQuery) {
+    allResults.sort((a, b) => {
+      const [ra, la] = _rank(a.label ?? '')
+      const [rb, lb] = _rank(b.label ?? '')
+      return ra !== rb ? ra - rb : la.localeCompare(lb)
+    })
+  }
+
   // Surface error message only when all queries failed (no results at all)
   const firstError = searchResults.find(r => r.error)?.error as (Error & { status?: number; body?: { error?: string; detail?: string } }) | undefined
   const allNotClassified = mosQuery.length >= 2 && searchResults.length > 0 && searchResults.every(r => (r.error as (Error & { body?: { error?: string } }) | undefined)?.body?.error === 'not_classified')
@@ -215,11 +258,11 @@ function MOSQuery() {
         ontologyId={acOid}
         versionId={null}
         onSearch={setMosQuery}
-        placeholder="MOS expression, e.g. 'cell' and 'nucleus'"
+        placeholder="MOS expression, e.g. cell, 'cell death', GO:0008150"
       />
 
       <p style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: 6, marginBottom: 8 }}>
-        Use <code>and</code>, <code>or</code>, <code>not</code>, <code>some</code>, <code>only</code> · quote names with spaces: <code>'has part'</code> ·{' '}
+        Use <code>and</code>, <code>or</code>, <code>not</code>, <code>some</code>, <code>only</code> · quote multi-word names: <code>'cell death'</code> ·{' '}
         {selectedOids.length > 0
           ? `searching ${selectedOids.length} selected ontolog${selectedOids.length > 1 ? 'ies' : 'y'}`
           : 'searching all ontologies'}
@@ -262,14 +305,18 @@ export default function Home() {
 
       {publicStats && (
         <div style={{ display: 'flex', gap: 12, marginBottom: '2rem' }}>
-          <StatCard label="Ontologies" value={publicStats.total_ontologies} />
-          <StatCard label="Classes" value={publicStats.total_classes} />
-          <StatCard label="Properties" value={publicStats.total_properties} />
+          <StatCard label="Ontologies" value={publicStats.total_ontologies} to="/ontologies" />
+          <StatCard label="Classes" value={publicStats.total_classes} to="/ontologies" />
+          <StatCard label="Properties" value={publicStats.total_properties} to="/ontologies" />
+          {publicStats.total_individuals > 0 && (
+            <StatCard label="Individuals" value={publicStats.total_individuals} to="/ontologies" />
+          )}
         </div>
       )}
 
       {/* Mode toggle */}
-      <div style={{ display: 'flex', borderRadius: 'var(--radius)', overflow: 'hidden', border: '1px solid var(--border)', marginBottom: 12, width: 'fit-content' }}>
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+      <div style={{ display: 'flex', borderRadius: 'var(--radius)', overflow: 'hidden', border: '1px solid var(--border)' }}>
         {(['search', 'query'] as Mode[]).map(m => (
           <button
             key={m}
@@ -284,6 +331,7 @@ export default function Home() {
             {m === 'search' ? 'Keyword Search' : 'Structured Query'}
           </button>
         ))}
+      </div>
       </div>
 
       {mode === 'search'

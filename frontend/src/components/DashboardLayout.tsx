@@ -5,6 +5,7 @@ const sidebarLinks = [
   { to: '/dashboard/keys', label: 'API Keys', end: false },
   { to: '/dashboard/webhooks', label: 'Webhooks', end: false },
   { to: '/dashboard/stats', label: 'Stats', end: false },
+  { to: '/dashboard/profile', label: 'Profile', end: false },
 ]
 
 export default function DashboardLayout() {

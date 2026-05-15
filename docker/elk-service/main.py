@@ -153,20 +153,17 @@ def compute_justification_endpoint(version_id: str, req: JustificationRequest):
 
     t0 = time.monotonic()
     timed_out = False
+    import concurrent.futures
     try:
-        import signal
-
-        def _handler(signum, frame):
-            raise TimeoutError("justification time limit exceeded")
-
-        signal.signal(signal.SIGALRM, _handler)
-        signal.alarm(_JUSTIFICATION_TIME_LIMIT)
-        try:
-            justs = compute_justifications(g, result, req.sub, sup, req.max_justifications)
-        finally:
-            signal.alarm(0)
-    except TimeoutError:
-        timed_out = True
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
+            _fut = _ex.submit(compute_justifications, g, result, req.sub, sup, req.max_justifications)
+            try:
+                justs = _fut.result(timeout=_JUSTIFICATION_TIME_LIMIT)
+            except concurrent.futures.TimeoutError:
+                timed_out = True
+                justs = []
+    except Exception:
+        timed_out = False
         justs = []
 
     elapsed_ms = round((time.monotonic() - t0) * 1000, 1)
@@ -214,15 +211,22 @@ def _load_or_404(version_id: str):
 
 def _reconstruct_graph_from_traces(result) -> rdflib.Graph:
     """Reconstruct input axioms from the recorded proof traces."""
-    g = rdflib.Graph()
-    seen: set[str] = set()
+    seen: list[str] = []
+    seen_set: set[str] = set()
     for steps in result.proof_traces.values():
         for step in steps:
             for ax in step.get("axioms", []):
-                if ax not in seen and not ax.startswith("_:"):
-                    seen.add(ax)
-                    try:
-                        g.parse(data=ax, format="nt")
-                    except Exception:
-                        pass
+                if ax not in seen_set:
+                    seen_set.add(ax)
+                    seen.append(ax)
+    g = rdflib.Graph()
+    # Parse all axioms together so blank node IDs stay consistent across triples.
+    try:
+        g.parse(data="\n".join(seen), format="nt")
+    except Exception:
+        for ax in seen:
+            try:
+                g.parse(data=ax, format="nt")
+            except Exception:
+                pass
     return g

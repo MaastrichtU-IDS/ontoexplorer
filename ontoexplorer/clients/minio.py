@@ -45,8 +45,7 @@ def download_bytes(bucket: str, key: str) -> bytes:
 
 def presigned_get_url(bucket: str, key: str, expires_seconds: int = 3600) -> str:
     from datetime import timedelta
-    client = get_minio_client()
-    return client.presigned_get_object(bucket, key, expires=timedelta(seconds=expires_seconds))
+    return get_minio_client().presigned_get_object(bucket, key, expires=timedelta(seconds=expires_seconds))
 
 
 def object_exists(bucket: str, key: str) -> bool:

@@ -19,6 +19,19 @@ class Completion:
     insert: str         # text to splice at cursor (includes closing ' for labels)
 
 
+# Built-in OWL classes injected into autocomplete when they match the partial.
+# Not declared as owl:Class in ontology files so absent from the index until re-indexed.
+_BUILTIN_CLASSES = [
+    Completion(
+        text="owl:Thing",
+        type="class",
+        iri="http://www.w3.org/2002/07/owl#Thing",
+        short="owl:Thing",
+        insert="owl:Thing ",
+    ),
+]
+
+
 def get_completions(
     q: str,
     cursor: int,
@@ -33,9 +46,21 @@ def get_completions(
                                    excluded_types=frozenset({"annotation_property"}))
 
     if result.token_type == "EXPECT_ENTITY":
-        # After some/only/not/and/or/(  — figure out if we expect class or property
-        # Heuristic: after a restriction keyword (some/only/value/min N/max N/exactly N) → class
-        # At start / after boolean → either
+        if result.partial:
+            # User is typing a bare word (no opening quote) — show entity completions directly.
+            raw = _entity_completions(r, version_id, result.partial, entity_type=None, limit=limit,
+                                      excluded_types=frozenset({"annotation_property"}))
+            # Single-word labels don't need quotes; multi-word must be quoted.
+            return [
+                Completion(
+                    text=c.text,
+                    type=c.type,
+                    iri=c.iri,
+                    short=c.short,
+                    insert=c.text + " " if " " not in c.text else f"'{c.text}' ",
+                )
+                for c in raw
+            ]
         kws = _keyword_completions(["'"])  # trigger quote
         return kws
 
@@ -64,14 +89,25 @@ def _entity_completions(
     key = _prefix_key(version_id)
 
     if norm:
-        min_val = f"[{norm}"
-        max_val = f"[{norm}\xff"
-        members = r.zrangebylex(key, min_val, max_val, start=0, num=limit * 4)
+        # Two-scan: exact-label entries first, then all prefix entries.
+        # Space (0x20) < pipe (0x7C) in Redis lex order, so "cell adhesion|..."
+        # sorts BEFORE "cell|..." (exact) in a single prefix scan.
+        exact_members = r.zrangebylex(key, f"[{norm}|", f"[{norm}|\xff", start=0, num=max(limit, 20))
+        all_members   = r.zrangebylex(key, f"[{norm}",  f"[{norm}\xff",  start=0, num=limit * 8)
+        exact_set = set(exact_members)
+        members = list(exact_members) + [m for m in all_members if m not in exact_set]
     else:
         members = r.zrange(key, 0, limit * 4 - 1)
 
-    # Group members by normalised label to detect ambiguity
-    by_norm_label: dict[str, list[dict]] = {}
+    # Separate into two tiers based on whether the PRIMARY label starts with the
+    # query.  Word-suffix index entries (e.g. "cell" indexing "T cell receptor")
+    # are tier-B; labels that genuinely start with the query are tier-A.
+    seen_iris: set[str] = set()
+    # tier_a: primary-label starts with query  (key = primary norm label)
+    # tier_b: word-suffix match               (key = indexed norm label)
+    tier_a: dict[str, list[dict]] = {}
+    tier_b: dict[str, list[dict]] = {}
+
     for member in members:
         parts = member.split("|", 2)
         if len(parts) != 3:
@@ -81,33 +117,63 @@ def _entity_completions(
             continue
         if excluded_types and etype in excluded_types:
             continue
+        if iri in seen_iris:
+            continue
+        seen_iris.add(iri)
         detail = r.hgetall(_iri_key(version_id, iri))
         if not detail:
             continue
-        by_norm_label.setdefault(norm_lbl, []).append(detail)
-
-    completions: list[Completion] = []
-    for norm_lbl, entities in by_norm_label.items():
-        if len(entities) == 1:
-            e = entities[0]
-            completions.append(Completion(
-                text=e["label"],
-                type=e["type"],
-                iri=e["iri"],
-                short=e["short"],
-                insert=f"{e['label']}'",
-            ))
+        primary_norm = normalise_label(detail.get("label", ""))
+        if not norm or primary_norm.startswith(norm):
+            tier_a.setdefault(primary_norm, []).append(detail)
         else:
-            for e in entities:
-                completions.append(Completion(
-                    text=f"{e['label']} ({e['short']})",
+            tier_b.setdefault(norm_lbl, []).append(detail)
+
+    def _build(bucket: dict[str, list[dict]], out: list[Completion]) -> None:
+        for _key, entities in bucket.items():
+            if len(entities) == 1:
+                e = entities[0]
+                out.append(Completion(
+                    text=e["label"],
                     type=e["type"],
                     iri=e["iri"],
                     short=e["short"],
-                    insert=f"{e['label']} ({e['short']})'",
+                    insert=f"{e['label']}'",
                 ))
-        if len(completions) >= limit:
-            break
+            else:
+                for e in entities:
+                    out.append(Completion(
+                        text=f"{e['label']} ({e['short']})",
+                        type=e["type"],
+                        iri=e["iri"],
+                        short=e["short"],
+                        insert=f"{e['label']} ({e['short']})'",
+                    ))
+            if len(out) >= limit:
+                return
+
+    completions: list[Completion] = []
+    _build(tier_a, completions)
+    if len(completions) < limit:
+        _build(tier_b, completions)
+
+    # Inject built-in classes (e.g. owl:Thing) when the partial matches and they're
+    # not already present from the index (added by re-indexing, absent in old indexes).
+    if len(completions) < limit:
+        already = {c.iri for c in completions}
+        for builtin in _BUILTIN_CLASSES:
+            if builtin.iri in already:
+                continue
+            if entity_type and builtin.type != entity_type:
+                continue
+            if excluded_types and builtin.type in excluded_types:
+                continue
+            norm_text = normalise_label(builtin.text)
+            norm_short = normalise_label(builtin.short or "")
+            if not norm or norm_text.startswith(norm) or norm_short.startswith(norm):
+                completions.append(builtin)
+            if len(completions) >= limit:
+                break
 
     return completions[:limit]
 

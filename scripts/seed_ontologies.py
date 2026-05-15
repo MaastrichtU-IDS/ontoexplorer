@@ -52,6 +52,8 @@ def submit(client: httpx.Client, api_url: str, entry: dict) -> tuple[str, str]:
         body["url"] = entry["url"]
     else:
         return "skip", "no iri or url"
+    if entry.get("group"):
+        body["groups"] = [entry["group"]]
 
     try:
         resp = client.post(f"{api_url}/api/v1/ontologies", json=body, timeout=30.0)

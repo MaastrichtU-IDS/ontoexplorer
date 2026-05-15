@@ -25,17 +25,18 @@ router = APIRouter(prefix="/api/v1/stats", tags=["stats"])
 @router.get("/public", summary="Public aggregate statistics (no auth required)")
 async def get_public_stats(db: AsyncSession = Depends(get_db)):
     import json
-    from ontoexplorer.modules.search.indexer import _get_redis, _meta_key
+    from ontoexplorer.modules.search.indexer import _get_redis
 
     total_ontologies = await db.scalar(select(func.count(Ontology.id)))
     version_ids = list(await db.scalars(select(OntologyVersion.id)))
 
-    def _sum_stats(vids: list[str]) -> tuple[int, int]:
+    def _sum_stats(vids: list[str]) -> tuple[int, int, int]:
         if not vids:
-            return 0, 0
+            return 0, 0, 0
+        from ontoexplorer.modules.search.indexer import _stats_cache_key
         r = _get_redis()
-        values = r.mget([_meta_key(vid) for vid in vids])
-        classes = properties = 0
+        values = r.mget([_stats_cache_key(vid) for vid in vids])
+        classes = properties = individuals = 0
         for raw in values:
             if not raw:
                 continue
@@ -43,16 +44,18 @@ async def get_public_stats(db: AsyncSession = Depends(get_db)):
                 meta = json.loads(raw)
                 classes += int(meta.get("class_count", 0))
                 properties += int(meta.get("property_count", 0))
+                individuals += int(meta.get("individual_count", 0))
             except (ValueError, TypeError, json.JSONDecodeError):
                 pass
-        return classes, properties
+        return classes, properties, individuals
 
-    total_classes, total_properties = await asyncio.to_thread(_sum_stats, version_ids)
+    total_classes, total_properties, total_individuals = await asyncio.to_thread(_sum_stats, version_ids)
 
     return {
         "total_ontologies": total_ontologies,
         "total_classes": total_classes,
         "total_properties": total_properties,
+        "total_individuals": total_individuals,
     }
 
 
@@ -71,7 +74,7 @@ async def get_stats(user: User = Depends(require_auth), db: AsyncSession = Depen
     uploads_per_month = (await db.execute(
         text("""
             SELECT to_char(v.created_at, 'YYYY-MM') AS month, COUNT(*) AS count
-            FROM ontology_versions v
+            FROM versions v
             JOIN ontologies o ON o.id = v.ontology_id
             WHERE o.owner_id = :uid
             GROUP BY month ORDER BY month
@@ -84,7 +87,7 @@ async def get_stats(user: User = Depends(require_auth), db: AsyncSession = Depen
             SELECT to_char(j.started_at, 'YYYY-MM') AS month,
                    AVG(EXTRACT(EPOCH FROM (j.finished_at - j.started_at))) AS avg_seconds
             FROM jobs j
-            JOIN ontology_versions v ON v.id = j.version_id
+            JOIN versions v ON v.id = j.version_id
             JOIN ontologies o ON o.id = v.ontology_id
             WHERE o.owner_id = :uid AND j.type = 'reason' AND j.status = 'done'
               AND j.started_at IS NOT NULL AND j.finished_at IS NOT NULL

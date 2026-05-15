@@ -9,10 +9,11 @@ export function useClassTreeNodes(
   parent: string | null,
   entityType: EntityType = 'class',
   hideInverse = false,
+  hideObsolete = true,
 ) {
   return useQuery({
-    queryKey: ['class-tree', ontologyId, versionId, parent ?? 'root', entityType, hideInverse],
-    queryFn: () => api.ontologies.terms(ontologyId!, versionId!, parent, entityType, hideInverse),
+    queryKey: ['class-tree', ontologyId, versionId, parent ?? 'root', entityType, hideInverse, hideObsolete],
+    queryFn: () => api.ontologies.terms(ontologyId!, versionId!, parent, entityType, hideInverse, hideObsolete),
     enabled: !!ontologyId && !!versionId,
     staleTime: 60_000,
   })

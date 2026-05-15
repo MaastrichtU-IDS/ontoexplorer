@@ -109,8 +109,8 @@ ontologies:
     large: true
 
   - group: biomedical
-    iri: http://www.orpha.net/ontology/orphanet.owl
-    label: Orphanet Rare Disease Ontology (ORDO)
+    url: https://www.orphadata.com/data/ontologies/ordo/last_version/ORDO_en_4.8.owl
+    label: Orphanet Rare Disease Ontology (ORDO 4.8)
 
   - group: biomedical
     iri: http://purl.obolibrary.org/obo/mondo.owl

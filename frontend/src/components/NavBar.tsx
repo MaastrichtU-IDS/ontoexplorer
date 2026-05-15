@@ -4,7 +4,6 @@ import { logout } from '../lib/auth'
 
 const navLinks = [
   { to: '/ontologies', label: 'Ontologies' },
-  { to: '/dashboard', label: 'Dashboard' },
 ]
 
 export default function NavBar() {
@@ -52,9 +51,15 @@ export default function NavBar() {
                 Admin
               </NavLink>
             )}
-            <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>
-              {user?.display_name}
-            </span>
+            <NavLink
+              to="/dashboard"
+              style={({ isActive }) => ({
+                color: isActive ? 'var(--text)' : 'var(--text-dim)',
+                fontSize: 'var(--font-size-sm)',
+              })}
+            >
+              Dashboard
+            </NavLink>
             <button
               onClick={() => logout()}
               style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}

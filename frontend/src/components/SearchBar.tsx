@@ -22,7 +22,10 @@ export default function SearchBar({ ontologyId, versionId, onSearch, placeholder
   const replaceTo   = acData?.replace_to   ?? value.length
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter') {
+    if (e.key === 'Tab' && completions.length > 0) {
+      e.preventDefault()
+      applyCompletion(completions[0].insert)
+    } else if (e.key === 'Enter') {
       setShowSuggestions(false)
       onSearch(value.trim())
     } else if (e.key === 'Escape') {

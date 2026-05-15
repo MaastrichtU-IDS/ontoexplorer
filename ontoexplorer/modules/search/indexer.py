@@ -374,6 +374,25 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         elif entity_type != "individual":
             property_count += 1
 
+    # Inject owl:Thing as a queryable built-in class for any ontology that has classes.
+    # It is not declared as a owl:Class in ontology files so it would otherwise be absent.
+    if class_count > 0:
+        _OWL_THING_IRI = "http://www.w3.org/2002/07/owl#Thing"
+        _owl_thing_key = _iri_key(version_id, _OWL_THING_IRI)
+        pipe.hset(_owl_thing_key, mapping={
+            "label":      "Thing",
+            "type":       "class",
+            "iri":        _OWL_THING_IRI,
+            "short":      "owl:Thing",
+            "source":     "",
+            "synonyms":   "",
+            "definition": "",
+        })
+        pipe.expire(_owl_thing_key, _SEARCH_TTL)
+        # Index under both "thing" (label) and "owl:thing" (short CURIE)
+        pipe.zadd(prefix_key, {f"thing|class|{_OWL_THING_IRI}": 0})
+        pipe.zadd(prefix_key, {f"owl:thing|class|{_OWL_THING_IRI}": 0})
+
     pipe.expire(prefix_key, _SEARCH_TTL)
     pipe.expire(_type_key(version_id, "class"),               _SEARCH_TTL)
     pipe.expire(_type_key(version_id, "object_property"),     _SEARCH_TTL)

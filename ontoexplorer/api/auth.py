@@ -1,6 +1,7 @@
 """OAuth 2.0 / OIDC authentication endpoints."""
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
+from sqlalchemy import select
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -117,13 +118,18 @@ async def logout(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/me", summary="Current user profile")
-async def me(user: User = Depends(require_auth)):
+async def me(user: User = Depends(require_auth), db: AsyncSession = Depends(get_db)):
+    from ontoexplorer.models.db import OAuthAccount
+    accounts = (await db.execute(
+        select(OAuthAccount).where(OAuthAccount.user_id == user.id)
+    )).scalars().all()
     return {
         "id": user.id,
         "email": user.email,
         "display_name": user.display_name,
         "created_at": user.created_at.isoformat(),
         "is_admin": is_admin(user),
+        "connected_providers": [a.provider for a in accounts],
     }
 
 

@@ -68,7 +68,7 @@ async def search(
             "query": q,
             "results": [
                 {"iri": r["iri"], "label": r["label"], "short": r["short"],
-                 "source": r.get("source", ""), "match_type": "entity"}
+                 "type": r.get("type", ""), "source": r.get("source", ""), "match_type": "entity"}
                 for r in results
             ],
             "count": len(results),

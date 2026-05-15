@@ -9,6 +9,7 @@ import Dashboard from './pages/Dashboard'
 import ApiKeys from './pages/ApiKeys'
 import Webhooks from './pages/Webhooks'
 import Stats from './pages/Stats'
+import Profile from './pages/Profile'
 import OntologyPage from './pages/OntologyPage'
 import Login from './pages/Login'
 import AuthCallback from './pages/AuthCallback'
@@ -39,6 +40,7 @@ export default function App() {
           <Route path="/dashboard/keys" element={<ApiKeys />} />
           <Route path="/dashboard/webhooks" element={<Webhooks />} />
           <Route path="/dashboard/stats" element={<Stats />} />
+          <Route path="/dashboard/profile" element={<Profile />} />
         </Route>
         <Route path="/admin" element={<AdminPage />} />
       </Route>

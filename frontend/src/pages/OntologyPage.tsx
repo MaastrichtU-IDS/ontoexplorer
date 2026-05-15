@@ -688,7 +688,7 @@ function MOSQueryPane({
 
   const { data, error, isFetching } = useQuery({
     queryKey: ['onto-mos', ontologyId, versionId, mosQuery],
-    queryFn: () => api.ontologies.search(ontologyId, versionId, mosQuery),
+    queryFn: () => api.ontologies.search(ontologyId, versionId, mosQuery, 'expression'),
     enabled: mosQuery.length >= 2,
     staleTime: 10_000,
     retry: false,

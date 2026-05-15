@@ -12,7 +12,7 @@ from ontoexplorer.models.db import Ontology, OntologyVersion
 from ontoexplorer.modules.auth.dependencies import get_current_user
 from ontoexplorer.modules.search.autocomplete import get_completions
 from ontoexplorer.modules.search.evaluator import AmbiguousLabelError, evaluate
-from ontoexplorer.modules.search.indexer import entity_lookup
+from ontoexplorer.modules.search.indexer import entity_lookup, normalise_label
 from ontoexplorer.modules.search.mos_parser import ParseError, NamedClass, parse
 
 router = APIRouter(prefix="/api/v1", tags=["search"])
@@ -85,17 +85,20 @@ async def global_search(
                     return JSONResponse(status_code=400, content={"error": "parse_error", "message": str(exc)})
                 effective_mode = "entity"
 
-    per_version = max(5, limit // max(len(versions), 1))
-
     seen_iris: set[str] = set()
     merged: list[dict] = []
 
     if effective_mode == "entity":
+        # Fetch more candidates per version than the final limit so that exact
+        # matches in any ontology are not discarded before global re-ranking.
+        per_version = max(limit, 20)
+
         async def search_one_entity(v: OntologyVersion) -> list[dict]:
             rows = await asyncio.to_thread(entity_lookup, str(v.id), q, None, per_version)
             for r in rows:
                 r["version_id"] = str(v.id)
                 r["ontology_id"] = str(v.ontology_id)
+                r.setdefault("type", "")
             return rows
 
         nested = await asyncio.gather(*[search_one_entity(v) for v in versions])
@@ -104,10 +107,20 @@ async def global_search(
                 if row["iri"] not in seen_iris:
                     seen_iris.add(row["iri"])
                     merged.append(row)
-                    if len(merged) >= limit:
-                        break
-            if len(merged) >= limit:
-                break
+
+        # Re-rank globally: exact label match → prefix → word-suffix, then alpha.
+        norm_q = normalise_label(q)
+
+        def _global_rank(row: dict) -> tuple:
+            lbl = normalise_label(row.get("label", ""))
+            if lbl == norm_q:
+                return (0, lbl)
+            if lbl.startswith(norm_q):
+                return (1, lbl)
+            return (2, lbl)
+
+        merged.sort(key=_global_rank)
+        merged = merged[:limit]
 
         return {"mode": "entity", "query": q, "results": merged,
                 "count": len(merged), "truncated": len(merged) >= limit}
@@ -178,7 +191,8 @@ async def ontology_search(
         return {
             "mode": "entity", "query": q, "version_id": version_id,
             "results": [
-                {"iri": r["iri"], "label": r["label"], "short": r["short"], "match_type": "entity"}
+                {"iri": r["iri"], "label": r["label"], "short": r["short"],
+                 "type": r.get("type", ""), "match_type": "entity"}
                 for r in results
             ],
             "count": len(results), "truncated": len(results) >= limit,

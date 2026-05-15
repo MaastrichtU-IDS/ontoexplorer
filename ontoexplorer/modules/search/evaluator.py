@@ -1,6 +1,7 @@
 """MOS expression evaluator: AST → matching class IRIs via hybrid ELK + Oxigraph SPARQL."""
 from __future__ import annotations
 
+import re
 import urllib.parse
 from dataclasses import dataclass
 
@@ -10,6 +11,7 @@ from ontoexplorer.modules.search.indexer import (
     _get_redis,
     _iri_key,
     _prefix_key,
+    _type_key,
     normalise_label,
 )
 from ontoexplorer.modules.search.mos_parser import (
@@ -44,6 +46,16 @@ class AmbiguousLabelError(ValueError):
 
 _PROPERTY_TYPES = frozenset({"object_property", "data_property"})
 
+_OWL_THING = "http://www.w3.org/2002/07/owl#Thing"
+
+_WELL_KNOWN_PREFIXES: dict[str, str] = {
+    "owl":  "http://www.w3.org/2002/07/owl#",
+    "rdf":  "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "xsd":  "http://www.w3.org/2001/XMLSchema#",
+}
+_CURIE_STRICT_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_\-]*):([A-Za-z0-9_\-\.]+)$")
+
 
 def _resolve_label(
     r,
@@ -76,6 +88,11 @@ def _resolve_label(
 
     # Check if ref looks like a CURIE or IRI already
     if ":" in node.ref and not node.ref.startswith("'"):
+        # Expand well-known OWL/RDF/RDFS/XSD CURIEs to full IRIs immediately.
+        m = _CURIE_STRICT_RE.match(node.ref)
+        if m and m.group(1) in _WELL_KNOWN_PREFIXES:
+            return _WELL_KNOWN_PREFIXES[m.group(1)] + m.group(2)
+
         # Try direct lookup via short/CURIE
         norm = normalise_label(node.ref)
         key = _prefix_key(version_id)
@@ -93,7 +110,11 @@ def _resolve_label(
     norm = normalise_label(node.ref)
     key = _prefix_key(version_id)
     members = r.zrangebylex(key, f"[{norm}|", f"[{norm}|\xff")
-    # Exact-label match: members where the norm_label part exactly equals norm
+    # Exact-label match: the indexed norm-key equals norm AND the entity's
+    # primary label also normalises to norm.  The second check filters out
+    # word-suffix entries (e.g. "physical object" is indexed under "object"
+    # as a word-suffix, but its primary label normalises to "physical object",
+    # not "object", so it must not count as a match for 'object').
     matched: list[dict] = []
     seen_iris: set[str] = set()
     for m in members:
@@ -109,8 +130,11 @@ def _resolve_label(
             continue
         seen_iris.add(iri)
         detail = r.hgetall(_iri_key(version_id, iri))
-        if detail:
-            matched.append(detail)
+        if not detail:
+            continue
+        if normalise_label(detail.get("label", "")) != norm:
+            continue  # word-suffix entry — primary label doesn't match query
+        matched.append(detail)
 
     if len(matched) == 0:
         raise ValueError(f"'{node.ref}' not found in this ontology's index")
@@ -151,6 +175,11 @@ async def evaluate(node, version_id: str, ontology_id: str) -> list[SearchResult
     async def _eval(n) -> set[str]:
         if isinstance(n, NamedClass):
             iri = _resolve_label(r, version_id, n)
+            if iri == _OWL_THING:
+                # owl:Thing = all classes; read directly from the indexed type set
+                # (ELK's subclasses index omits root classes that only have
+                # asserted rdfs:subClassOf owl:Thing)
+                return r.smembers(_type_key(version_id, "class"))
             subs = set(subclasses_index.get(iri, []))
             subs.add(iri)
             return subs

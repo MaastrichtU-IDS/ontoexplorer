@@ -325,5 +325,14 @@ def partial_parse(text: str, cursor: int) -> PartialParseResult:
     if last_type == "INT":
         return PartialParseResult(token_type="EXPECT_ENTITY", partial="", token_start=cursor)
 
+    # WORD token: if cursor is right after the word (no trailing space), the user is still
+    # typing a bare label → surface entity completions for the partial text.
+    if last_type == "WORD":
+        if not prefix[-1:].isspace():
+            token_start = cursor - len(last_val)
+            return PartialParseResult(token_type="EXPECT_ENTITY", partial=last_val, token_start=token_start)
+        # WORD followed by whitespace → completed bare entity, expect keyword next
+        return PartialParseResult(token_type="EXPECT_KEYWORD", partial="", token_start=cursor)
+
     # After restriction keyword (some/only/value) or boolean (and/or) or not / ( → expect entity
     return PartialParseResult(token_type="EXPECT_ENTITY", partial="", token_start=cursor)

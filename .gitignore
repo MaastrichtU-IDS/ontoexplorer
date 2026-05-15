@@ -73,3 +73,6 @@ logs/
 # Data volumes (local dev)
 data/
 .superpowers/
+
+# Claude Code — local settings contain tokens
+.claude/settings.local.json
