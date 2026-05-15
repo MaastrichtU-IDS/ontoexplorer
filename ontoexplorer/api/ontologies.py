@@ -803,13 +803,17 @@ async def list_terms(
             """
 
         def _run_individuals(s, q):
-            rows = []
+            seen: dict[str, tuple[str | None, int]] = {}
             for row in s.query(q):
                 iri = row["entity"].value
-                lbl = row["label"]
-                label = lbl.value if (lbl is not None and hasattr(lbl, "value")) else None
-                rows.append({"iri": iri, "label": label, "has_children": False})
-            return rows
+                lbl_node = row["label"]
+                label = lbl_node.value if (lbl_node is not None and hasattr(lbl_node, "value")) else None
+                lang = (lbl_node.language if hasattr(lbl_node, "language") else None) if lbl_node is not None else None
+                score = 2 if lang == "en" else 1
+                prev = seen.get(iri)
+                if prev is None or score > prev[1]:
+                    seen[iri] = (label, score)
+            return [{"iri": iri, "label": lbl, "has_children": False} for iri, (lbl, _) in seen.items()]
 
         terms = await asyncio.to_thread(_run_individuals, get_store(), ind_q)
         return {"terms": terms, "offset": offset, "limit": limit, "parent": parent}
@@ -1837,12 +1841,17 @@ async def term_ancestors(
     """
 
     def _run(s, q):
-        out = []
+        seen: dict[str, tuple[str | None, int]] = {}
         for row in s.query(q):
-            lbl = row["label"]
-            label = lbl.value if (lbl is not None and hasattr(lbl, "value")) else None
-            out.append({"iri": row["ancestor"].value, "label": label})
-        return out
+            iri = row["ancestor"].value
+            lbl_node = row["label"]
+            label = lbl_node.value if (lbl_node is not None and hasattr(lbl_node, "value")) else None
+            lang = (lbl_node.language if hasattr(lbl_node, "language") else None) if lbl_node is not None else None
+            score = 2 if lang == "en" else (1 if lang is None or lang == "" else 0)
+            prev = seen.get(iri)
+            if prev is None or score > prev[1]:
+                seen[iri] = (label, score)
+        return [{"iri": iri, "label": lbl} for iri, (lbl, _) in seen.items()]
 
     ancestors_out = await asyncio.to_thread(_run, store, query)
     return {"ancestors": ancestors_out}
