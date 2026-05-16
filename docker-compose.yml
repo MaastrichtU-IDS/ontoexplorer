@@ -7,6 +7,7 @@ services:
     env_file: .env
     environment:
       OXIGRAPH_READ_ONLY: "true"
+      FASTEMBED_CACHE_PATH: /root/.cache/fastembed
     depends_on:
       - postgres
       - redis
@@ -14,7 +15,9 @@ services:
       - qlever
     volumes:
       - ./ontoexplorer:/app/ontoexplorer
+      - ./alembic:/app/alembic
       - oxigraph-data:/data/oxigraph
+      - fastembed-cache:/root/.cache/fastembed
 
   worker:
     build: .
@@ -22,6 +25,9 @@ services:
     env_file: .env
     environment:
       FASTEMBED_CACHE_PATH: /root/.cache/fastembed
+      OMP_NUM_THREADS: "2"
+      ONNXRUNTIME_NUM_THREADS: "2"
+    mem_limit: 3g
     depends_on:
       - postgres
       - redis
@@ -68,13 +74,13 @@ services:
 
   oxigraph-sparql:
     image: oxigraph/oxigraph
-    command: serve --location /data/oxigraph --bind 0.0.0.0:7878 --read-only
+    command: serve --location /data/oxigraph --bind 0.0.0.0:7878
     restart: unless-stopped
     volumes:
       - oxigraph-data:/data/oxigraph
 
   postgres:
-    image: postgres:16
+    image: pgvector/pgvector:pg16
     ports:
       - "5432:5432"
     environment:
