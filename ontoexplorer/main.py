@@ -11,6 +11,7 @@ from ontoexplorer.api.jobs import router as jobs_router
 from ontoexplorer.api.ontologies import router as ontologies_router
 from ontoexplorer.api.search import router as search_router
 from ontoexplorer.api.sparql import router as sparql_router
+from ontoexplorer.api.sparql_queries import router as sparql_queries_router
 from ontoexplorer.api.admin import router as admin_router
 from ontoexplorer.api.stats import router as stats_router
 from ontoexplorer.api.inbound import router as inbound_router
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(sparql_router)
+    app.include_router(sparql_queries_router)
     app.include_router(jobs_router)
     # global_search_router before ontologies_router: static /search segment must match
     # before ontologies_router's /{ontology_id}/{version_id} parameterized route
