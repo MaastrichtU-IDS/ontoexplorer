@@ -6,12 +6,15 @@ A next-generation FAIR ontology repository — ingest, browse, query, and reason
 
 - **Ingest** ontologies by IRI, URL, or file upload (OWL/XML, Turtle, RDF/XML, OBO, JSON-LD)
 - **Browse** class and property hierarchies with asserted and OWL-EL inferred views; keyboard-navigable (↑↓→←, Space, Enter)
-- **Search** terms by label, synonym, or CURIE with fast prefix-search backed by Redis
+- **Search** across all ontologies from the home page — keyword prefix search, structured MOS expression query, and **vector semantic search** (type ≥ 3 characters to get semantically similar results alongside prefix matches)
+- **Semantic search** — nomic-ai/nomic-embed-text-v1.5 embeddings stored in pgvector; cosine-similarity search over term labels, definitions, synonyms, and ontological context (superclasses/subclasses)
 - **Reason** using ELK (OWL-EL) — superclasses, subclasses, consistency, justifications
 - **Inspect** ontology document metadata (dcterms, pav, vann, schema.org, etc.) and VoID statistics
 - **Query** via SPARQL 1.1 endpoints over both metadata (Fuseki) and content (Oxigraph)
 - **Authenticate** via ORCID, GitHub, or Google OAuth 2.0
 - **Profile** annotation properties per version — auto-detect which IRIs carry labels, definitions, synonyms, and deprecated flags; confirm or adjust via a Profile tab; the search index rebuilds automatically
+- **Standardize metadata** — auto-detect which vocabulary expresses each ontology's title, description, version, license, homepage, and creators from the `owl:Ontology` block; confirm or override via a Metadata tab
+- **Browse in your language** — pick a language from the global navbar picker (sourced live from indexed ontologies); class, property, and individual trees show labels in the preferred language; term detail panels filter definitions, synonyms, and annotations to that language; each tree node carries a small language badge so you always know which label variant is shown
 - **Sync** ontologies automatically — hourly polling and GitHub push webhooks trigger re-ingestion when content changes
 - **Track** ingestion jobs, register webhooks, and manage API keys
 
@@ -50,7 +53,7 @@ A next-generation FAIR ontology repository — ingest, browse, query, and reason
 | MinIO | Raw ontology files and cached `owl:imports` |
 | Oxigraph (embedded) | Asserted + inferred RDF triples, SPARQL content queries |
 | Fuseki | DCAT/VoID/PROV-O metadata, federation-ready SPARQL endpoint |
-| Postgres | Users, versions, jobs, webhooks, API keys, annotation profiles |
+| Postgres (pgvector) | Users, versions, jobs, webhooks, API keys, annotation profiles, **term embeddings** |
 | Redis | Celery broker, search index, stats cache, ELK classification cache |
 
 ## Quickstart
@@ -79,8 +82,10 @@ docker compose up -d
 ### 3. Run database migrations
 
 ```bash
-docker compose exec api uv run alembic upgrade head
+docker compose exec api alembic upgrade head
 ```
+
+> **Note:** The stack uses `pgvector/pgvector:pg16` (not `postgres:16`) so the `vector` extension is available for semantic search embeddings.
 
 Backend services:
 
@@ -203,6 +208,16 @@ The script prints `✓ queued`, `~ already registered`, or `✗ error` per entry
 
 ## Using the Browser
 
+### Home page (`/`)
+
+The home page is the primary entry point for searching across all ontologies. It shows live aggregate stats (ontology count, total classes, properties, individuals) and two search modes toggled via a tab bar:
+
+**Keyword Search** — prefix-matches term labels, CURIEs, and IRIs against the Redis search index for every ontology that has been indexed. Results are globally re-ranked (exact label → prefix match → substring) and each hit shows the term label, its short IRI, and the source ontology name or shortname as a right-pinned pill. Semantically similar terms (vector search, when embeddings are available) appear below a divider with cosine-similarity scores.
+
+**Structured Query** — accepts a Manchester OWL Syntax (MOS) expression such as `'cell death'`, `BFO:0000040`, or `'part of' some GO:0005623`. Results are fanned out across all ontologies in parallel and merged with global re-ranking. An ontology picker filters the search to a specific subset.
+
+The navbar exposes an **API** link (opens `/api/docs` in a new tab) for quick access to the interactive Swagger UI.
+
 ### Browsing the catalog (`/ontologies`)
 
 The Ontologies page lists every registered ontology with its description, statistics, and group membership.
@@ -237,9 +252,60 @@ Open an ontology page (`/ontologies/<name>`) to see the class and property trees
 
 The keyboard cursor (accent outline) is independent from the selected node shown in the right panel — you can arrow around freely and press Enter only when you want to navigate. Each tree section (Classes, Object Properties, Data Properties, Annotation Properties) has its own independent focus; Tab moves between them.
 
+### Multilingual support
+
+OntoExplorer surfaces the language-tagged literals that are already present in each ontology — it does not translate anything.
+
+**Global language picker** — in the top-right of the navbar, click the language chip to open a dropdown that lists every language tag found across all indexed ontologies, sorted alphabetically and searchable by name or ISO code. Selecting a language stores it in `sessionStorage` and reloads the page so the preference applies immediately to every component.
+
+**Per-tree filtering** — the selected language propagates to every tree query. If a term has a label in the preferred language, that label is shown with a small monospace badge displaying the ISO tag (e.g., `fr`). When no preferred-language label exists, the tree falls back to untagged labels, then English, then any other language.
+
+**Term detail panel** — definitions, synonyms, and annotation values in the right panel are filtered by the same preference (preferred lang → untagged → English → all). Duplicate values that appear across multiple predicates (e.g., both `IAO:0000115` and `skos:definition` carry the same text) are collapsed to a single entry.
+
+**Ontology statistics** — the stats panel at the top of each ontology page includes a **Languages** count showing how many distinct language tags are present in that version's search index.
+
+**Language preference scope** — the preference is session-scoped (cleared when the browser tab closes). It does not affect API queries made outside the browser. Set a per-ontology default by editing the ontology's `preferred_lang` field via PATCH.
+
+### Semantic Search
+
+After indexing, each ontology version is embedded with `nomic-ai/nomic-embed-text-v1.5` (768-dimensional ONNX model, run by the Celery worker). The embedding text for each entity combines its primary label, first definition, up to 10 synonyms, and up to 5 superclass and 10 subclass labels for ontological context.
+
+Embeddings are stored in Postgres via **pgvector** with an HNSW cosine-similarity index. At query time, the API embeds the search string and issues a vector nearest-neighbour query. Results appear in a "Semantically similar" section below prefix matches, with cosine-similarity scores (0–1).
+
+- Semantic results are only returned when the search string is ≥ 3 characters and `semantic=true` is passed (the frontend sets this automatically).
+- If embedding is still in progress for an ontology, semantic results are silently empty (prefix search is unaffected).
+- The worker respects `OMP_NUM_THREADS=2` / `ONNXRUNTIME_NUM_THREADS=2` and a 3 GiB memory cap to avoid saturating the host.
+
+**Backfilling existing ontologies:**
+
+```bash
+# Queue embed_ontology for all ready versions that have no embeddings yet
+docker compose exec api python - << 'EOF'
+import asyncio
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy import text
+from ontoexplorer.modules.jobs.tasks import embed_ontology
+from ontoexplorer.config import Settings
+
+async def dispatch():
+    engine = create_async_engine(Settings().database_url)
+    async with AsyncSession(engine) as db:
+        rows = (await db.execute(text("""
+            SELECT v.id, v.ontology_id FROM versions v
+            WHERE v.status = 'ready'
+              AND NOT EXISTS (SELECT 1 FROM term_embeddings te WHERE te.version_id = v.id)
+        """))).all()
+        for v in rows:
+            embed_ontology.delay(v.id, ontology_id=v.ontology_id)
+        print(f"Queued {len(rows)} versions")
+
+asyncio.run(dispatch())
+EOF
+```
+
 ### Searching within an ontology
 
-Use the search bar at the top of the left panel to find classes and properties by label or CURIE. Arrow keys and Enter work in the search dropdown too.
+Use the search bar at the top of the left panel to find classes and properties by label or CURIE. Arrow keys and Enter work in the search dropdown too. Semantic results appear below prefix matches when embeddings are available for that version.
 
 ### Asserted vs. inferred views
 
@@ -275,12 +341,45 @@ Click **Review →** (or the **Profile** tab) to open the editor. You can add, r
 ### Pipeline
 
 ```
-ingest → detect_profile → index_ontology → (reason)
+ingest → detect_profile → index_ontology → embed_ontology → (reason)
                 ↑
-   PATCH /profile → re-index
+   PATCH /profile → re-index → embed_ontology
 ```
 
-`detect_profile` always enqueues `index_ontology` — even if detection fails, indexing proceeds using the curated registry defaults.
+`detect_profile` always enqueues `index_ontology` — even if detection fails, indexing proceeds using the curated registry defaults. `index_ontology` enqueues `embed_ontology` once the search index is ready.
+
+## Ontology Metadata Profile
+
+Ontologies express document-level metadata using many different vocabularies — one uses `dcterms:title` for the ontology title, another `rdfs:label`; one uses `owl:versionInfo` for the version string, another `pav:version`. Without knowing which predicates are actually used, the platform cannot reliably surface a consistent title, description, or license for every ontology.
+
+After each ingest, a `detect_meta_profile` Celery task scans the `owl:Ontology` block in Oxigraph and scores candidate values for each metadata role against a curated registry. The best candidates are written to an `ontology_meta_profiles` row and used in list views, the admin panel, and ontology detail pages.
+
+### What's detected
+
+| Role | Curated sources |
+|------|-----------------|
+| Title | `dcterms:title`, `rdfs:label`, `skos:prefLabel`, `schema:name` |
+| Description | `dcterms:description`, `rdfs:comment`, `skos:definition` |
+| Version | `owl:versionInfo`, `pav:version`, `dcterms:hasVersion` |
+| Homepage | `foaf:homepage`, `schema:url`, `dcterms:source` |
+| License | `dcterms:license`, `schema:license`, `xhv:license` |
+| Creators | `dcterms:creator`, `pav:createdBy`, `schema:creator` |
+
+18 roles are detected in total — see `ontoexplorer/modules/meta_profile/registry.py` for the full list.
+
+### Reviewing and confirming
+
+Auto-detected values appear immediately on the ontology detail page under a **Metadata** tab. The tab shows the resolved value for each role alongside the source IRI. Click **Confirm** to lock in the auto-detected values, or edit individual role IRIs before confirming.
+
+The bulk endpoint `GET /meta?ids=...` returns resolved metadata for multiple versions in one request and is used by the admin panel and list views.
+
+### Pipeline
+
+```
+ingest → detect_meta_profile → (ready for display)
+                ↑
+   PATCH /meta → re-resolve
+```
 
 ## API Reference
 
@@ -322,6 +421,9 @@ POST   /ontologies/{id}/{vid}/meta/detect        Re-run metadata auto-detection
 GET    /ontologies/{id}/{vid}/meta/candidates    All candidate metadata values
 GET    /meta                                     Bulk metadata for all versions
 
+# Languages
+GET    /languages                                All language tags present across indexed ontologies (with label counts)
+
 # Stats
 GET    /stats/public                             Aggregate counts (ontologies, classes, properties, individuals) — no auth
 GET    /stats                                    Usage statistics for the authenticated user
@@ -335,9 +437,9 @@ GET/POST /sparql                                 SPARQL over Fuseki (FAIR metada
 GET/POST /sparql/content                         SPARQL over Oxigraph (asserted triples)
 
 # Search
-GET    /search                                   Cross-ontology entity or MOS expression search
-GET    /ontologies/{id}/search                   Search within an ontology (latest version)
-GET    /ontologies/{id}/autocomplete             Autocomplete within an ontology (latest version)
+GET    /search                                   Cross-ontology entity or MOS expression search (all indexed versions)
+GET    /ontologies/{id}/search                   Search within an ontology (latest indexed version)
+GET    /ontologies/{id}/autocomplete             Autocomplete within an ontology (latest indexed version)
 
 # Jobs / webhooks / API keys
 GET    /jobs                                     List jobs
@@ -390,7 +492,7 @@ ontoexplorer/                    Python package
     jobs/                        Celery tasks (ingest, detect_profile, index, reason, justify, poll)
     profile/                     Annotation property registry + SPARQL-based detector
     meta_profile/                Ontology document metadata registry + auto-detector
-    search/                      Redis entity index (build_index, entity_lookup)
+    search/                      Redis entity index (build_index, entity_lookup), fastembed embedder, pgvector semantic search
     webhooks/                    HMAC-signed outbound delivery
   clients/
     oxigraph.py                  pyoxigraph Store wrapper
@@ -433,7 +535,13 @@ tests/
 | Auto-sync dedup | SHA-256 comparison before re-queue | Polling fetches the full file; comparing hash avoids spurious ingestion when nothing changed |
 | GitHub sync | HMAC-SHA256 on `X-Hub-Signature-256` | Standard GitHub webhook verification; 401 on mismatch prevents replay attacks |
 | Annotation profiles | SPARQL COUNT per curated IRI, stored in `ontology_profiles` table | Different ontologies use different predicates for labels/definitions; auto-detection + user override avoids hardcoding |
+| Metadata profiles | Scored candidate extraction from `owl:Ontology` block, stored in `ontology_meta_profiles` | Unifies title/description/license across dcterms, pav, schema.org, SKOS without hardcoding per-ontology mappings |
+| Language filtering | Preferred lang → untagged → English → all; dedup by value | Ontologies mix predicates (IAO:0000115, skos:definition, rdfs:comment) carrying the same text — dedup prevents repeated entries; fallback chain ensures something always renders even if the term has no label in the session language |
+| Language index | Redis hash `search:entities:{vid}:langs` (lang → count) per version | Aggregated at index time; `GET /languages` sums across all versions in O(versions) without a SPARQL scan |
 | Search index | Redis sorted set (lexicographic) | Sub-millisecond prefix search over 100k+ terms |
+| Semantic search | fastembed + nomic-embed-text-v1.5 → pgvector HNSW cosine index | ONNX-optimised 768-dim model; no GPU required; HNSW gives sub-10ms ANN at scale; model cached on shared Docker volume so API and worker share one copy |
+| Embedding text | label + definition + synonyms + superclass/subclass labels | Ontological context improves cosine similarity for domain-specific synonymy ("auntie" → Aunt) beyond pure label matching |
+| Embedding resource limits | `OMP_NUM_THREADS=2`, `ONNXRUNTIME_NUM_THREADS=2`, `mem_limit=3g` | Default ONNX Runtime uses all cores (measured 800% CPU on 8-core host); limits prevent system starvation during backfill |
 | Mobile layout | Single-pane, tree ↔ detail toggle | Two-pane layout unusable below 768px |
 
 ## Configuration
@@ -446,6 +554,7 @@ REDIS_URL=redis://redis:6379/0
 MINIO_ENDPOINT=minio:9000
 OXIGRAPH_DATA_PATH=/data/oxigraph
 OXIGRAPH_READ_ONLY=true          # set in API container; worker keeps write access
+FASTEMBED_CACHE_PATH=/root/.cache/fastembed  # shared volume between API and worker
 ELK_SERVICE_URL=http://elk-service:8001
 ELK_SERVICE_TIMEOUT=3600         # seconds — GO classification takes ~7.5 min
 JWT_SECRET_KEY=change-me-in-production
