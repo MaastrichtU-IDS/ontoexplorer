@@ -11,6 +11,7 @@ import TermPanel from '../components/TermPanel'
 import ResizeHandle from '../components/ResizeHandle'
 import ProfileEditor from '../components/ProfileEditor'
 import MetaProfileEditor from '../components/MetaProfileEditor'
+import HistoryTab from '../components/HistoryTab'
 import SearchBar from '../components/SearchBar'
 import { useOntologyMeta } from '../hooks/useOntologyMeta'
 import { useLang } from '../hooks/useLang'
@@ -829,7 +830,7 @@ export default function OntologyPage() {
 
   const [classMode, setClassMode] = useState<HierarchyMode>('asserted')
   const [mobilePane, setMobilePane] = useState<'tree' | 'detail'>('tree')
-  const [detailTab, setDetailTab] = useState<'info' | 'metadata' | 'profile'>('info')
+  const [detailTab, setDetailTab] = useState<'info' | 'metadata' | 'profile' | 'history'>('info')
   const [leftTab, setLeftTab] = useState<'browse' | 'query'>('browse')
 
   const [hideInverseProps, setHideInverseProps] = useState(true)
@@ -1142,7 +1143,7 @@ export default function OntologyPage() {
             display: 'flex', borderBottom: '1px solid var(--border)',
             background: 'var(--bg-secondary)', flexShrink: 0,
           }}>
-            {(['info', 'metadata', 'profile'] as const).map(tab => (
+            {(['info', 'metadata', 'profile', 'history'] as const).map(tab => (
               <button
                 key={tab}
                 onClick={() => setDetailTab(tab)}
@@ -1172,6 +1173,16 @@ export default function OntologyPage() {
               oid && activeVid
                 ? <MetaProfileEditor ontologyId={oid} versionId={activeVid} />
                 : null
+            ) : detailTab === 'history' ? (
+              oid && activeVid && versions.length > 1
+                ? <HistoryTab
+                    ontologyId={oid}
+                    currentVersionId={activeVid}
+                    versions={versions}
+                  />
+                : <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 12 }}>
+                    Only one version available — no diff to show.
+                  </div>
             ) : (
               oid && activeVid
                 ? <ProfileEditor ontologyId={oid} versionId={activeVid} />
