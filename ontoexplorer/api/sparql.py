@@ -42,7 +42,10 @@ def _check_query_guard(query: str) -> None:
 @router.get("/sparql", summary="SPARQL 1.1 over QLever metadata store")
 @router.post("/sparql")
 async def sparql_metadata(request: Request):
-    query, accept = await _extract_query_and_accept(request)
+    try:
+        query, accept = await _extract_query_and_accept(request)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
     metrics.sparql_requests_total.labels(endpoint="qlever", method=request.method).inc()
     t0 = time.monotonic()
     try:
@@ -59,7 +62,10 @@ async def sparql_metadata(request: Request):
 @router.get("/sparql/content", summary="SPARQL 1.1 over Oxigraph content store (asserted triples)")
 @router.post("/sparql/content")
 async def sparql_content(request: Request):
-    query, accept = await _extract_query_and_accept(request)
+    try:
+        query, accept = await _extract_query_and_accept(request)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     try:
         _check_query_guard(query)

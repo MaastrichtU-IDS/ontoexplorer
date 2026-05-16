@@ -68,10 +68,10 @@ services:
 
   oxigraph-sparql:
     image: oxigraph/oxigraph
-    command: serve --location /data --bind 0.0.0.0:7878 --read-only
+    command: serve --location /data/oxigraph --bind 0.0.0.0:7878 --read-only
     restart: unless-stopped
     volumes:
-      - oxigraph-data:/data
+      - oxigraph-data:/data/oxigraph
 
   postgres:
     image: postgres:16

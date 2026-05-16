@@ -135,6 +135,17 @@ async def test_sparql_upstream_error_code_forwarded(client):
 
 
 @pytest.mark.anyio
+async def test_sparql_content_missing_query_returns_400(client):
+    resp = await client.post(
+        "/api/v1/sparql/content",
+        content=b"",
+        headers={"content-type": "application/sparql-query"},
+    )
+    assert resp.status_code == 400
+    assert "missing" in resp.json()["detail"].lower()
+
+
+@pytest.mark.anyio
 async def test_sparql_comment_does_not_trigger_guard(client):
     """A SPARQL comment containing 'INSERT' must not be blocked."""
     fake = MagicMock()
