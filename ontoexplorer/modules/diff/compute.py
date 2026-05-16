@@ -112,7 +112,7 @@ def run_diff(
                     "removed": from_lits_map.get((pred, lang)),
                     "added":   to_lits_map.get((pred, lang)),
                 }
-                for pred, lang in sorted(set(from_lits_map) | set(to_lits_map))
+                for pred, lang in sorted(set(from_lits_map) | set(to_lits_map), key=lambda t: (t[0], t[1] or ""))
             ]
 
             axiom_changes = [

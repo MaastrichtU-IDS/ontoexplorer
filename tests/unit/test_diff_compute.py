@@ -122,3 +122,18 @@ def test_by_entity_type_counts():
     summary, _ = run_diff(s, OID, FROM_VID, TO_VID)
     assert summary["by_entity_type"]["class"]["added"] == 1
     assert summary["by_entity_type"]["object_property"]["added"] == 1
+
+
+def test_literal_lang_tag_change():
+    """run_diff must not crash when a literal gains or loses a language tag."""
+    iri = ox.NamedNode("http://example.org/TaggedClass")
+    shared = [(iri, _RDF_TYPE, _OWL_CLASS)]
+    s = _store(
+        from_quads=shared + [(iri, _RDFS_LBL, ox.Literal("Foo"))],          # no lang tag
+        to_quads=shared   + [(iri, _RDFS_LBL, ox.Literal("Foo", language="en"))],  # with lang tag
+    )
+    summary, diff_data = run_diff(s, OID, FROM_VID, TO_VID)
+    assert summary["modified"] == 1
+    assert summary["literal_changes"] == 1
+    m = diff_data["modified"][0]
+    assert len(m["literal_changes"]) == 2  # removed untagged, added tagged
