@@ -19,14 +19,22 @@ router = APIRouter(prefix="/api/v1", tags=["sparql"])
 _DEFAULT_ACCEPT = "application/sparql-results+json"
 
 _UPDATE_RE = re.compile(
-    r"\b(INSERT|DELETE|DROP|CLEAR|LOAD|CREATE|COPY|MOVE|ADD)\b",
+    r"\b(INSERT|DELETE|DROP|CLEAR|LOAD|CREATE|COPY|MOVE)\b",
     re.IGNORECASE,
 )
 
 
 def _check_query_guard(query: str) -> None:
-    """Raise ValueError if query contains SPARQL Update keywords."""
-    stripped = re.sub(r"#[^\n]*", "", query)
+    """Raise ValueError if query contains SPARQL Update keywords.
+
+    Best-effort guard: strips IRIs and string literals before checking.
+    Primary enforcement is the oxigraph-server --read-only flag.
+    """
+    # Strip IRIs (<...>), quoted strings ("..." and '...'), then comments (#...)
+    stripped = re.sub(r"<[^>]*>", " ", query)
+    stripped = re.sub(r'"[^"\\]*(?:\\.[^"\\]*)*"', " ", stripped)
+    stripped = re.sub(r"'[^'\\]*(?:\\.[^'\\]*)*'", " ", stripped)
+    stripped = re.sub(r"#[^\n]*", "", stripped)
     if _UPDATE_RE.search(stripped):
         raise ValueError("SPARQL Update not permitted")
 
@@ -70,6 +78,7 @@ async def sparql_content(request: Request):
             )
         return Response(
             content=resp.content,
+            status_code=resp.status_code,
             media_type=resp.headers.get("content-type", accept),
         )
     except httpx.TimeoutException:

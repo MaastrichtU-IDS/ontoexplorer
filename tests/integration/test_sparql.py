@@ -101,6 +101,40 @@ async def test_sparql_content_get_proxies_query_param(client):
 
 
 @pytest.mark.anyio
+async def test_sparql_iri_fragment_does_not_bypass_guard(client):
+    """An IRI containing a fragment (#) must not allow INSERT to evade the guard."""
+    resp = await client.post(
+        "/api/v1/sparql/content",
+        content=b"SELECT * WHERE { <http://ex.org#foo> ?p ?o } INSERT DATA { <a> <b> <c> }",
+        headers={"content-type": "application/sparql-query"},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_sparql_upstream_error_code_forwarded(client):
+    """HTTP error from Oxigraph (e.g. 400 bad syntax) must be relayed to caller."""
+    fake = MagicMock()
+    fake.status_code = 400
+    fake.content = b"Parse error"
+    fake.headers = {"content-type": "text/plain"}
+
+    mock_http = AsyncMock()
+    mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+    mock_http.__aexit__ = AsyncMock(return_value=None)
+    mock_http.post = AsyncMock(return_value=fake)
+
+    with patch("ontoexplorer.api.sparql.httpx.AsyncClient", return_value=mock_http):
+        resp = await client.post(
+            "/api/v1/sparql/content",
+            content=b"SELECT * WHERE { BAD SYNTAX }",
+            headers={"content-type": "application/sparql-query"},
+        )
+
+    assert resp.status_code == 400
+
+
+@pytest.mark.anyio
 async def test_sparql_comment_does_not_trigger_guard(client):
     """A SPARQL comment containing 'INSERT' must not be blocked."""
     fake = MagicMock()
