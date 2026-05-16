@@ -17,6 +17,7 @@ from ontoexplorer.api.inbound import router as inbound_router
 from ontoexplorer.api.webhooks import router as webhooks_router
 from ontoexplorer.api.profile import router as profile_router
 from ontoexplorer.api.meta_profile import router as meta_profile_router
+from ontoexplorer.api.diff import router as diff_router
 from ontoexplorer.config import get_settings
 from ontoexplorer.logging_config import configure_logging
 
@@ -60,6 +61,9 @@ def create_app() -> FastAPI:
     # profile_router before ontologies_router: /profile and /profile/candidates static
     # segments must match before ontologies_router's parameterized sub-routes
     app.include_router(profile_router)
+    # diff_router before ontologies_router: /{id}/diff static segment must
+    # take precedence over ontologies_router's /{id}/{version_id} parameter
+    app.include_router(diff_router)
     app.include_router(ontologies_router)
     app.include_router(search_router)
     app.include_router(webhooks_router)
