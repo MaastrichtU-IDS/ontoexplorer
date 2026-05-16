@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from fastembed import TextEmbedding
@@ -17,7 +17,7 @@ def get_embedder() -> "TextEmbedding":
     if _embedder is None:
         from fastembed import TextEmbedding
         cache_path = os.environ.get("FASTEMBED_CACHE_PATH")
-        kwargs: dict = {}
+        kwargs: dict[str, str] = {}
         if cache_path:
             kwargs["cache_dir"] = cache_path
         _embedder = TextEmbedding(_MODEL_NAME, **kwargs)
@@ -25,7 +25,7 @@ def get_embedder() -> "TextEmbedding":
 
 
 def build_entity_text(
-    entity: dict,
+    entity: dict[str, Any],
     parent_labels: list[str],
     child_labels: list[str],
 ) -> str:
@@ -36,14 +36,16 @@ def build_entity_text(
         parts.append(label + ".")
 
     raw_defs = entity.get("definitions", "[]")
-    defs: list[dict] = json.loads(raw_defs) if isinstance(raw_defs, str) else raw_defs
-    if defs:
-        parts.append(defs[0]["value"] + ".")
+    defs: list[dict[str, Any]] = json.loads(raw_defs) if isinstance(raw_defs, str) else raw_defs
+    def_val = defs[0].get("value", "") if defs else ""
+    if def_val:
+        parts.append(def_val + ".")
 
     raw_syns = entity.get("synonyms", "[]")
-    syns: list[dict] = json.loads(raw_syns) if isinstance(raw_syns, str) else raw_syns
-    if syns:
-        parts.append("Synonyms: " + "; ".join(s["value"] for s in syns[:10]) + ".")
+    syns: list[dict[str, Any]] = json.loads(raw_syns) if isinstance(raw_syns, str) else raw_syns
+    syn_vals = [s.get("value", "") for s in syns[:10] if s.get("value")]
+    if syn_vals:
+        parts.append("Synonyms: " + "; ".join(syn_vals) + ".")
 
     if parent_labels:
         parts.append("Superclasses: " + ", ".join(parent_labels[:5]) + ".")
@@ -65,4 +67,4 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
 def embed_query(text: str) -> list[float]:
     embedder = get_embedder()
-    return next(embedder.query_embed([text])).tolist()
+    return next(embedder.query_embed([text])).tolist()  # type: ignore[return-value]
