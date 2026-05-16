@@ -15,6 +15,7 @@ from ontoexplorer.modules.search.evaluator import AmbiguousLabelError, evaluate
 from ontoexplorer.modules.search.indexer import entity_lookup, normalise_label
 from ontoexplorer.modules.search.lang import resolve_lang
 from ontoexplorer.modules.search.mos_parser import ParseError, NamedClass, parse
+from ontoexplorer.modules.search.semantic import semantic_search
 
 router = APIRouter(prefix="/api/v1", tags=["search"])
 
@@ -89,6 +90,7 @@ async def global_search(
     mode: str = Query("auto", description="auto | entity | expression"),
     limit: int = Query(20, ge=1, le=200),
     lang: str | None = Query(None, description="BCP-47 language tag for preferred results"),
+    semantic: bool = Query(False, description="Include vector semantic results"),
     _user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -152,8 +154,16 @@ async def global_search(
         merged.sort(key=_global_rank)
         merged = merged[:limit]
 
-        return {"mode": "entity", "query": q, "results": merged,
-                "count": len(merged), "truncated": len(merged) >= limit}
+        sem_results: list[dict] = []
+        if semantic and len(q) >= 3:
+            version_id_strs = [str(v.id) for v in versions]
+            sem_results = await semantic_search(q, db, version_id_strs, limit=10)
+
+        return {
+            "mode": "entity", "query": q, "results": merged,
+            "count": len(merged), "truncated": len(merged) >= limit,
+            "semantic_results": sem_results,
+        }
 
     # Expression mode — evaluate against each version separately
     async def search_one_expression(v: OntologyVersion) -> list[dict]:
@@ -182,7 +192,8 @@ async def global_search(
             break
 
     return {"mode": "expression", "query": q, "results": merged[:limit],
-            "count": len(merged[:limit]), "truncated": len(merged) > limit}
+            "count": len(merged[:limit]), "truncated": len(merged) > limit,
+            "semantic_results": []}
 
 
 # ── Per-ontology search (latest version) ──────────────────────────────────────
@@ -195,6 +206,7 @@ async def ontology_search(
     mode: str = Query("auto", description="auto | entity | expression"),
     limit: int = Query(20, ge=1, le=200),
     lang: str | None = Query(None, description="BCP-47 language tag"),
+    semantic: bool = Query(False, description="Include vector semantic results"),
     _user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -224,6 +236,9 @@ async def ontology_search(
 
     if effective_mode == "entity":
         results = await asyncio.to_thread(entity_lookup, version_id, q, None, limit)
+        sem_results: list[dict] = []
+        if semantic and len(q) >= 3:
+            sem_results = await semantic_search(q, db, [version_id], limit=10)
         return {
             "mode": "entity", "query": q, "version_id": version_id,
             "results": [
@@ -232,6 +247,7 @@ async def ontology_search(
                 for r in results
             ],
             "count": len(results), "truncated": len(results) >= limit,
+            "semantic_results": sem_results,
         }
 
     try:
@@ -252,6 +268,7 @@ async def ontology_search(
             for r in trimmed
         ],
         "count": len(trimmed), "truncated": len(search_results) > limit,
+        "semantic_results": [],
     }
 
 

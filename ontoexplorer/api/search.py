@@ -16,6 +16,7 @@ from ontoexplorer.modules.search.evaluator import AmbiguousLabelError, evaluate
 from ontoexplorer.modules.search.indexer import entity_lookup
 from ontoexplorer.modules.search.lang import resolve_lang
 from ontoexplorer.modules.search.mos_parser import ParseError, parse, NamedClass, And, Or, Not
+from ontoexplorer.modules.search.semantic import semantic_search
 
 router = APIRouter(
     prefix="/api/v1/ontologies/{ontology_id}/{version_id}",
@@ -38,6 +39,7 @@ async def search(
     mode: str = Query("auto", description="auto | entity | expression"),
     limit: int = Query(20, ge=1, le=200),
     lang: str | None = Query(None, description="BCP-47 language tag for preferred results"),
+    semantic: bool = Query(False, description="Include vector semantic results"),
     _user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -71,6 +73,9 @@ async def search(
 
     if effective_mode == "entity":
         results = await asyncio.to_thread(entity_lookup, version_id, q, None, limit)
+        sem_results: list[dict] = []
+        if semantic and len(q) >= 3:
+            sem_results = await semantic_search(q, db, [version_id], limit=10)
         return {
             "mode": "entity",
             "query": q,
@@ -81,6 +86,7 @@ async def search(
             ],
             "count": len(results),
             "truncated": len(results) >= limit,
+            "semantic_results": sem_results,
         }
 
     # Expression mode
@@ -123,6 +129,7 @@ async def search(
         ],
         "count": len(trimmed),
         "truncated": len(search_results) > limit,
+        "semantic_results": [],
     }
 
 
