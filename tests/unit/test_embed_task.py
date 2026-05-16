@@ -1,5 +1,5 @@
 """Unit tests for embed_ontology task wiring (no DB or embedder calls)."""
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock
 
 
 def test_embed_ontology_task_registered():
