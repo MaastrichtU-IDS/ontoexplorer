@@ -31,9 +31,9 @@ export default function Sparql() {
           { endpoint: '/api/v1/sparql/content', title: 'OntoExplorer — Ontology Content' },
         ],
       },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      yasqe: { value: DEFAULT_QUERY } as any,
     })
+    // Set initial query via the API (avoids type-unsafe 'as any' cast on yasqe config)
+    yasguiRef.current.getTab()?.getYasqe()?.setValue(DEFAULT_QUERY)
 
     return () => {
       if (yasguiRef.current) {
