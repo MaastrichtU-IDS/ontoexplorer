@@ -360,6 +360,19 @@ export interface WebhookDelivery {
   last_attempt_at: string | null
 }
 
+export interface SavedQuery {
+  id: string
+  user_id: string
+  name: string
+  description: string | null
+  query_text: string
+  tags: string[]
+  is_public: boolean
+  created_at: string
+  updated_at: string
+  user_display_name?: string
+}
+
 // ── Profile types ─────────────────────────────────────────────────────────────
 
 export interface OntologyProfileData {
@@ -494,6 +507,7 @@ export interface AdminOntologyEntry {
   triple_count: number | null
   ingestion_status: string
   indexed: boolean
+  embed_count: number
   reasoning_status: 'ready' | 'running' | 'not_started'
   version_created_at: string | null
 }
@@ -827,6 +841,33 @@ export const api = {
     delete: (id: string) => request<void>(`/webhooks/${id}`, { method: 'DELETE' }),
     test: (id: string) =>
       request<{ delivery_id: string; status: string }>(`/webhooks/${id}/test`, { method: 'POST' }),
+  },
+
+  savedQueries: {
+    create: (body: { name: string; description?: string; query_text: string; tags: string[]; is_public: boolean }) =>
+      request<SavedQuery>('/sparql/queries', { method: 'POST', body: JSON.stringify(body) }),
+
+    list: () =>
+      request<{ queries: SavedQuery[] }>('/sparql/queries'),
+
+    listPublic: (params: { q?: string; ontology?: string; user_id?: string; limit?: number; offset?: number }) => {
+      const p = new URLSearchParams()
+      if (params.q) p.set('q', params.q)
+      if (params.ontology) p.set('ontology', params.ontology)
+      if (params.user_id) p.set('user_id', params.user_id)
+      if (params.limit !== undefined) p.set('limit', String(params.limit))
+      if (params.offset !== undefined) p.set('offset', String(params.offset))
+      return request<{ queries: SavedQuery[]; total: number }>(`/sparql/queries/public?${p}`)
+    },
+
+    get: (id: string) =>
+      request<SavedQuery>(`/sparql/queries/${id}`),
+
+    update: (id: string, body: Partial<{ name: string; description: string; query_text: string; tags: string[]; is_public: boolean }>) =>
+      request<SavedQuery>(`/sparql/queries/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+
+    delete: (id: string) =>
+      request<void>(`/sparql/queries/${id}`, { method: 'DELETE' }),
   },
 
   stats: {
