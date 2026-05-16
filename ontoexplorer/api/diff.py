@@ -187,6 +187,8 @@ async def get_or_generate_narrative(
         "Summarise the changes between two versions of an ontology in 2-3 sentences "
         "suitable for release notes. Be specific about counts and entity types. "
         "Do not start with 'This version' or 'In this version'.\n\n"
+        f"From: {prev.version_iri or prev.id}\n"
+        f"To:   {version.version_iri or version_id}\n\n"
         f"Changes:\n"
         f"- Added: {summary.get('added', 0)} entities\n"
         f"- Removed: {summary.get('removed', 0)} entities\n"
@@ -196,13 +198,18 @@ async def get_or_generate_narrative(
         f"- By type: {type_breakdown}"
     )
 
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=300,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    narrative = message.content[0].text
+    try:
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        message = await client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        narrative = message.content[0].text
+    except anthropic.APIStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Anthropic API error: {exc.status_code}")
+    except anthropic.APIConnectionError:
+        raise HTTPException(status_code=502, detail="Anthropic API unreachable")
 
     diff_row.narrative = narrative
     await db.commit()
