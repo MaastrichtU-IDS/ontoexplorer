@@ -37,8 +37,7 @@ export function useGenerateNarrative(ontologyId: string, versionId: string) {
   return useMutation({
     mutationFn: () => api.ontologies.generateNarrative(ontologyId, versionId),
     onSuccess: () => {
-      // Invalidate the consecutive diff so the narrative appears
-      queryClient.invalidateQueries({ queryKey: ['diff', ontologyId, versionId] })
+      queryClient.invalidateQueries({ queryKey: ['diff', ontologyId] })
     },
   })
 }
