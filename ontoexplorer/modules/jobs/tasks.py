@@ -426,6 +426,7 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                 await db.commit()
 
         asyncio.run(_mark_ready())
+        embed_ontology.delay(version_id, ontology_id=ontology_id)
         log.info("index_ontology_done", version_id=version_id,
                  class_count=stats.class_count, property_count=stats.property_count)
         return {"status": "done", "version_id": version_id,
@@ -548,3 +549,119 @@ def poll_for_updates() -> None:
             await _run_poll(db)
 
     asyncio.run(_run())
+
+
+@celery_app.task(name="ontoexplorer.embed_ontology")
+def embed_ontology(version_id: str, ontology_id: str = "") -> dict:
+    """Compute pgvector embeddings for all indexed entities in a version."""
+    log.info("embed_ontology_start", version_id=version_id)
+    try:
+        import uuid as _uuid_mod
+        from ontoexplorer.clients.oxigraph import graph_iri, sparql_query
+        from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _type_key
+        from ontoexplorer.modules.search.embedder import build_entity_text, text_hash, embed_texts
+        from ontoexplorer.database import make_celery_db_session
+        from ontoexplorer.models.db import TermEmbedding
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        r = _get_redis()
+        named_graph = graph_iri(ontology_id, version_id)
+
+        all_entities: dict[str, str] = {}
+        for etype in ["class", "object_property", "data_property", "annotation_property", "individual"]:
+            for iri in r.smembers(_type_key(version_id, etype)):
+                all_entities[iri] = etype
+
+        if not all_entities:
+            log.info("embed_ontology_skip_empty", version_id=version_id)
+            return {"status": "skip", "version_id": version_id}
+
+        _SKIP_IRIS = {
+            "http://www.w3.org/2002/07/owl#Thing",
+            "http://www.w3.org/2002/07/owl#topObjectProperty",
+            "http://www.w3.org/2002/07/owl#topDataProperty",
+        }
+        parents_by_iri: dict[str, list[str]] = {iri: [] for iri in all_entities}
+        children_by_iri: dict[str, list[str]] = {iri: [] for iri in all_entities}
+
+        try:
+            for sol in sparql_query(f"""
+                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+                SELECT ?entity ?parent WHERE {{
+                    GRAPH <{named_graph}> {{
+                        ?entity rdfs:subClassOf ?parent .
+                        FILTER(isIRI(?entity) && isIRI(?parent))
+                    }}
+                }}
+            """):
+                iri = sol["entity"].value
+                parent = sol["parent"].value
+                if iri in parents_by_iri and parent not in _SKIP_IRIS:
+                    parents_by_iri[iri].append(parent)
+            for sol in sparql_query(f"""
+                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+                SELECT ?child ?entity WHERE {{
+                    GRAPH <{named_graph}> {{
+                        ?child rdfs:subClassOf ?entity .
+                        FILTER(isIRI(?child) && isIRI(?entity))
+                    }}
+                }}
+            """):
+                iri = sol["entity"].value
+                child = sol["child"].value
+                if iri in children_by_iri:
+                    children_by_iri[iri].append(child)
+        except Exception as exc:
+            log.warning("embed_ontology_sparql_warn", version_id=version_id, error=str(exc))
+
+        def _label(iri: str) -> str:
+            v = r.hget(_iri_key(version_id, iri), "primary_label")
+            return v or iri.split("/")[-1].split("#")[-1]
+
+        records: list[tuple[str, str, str, str]] = []
+        for iri, etype in all_entities.items():
+            entity = r.hgetall(_iri_key(version_id, iri))
+            if not entity:
+                continue
+            p_labels = [_label(p) for p in parents_by_iri.get(iri, [])[:5]]
+            c_labels = [_label(c) for c in children_by_iri.get(iri, [])[:10]]
+            t = build_entity_text(entity, p_labels, c_labels)
+            records.append((iri, etype, t, text_hash(t)))
+
+        if not records:
+            return {"status": "skip", "version_id": version_id}
+
+        BATCH = 64
+        total = len(records)
+
+        async def _embed_and_store() -> None:
+            async with make_celery_db_session()() as db:
+                for i in range(0, total, BATCH):
+                    batch = records[i : i + BATCH]
+                    embeddings = embed_texts([rec[2] for rec in batch])
+                    for (iri, etype, _, h), emb in zip(batch, embeddings):
+                        stmt = pg_insert(TermEmbedding).values(
+                            id=str(_uuid_mod.uuid4()),
+                            version_id=version_id,
+                            entity_iri=iri,
+                            entity_type=etype,
+                            text_hash=h,
+                            embedding=emb,
+                        ).on_conflict_do_update(
+                            index_elements=["version_id", "entity_iri"],
+                            set_={"entity_type": etype, "text_hash": h, "embedding": emb},
+                            where=(TermEmbedding.text_hash != h),
+                        )
+                        await db.execute(stmt)
+                    await db.commit()
+                    done = min(i + BATCH, total)
+                    if done % 1000 < BATCH or done == total:
+                        log.info("embed_ontology_progress", version_id=version_id,
+                                 done=done, total=total)
+
+        asyncio.run(_embed_and_store())
+        log.info("embed_ontology_done", version_id=version_id, total=total)
+        return {"status": "done", "version_id": version_id, "total": total}
+    except Exception as exc:
+        log.error("embed_ontology_failed", version_id=version_id, error=str(exc))
+        return {"status": "failed", "version_id": version_id, "error": str(exc)}
