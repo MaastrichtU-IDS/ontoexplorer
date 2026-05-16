@@ -102,8 +102,8 @@ export interface DiffEntity {
   iri: string
   label: string | null
   entity_type: DiffEntityType
-  literal_changes?: DiffLiteralChange[]
-  axiom_changes?: DiffAxiomChange[]
+  literal_changes: DiffLiteralChange[]
+  axiom_changes: DiffAxiomChange[]
 }
 
 export interface DiffSummary {
@@ -123,7 +123,7 @@ export interface OntologyDiff {
     removed: DiffEntity[]
     modified: DiffEntity[]
   }
-  narrative?: string | null
+  narrative: string | null
 }
 
 export interface UserProfile {
