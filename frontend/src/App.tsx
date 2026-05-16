@@ -15,6 +15,7 @@ import Login from './pages/Login'
 import AuthCallback from './pages/AuthCallback'
 import AdminPage from './pages/AdminPage'
 import Sparql from './pages/Sparql'
+import SparqlGallery from './pages/SparqlGallery'
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -34,6 +35,7 @@ export default function App() {
       <Route path="/ontologies/:slug/:version" element={<Shell><OntologyPage /></Shell>} />
       <Route path="/search" element={<Shell><Search /></Shell>} />
       <Route path="/sparql" element={<Shell><Sparql /></Shell>} />
+      <Route path="/sparql/gallery" element={<Shell><SparqlGallery /></Shell>} />
       <Route path="/login" element={<Shell><Login /></Shell>} />
       <Route path="/auth/:provider/callback" element={<AuthCallback />} />
       <Route element={<Shell><AuthGuard /></Shell>}>
