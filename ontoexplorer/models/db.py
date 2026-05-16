@@ -38,6 +38,7 @@ class User(Base):
     ontologies: Mapped[list["Ontology"]] = relationship(back_populates="owner")
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     webhooks: Mapped[list["Webhook"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    saved_queries: Mapped[list["SavedQuery"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class OAuthAccount(Base):
@@ -260,3 +261,19 @@ class TermEmbedding(Base):
     entity_type: Mapped[str] = mapped_column(String)
     text_hash: Mapped[str] = mapped_column(String)
     embedding: Mapped[list] = mapped_column(Vector(768))
+
+
+class SavedQuery(Base):
+    __tablename__ = "saved_queries"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    user: Mapped["User"] = relationship(back_populates="saved_queries")
