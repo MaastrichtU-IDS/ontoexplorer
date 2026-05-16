@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import Sparql from './Sparql'
@@ -12,6 +12,10 @@ vi.mock('@triply/yasgui', () => ({
 
 vi.mock('../hooks/useOntologies', () => ({
   useOntologies: vi.fn(),
+}))
+
+vi.mock('../components/QuerySidebar', () => ({
+  default: () => null,
 }))
 
 import { useOntologies } from '../hooks/useOntologies'
@@ -102,8 +106,8 @@ test('shows empty message when filter matches nothing', () => {
 test('copy button writes correct graph URI to clipboard', async () => {
   wrap(<Sparql />)
   fireEvent.click(screen.getByRole('button', { name: /Graphs \(2\)/i }))
-  const copyBtns = screen.getAllByRole('button', { name: 'Copy' })
-  fireEvent.click(copyBtns[0])
+  const goCell = screen.getByText('go').closest('div')!
+  fireEvent.click(within(goCell).getByRole('button', { name: 'Copy' }))
   await waitFor(() => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('urn:ontology:abc1:v1')
   })
