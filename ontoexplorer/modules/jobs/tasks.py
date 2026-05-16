@@ -106,14 +106,15 @@ def detect_meta_profile(version_id: str, ontology_id: str = "") -> dict:
     return {"status": "done", "version_id": version_id}
 
 
-@celery_app.task(name="ontoexplorer.compute_diff")
+@celery_app.task(name="ontoexplorer.compute_diff", time_limit=300)
 def compute_diff(version_from_id: str, version_to_id: str, ontology_id: str) -> dict:
     """Compute diff between two ontology versions and store results in the DB."""
-    import asyncio
+    import uuid
     from ontoexplorer.database import make_celery_db_session
 
     async def _run() -> None:
         from sqlalchemy import select
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
         from ontoexplorer.models.db import OntologyDiff
         from ontoexplorer.modules.diff.compute import run_diff as _run_diff
         from ontoexplorer.clients.oxigraph import get_store
@@ -128,18 +129,28 @@ def compute_diff(version_from_id: str, version_to_id: str, ontology_id: str) -> 
             if existing and existing.status == "ready":
                 return
 
-            if existing is None:
-                diff_row = OntologyDiff(
+            # Upsert pending row — ON CONFLICT DO NOTHING handles concurrent workers
+            await db.execute(
+                pg_insert(OntologyDiff)
+                .values(
+                    id=str(uuid.uuid4()),
                     ontology_id=ontology_id,
                     version_from_id=version_from_id,
                     version_to_id=version_to_id,
                     status="pending",
                 )
-                db.add(diff_row)
-                await db.commit()
-                await db.refresh(diff_row)
-            else:
-                diff_row = existing
+                .on_conflict_do_nothing()
+            )
+            await db.commit()
+
+            diff_row = await db.scalar(
+                select(OntologyDiff).where(
+                    OntologyDiff.version_from_id == version_from_id,
+                    OntologyDiff.version_to_id == version_to_id,
+                )
+            )
+            if diff_row is None:
+                return  # should not happen, but guard
 
             try:
                 store = get_store()
@@ -160,6 +171,7 @@ def compute_diff(version_from_id: str, version_to_id: str, ontology_id: str) -> 
         log.info("compute_diff_done", from_vid=version_from_id, to_vid=version_to_id)
     except Exception as exc:
         log.error("compute_diff_task_error", error=str(exc))
+        raise  # let Celery record the failure
     return {"status": "done"}
 
 
