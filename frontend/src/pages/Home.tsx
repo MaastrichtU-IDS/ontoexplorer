@@ -98,8 +98,9 @@ function KeywordSearch() {
   const [query, setQuery] = useState('')
   const [submitted, setSubmitted] = useState('')
   const { ontologies } = useOntologies()
-  const { data } = useGlobalSearch(submitted)
+  const { data } = useGlobalSearch(submitted, submitted.length >= 3)
   const results = data?.results ?? []
+  const semanticResults = data?.semantic_results ?? []
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -157,6 +158,57 @@ function KeywordSearch() {
         </p>
       )}
       <ResultList results={results} pathFor={pathFor} />
+      {semanticResults.length > 0 && (
+        <>
+          <div style={{
+            margin: '1.25rem 0 0.5rem',
+            fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase',
+            letterSpacing: 0.8, display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span style={{ flex: 1, borderTop: '1px solid var(--border)' }} />
+            Semantically similar
+            <span style={{ flex: 1, borderTop: '1px solid var(--border)' }} />
+          </div>
+          <ul style={{ listStyle: 'none', marginTop: 0 }}>
+            {semanticResults.map(r => {
+              const path = pathFor(r)
+              const alreadyInResults = results.some(p => p.iri === r.iri)
+              const inner = (
+                <>
+                  <span style={{
+                    color: alreadyInResults ? 'var(--text-dim)' : 'var(--accent)',
+                    fontWeight: 500, flexShrink: 0,
+                  }}>{r.label}</span>
+                  {r.source && <SourceBadge source={r.source} />}
+                  <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{r.short}</span>
+                  <span style={{
+                    fontSize: 10, padding: '1px 5px', borderRadius: 3,
+                    background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                    color: 'var(--text-dim)', marginLeft: 'auto', flexShrink: 0,
+                  }}>{r.score?.toFixed(2)}</span>
+                </>
+              )
+              const sharedStyle: React.CSSProperties = {
+                padding: '8px 10px', borderRadius: 'var(--radius-sm)',
+                display: 'flex', gap: 10, alignItems: 'baseline',
+                borderBottom: '1px solid var(--border)',
+                textDecoration: 'none',
+                opacity: alreadyInResults ? 0.5 : 1,
+              }
+              return path ? (
+                <li key={r.iri}>
+                  <Link to={path} style={sharedStyle}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = '')}
+                  >{inner}</Link>
+                </li>
+              ) : (
+                <li key={r.iri} style={{ ...sharedStyle, color: 'var(--text-dim)' }}>{inner}</li>
+              )
+            })}
+          </ul>
+        </>
+      )}
     </>
   )
 }
