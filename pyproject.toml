@@ -29,6 +29,7 @@ dependencies = [
     "prometheus-client",
     "lark>=1.2",
     "redis>=6.0",
+    "anthropic",
 ]
 
 [dependency-groups]

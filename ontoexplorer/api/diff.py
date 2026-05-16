@@ -131,3 +131,79 @@ async def trigger_diff_compute(
     await _get_version_or_404(db, ontology_id, from_vid)
     await _get_version_or_404(db, ontology_id, to_vid)
     return await _get_or_enqueue(db, ontology_id, from_vid, to_vid)
+
+
+@router.post("/{ontology_id}/{version_id}/diff/narrative",
+             summary="Generate or retrieve LLM changelog narrative for consecutive diff")
+async def get_or_generate_narrative(
+    ontology_id: str,
+    version_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    version = await _get_version_or_404(db, ontology_id, version_id)
+
+    prev = await db.scalar(
+        select(OntologyVersion)
+        .where(
+            OntologyVersion.ontology_id == ontology_id,
+            OntologyVersion.id != version_id,
+            OntologyVersion.status != "deprecated",
+            OntologyVersion.created_at < version.created_at,
+        )
+        .order_by(OntologyVersion.created_at.desc())
+        .limit(1)
+    )
+    if not prev:
+        raise HTTPException(status_code=404, detail="No previous version found")
+
+    diff_row = await db.scalar(
+        select(OntologyDiff).where(
+            OntologyDiff.version_from_id == str(prev.id),
+            OntologyDiff.version_to_id == version_id,
+        )
+    )
+    if not diff_row or diff_row.status != "ready":
+        raise HTTPException(status_code=409, detail="Diff not yet computed")
+
+    if diff_row.narrative:
+        return {"narrative": diff_row.narrative}
+
+    import anthropic
+    from ontoexplorer.config import get_settings
+    settings = get_settings()
+
+    if not settings.anthropic_api_key:
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not configured")
+
+    summary = diff_row.summary or {}
+    by_type = summary.get("by_entity_type", {})
+    type_breakdown = ", ".join(
+        f"{et.replace('_', ' ')}: +{v['added']} -{v['removed']} ~{v['modified']}"
+        for et, v in by_type.items()
+        if v["added"] or v["removed"] or v["modified"]
+    )
+
+    prompt = (
+        "Summarise the changes between two versions of an ontology in 2-3 sentences "
+        "suitable for release notes. Be specific about counts and entity types. "
+        "Do not start with 'This version' or 'In this version'.\n\n"
+        f"Changes:\n"
+        f"- Added: {summary.get('added', 0)} entities\n"
+        f"- Removed: {summary.get('removed', 0)} entities\n"
+        f"- Modified: {summary.get('modified', 0)} entities "
+        f"({summary.get('literal_changes', 0)} with literal changes, "
+        f"{summary.get('axiom_changes', 0)} with axiom changes)\n"
+        f"- By type: {type_breakdown}"
+    )
+
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=300,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    narrative = message.content[0].text
+
+    diff_row.narrative = narrative
+    await db.commit()
+    return {"narrative": narrative}

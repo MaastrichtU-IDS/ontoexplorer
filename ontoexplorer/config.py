@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     elk_service_url: str = "http://localhost:8001"
     elk_service_timeout: int = 3600  # seconds — large ontologies (GO) can take >10 min
 
+    # Anthropic
+    anthropic_api_key: str = ""
+
     # JWT / session
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
