@@ -66,6 +66,13 @@ services:
       JVM_ARGS: "-Xmx1g"
     command: /jena-fuseki/fuseki-server --update --mem /qlever
 
+  oxigraph-sparql:
+    image: oxigraph/oxigraph
+    command: serve --location /data --bind 0.0.0.0:7878 --read-only
+    restart: unless-stopped
+    volumes:
+      - oxigraph-data:/data
+
   postgres:
     image: postgres:16
     ports:
