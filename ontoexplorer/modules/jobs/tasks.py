@@ -106,6 +106,63 @@ def detect_meta_profile(version_id: str, ontology_id: str = "") -> dict:
     return {"status": "done", "version_id": version_id}
 
 
+@celery_app.task(name="ontoexplorer.compute_diff")
+def compute_diff(version_from_id: str, version_to_id: str, ontology_id: str) -> dict:
+    """Compute diff between two ontology versions and store results in the DB."""
+    import asyncio
+    from ontoexplorer.database import make_celery_db_session
+
+    async def _run() -> None:
+        from sqlalchemy import select
+        from ontoexplorer.models.db import OntologyDiff
+        from ontoexplorer.modules.diff.compute import run_diff as _run_diff
+        from ontoexplorer.clients.oxigraph import get_store
+
+        async with make_celery_db_session()() as db:
+            existing = await db.scalar(
+                select(OntologyDiff).where(
+                    OntologyDiff.version_from_id == version_from_id,
+                    OntologyDiff.version_to_id == version_to_id,
+                )
+            )
+            if existing and existing.status == "ready":
+                return
+
+            if existing is None:
+                diff_row = OntologyDiff(
+                    ontology_id=ontology_id,
+                    version_from_id=version_from_id,
+                    version_to_id=version_to_id,
+                    status="pending",
+                )
+                db.add(diff_row)
+                await db.commit()
+                await db.refresh(diff_row)
+            else:
+                diff_row = existing
+
+            try:
+                store = get_store()
+                summary, diff_data = await asyncio.to_thread(
+                    _run_diff, store, ontology_id, version_from_id, version_to_id
+                )
+                diff_row.summary = summary
+                diff_row.diff_data = diff_data
+                diff_row.status = "ready"
+            except Exception as exc:
+                diff_row.status = "failed"
+                log.error("compute_diff_failed", from_vid=version_from_id,
+                          to_vid=version_to_id, error=str(exc))
+            await db.commit()
+
+    try:
+        asyncio.run(_run())
+        log.info("compute_diff_done", from_vid=version_from_id, to_vid=version_to_id)
+    except Exception as exc:
+        log.error("compute_diff_task_error", error=str(exc))
+    return {"status": "done"}
+
+
 @celery_app.task(bind=True, name="ontoexplorer.ingest_ontology", max_retries=3)
 def ingest_ontology(
     self,

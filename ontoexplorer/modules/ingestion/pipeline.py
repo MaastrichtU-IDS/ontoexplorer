@@ -229,6 +229,22 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     detect_profile.delay(version_id, ontology_id=ontology_id)
     detect_meta_profile.delay(version_id, ontology_id=ontology_id)
 
+    # ── Step 10: Queue diff computation against previous version ─────────────
+    prev_result = await db.execute(
+        select(OntologyVersion)
+        .where(
+            OntologyVersion.ontology_id == ontology_id,
+            OntologyVersion.id != version_id,
+            OntologyVersion.status != "deprecated",
+        )
+        .order_by(OntologyVersion.created_at.desc())
+        .limit(1)
+    )
+    prev_version = prev_result.scalar_one_or_none()
+    if prev_version:
+        from ontoexplorer.modules.jobs.tasks import compute_diff as _compute_diff_task
+        _compute_diff_task.delay(str(prev_version.id), version_id, ontology_id)
+
     elapsed = time.monotonic() - _t0
     metrics.ontologies_ingested_total.labels(format=fmt.value, duplicate="false").inc()
     metrics.ingestion_duration_seconds.labels(format=fmt.value).observe(elapsed)
