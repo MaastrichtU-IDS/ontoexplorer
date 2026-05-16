@@ -28,6 +28,7 @@ export default function QuerySidebar({ yasguiRef }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [ontologyNames, setOntologyNames] = useState<string[]>([])
   const [showTagSuggestions, setShowTagSuggestions] = useState(false)
@@ -65,6 +66,7 @@ export default function QuerySidebar({ yasguiRef }: Props) {
   function cancelForm() {
     setForm(EMPTY_FORM)
     setEditingId(null)
+    setSaveError(null)
     setView('list')
   }
 
@@ -72,6 +74,7 @@ export default function QuerySidebar({ yasguiRef }: Props) {
     e.preventDefault()
     if (!form.name.trim()) return
     setSaving(true)
+    setSaveError(null)
     try {
       const queryText = editingId
         ? (queries.find(q => q.id === editingId)?.query_text ?? '')
@@ -91,6 +94,8 @@ export default function QuerySidebar({ yasguiRef }: Props) {
         setQueries(qs => [created, ...qs])
       }
       cancelForm()
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Save failed')
     } finally {
       setSaving(false)
     }
@@ -303,6 +308,9 @@ export default function QuerySidebar({ yasguiRef }: Props) {
             )}
           </div>
 
+          {saveError && (
+            <div style={{ color: '#f87171', fontSize: '0.6rem', wordBreak: 'break-word' }}>{saveError}</div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-muted)', fontSize: '0.7rem', cursor: 'pointer' }}>
               <input
