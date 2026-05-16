@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import Yasgui from '@triply/yasgui'
 import '@triply/yasgui/build/yasgui.min.css'
@@ -61,9 +61,10 @@ function GraphsPanel({ entries }: { entries: GraphEntry[] }) {
     : entries
 
   function copyUri(uri: string) {
-    navigator.clipboard.writeText(uri)
-    setCopied(uri)
-    setTimeout(() => setCopied(null), 1500)
+    navigator.clipboard.writeText(uri).then(() => {
+      setCopied(uri)
+      setTimeout(() => setCopied(null), 1500)
+    }).catch(() => {})
   }
 
   return (
@@ -149,7 +150,7 @@ export default function Sparql() {
   const [queryError, setQueryError] = useState<string | null>(null)
   const { ontologies } = useOntologies()
 
-  const entries = toEntries(ontologies)
+  const entries = useMemo(() => toEntries(ontologies), [ontologies])
 
   useEffect(() => {
     namedGraphsRef.current = entries.map(e => e.graphUri)
