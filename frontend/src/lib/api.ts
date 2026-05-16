@@ -79,6 +79,53 @@ export interface OntologyLanguage {
   label_count: number
 }
 
+export interface DiffLiteralChange {
+  predicate: string
+  lang: string | null
+  removed: string | null
+  added: string | null
+}
+
+export interface DiffAxiomChange {
+  op: 'added' | 'removed'
+  axiom: string
+}
+
+export type DiffEntityType =
+  | 'class'
+  | 'object_property'
+  | 'data_property'
+  | 'annotation_property'
+  | 'individual'
+
+export interface DiffEntity {
+  iri: string
+  label: string | null
+  entity_type: DiffEntityType
+  literal_changes?: DiffLiteralChange[]
+  axiom_changes?: DiffAxiomChange[]
+}
+
+export interface DiffSummary {
+  added: number
+  removed: number
+  modified: number
+  literal_changes: number
+  axiom_changes: number
+  by_entity_type: Record<DiffEntityType, { added: number; removed: number; modified: number }>
+}
+
+export interface OntologyDiff {
+  status: 'pending' | 'ready' | 'failed'
+  summary?: DiffSummary
+  diff_data?: {
+    added: DiffEntity[]
+    removed: DiffEntity[]
+    modified: DiffEntity[]
+  }
+  narrative?: string | null
+}
+
 export interface UserProfile {
   id: string
   email: string | null
@@ -583,7 +630,7 @@ export const api = {
       )
     },
     get: (id: string) => request<Ontology>(`/ontologies/${id}`),
-    patch: (id: string, body: { shortname?: string | null; title?: string | null; preferred_lang?: string | null }) =>
+    patch: (id: string, body: { shortname?: string | null; title?: string | null; preferred_lang?: string | null; groups?: string[] }) =>
       request<Ontology>(`/ontologies/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(body),
@@ -614,6 +661,17 @@ export const api = {
       ),
     languages: (oid: string, vid: string) =>
       request<OntologyLanguage[]>(`/ontologies/${oid}/${vid}/languages`),
+    diff: (ontologyId: string, versionId: string) =>
+      request<OntologyDiff>(`/ontologies/${ontologyId}/${versionId}/diff`),
+    diffArbitrary: (ontologyId: string, fromVid: string, toVid: string) =>
+      request<OntologyDiff>(
+        `/ontologies/${ontologyId}/diff?from=${encodeURIComponent(fromVid)}&to=${encodeURIComponent(toVid)}`
+      ),
+    generateNarrative: (ontologyId: string, versionId: string) =>
+      request<{ narrative: string }>(
+        `/ontologies/${ontologyId}/${versionId}/diff/narrative`,
+        { method: 'POST' }
+      ),
     autocompleteLatest: (oid: string, q: string, cursor = -1) =>
       request<AutocompleteResponse>(
         `/ontologies/${oid}/autocomplete?q=${encodeURIComponent(q)}&cursor=${cursor}`
