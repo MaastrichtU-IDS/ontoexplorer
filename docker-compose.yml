@@ -20,6 +20,8 @@ services:
     build: .
     command: celery -A ontoexplorer.modules.jobs.tasks worker --loglevel=info --concurrency=1
     env_file: .env
+    environment:
+      FASTEMBED_CACHE_PATH: /root/.cache/fastembed
     depends_on:
       - postgres
       - redis
@@ -27,6 +29,7 @@ services:
     volumes:
       - ./ontoexplorer:/app/ontoexplorer
       - oxigraph-data:/data/oxigraph
+      - fastembed-cache:/root/.cache/fastembed
 
   beat:
     build: .
@@ -130,3 +133,4 @@ volumes:
   oxigraph-data:
   grafana-data:
   redis-data:
+  fastembed-cache:

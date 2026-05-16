@@ -14,6 +14,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from pgvector.sqlalchemy import Vector
 
 from ontoexplorer.database import Base
 
@@ -247,3 +248,15 @@ class OntologyDiff(Base):
     diff_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     narrative: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TermEmbedding(Base):
+    __tablename__ = "term_embeddings"
+    __table_args__ = (UniqueConstraint("version_id", "entity_iri"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    version_id: Mapped[str] = mapped_column(ForeignKey("versions.id", ondelete="CASCADE"))
+    entity_iri: Mapped[str] = mapped_column(Text)
+    entity_type: Mapped[str] = mapped_column(String)
+    text_hash: Mapped[str] = mapped_column(String)
+    embedding: Mapped[list] = mapped_column(Vector(768))
