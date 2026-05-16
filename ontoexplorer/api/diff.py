@@ -59,8 +59,21 @@ async def _get_or_enqueue(
         version_to_id=to_vid,
         status="pending",
     )
-    db.add(diff_row)
-    await db.commit()
+    try:
+        db.add(diff_row)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        existing = await db.scalar(
+            select(OntologyDiff).where(
+                OntologyDiff.version_from_id == from_vid,
+                OntologyDiff.version_to_id == to_vid,
+            )
+        )
+        return JSONResponse(
+            status_code=202,
+            content={"status": existing.status if existing else "pending"},
+        )
 
     from ontoexplorer.modules.jobs.tasks import compute_diff as _compute_diff_task
     _compute_diff_task.delay(from_vid, to_vid, ontology_id)
