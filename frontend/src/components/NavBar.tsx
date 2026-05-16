@@ -7,6 +7,7 @@ import { logout } from '../lib/auth'
 
 const navLinks = [
   { to: '/ontologies', label: 'Ontologies' },
+  { to: '/sparql', label: 'SPARQL' },
 ]
 
 const LANG_NAMES: Record<string, string> = {
@@ -165,21 +166,40 @@ export default function NavBar() {
             <NavLink
               to="/dashboard"
               style={({ isActive }) => ({
-                color: isActive ? 'var(--text)' : 'var(--text-dim)',
+                color: isActive ? '#c678dd' : 'var(--text-dim)',
                 fontSize: 'var(--font-size-sm)',
+                border: '1px solid',
+                borderColor: isActive ? '#c678dd' : 'var(--border)',
+                borderRadius: 4,
+                padding: '2px 8px',
               })}
             >
               Dashboard
             </NavLink>
             <button
               onClick={() => logout()}
-              style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}
+              style={{
+                color: '#61afef',
+                fontSize: 'var(--font-size-sm)',
+                border: '1px solid #61afef',
+                borderRadius: 4,
+                padding: '2px 8px',
+              }}
             >
               Sign out
             </button>
           </div>
         ) : (
-          <Link to="/login" style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>
+          <Link
+            to="/login"
+            style={{
+              color: '#61afef',
+              fontSize: 'var(--font-size-sm)',
+              border: '1px solid #61afef',
+              borderRadius: 4,
+              padding: '2px 8px',
+            }}
+          >
             Sign in
           </Link>
         )}
