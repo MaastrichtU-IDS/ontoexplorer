@@ -11,17 +11,13 @@ import type { Ontology } from '../lib/api'
 const DEFAULT_QUERY = `PREFIX owl: <http://www.w3.org/2002/07/owl#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
-# All triples are stored in named graphs (one per ontology version).
-# Use GRAPH ?g { ... } to query across all ontologies, or bind ?g to
-# a specific graph IRI to query a single ontology version.
-
-SELECT ?class ?label WHERE {
+SELECT DISTINCT ?class ?label WHERE {
   GRAPH ?g {
     ?class a owl:Class .
     OPTIONAL { ?class rdfs:label ?label }
   }
 }
-LIMIT 100`
+LIMIT 10`
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
