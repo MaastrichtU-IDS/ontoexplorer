@@ -81,7 +81,10 @@ async def test_public_gallery_and_filter(client, user_and_key):
 
     resp = await client.get(f"{BASE}/public")
     assert resp.status_code == 200
-    names = [q["name"] for q in resp.json()["queries"]]
+    body = resp.json()
+    assert "total" in body
+    assert body["total"] >= 1
+    names = [q["name"] for q in body["queries"]]
     assert "Gallery query" in names
 
     resp = await client.get(f"{BASE}/public?ontology=hp")
@@ -124,3 +127,59 @@ async def test_unauthenticated_create_returns_401(client):
         json={"name": "q", "query_text": "SELECT ?s WHERE { ?s ?p ?o }", "tags": [], "is_public": False},
     )
     assert resp.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_cross_user_private_access(client, db_session):
+    """Authenticated user B cannot see/modify user A's private query."""
+    import hashlib
+    import uuid as _uuid
+
+    from ontoexplorer.models.db import ApiKey, User
+
+    # Create user A with API key
+    raw_key_a = f"oe_test_{_uuid.uuid4().hex}"
+    user_a = User(id=str(_uuid.uuid4()), email=f"a-{_uuid.uuid4()}@example.com", display_name="A")
+    key_a = ApiKey(
+        id=str(_uuid.uuid4()),
+        user_id=user_a.id,
+        key_hash=hashlib.sha256(raw_key_a.encode()).hexdigest(),
+        name="key-a",
+        scopes=["read", "write"],
+    )
+    # Create user B with API key
+    raw_key_b = f"oe_test_{_uuid.uuid4().hex}"
+    user_b = User(id=str(_uuid.uuid4()), email=f"b-{_uuid.uuid4()}@example.com", display_name="B")
+    key_b = ApiKey(
+        id=str(_uuid.uuid4()),
+        user_id=user_b.id,
+        key_hash=hashlib.sha256(raw_key_b.encode()).hexdigest(),
+        name="key-b",
+        scopes=["read", "write"],
+    )
+    db_session.add_all([user_a, key_a, user_b, key_b])
+    await db_session.commit()
+
+    auth_a = {"Authorization": f"Bearer {raw_key_a}"}
+    auth_b = {"Authorization": f"Bearer {raw_key_b}"}
+
+    # User A creates a private query
+    resp = await client.post(
+        "/api/v1/sparql/queries",
+        json={"name": "secret", "query_text": "SELECT ?s WHERE { ?s ?p ?o }", "tags": [], "is_public": False},
+        headers=auth_a,
+    )
+    assert resp.status_code == 201
+    qid = resp.json()["id"]
+
+    # User B cannot read it
+    assert (await client.get(f"/api/v1/sparql/queries/{qid}", headers=auth_b)).status_code == 404
+
+    # User B cannot update it
+    assert (await client.patch(f"/api/v1/sparql/queries/{qid}", json={"name": "hacked"}, headers=auth_b)).status_code == 404
+
+    # User B cannot delete it
+    assert (await client.delete(f"/api/v1/sparql/queries/{qid}", headers=auth_b)).status_code == 404
+
+    # User A can still read it
+    assert (await client.get(f"/api/v1/sparql/queries/{qid}", headers=auth_a)).status_code == 200
