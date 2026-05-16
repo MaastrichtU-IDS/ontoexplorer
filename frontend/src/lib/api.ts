@@ -284,7 +284,8 @@ export interface SearchResult {
   short: string
   type?: string
   source?: string
-  match_type: 'entity' | 'elk' | 'sparql'
+  match_type: 'entity' | 'elk' | 'sparql' | 'semantic'
+  score?: number
   version_id?: string
   ontology_id?: string
   lang?: string | null
@@ -651,9 +652,15 @@ export const api = {
       request<RawTermDetail>(
         `/ontologies/${oid}/${vid}/terms/${encodeURIComponent(iri)}${lang ? `?lang=${lang}` : ''}`
       ),
-    search: (oid: string, vid: string, q: string, mode = 'auto', lang?: string) =>
-      request<{ mode: string; results: SearchResult[]; count: number; truncated: boolean }>(
-        `/ontologies/${oid}/${vid}/search?q=${encodeURIComponent(q)}&mode=${mode}${lang ? `&lang=${lang}` : ''}`
+    search: (oid: string, vid: string, q: string, mode = 'auto', lang?: string, semantic = false) =>
+      request<{
+        mode: string
+        results: SearchResult[]
+        count: number
+        truncated: boolean
+        semantic_results?: SearchResult[]
+      }>(
+        `/ontologies/${oid}/${vid}/search?q=${encodeURIComponent(q)}&mode=${mode}${lang ? `&lang=${lang}` : ''}${semantic ? '&semantic=true' : ''}`
       ),
     autocomplete: (oid: string, vid: string, q: string, cursor = -1, lang?: string) =>
       request<AutocompleteResponse>(
@@ -769,10 +776,16 @@ export const api = {
   },
 
   globalSearch: {
-    search: (q: string, limit = 20) => {
+    search: (q: string, limit = 20, semantic = false) => {
       const params = new URLSearchParams({ q, limit: String(limit) })
+      if (semantic) params.set('semantic', 'true')
       return fetch(`/api/v1/search?${params}`)
-        .then(r => r.json()) as Promise<{ results: SearchResult[]; count: number; truncated: boolean }>
+        .then(r => r.json()) as Promise<{
+          results: SearchResult[]
+          count: number
+          truncated: boolean
+          semantic_results?: SearchResult[]
+        }>
     },
   },
 

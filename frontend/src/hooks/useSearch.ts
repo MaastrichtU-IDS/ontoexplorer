@@ -29,10 +29,10 @@ export function useAutocomplete(
   })
 }
 
-export function useGlobalSearch(query: string) {
+export function useGlobalSearch(query: string, semantic = false) {
   return useQuery({
-    queryKey: ['global-search', query],
-    queryFn: () => api.globalSearch.search(query),
+    queryKey: ['global-search', query, semantic],
+    queryFn: () => api.globalSearch.search(query, 20, semantic),
     enabled: query.length >= 2,
     staleTime: 10_000,
   })
