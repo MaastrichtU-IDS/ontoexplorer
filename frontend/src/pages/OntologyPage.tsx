@@ -608,12 +608,13 @@ function OntologySearchBar({
 
   const { data } = useQuery({
     queryKey: ['onto-search', ontologyId, versionId, dq, lang],
-    queryFn: () => api.ontologies.search(ontologyId, versionId, dq, 'auto', lang ?? undefined),
+    queryFn: () => api.ontologies.search(ontologyId, versionId, dq, 'auto', lang ?? undefined, dq.length >= 3),
     enabled: dq.length >= 2,
     staleTime: 30_000,
   })
 
   const results: SearchResult[] = data?.results ?? []
+  const semanticResults: SearchResult[] = data?.semantic_results ?? []
 
   useEffect(() => { setActiveIdx(-1) }, [results])
 
@@ -629,11 +630,17 @@ function OntologySearchBar({
     onSelect(r.iri); setQuery(''); setOpen(false)
   }
 
+  const totalItems = results.length + semanticResults.length
+
   function handleKey(e: React.KeyboardEvent) {
-    if (!open || results.length === 0) return
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx(i => Math.min(i + 1, results.length - 1)) }
+    if (!open || totalItems === 0) return
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx(i => Math.min(i + 1, totalItems - 1)) }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIdx(i => Math.max(i - 1, 0)) }
-    else if (e.key === 'Enter' && activeIdx >= 0) { e.preventDefault(); pick(results[activeIdx]) }
+    else if (e.key === 'Enter' && activeIdx >= 0) {
+      e.preventDefault()
+      if (activeIdx < results.length) pick(results[activeIdx])
+      else pick(semanticResults[activeIdx - results.length])
+    }
     else if (e.key === 'Escape') { setOpen(false) }
   }
 
@@ -653,13 +660,13 @@ function OntologySearchBar({
           outline: 'none',
         }}
       />
-      {open && results.length > 0 && (
+      {open && (results.length > 0 || semanticResults.length > 0) && (
         <ul style={{
           position: 'absolute', top: '100%', left: 8, right: 8,
           zIndex: 100, listStyle: 'none', margin: 0, padding: 0,
           background: 'var(--bg-secondary)', border: '1px solid var(--border)',
           borderRadius: 'var(--radius-sm)', boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-          maxHeight: 260, overflowY: 'auto',
+          maxHeight: 320, overflowY: 'auto',
         }}>
           {results.map((r, i) => {
             const isInd = r.type === 'individual'
@@ -690,6 +697,53 @@ function OntologySearchBar({
               </li>
             )
           })}
+          {semanticResults.length > 0 && (
+            <>
+              <li style={{
+                fontSize: 10, color: 'var(--text-dim)', padding: '4px 10px 2px',
+                textTransform: 'uppercase', letterSpacing: 0.6,
+                borderTop: '1px solid var(--border)',
+              }}>
+                Semantically similar
+              </li>
+              {semanticResults.map((r, i) => {
+                const alreadyShown = results.some(p => p.iri === r.iri)
+                const isInd = r.type === 'individual'
+                const isProp = r.type?.endsWith('_property')
+                const typeColor = isInd
+                  ? 'var(--accent-blue, #61afef)'
+                  : isProp ? 'var(--accent-purple, #c678dd)' : 'var(--text-dim)'
+                return (
+                  <li
+                    key={r.iri}
+                    onMouseDown={() => pick(r)}
+                    onMouseEnter={() => setActiveIdx(results.length + i)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6,
+                      padding: '5px 10px', cursor: 'pointer', fontSize: 'var(--font-size-sm)',
+                      background: activeIdx === results.length + i ? 'var(--bg-hover)' : 'transparent',
+                      color: alreadyShown ? 'var(--text-dim)' : 'var(--text)',
+                      opacity: alreadyShown ? 0.6 : 1,
+                    }}
+                  >
+                    <span style={{
+                      fontSize: 9, fontWeight: 700, padding: '1px 4px',
+                      borderRadius: 2, background: 'var(--bg)',
+                      color: typeColor, flexShrink: 0, minWidth: 28, textAlign: 'center',
+                    }}>
+                      {r.type === 'class' ? 'cls' : r.type === 'individual' ? 'ind' : 'prop'}
+                    </span>
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {r.label}
+                    </span>
+                    <span style={{ fontSize: 10, color: 'var(--text-dim)', flexShrink: 0 }}>
+                      {r.score?.toFixed(2)}
+                    </span>
+                  </li>
+                )
+              })}
+            </>
+          )}
         </ul>
       )}
     </div>
