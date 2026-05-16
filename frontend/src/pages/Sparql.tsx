@@ -52,6 +52,8 @@ function GraphsPanel({ entries }: { entries: GraphEntry[] }) {
   const [open, setOpen] = useState(false)
   const [filter, setFilter] = useState('')
   const [copied, setCopied] = useState<string | null>(null)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
 
   const q = filter.trim().toLowerCase()
   const visible = q
@@ -63,7 +65,8 @@ function GraphsPanel({ entries }: { entries: GraphEntry[] }) {
   function copyUri(uri: string) {
     navigator.clipboard.writeText(uri).then(() => {
       setCopied(uri)
-      setTimeout(() => setCopied(null), 1500)
+      if (timerRef.current) clearTimeout(timerRef.current)
+      timerRef.current = setTimeout(() => setCopied(null), 1500)
     }).catch(() => {})
   }
 

@@ -96,6 +96,14 @@ test('filter input narrows rows by name', () => {
   expect(screen.queryByText('mondo')).not.toBeInTheDocument()
 })
 
+test('filter input narrows rows by graph URI substring', () => {
+  wrap(<Sparql />)
+  fireEvent.click(screen.getByRole('button', { name: /Graphs \(2\)/i }))
+  fireEvent.change(screen.getByPlaceholderText('Filter ontologies…'), { target: { value: 'abc2' } })
+  expect(screen.getByText('mondo')).toBeInTheDocument()
+  expect(screen.queryByText('go')).not.toBeInTheDocument()
+})
+
 test('shows empty message when filter matches nothing', () => {
   wrap(<Sparql />)
   fireEvent.click(screen.getByRole('button', { name: /Graphs \(2\)/i }))
