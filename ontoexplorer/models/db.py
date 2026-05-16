@@ -236,6 +236,7 @@ class OntologyMetaProfile(Base):
 
 class OntologyDiff(Base):
     __tablename__ = "ontology_diffs"
+    __table_args__ = (UniqueConstraint("version_from_id", "version_to_id"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     ontology_id: Mapped[str] = mapped_column(ForeignKey("ontologies.id", ondelete="CASCADE"))
