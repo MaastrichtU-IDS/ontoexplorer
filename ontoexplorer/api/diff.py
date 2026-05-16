@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.database import get_db
 from ontoexplorer.logging_config import get_logger
-from ontoexplorer.models.db import OntologyDiff, OntologyVersion
+from ontoexplorer.models.db import OntologyDiff, OntologyVersion, User
+from ontoexplorer.modules.auth.dependencies import require_auth
 
 log = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/ontologies", tags=["diff"])
@@ -139,6 +140,7 @@ async def get_or_generate_narrative(
     ontology_id: str,
     version_id: str,
     db: AsyncSession = Depends(get_db),
+    _user: User = Depends(require_auth),
 ):
     version = await _get_version_or_404(db, ontology_id, version_id)
 

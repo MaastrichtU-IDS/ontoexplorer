@@ -155,6 +155,12 @@ export default function HistoryTab({ ontologyId, currentVersionId, versions }: P
   const { mutate: generateNarrative, isPending: generatingNarrative } =
     useGenerateNarrative(ontologyId, toVid)
 
+  // Narrative endpoint only supports consecutive diffs (prev → toVid).
+  // Disable the button when the user has selected a non-consecutive pair.
+  const toVidIdx = sorted.findIndex(v => v.id === toVid)
+  const consecutivePrev = toVidIdx < sorted.length - 1 ? sorted[toVidIdx + 1].id : ''
+  const isConsecutivePair = fromVid === consecutivePrev
+
   const toggleOp = (op: Op) => {
     setOps(prev => {
       const next = new Set(prev)
@@ -234,11 +240,12 @@ export default function HistoryTab({ ontologyId, currentVersionId, versions }: P
         </select>
         <button
           onClick={() => generateNarrative()}
-          disabled={!diff || diff.status !== 'ready' || generatingNarrative}
+          disabled={!diff || diff.status !== 'ready' || generatingNarrative || !isConsecutivePair}
+          title={!isConsecutivePair ? 'Changelog generation is only available for consecutive version pairs' : undefined}
           style={{
             marginLeft: 'auto', background: '#238636', color: '#fff', border: 'none',
-            borderRadius: 4, padding: '3px 10px', cursor: 'pointer', fontSize: 10,
-            opacity: (!diff || diff.status !== 'ready') ? 0.5 : 1,
+            borderRadius: 4, padding: '3px 10px', cursor: isConsecutivePair ? 'pointer' : 'not-allowed', fontSize: 10,
+            opacity: (!diff || diff.status !== 'ready' || !isConsecutivePair) ? 0.5 : 1,
           }}
         >
           {generatingNarrative ? 'Generating…' : 'Generate changelog'}
