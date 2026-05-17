@@ -213,7 +213,9 @@ def _render_bnode_expression(
     """
     preds = _bnode_predicates(store, graph, node)
 
-    # Each branch added in a subsequent task; for now everything falls through.
+    # Property restrictions: detected by presence of owl:onProperty.
+    if _OWL_ON_PROPERTY in preds:
+        return _render_restriction(store, graph, preds, labels=labels, depth=depth)
 
     return _bnode_fallback(store, graph, node)
 
@@ -231,6 +233,49 @@ def _bnode_predicates(
         # First-wins; predicates we care about are functional in OWL2 anyway.
         preds.setdefault(q.predicate.value, q.object)
     return preds
+
+
+def _render_restriction(
+    store: ox.Store,
+    graph: ox.NamedNode,
+    preds: dict[str, ox.Term],
+    *,
+    labels: dict[str, str],
+    depth: int,
+) -> str:
+    """Render an owl:Restriction.
+
+    Required: owl:onProperty. Then exactly one of someValuesFrom / allValuesFrom /
+    hasValue / hasSelf / cardinality-variants.
+    """
+    prop_term = preds[_OWL_ON_PROPERTY]
+    prop_label = render_class_expression(
+        store, graph, prop_term, labels=labels, depth=depth + 1
+    )
+
+    if _OWL_SOME_VALUES in preds:
+        filler = render_class_expression(
+            store, graph, preds[_OWL_SOME_VALUES], labels=labels, depth=depth + 1
+        )
+        return f"{prop_label} some {filler}"
+    if _OWL_ALL_VALUES in preds:
+        filler = render_class_expression(
+            store, graph, preds[_OWL_ALL_VALUES], labels=labels, depth=depth + 1
+        )
+        return f"{prop_label} only {filler}"
+    if _OWL_HAS_VALUE in preds:
+        v = render_class_expression(
+            store, graph, preds[_OWL_HAS_VALUE], labels=labels, depth=depth + 1
+        )
+        return f"{prop_label} value {v}"
+    if _OWL_HAS_SELF in preds:
+        v = preds[_OWL_HAS_SELF]
+        if isinstance(v, ox.Literal) and v.value == _XSD_TRUE_LITERAL:
+            return f"{prop_label} Self"
+        # `hasSelf false` is not a standard Manchester construct; fall through.
+
+    # Cardinality patterns are handled in a later task; until then, fallback.
+    return f"[restriction:{prop_label}]"
 
 
 def _bnode_fallback(

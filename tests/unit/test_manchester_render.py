@@ -200,3 +200,77 @@ def test_render_unknown_bnode_returns_bnode_placeholder():
     )
     out = render_class_expression(store, _GRAPH, bnode, labels={})
     assert out.startswith("[bnode:")
+
+
+_OWL_RESTRICTION = ox.NamedNode("http://www.w3.org/2002/07/owl#Restriction")
+_OWL_ON_PROPERTY = ox.NamedNode("http://www.w3.org/2002/07/owl#onProperty")
+_OWL_SOME = ox.NamedNode("http://www.w3.org/2002/07/owl#someValuesFrom")
+_OWL_ALL  = ox.NamedNode("http://www.w3.org/2002/07/owl#allValuesFrom")
+_OWL_HAS_VALUE = ox.NamedNode("http://www.w3.org/2002/07/owl#hasValue")
+_OWL_HAS_SELF  = ox.NamedNode("http://www.w3.org/2002/07/owl#hasSelf")
+_RDF_TYPE_N = ox.NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
+_XSD_TRUE = ox.Literal("true", datatype=ox.NamedNode("http://www.w3.org/2001/XMLSchema#boolean"))
+
+
+def test_restriction_some_values_from():
+    p = ox.NamedNode("http://example.org/hasTopping")
+    c = ox.NamedNode("http://example.org/Tomato")
+    r = ox.BlankNode("r1")
+    store = _store(
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_SOME, c),
+    )
+    out = render_class_expression(store, _GRAPH, r, labels={})
+    assert out == "hasTopping some Tomato"
+
+
+def test_restriction_all_values_from():
+    p = ox.NamedNode("http://example.org/hasTopping")
+    c = ox.NamedNode("http://example.org/Tomato")
+    r = ox.BlankNode("r2")
+    store = _store(
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_ALL, c),
+    )
+    out = render_class_expression(store, _GRAPH, r, labels={})
+    assert out == "hasTopping only Tomato"
+
+
+def test_restriction_has_value_iri():
+    p = ox.NamedNode("http://example.org/hasTopping")
+    v = ox.NamedNode("http://example.org/SpecificTomato")
+    r = ox.BlankNode("r3")
+    store = _store(
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_HAS_VALUE, v),
+    )
+    out = render_class_expression(store, _GRAPH, r, labels={})
+    assert out == "hasTopping value SpecificTomato"
+
+
+def test_restriction_has_value_literal():
+    p = ox.NamedNode("http://example.org/hasName")
+    v = ox.Literal("Salty", language="en")
+    r = ox.BlankNode("r4")
+    store = _store(
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_HAS_VALUE, v),
+    )
+    out = render_class_expression(store, _GRAPH, r, labels={})
+    assert out == 'hasName value "Salty"@en'
+
+
+def test_restriction_has_self_true():
+    p = ox.NamedNode("http://example.org/hasPartOf")
+    r = ox.BlankNode("r5")
+    store = _store(
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_HAS_SELF, _XSD_TRUE),
+    )
+    out = render_class_expression(store, _GRAPH, r, labels={})
+    assert out == "hasPartOf Self"
