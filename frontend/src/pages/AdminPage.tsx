@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../hooks/useAuth'
 import { useAdminOverview } from '../hooks/useAdminOverview'
-import { AdminOntologyEntry, AdminJobEntry } from '../lib/api'
+import { AdminOntologyEntry, AdminJobEntry, WorkerTask, api } from '../lib/api'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -93,47 +94,223 @@ function ServiceCard({ name, status }: { name: string; status: string | number }
 
 const REASONING_ORDER: Record<string, number> = { not_started: 0, running: 1, ready: 2 }
 
-function OntologyTable({ rows }: { rows: AdminOntologyEntry[] }) {
-  const sorted = [...rows].sort((a, b) =>
-    (REASONING_ORDER[a.reasoning_status] ?? 0) - (REASONING_ORDER[b.reasoning_status] ?? 0)
-  )
+type UpdateState = 'idle' | 'queued' | 'error'
+type SortCol = 'ontology' | 'triples' | 'ingestion' | 'indexed' | 'embeddings' | 'reasoning' | 'updated'
+
+function ontologyDisplayName(row: AdminOntologyEntry): string {
+  return row.shortname
+    || row.iri.replace(/[/#]+$/, '').split(/[/#]/).pop()?.replace(/\.(owl|ttl|rdf|obo|json|xml|nt)$/i, '')
+    || row.iri
+}
+
+function UpdateButton({
+  ontologyId,
+  sourceUrl,
+  iri,
+  state,
+  onUpdate,
+}: {
+  ontologyId: string
+  sourceUrl: string | null
+  iri: string
+  state: UpdateState
+  onUpdate: (id: string) => void
+}) {
+  const hasSource = !!(sourceUrl || iri)
+  if (!hasSource) {
+    return <span style={{ color: 'var(--text-dim)', fontSize: 10 }}>—</span>
+  }
+  if (state === 'queued') {
+    return <span style={{ color: '#ffa657', fontSize: 10 }}>↑ queued</span>
+  }
+  const method = sourceUrl ? 'url' : 'iri'
+  const isError = state === 'error'
   return (
-    <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-        <thead>
-          <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
-            {['Ontology', 'Triples', 'Ingestion', 'Indexed', 'Reasoning', 'Updated'].map(h => (
-              <th key={h} style={{ padding: '7px 10px', textAlign: h === 'Ontology' ? 'left' : 'center', color: 'var(--text-dim)', fontWeight: 500, fontSize: 10, textTransform: 'uppercase', letterSpacing: .5 }}>
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map(row => (
-            <tr key={row.version_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-              <td style={{ padding: '6px 10px', color: 'var(--text)' }}>
-                {row.label || row.shortname || row.iri.split(/[/#]/).pop()}
-              </td>
-              <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                {fmtTriples(row.triple_count)}
-              </td>
-              <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-                <StatusDot status={row.ingestion_status} />
-              </td>
-              <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-                <StatusDot status={row.indexed ? 'done' : 'not_started'} label={row.indexed ? 'yes' : 'no'} />
-              </td>
-              <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-                <StatusDot status={row.reasoning_status} label={row.reasoning_status.replace('_', ' ')} />
-              </td>
-              <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
-                {fmtAge(row.version_created_at)}
-              </td>
+    <button
+      onClick={() => onUpdate(ontologyId)}
+      title={method === 'url' ? `Re-ingest via URL: ${sourceUrl}` : `Re-ingest via IRI (content negotiation): ${iri}`}
+      style={{
+        background: isError ? 'rgba(248,81,73,0.1)' : 'none',
+        border: `1px solid ${isError ? 'rgba(248,81,73,0.3)' : 'var(--border)'}`,
+        borderRadius: 4, cursor: 'pointer',
+        color: isError ? '#f85149' : 'var(--text-dim)',
+        fontSize: 10, padding: '2px 8px',
+      }}
+    >
+      {isError ? '✕ retry' : `↑ ${method}`}
+    </button>
+  )
+}
+
+const PAGE_SIZE = 25
+
+function OntologyTable({
+  rows,
+  updateStates,
+  onUpdate,
+}: {
+  rows: AdminOntologyEntry[]
+  updateStates: Record<string, UpdateState>
+  onUpdate: (id: string) => void
+}) {
+  const [search, setSearch] = useState('')
+  const [sort, setSort] = useState<{ col: SortCol; dir: 'asc' | 'desc' }>({ col: 'ontology', dir: 'asc' })
+  const [page, setPage] = useState(0)
+
+  function toggleSort(col: SortCol) {
+    setSort(s => s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'asc' })
+    setPage(0)
+  }
+
+  function handleSearch(q: string) {
+    setSearch(q)
+    setPage(0)
+  }
+
+  const filtered = rows.filter(r => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    return (
+      ontologyDisplayName(r).toLowerCase().includes(q) ||
+      r.iri.toLowerCase().includes(q) ||
+      (r.label ?? '').toLowerCase().includes(q) ||
+      (r.shortname ?? '').toLowerCase().includes(q)
+    )
+  })
+
+  const sorted = [...filtered].sort((a, b) => {
+    let cmp = 0
+    switch (sort.col) {
+      case 'ontology':   cmp = ontologyDisplayName(a).localeCompare(ontologyDisplayName(b)); break
+      case 'triples':    cmp = (a.triple_count ?? -1) - (b.triple_count ?? -1); break
+      case 'ingestion':  cmp = a.ingestion_status.localeCompare(b.ingestion_status); break
+      case 'indexed':    cmp = (a.indexed ? 1 : 0) - (b.indexed ? 1 : 0); break
+      case 'embeddings': cmp = a.embed_count - b.embed_count; break
+      case 'reasoning':  cmp = (REASONING_ORDER[a.reasoning_status] ?? 0) - (REASONING_ORDER[b.reasoning_status] ?? 0); break
+      case 'updated':    cmp = (a.version_created_at ?? '').localeCompare(b.version_created_at ?? ''); break
+    }
+    return sort.dir === 'asc' ? cmp : -cmp
+  })
+
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE)
+  const paged = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+
+  const thBase: React.CSSProperties = {
+    padding: '7px 10px', fontWeight: 500, fontSize: 10,
+    textTransform: 'uppercase', letterSpacing: .5,
+    cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap',
+  }
+
+  function SortTh({ col, label, align = 'center' }: { col: SortCol; label: string; align?: React.CSSProperties['textAlign'] }) {
+    const active = sort.col === col
+    return (
+      <th onClick={() => toggleSort(col)} style={{ ...thBase, textAlign: align, color: active ? 'var(--text)' : 'var(--text-dim)' }}>
+        {label} <span style={{ opacity: active ? 1 : 0.25 }}>{active && sort.dir === 'desc' ? '▼' : '▲'}</span>
+      </th>
+    )
+  }
+
+  const btnStyle = (disabled: boolean): React.CSSProperties => ({
+    background: 'none', border: '1px solid var(--border)', borderRadius: 4,
+    color: disabled ? 'var(--text-dim)' : 'var(--text)',
+    fontSize: 11, padding: '2px 10px', cursor: disabled ? 'default' : 'pointer',
+    opacity: disabled ? 0.4 : 1,
+  })
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <input
+          value={search}
+          onChange={e => handleSearch(e.target.value)}
+          placeholder="Search ontologies…"
+          style={{
+            background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+            borderRadius: 6, padding: '5px 10px', color: 'var(--text)',
+            fontSize: 12, outline: 'none', width: 240,
+          }}
+        />
+        <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>
+          {filtered.length !== rows.length ? `${filtered.length} of ${rows.length}` : `${rows.length} total`}
+        </span>
+      </div>
+
+      <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+              <SortTh col="ontology"   label="Ontology"    align="left" />
+              <SortTh col="triples"    label="Triples" />
+              <SortTh col="ingestion"  label="Ingestion" />
+              <SortTh col="indexed"    label="Indexed" />
+              <SortTh col="embeddings" label="Embeddings" />
+              <SortTh col="reasoning"  label="Reasoning" />
+              <SortTh col="updated"    label="Updated" />
+              <th style={{ ...thBase, textAlign: 'center', cursor: 'default', color: 'var(--text-dim)' }}>Update</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {paged.map(row => (
+              <tr key={row.version_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                <td style={{ padding: '6px 10px', color: 'var(--text)' }}>
+                  <div>{ontologyDisplayName(row)}</div>
+                  {row.label && row.label !== ontologyDisplayName(row) && (
+                    <div style={{ color: 'var(--text-dim)', fontSize: 10 }}>{row.label}</div>
+                  )}
+                </td>
+                <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  {fmtTriples(row.triple_count)}
+                </td>
+                <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                  <StatusDot status={row.ingestion_status} />
+                </td>
+                <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                  <StatusDot status={row.indexed ? 'done' : 'not_started'} label={row.indexed ? 'yes' : 'no'} />
+                </td>
+                <td style={{ padding: '6px 10px', textAlign: 'center', color: row.embed_count > 0 ? 'var(--accent-green, #3fb950)' : 'var(--text-dim)', fontSize: 11 }}>
+                  {row.embed_count > 0 ? fmtTriples(row.embed_count) : '—'}
+                </td>
+                <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                  <StatusDot status={row.reasoning_status} label={row.reasoning_status.replace('_', ' ')} />
+                </td>
+                <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
+                  {fmtAge(row.version_created_at)}
+                </td>
+                <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                  <UpdateButton
+                    ontologyId={row.id}
+                    sourceUrl={row.source_url}
+                    iri={row.iri}
+                    state={updateStates[row.id] ?? 'idle'}
+                    onUpdate={onUpdate}
+                  />
+                </td>
+              </tr>
+            ))}
+            {paged.length === 0 && (
+              <tr>
+                <td colSpan={8} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                  {search ? 'No matching ontologies' : 'No ontologies'}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {totalPages > 1 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
+          <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>
+            {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, sorted.length)} of {sorted.length}
+          </span>
+          <button onClick={() => setPage(p => p - 1)} disabled={page === 0} style={btnStyle(page === 0)}>
+            ‹ Prev
+          </button>
+          <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} style={btnStyle(page >= totalPages - 1)}>
+            Next ›
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -147,6 +324,7 @@ const JOB_TYPE_COLOR: Record<string, string> = {
   indexing: '#79c0ff',
   reason: '#56d364',
   reasoning: '#56d364',
+  embedding: '#ffa657',
 }
 
 function JobsTable({ jobs }: { jobs: AdminJobEntry[] }) {
@@ -199,6 +377,126 @@ function JobsTable({ jobs }: { jobs: AdminJobEntry[] }) {
   )
 }
 
+// ── Workers panel ─────────────────────────────────────────────────────────────
+
+const TASK_SHORT: Record<string, string> = {
+  'ontoexplorer.ingest_ontology':    'ingest',
+  'ontoexplorer.embed_ontology':     'embed',
+  'ontoexplorer.index_ontology':     'index',
+  'ontoexplorer.reason_ontology':    'reason',
+  'ontoexplorer.detect_profile':     'profile',
+  'ontoexplorer.detect_meta_profile':'meta',
+  'ontoexplorer.compute_diff':       'diff',
+  'ontoexplorer.poll_for_updates':   'poll',
+}
+
+function taskLabel(name: string): string {
+  return TASK_SHORT[name] ?? name.split('.').pop() ?? name
+}
+
+function taskDetail(t: WorkerTask, versionMap: Record<string, string>): string {
+  const kw = t.kwargs
+  if (kw.version_id) {
+    const name = versionMap[String(kw.version_id)]
+    return name ?? String(kw.version_id).slice(0, 8) + '…'
+  }
+  if (kw.iri) return String(kw.iri).replace(/^https?:\/\//, '').slice(0, 48)
+  if (kw.url) return String(kw.url).replace(/^https?:\/\//, '').slice(0, 48)
+  return '—'
+}
+
+function WorkersPanel({ versionMap }: { versionMap: Record<string, string> }) {
+  const qc = useQueryClient()
+  const [revoking, setRevoking] = useState<Set<string>>(new Set())
+
+  const { data, isFetching } = useQuery({
+    queryKey: ['admin-workers'],
+    queryFn: () => api.admin.workers(),
+    refetchInterval: 5000,
+  })
+
+  async function handleRevoke(t: WorkerTask) {
+    setRevoking(s => new Set(s).add(t.id))
+    try {
+      const versionId = t.kwargs.version_id ? String(t.kwargs.version_id) : undefined
+      await api.admin.revokeWorker(t.id, versionId)
+      setTimeout(() => qc.invalidateQueries({ queryKey: ['admin-workers'] }), 800)
+    } finally {
+      setRevoking(s => { const n = new Set(s); n.delete(t.id); return n })
+    }
+  }
+
+  const tasks = data?.tasks ?? []
+
+  return (
+    <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+            {['Task', 'Ontology', 'Worker', 'State', 'Running', ''].map(h => (
+              <th key={h} style={{ padding: '7px 10px', textAlign: h === 'Task' || h === 'Ontology' || h === 'Worker' ? 'left' : 'center', color: 'var(--text-dim)', fontWeight: 500, fontSize: 10, textTransform: 'uppercase', letterSpacing: .5 }}>
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {tasks.map(t => (
+            <tr key={t.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+              <td style={{ padding: '6px 10px' }}>
+                <div style={{ color: JOB_TYPE_COLOR[taskLabel(t.name)] ?? '#79c0ff', fontSize: 10, textTransform: 'uppercase', fontWeight: 600 }}>
+                  {taskLabel(t.name)}
+                </div>
+                <div style={{ color: 'var(--text-dim)', fontFamily: 'monospace', fontSize: 9, marginTop: 1 }} title={t.id}>
+                  {t.id.slice(0, 8)}…
+                </div>
+              </td>
+              <td style={{ padding: '6px 10px', color: 'var(--text-dim)', fontSize: 11 }}>
+                {taskDetail(t, versionMap)}
+              </td>
+              <td style={{ padding: '6px 10px', color: 'var(--text-dim)', fontFamily: 'monospace', fontSize: 10 }}>
+                {t.worker === 'queue' ? '—' : t.worker.replace(/^celery@/, '')}
+              </td>
+              <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                {t.state === 'active'
+                  ? <span style={{ color: '#58a6ff', fontSize: 11 }}>⟳ running</span>
+                  : t.state === 'reserved'
+                  ? <span style={{ color: '#d29922', fontSize: 11 }}>⏳ next</span>
+                  : <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>· queued</span>
+                }
+              </td>
+              <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
+                {t.time_start ? fmtDuration(new Date(t.time_start * 1000).toISOString(), null) : '—'}
+              </td>
+              <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                <button
+                  onClick={() => handleRevoke(t)}
+                  disabled={revoking.has(t.id)}
+                  style={{
+                    background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)',
+                    borderRadius: 4, color: '#f85149', fontSize: 10, padding: '2px 8px',
+                    cursor: revoking.has(t.id) ? 'default' : 'pointer',
+                    opacity: revoking.has(t.id) ? 0.5 : 1,
+                  }}
+                >
+                  {revoking.has(t.id) ? '…' : 'Cancel'}
+                </button>
+              </td>
+            </tr>
+          ))}
+          {tasks.length === 0 && (
+            <tr>
+              <td colSpan={6} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                {isFetching ? 'Checking workers…' : 'No active or queued tasks'}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AdminPage() {
@@ -206,6 +504,16 @@ export default function AdminPage() {
   const { user, isLoading: authLoading } = useAuth()
   const { data, isLoading, dataUpdatedAt } = useAdminOverview()
   const [secondsAgo, setSecondsAgo] = useState(0)
+  const [updateStates, setUpdateStates] = useState<Record<string, UpdateState>>({})
+
+  async function handleUpdate(ontologyId: string) {
+    setUpdateStates(s => ({ ...s, [ontologyId]: 'queued' }))
+    try {
+      await api.admin.queueIngest(ontologyId)
+    } catch {
+      setUpdateStates(s => ({ ...s, [ontologyId]: 'error' }))
+    }
+  }
 
   // Redirect non-admins after auth resolves
   useEffect(() => {
@@ -229,6 +537,13 @@ export default function AdminPage() {
   if (!user?.is_admin) return null
 
   const s = data!.services
+
+  // version_id → display name for worker task labels
+  const versionMap: Record<string, string> = {}
+  for (const o of data!.ontologies) {
+    const name = o.shortname || o.iri.replace(/[/#]+$/, '').split(/[/#]/).pop()?.replace(/\.(owl|ttl|rdf|obo|json|xml|nt)$/i, '') || o.iri
+    versionMap[o.version_id] = name
+  }
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '1.5rem 2rem' }}>
@@ -262,7 +577,13 @@ export default function AdminPage() {
       {/* Ontology pipeline */}
       <SectionLabel>Ontology Pipeline ({data!.ontologies.length})</SectionLabel>
       <div style={{ marginBottom: 24 }}>
-        <OntologyTable rows={data!.ontologies} />
+        <OntologyTable rows={data!.ontologies} updateStates={updateStates} onUpdate={handleUpdate} />
+      </div>
+
+      {/* Workers */}
+      <SectionLabel>Workers</SectionLabel>
+      <div style={{ marginBottom: 24 }}>
+        <WorkersPanel versionMap={versionMap} />
       </div>
 
       {/* Recent jobs */}
