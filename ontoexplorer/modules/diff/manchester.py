@@ -78,3 +78,38 @@ _FACETS: dict[str, str] = {
 
 # Class expression recursion depth (matches compute._BNODE_FP_MAX_DEPTH).
 _MAX_DEPTH = 10
+
+
+def iri_to_label(
+    store: ox.Store, graph: ox.NamedNode, iri: str, *, labels: dict[str, str]
+) -> str:
+    """Resolve an IRI to a display label.
+
+    Order: cache hit → rdfs:label@en → any rdfs:label → local name after `#` or `/`
+    → full IRI. The result is cached in `labels` so subsequent calls are O(1).
+    """
+    if iri in labels:
+        return labels[iri]
+
+    label_pred = ox.NamedNode(_RDFS_LABEL)
+    en_label: str | None = None
+    any_label: str | None = None
+    for q in store.quads_for_pattern(ox.NamedNode(iri), label_pred, None, graph):
+        if isinstance(q.object, ox.Literal):
+            if q.object.language == "en" and en_label is None:
+                en_label = q.object.value
+            elif any_label is None:
+                any_label = q.object.value
+    chosen = en_label or any_label
+    if chosen is None:
+        # Local name fallback
+        if "#" in iri:
+            chosen = iri.rsplit("#", 1)[1]
+        elif "/" in iri:
+            chosen = iri.rsplit("/", 1)[1]
+        else:
+            chosen = iri
+        if not chosen:
+            chosen = iri
+    labels[iri] = chosen
+    return chosen
