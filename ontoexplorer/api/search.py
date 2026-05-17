@@ -1,6 +1,7 @@
 """MOS Search API — GET /search and GET /autocomplete per ontology version."""
 import asyncio
 
+import httpx
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
@@ -101,7 +102,7 @@ async def search(
                 "candidates": exc.candidates,
             },
         )
-    except ReasoningNotReadyError:
+    except (ReasoningNotReadyError, httpx.TimeoutException):
         return JSONResponse(
             status_code=503,
             content={"error": "not_classified"},

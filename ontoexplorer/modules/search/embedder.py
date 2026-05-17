@@ -36,13 +36,13 @@ def build_entity_text(
         parts.append(label + ".")
 
     raw_defs = entity.get("definitions", "[]")
-    defs: list[dict[str, Any]] = json.loads(raw_defs) if isinstance(raw_defs, str) else raw_defs
+    defs: list[dict[str, Any]] = json.loads(raw_defs) if raw_defs else []
     def_val = defs[0].get("value", "") if defs else ""
     if def_val:
         parts.append(def_val + ".")
 
     raw_syns = entity.get("synonyms", "[]")
-    syns: list[dict[str, Any]] = json.loads(raw_syns) if isinstance(raw_syns, str) else raw_syns
+    syns: list[dict[str, Any]] = json.loads(raw_syns) if raw_syns else []
     syn_vals = [s.get("value", "") for s in syns[:10] if s.get("value")]
     if syn_vals:
         parts.append("Synonyms: " + "; ".join(syn_vals) + ".")

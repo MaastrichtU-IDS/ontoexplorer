@@ -562,6 +562,7 @@ def embed_ontology(version_id: str, ontology_id: str = "") -> dict:
         from ontoexplorer.modules.search.embedder import build_entity_text, text_hash, embed_texts
         from ontoexplorer.database import make_celery_db_session
         from ontoexplorer.models.db import TermEmbedding
+        from ontoexplorer.modules.jobs import tracker
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
         r = _get_redis()
@@ -631,33 +632,40 @@ def embed_ontology(version_id: str, ontology_id: str = "") -> dict:
         if not records:
             return {"status": "skip", "version_id": version_id}
 
-        BATCH = 64
+        BATCH = 32
         total = len(records)
 
         async def _embed_and_store() -> None:
             async with make_celery_db_session()() as db:
-                for i in range(0, total, BATCH):
-                    batch = records[i : i + BATCH]
-                    embeddings = embed_texts([rec[2] for rec in batch])
-                    for (iri, etype, _, h), emb in zip(batch, embeddings):
-                        stmt = pg_insert(TermEmbedding).values(
-                            id=str(_uuid_mod.uuid4()),
-                            version_id=version_id,
-                            entity_iri=iri,
-                            entity_type=etype,
-                            text_hash=h,
-                            embedding=emb,
-                        ).on_conflict_do_update(
-                            index_elements=["version_id", "entity_iri"],
-                            set_={"entity_type": etype, "text_hash": h, "embedding": emb},
-                            where=(TermEmbedding.text_hash != h),
-                        )
-                        await db.execute(stmt)
-                    await db.commit()
-                    done = min(i + BATCH, total)
-                    if done % 1000 < BATCH or done == total:
-                        log.info("embed_ontology_progress", version_id=version_id,
-                                 done=done, total=total)
+                job = await tracker.create_job(db, version_id=version_id, job_type="embedding")
+                await tracker.mark_running(db, job.id)
+                try:
+                    for i in range(0, total, BATCH):
+                        batch = records[i : i + BATCH]
+                        embeddings = embed_texts([rec[2] for rec in batch])
+                        for (iri, etype, _, h), emb in zip(batch, embeddings):
+                            stmt = pg_insert(TermEmbedding).values(
+                                id=str(_uuid_mod.uuid4()),
+                                version_id=version_id,
+                                entity_iri=iri,
+                                entity_type=etype,
+                                text_hash=h,
+                                embedding=emb,
+                            ).on_conflict_do_update(
+                                index_elements=["version_id", "entity_iri"],
+                                set_={"entity_type": etype, "text_hash": h, "embedding": emb},
+                                where=(TermEmbedding.text_hash != h),
+                            )
+                            await db.execute(stmt)
+                        await db.commit()
+                        done = min(i + BATCH, total)
+                        if done % 1000 < BATCH or done == total:
+                            log.info("embed_ontology_progress", version_id=version_id,
+                                     done=done, total=total)
+                    await tracker.mark_done(db, job.id)
+                except Exception as exc:
+                    await tracker.mark_failed(db, job.id, str(exc))
+                    raise
 
         asyncio.run(_embed_and_store())
         log.info("embed_ontology_done", version_id=version_id, total=total)

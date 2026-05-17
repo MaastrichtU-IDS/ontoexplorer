@@ -290,7 +290,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
             iri = sol["entity"].value
             if iri in labels_by_iri:
                 val = sol["label"].value
-                lang_tag = sol["lang"].value if sol.get("lang") and sol["lang"] else ""
+                lang_tag = sol["lang"].value if sol["lang"] is not None else ""
                 entry = {"value": val, "lang": lang_tag}
                 # O(1) dedup by value using tracking set
                 if val not in label_seen[iri]:
@@ -316,7 +316,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
             iri = sol["entity"].value
             if iri in synonyms_by_iri:
                 val = sol["syn"].value
-                lang_tag = sol["lang"].value if sol.get("lang") and sol["lang"] else ""
+                lang_tag = sol["lang"].value if sol["lang"] is not None else ""
                 entry = {"value": val, "lang": lang_tag}
                 # O(1) dedup by value using tracking set
                 if val not in syn_seen[iri]:
@@ -339,7 +339,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
             iri = sol["entity"].value
             if iri in entities and iri not in defs_by_iri:
                 val = sol["def"].value
-                lang_tag = sol["lang"].value if sol.get("lang") and sol["lang"] else ""
+                lang_tag = sol["lang"].value if sol["lang"] is not None else ""
                 defs_by_iri[iri] = [{"value": val, "lang": lang_tag}]
                 lang_counts[lang_tag] = lang_counts.get(lang_tag, 0) + 1
 
@@ -350,6 +350,9 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
     # Write to Redis via pipeline
     prefix_key = _prefix_key(version_id)
     r.delete(prefix_key)
+    # Delete meta key upfront so we can safely use hset even if a previous run
+    # left a string value there (WRONGTYPE error otherwise).
+    r.delete(_meta_key(version_id))
 
     pipe = r.pipeline(transaction=False)
     class_count = property_count = 0
