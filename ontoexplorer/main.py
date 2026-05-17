@@ -19,6 +19,7 @@ from ontoexplorer.api.webhooks import router as webhooks_router
 from ontoexplorer.api.profile import router as profile_router
 from ontoexplorer.api.meta_profile import router as meta_profile_router
 from ontoexplorer.api.diff import router as diff_router
+from ontoexplorer.api.mod import router as mod_router
 from ontoexplorer.config import get_settings
 from ontoexplorer.logging_config import configure_logging
 
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
     app.include_router(api_keys_router)
     app.include_router(stats_router)
     app.include_router(admin_router)
+    app.include_router(mod_router)
 
     if settings.jwt_secret_key == "change-me-in-production":
         log.warning("SECURITY: jwt_secret_key is set to the default value — set JWT_SECRET_KEY in production")
