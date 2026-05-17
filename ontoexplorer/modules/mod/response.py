@@ -65,27 +65,58 @@ def _render_html(graph: Graph) -> str:
     from jinja2 import Environment
     env = Environment(autoescape=True)
     env.globals["pred_label"] = _short_label
-    env.globals["subject_label"] = _short_label
 
     title_pred = "http://purl.org/dc/terms/title"
-    title = next(
-        (str(o) for _, p, o in graph if str(p) == title_pred),
-        "RDF Graph",
-    )
+    acronym_pred = "https://w3id.org/mod#acronym"
+    collection_type = "http://www.w3.org/ns/hydra/core#Collection"
+    rdf_type_pred = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 
-    # Group triples by subject, skip rdf:type triples that just clutter every row
-    rdf_type = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+    # Group triples by subject
     by_subject: dict[str, list[tuple[str, str]]] = defaultdict(list)
     for s, p, o in graph:
         by_subject[str(s)].append((str(p), str(o)))
     for rows in by_subject.values():
         rows.sort()
 
-    # Put subjects with a dcterms:title first; sort the rest alphabetically
+    # Build per-subject label: prefer mod:acronym, then dcterms:title, then IRI fragment
+    def _subject_label(subj: str) -> str:
+        rows = by_subject.get(subj, [])
+        acronym = next((o for p, o in rows if p == acronym_pred), None)
+        if acronym:
+            return acronym
+        t = next((o for p, o in rows if p == title_pred), None)
+        if t:
+            return t
+        return _short_label(subj)
+
+    env.globals["subject_label"] = _subject_label
+
+    # Page title: use dcterms:title on the collection subject if present,
+    # otherwise derive from the collection URI path, otherwise first title found
+    collection_subj = next(
+        (s for s, rows in by_subject.items()
+         if any(p == rdf_type_pred and o == collection_type for p, o in rows)),
+        None,
+    )
+    if collection_subj:
+        title = next(
+            (o for p, o in by_subject[collection_subj] if p == title_pred),
+            _short_label(collection_subj).replace("-", " ").replace("_", " ").title(),
+        )
+    else:
+        title = next(
+            (str(o) for _, p, o in graph if str(p) == title_pred),
+            "RDF Graph",
+        )
+
+    # Put the collection subject first, then artefacts (those with acronym/title), then the rest
     def _sort_key(item: tuple[str, list]) -> tuple[int, str]:
         subj, rows = item
+        if subj == collection_subj:
+            return (0, subj)
+        has_acronym = any(p == acronym_pred for p, _ in rows)
         has_title = any(p == title_pred for p, _ in rows)
-        return (0 if has_title else 1, subj)
+        return (1 if (has_acronym or has_title) else 2, _subject_label(subj))
 
     groups = sorted(by_subject.items(), key=_sort_key)
 
