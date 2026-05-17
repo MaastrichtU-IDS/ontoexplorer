@@ -17,13 +17,16 @@ Steps:
 
 from __future__ import annotations
 
+import asyncio
+import io
 import re
 import time
 import uuid
 from dataclasses import dataclass, field
 
+import pyoxigraph
 import rdflib
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.config import get_settings
@@ -177,15 +180,22 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
                 log.warning("failed_to_load_import_triples", iri=imp_iri, error=str(exc))
                 warnings.append(f"Could not load import triples: {imp_iri}")
 
-    # ── Refine ontology IRI from loaded triples (streaming path) ──────────────
+    # ── Refine ontology IRI from loaded triples (safety net) ──────────────────
+    # _extract_ontology_iri_fast already runs an in-memory parse before any DB
+    # writes, so this normally agrees with provisional_iri. The SPARQL re-check
+    # runs against the persisted store (which now also contains import closure
+    # triples) and catches the rare case where the eager parse missed.
     canonical_iri = _extract_ontology_iri_sparql(ontology_id, version_id)
     if canonical_iri and canonical_iri != provisional_iri:
-        await _update_ontology_iri(db, ontology_id, canonical_iri)
+        ontology_id = await _reconcile_ontology_iri(
+            db, bogus_ontology_id=ontology_id, canonical_iri=canonical_iri, version_id=version_id
+        )
 
     # ── Persist version record ────────────────────────────────────────────────
+    effective_iri = canonical_iri or provisional_iri
     version_iri = (
-        _extract_version_iri(graph) if graph is not None
-        else _extract_version_iri_sparql(ontology_id, version_id)
+        _extract_version_iri(graph, ontology_iri=effective_iri) if graph is not None
+        else _extract_version_iri_sparql(ontology_id, version_id, ontology_iri=effective_iri)
     )
     version = OntologyVersion(
         id=version_id,
@@ -276,17 +286,74 @@ async def _ensure_ontology(db: AsyncSession, ontology_iri: str, request: Ingesti
     return ontology.id
 
 
-async def _update_ontology_iri(db: AsyncSession, ontology_id: str, canonical_iri: str) -> None:
-    """Update the Ontology row's IRI to the canonical value extracted from the RDF."""
-    existing = await db.execute(select(Ontology).where(Ontology.iri == canonical_iri))
-    if existing.scalar_one_or_none():
-        # Another Ontology row already has this IRI — leave the provisional in place
-        log.warning("canonical_iri_conflict", canonical_iri=canonical_iri, ontology_id=ontology_id)
-        return
-    await db.execute(
-        update(Ontology).where(Ontology.id == ontology_id).values(iri=canonical_iri)
+async def _reconcile_ontology_iri(
+    db: AsyncSession,
+    bogus_ontology_id: str,
+    canonical_iri: str,
+    version_id: str,
+) -> str:
+    """Reconcile a post-load canonical IRI against the provisional Ontology row.
+
+    Three outcomes:
+      1. No row with `canonical_iri` exists → update the provisional row's IRI in place.
+      2. Some other row already has `canonical_iri` → MERGE: move the just-loaded
+         named graph in Oxigraph to the canonical row's id, reassign this version,
+         drop the orphan row. Returns the canonical row's id.
+      3. The canonical row IS this row → no-op.
+
+    Replaces the previous handler that silently kept the wrong IRI on conflict.
+    """
+    existing = (await db.execute(
+        select(Ontology).where(Ontology.iri == canonical_iri)
+    )).scalar_one_or_none()
+
+    if existing is None:
+        await db.execute(
+            update(Ontology).where(Ontology.id == bogus_ontology_id).values(iri=canonical_iri)
+        )
+        log.info("ontology_iri_updated", ontology_id=bogus_ontology_id, canonical_iri=canonical_iri)
+        return bogus_ontology_id
+
+    if existing.id == bogus_ontology_id:
+        return bogus_ontology_id
+
+    await _move_named_graph(bogus_ontology_id, existing.id, version_id)
+
+    # Drop the bogus row only if no other versions point to it (the current
+    # version hasn't been added to the session yet, so a brand-new bogus row
+    # from this ingestion will have zero versions and is safe to delete).
+    other_version = (await db.execute(
+        select(OntologyVersion.id)
+        .where(OntologyVersion.ontology_id == bogus_ontology_id)
+        .limit(1)
+    )).scalar_one_or_none()
+    if other_version is None:
+        await db.execute(delete(Ontology).where(Ontology.id == bogus_ontology_id))
+
+    log.info(
+        "ontology_iri_conflict_merged",
+        from_id=bogus_ontology_id,
+        into_id=existing.id,
+        canonical_iri=canonical_iri,
+        orphan_deleted=other_version is None,
     )
-    log.info("ontology_iri_updated", ontology_id=ontology_id, canonical_iri=canonical_iri)
+    return existing.id
+
+
+async def _move_named_graph(old_ontology_id: str, new_ontology_id: str, version_id: str) -> None:
+    """Copy quads from the old named graph to the new one and drop the old."""
+    from ontoexplorer.clients.oxigraph import get_store, graph_iri
+
+    def _do_move() -> None:
+        store = get_store()
+        old_named = pyoxigraph.NamedNode(graph_iri(old_ontology_id, version_id))
+        new_named = pyoxigraph.NamedNode(graph_iri(new_ontology_id, version_id))
+        store.add_graph(new_named)
+        for q in store.quads_for_pattern(None, None, None, old_named):
+            store.add(pyoxigraph.Quad(q.subject, q.predicate, q.object, new_named))
+        store.remove_graph(old_named)
+
+    await asyncio.to_thread(_do_move)
 
 
 async def _write_fair_metadata(
@@ -331,20 +398,50 @@ async def _write_fair_metadata(
 
 
 def _extract_ontology_iri_fast(data: bytes, fmt: OntologyFormat) -> str | None:
-    """Scan the first 8 KB of raw bytes to find the ontology IRI without a full parse."""
-    snippet = data[:8192].decode("utf-8", errors="replace")
+    """Find the owl:Ontology declaration.
+
+    Tries a regex over the first 32 KB first (cheap), then falls back to a full
+    in-memory parse via pyoxigraph for bulk-loadable formats. Returns None when
+    no `?iri a owl:Ontology` triple is present (caller falls back to URL/IRI).
+
+    The previous "any rdf:about that looks like a URL" fallback was removed —
+    it grabbed class IRIs from files where the `<owl:Ontology>` element is
+    declared after the first class block, producing bogus ontology rows.
+    """
+    snippet = data[:32768].decode("utf-8", errors="replace")
     if fmt in (OntologyFormat.OWL_XML, OntologyFormat.RDF_XML):
-        # Most OWL/RDF files: <owl:Ontology rdf:about="...">
-        m = re.search(r'<[^>]*Ontology[^>]+rdf:about="([^"]+)"', snippet)
+        m = re.search(r'<[^>]*\bOntology\b[^>]+rdf:about="([^"]+)"', snippet)
         if m:
-            return m.group(1)
-        m = re.search(r'rdf:about="([^"]+)"', snippet)
-        if m and m.group(1).startswith("http"):
             return m.group(1)
     elif fmt == OntologyFormat.TURTLE:
-        m = re.search(r'<([^>]+)>\s+(?:rdf:type|a)\s+owl:Ontology', snippet)
+        m = re.search(r'<([^>]+)>\s+(?:rdf:type|a)\s+(?:owl:Ontology|<http://www\.w3\.org/2002/07/owl#Ontology>)', snippet)
         if m:
             return m.group(1)
+    return _extract_ontology_iri_by_parsing(data, fmt)
+
+
+def _extract_ontology_iri_by_parsing(data: bytes, fmt: OntologyFormat) -> str | None:
+    """Authoritative IRI extraction via in-memory pyoxigraph parse.
+
+    Used when the fast regex misses (e.g. `<owl:Ontology>` declared deep in the
+    file, or unusual XML/Turtle syntax). Costs an extra parse pass but happens
+    before any DB write, so failures are non-destructive.
+    """
+    mime = _DIRECT_MIME.get(fmt)
+    if not mime:
+        return None  # OBO/Manchester are parsed by rdflib later; can't do it cheaply here
+    try:
+        tmp = pyoxigraph.Store()
+        tmp.bulk_load(io.BytesIO(data), mime)
+        results = tmp.query(
+            "SELECT ?iri WHERE { ?iri a <http://www.w3.org/2002/07/owl#Ontology> . FILTER(isIRI(?iri)) } LIMIT 1"
+        )
+        for row in results:
+            val = row["iri"].value if hasattr(row["iri"], "value") else str(row["iri"])
+            if val.startswith("http"):
+                return val
+    except Exception as exc:
+        log.warning("eager_iri_parse_failed", error=str(exc), fmt=fmt.value)
     return None
 
 
@@ -365,22 +462,42 @@ def _extract_ontology_iri_sparql(ontology_id: str, version_id: str) -> str | Non
     return None
 
 
-def _extract_version_iri(graph: rdflib.Graph) -> str | None:
+def _extract_version_iri(graph: rdflib.Graph, ontology_iri: str | None = None) -> str | None:
+    """Return owl:versionIRI scoped to the given ontology IRI when provided.
+
+    Without scoping, an arbitrary owl:versionIRI triple from a merged import
+    closure can be returned (e.g. the imported pro ontology's version IRI
+    showing up as the pizza ontology's version IRI).
+    """
     from rdflib.namespace import OWL
-    for _, _, o in graph.triples((None, OWL.versionIRI, None)):
+    subject = rdflib.URIRef(ontology_iri) if ontology_iri else None
+    for _, _, o in graph.triples((subject, OWL.versionIRI, None)):
         return str(o)
     return None
 
 
-def _extract_version_iri_sparql(ontology_id: str, version_id: str) -> str | None:
-    """Query Oxigraph for the owl:versionIRI of the loaded graph."""
+def _extract_version_iri_sparql(ontology_id: str, version_id: str, ontology_iri: str | None = None) -> str | None:
+    """Query Oxigraph for the owl:versionIRI of this ontology in the named graph.
+
+    Scoped to `<ontology_iri>` to avoid grabbing an import's version IRI from
+    the merged closure. Falls back to unscoped query only if no ontology IRI
+    is known (rare — provisional URI always exists).
+    """
     from ontoexplorer.clients.oxigraph import sparql_query, graph_iri
     g = graph_iri(ontology_id, version_id)
-    results = sparql_query(f"""
-        SELECT ?v FROM <{g}> WHERE {{
-            ?ont <http://www.w3.org/2002/07/owl#versionIRI> ?v .
-        }} LIMIT 1
-    """)
+    if ontology_iri:
+        query = f"""
+            SELECT ?v FROM <{g}> WHERE {{
+                <{ontology_iri}> <http://www.w3.org/2002/07/owl#versionIRI> ?v .
+            }} LIMIT 1
+        """
+    else:
+        query = f"""
+            SELECT ?v FROM <{g}> WHERE {{
+                ?ont <http://www.w3.org/2002/07/owl#versionIRI> ?v .
+            }} LIMIT 1
+        """
+    results = sparql_query(query)
     for row in results:
         v = row["v"]
         return v.value if hasattr(v, "value") else str(v)
