@@ -6,7 +6,7 @@ A next-generation FAIR ontology repository — ingest, browse, query, and reason
 
 - **Ingest** ontologies by IRI, URL, or file upload (OWL/XML, Turtle, RDF/XML, OBO, JSON-LD)
 - **Browse** class and property hierarchies with asserted and OWL-EL inferred views; keyboard-navigable (↑↓→←→, Enter)
-- **Search** across all ontologies from the home page — keyword prefix search, structured MOS expression query, and **vector semantic search** (type ≥ 3 characters to get semantically similar results alongside prefix matches)
+- **Search** across all ontologies from the home page — keyword prefix search, structured MOS expression query, and **vector semantic search** (type ≥ 3 characters to get semantically similar results alongside prefix matches); a "Searching…" indicator replaces "No results" while queries are in flight
 - **Semantic search** — nomic-ai/nomic-embed-text-v1.5 embeddings stored in pgvector; cosine-similarity search over term labels, definitions, synonyms, and ontological context (superclasses/subclasses)
 - **Reason** using ELK (OWL-EL) — superclasses, subclasses, consistency, justifications
 - **Inspect** ontology document metadata (dcterms, pav, vann, schema.org, etc.) and VoID statistics
@@ -284,6 +284,7 @@ Embeddings are stored in Postgres via **pgvector** with an HNSW cosine-similarit
 - Semantic results are only returned when the search string is ≥ 3 characters and `semantic=true` is passed (the frontend sets this automatically).
 - If embedding is still in progress for an ontology, semantic results are silently empty (prefix search is unaffected).
 - The worker respects `OMP_NUM_THREADS=2` / `ONNXRUNTIME_NUM_THREADS=2` and a 3 GiB memory cap to avoid saturating the host.
+- **RDFS-only vocabularies** (e.g. Schema.org, which uses `rdfs:Class` / `rdf:Property` instead of OWL types) are fully indexed and embedded. OWL-typed entities take precedence; RDFS types fill the gap for non-OWL vocabularies.
 
 **Backfilling existing ontologies:**
 
@@ -324,7 +325,7 @@ The Classes section header has an **Asserted / Inferred** toggle. The inferred v
 
 Different ontologies use different annotation properties to express the same concepts — one uses `rdfs:label`, another `skos:prefLabel`; one uses `IAO:0000115` for definitions, another `rdfs:comment`. Without knowing which properties an ontology actually uses, search indexing, rendering, and synonym lookup will silently miss data.
 
-After each ingest, a `detect_profile` Celery task scans the ontology's named graph in Oxigraph to count how many OWL classes carry each annotation property from a curated registry. The best-matching properties are written to an `ontology_profiles` row and passed to the search indexer — no hardcoded predicate list.
+After each ingest, a `detect_profile` Celery task scans the ontology's named graph in Oxigraph to count how many entities carry each annotation property from a curated registry. The best-matching properties are written to an `ontology_profiles` row and passed to the search indexer — no hardcoded predicate list.
 
 ### What's detected
 
@@ -359,11 +360,13 @@ ingest → detect_profile → index_ontology → embed_ontology → (reason)
 
 `detect_profile` always enqueues `index_ontology` — even if detection fails, indexing proceeds using the curated registry defaults. `index_ontology` enqueues `embed_ontology` once the search index is ready.
 
+Each step can also be triggered individually from the **Admin panel** using the per-row action buttons (↑ ingest, ↺ index, ⬡ embed, ⚙ reason), or from the API — see [Admin endpoints](#api-reference).
+
 ## Ontology Metadata Profile
 
 Ontologies express document-level metadata using many different vocabularies — one uses `dcterms:title` for the ontology title, another `rdfs:label`; one uses `owl:versionInfo` for the version string, another `pav:version`. Without knowing which predicates are actually used, the platform cannot reliably surface a consistent title, description, or license for every ontology.
 
-After each ingest, a `detect_meta_profile` Celery task scans the `owl:Ontology` block in Oxigraph and scores candidate values for each metadata role against a curated registry. The best candidates are written to an `ontology_meta_profiles` row and used in list views, the admin panel, and ontology detail pages.
+After each ingest, a `detect_meta_profile` Celery task scans the `owl:Ontology` block (or `rdfs:Class`/`rdf:Property` subject in RDFS-only vocabularies) in Oxigraph and scores candidate values for each metadata role against a curated registry. The best candidates are written to an `ontology_meta_profiles` row and used in list views, the admin panel, and ontology detail pages.
 
 ### What's detected
 
@@ -442,6 +445,10 @@ GET    /stats                                    Usage statistics for the authen
 
 # Admin
 GET    /admin/overview                           System overview (requires admin role)
+POST   /admin/ontologies/{id}/ingest             Queue re-ingestion for one ontology (requires admin role)
+POST   /admin/ontologies/{id}/index              Queue search re-index for one ontology (requires admin role)
+POST   /admin/ontologies/{id}/embed              Queue embedding generation for one ontology (requires admin role)
+POST   /admin/ontologies/{id}/reason             Queue OWL-EL reasoning for one ontology (requires admin role)
 POST   /admin/reindex                            Queue re-index for all ingested versions (requires admin role)
 
 # SPARQL
@@ -492,7 +499,7 @@ ontoexplorer/                    Python package
     webhooks.py                  Webhook management
     api_keys.py                  API key management
     stats.py                     Aggregate and per-user usage statistics
-    admin.py                     Admin overview and bulk re-index endpoints
+    admin.py                     Admin overview, per-ontology pipeline actions (ingest/index/embed/reason), and bulk re-index endpoints
     sparql.py                    SPARQL proxy endpoints
     inbound.py                   Inbound webhook receivers (GitHub push events)
   modules/
@@ -554,6 +561,9 @@ tests/
 | Semantic search | fastembed + nomic-embed-text-v1.5 → pgvector HNSW cosine index | ONNX-optimised 768-dim model; no GPU required; HNSW gives sub-10ms ANN at scale; model cached on shared Docker volume so API and worker share one copy |
 | Embedding text | label + definition + synonyms + superclass/subclass labels | Ontological context improves cosine similarity for domain-specific synonymy ("auntie" → Aunt) beyond pure label matching |
 | Embedding resource limits | `OMP_NUM_THREADS=2`, `ONNXRUNTIME_NUM_THREADS=2`, `mem_limit=3g` | Default ONNX Runtime uses all cores (measured 800% CPU on 8-core host); limits prevent system starvation during backfill |
+| RDFS entity collection | `rdfs:Class` + `rdf:Property` checked after OWL types | Enables indexing of non-OWL vocabularies (Schema.org, SKOS, etc.); OWL types take precedence so standard ontologies are unaffected |
+| Inferred tree performance | Reverse `children_of` index built once per request; Redis pipeline for batch label lookups; in-process LRU cache for ELK classifications (10-min TTL, per-version lock) | GO has 67k+ classes — O(N²) child detection and per-request ELK fetches caused multi-minute loads; reverse index + cache reduces this to sub-second |
+| Admin pipeline actions | Per-row buttons (ingest / index / embed / reason) inline in status cells | Avoids extra columns; action buttons are contextually co-located with the status they affect |
 | Mobile layout | Single-pane, tree ↔ detail toggle | Two-pane layout unusable below 768px |
 
 ## Configuration
