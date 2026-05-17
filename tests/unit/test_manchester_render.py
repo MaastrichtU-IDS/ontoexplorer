@@ -569,3 +569,62 @@ def test_depth_limit_returns_ellipsis():
     store = _store(*quads)
     out = render_class_expression(store, _GRAPH, last, labels={})
     assert "…" in out, f"expected depth-limit ellipsis, got: {out}"
+
+
+from ontoexplorer.modules.diff.manchester import render_axiom
+
+_RDFS_SUB_N = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
+_OWL_EQUIV_CLASS_N = ox.NamedNode("http://www.w3.org/2002/07/owl#equivalentClass")
+_OWL_DISJOINT_N = ox.NamedNode("http://www.w3.org/2002/07/owl#disjointWith")
+_OWL_DISJOINT_UNION_N = ox.NamedNode("http://www.w3.org/2002/07/owl#disjointUnionOf")
+
+
+def test_axiom_subclassof_named():
+    subj = "http://example.org/Pizza"
+    obj = ox.NamedNode("http://example.org/Food")
+    store = _store()
+    out = render_axiom(
+        store, _GRAPH, subj, _RDFS_SUB_N.value, obj, labels={}
+    )
+    assert out == "SubClassOf: Food"
+
+
+def test_axiom_subclassof_restriction():
+    subj = "http://example.org/Pizza"
+    p = ox.NamedNode("http://example.org/hasTopping")
+    c = ox.NamedNode("http://example.org/Tomato")
+    r = ox.BlankNode("axr1")
+    store = _store(
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_SOME, c),
+    )
+    out = render_axiom(store, _GRAPH, subj, _RDFS_SUB_N.value, r, labels={})
+    assert out == "SubClassOf: hasTopping some Tomato"
+
+
+def test_axiom_equivalent_class():
+    subj = "http://example.org/Pizza"
+    obj = ox.NamedNode("http://example.org/Food")
+    store = _store()
+    out = render_axiom(store, _GRAPH, subj, _OWL_EQUIV_CLASS_N.value, obj, labels={})
+    assert out == "EquivalentTo: Food"
+
+
+def test_axiom_disjoint_with():
+    subj = "http://example.org/Pizza"
+    obj = ox.NamedNode("http://example.org/Pasta")
+    store = _store()
+    out = render_axiom(store, _GRAPH, subj, _OWL_DISJOINT_N.value, obj, labels={})
+    assert out == "DisjointWith: Pasta"
+
+
+def test_axiom_unknown_predicate_returns_none():
+    """A predicate outside the coverage table returns None, signalling the caller to fall back."""
+    subj = "http://example.org/X"
+    obj = ox.NamedNode("http://example.org/Y")
+    store = _store()
+    out = render_axiom(
+        store, _GRAPH, subj, "http://example.org/unknownPred", obj, labels={}
+    )
+    assert out is None

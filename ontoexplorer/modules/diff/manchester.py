@@ -382,6 +382,38 @@ def _render_junction(
     return "(" + f" {op} ".join(parts) + ")"
 
 
+# Predicate-keyed dispatch for axioms whose Manchester rendering is
+# `<Keyword>: <class-or-property-expression>`. The frame layer groups changes
+# by keyword; this function only emits a single axiom line.
+_CLASS_AXIOMS: dict[str, str] = {
+    _RDFS_SUBCLASS:      "SubClassOf",
+    _OWL_EQUIV_CLASS:    "EquivalentTo",
+    _OWL_DISJOINT_WITH:  "DisjointWith",
+    _OWL_DISJOINT_UNION: "DisjointUnionOf",
+}
+
+
+def render_axiom(
+    store: ox.Store,
+    graph: ox.NamedNode,
+    subject_iri: str,
+    predicate_iri: str,
+    object_term: ox.Term,
+    *,
+    labels: dict[str, str],
+) -> str | None:
+    """Render a single axiom (predicate + object) as a Manchester line.
+
+    Returns None when the predicate is not in the coverage table; callers should
+    treat None as "fall back to `<predicate> <object>` rendering".
+    """
+    keyword = _CLASS_AXIOMS.get(predicate_iri)
+    if keyword is None:
+        return None
+    filler = render_class_expression(store, graph, object_term, labels=labels)
+    return f"{keyword}: {filler}"
+
+
 def _render_datatype_restriction(
     store: ox.Store,
     graph: ox.NamedNode,
