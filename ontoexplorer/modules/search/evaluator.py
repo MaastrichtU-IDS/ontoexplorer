@@ -199,15 +199,14 @@ async def evaluate(node, version_id: str, ontology_id: str, lang: str | None = N
     """Evaluate a MOS AST node against the given version, returning matching classes."""
     r = _get_redis()
 
-    # Only fetch ELK classification when the expression needs the subclass hierarchy
-    subclasses_index: dict[str, list[str]] = {}
-    all_class_iris: set[str] = set()
-    if _needs_elk(node):
-        classification = await get_classification(version_id)
-        subclasses_index = classification.get("subclasses", {})
-        all_class_iris = set(subclasses_index.keys()) | {
-            iri for subs in subclasses_index.values() for iri in subs
-        }
+    # Always load ELK: needed for NamedClass/And/Or/Not, and to expand SPARQL
+    # restriction results with inherited subclasses (a class that inherits
+    # P some C from a superclass won't assert it directly, so SPARQL alone misses it).
+    classification = await get_classification(version_id)
+    subclasses_index: dict[str, list[str]] = classification.get("subclasses", {})
+    all_class_iris: set[str] = set(subclasses_index.keys()) | {
+        iri for subs in subclasses_index.values() for iri in subs
+    }
 
     async def _eval(n) -> set[str]:
         if isinstance(n, NamedClass):
@@ -234,7 +233,13 @@ async def evaluate(node, version_id: str, ontology_id: str, lang: str | None = N
 
         if isinstance(n, (SomeValuesFrom, AllValuesFrom, HasValue, HasSelf,
                           MinCardinality, MaxCardinality, ExactCardinality)):
-            return await asyncio.to_thread(_sparql_eval, n, version_id, ontology_id, r)
+            direct = await asyncio.to_thread(_sparql_eval, n, version_id, ontology_id, r)
+            # Expand with ELK subclasses: a class inheriting a restriction from a
+            # superclass won't directly assert it, so SPARQL alone misses it.
+            expanded = set(direct)
+            for iri in direct:
+                expanded.update(subclasses_index.get(iri, []))
+            return expanded
 
         return set()
 
@@ -369,9 +374,12 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
             SELECT DISTINCT ?cls WHERE {{
                 GRAPH <{g}> {{
                     ?cls <{RDFS}subClassOf> ?restr .
-                    ?restr <{OWL}onProperty> <{prop_iri}> .
-                    ?restr <{OWL}minCardinality> ?n .
+                    ?restr <{OWL}onProperty> ?prop .
+                    {{ ?restr <{OWL}minCardinality> ?n . }}
+                    UNION
+                    {{ ?restr <{OWL}minQualifiedCardinality> ?n . }}
                     FILTER(?n >= {node.cardinality})
+                    ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
                 }}
             }}
         """
@@ -381,9 +389,12 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
             SELECT DISTINCT ?cls WHERE {{
                 GRAPH <{g}> {{
                     ?cls <{RDFS}subClassOf> ?restr .
-                    ?restr <{OWL}onProperty> <{prop_iri}> .
-                    ?restr <{OWL}maxCardinality> ?n .
+                    ?restr <{OWL}onProperty> ?prop .
+                    {{ ?restr <{OWL}maxCardinality> ?n . }}
+                    UNION
+                    {{ ?restr <{OWL}maxQualifiedCardinality> ?n . }}
                     FILTER(?n <= {node.cardinality})
+                    ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
                 }}
             }}
         """
@@ -393,8 +404,12 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
             SELECT DISTINCT ?cls WHERE {{
                 GRAPH <{g}> {{
                     ?cls <{RDFS}subClassOf> ?restr .
-                    ?restr <{OWL}onProperty> <{prop_iri}> .
-                    ?restr <{OWL}cardinality> {node.cardinality} .
+                    ?restr <{OWL}onProperty> ?prop .
+                    {{ ?restr <{OWL}cardinality> ?n . }}
+                    UNION
+                    {{ ?restr <{OWL}qualifiedCardinality> ?n . }}
+                    FILTER(?n = {node.cardinality})
+                    ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
                 }}
             }}
         """

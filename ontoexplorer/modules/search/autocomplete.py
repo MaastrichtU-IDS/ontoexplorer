@@ -128,12 +128,9 @@ def _entity_completions(
     # Separate into two tiers based on whether the PRIMARY label starts with the
     # query.  Word-suffix index entries (e.g. "cell" indexing "T cell receptor")
     # are tier-B; labels that genuinely start with the query are tier-A.
+    # First pass: filter candidates and collect unique IRIs
     seen_iris: set[str] = set()
-    # tier_a: primary-label starts with query  (key = primary norm label)
-    # tier_b: word-suffix match               (key = indexed norm label)
-    tier_a: dict[str, list[dict]] = {}
-    tier_b: dict[str, list[dict]] = {}
-
+    candidates: list[tuple[str, str, str, str]] = []  # (norm_lbl, lang_tag, etype, iri)
     for member in members:
         norm_lbl, lang_tag, etype, iri = _parse_lang_from_member(member)
         if not iri:
@@ -145,12 +142,22 @@ def _entity_completions(
         if iri in seen_iris:
             continue
         seen_iris.add(iri)
-        detail = r.hgetall(_iri_key(version_id, iri))
+        candidates.append((norm_lbl, lang_tag, etype, iri))
+
+    # Fetch all detail hashes in one pipeline round-trip
+    pipe = r.pipeline(transaction=False)
+    for _, _, _, iri in candidates:
+        pipe.hgetall(_iri_key(version_id, iri))
+    details = pipe.execute()
+
+    # Second pass: bucket into tiers
+    tier_a: dict[str, list[dict]] = {}
+    tier_b: dict[str, list[dict]] = {}
+    for (norm_lbl, lang_tag, etype, iri), detail in zip(candidates, details):
         if not detail:
             continue
         is_cross = bool(lang) and lang_tag != lang
         primary_norm = normalise_label(detail.get("label", ""))
-        # Attach lang metadata to the detail dict for use in _build
         detail["_lang_tag"] = lang_tag
         detail["_cross_language"] = is_cross
         if not norm or primary_norm.startswith(norm):
