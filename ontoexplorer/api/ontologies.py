@@ -728,17 +728,20 @@ _PROP_TYPES = (
     "owl:DatatypeProperty",
     "owl:AnnotationProperty",
 )
+_RDF_PROPERTY = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#Property>"
 _PROP_UNION = " UNION ".join(f"{{ ?entity a {t} }}" for t in _PROP_TYPES)
+_PROP_UNION = f"{_PROP_UNION} UNION {{ ?entity a {_RDF_PROPERTY} }}"
 
 _PROP_SUBTYPE_FILTER = {
-    "object_property":     "{ ?entity a owl:ObjectProperty }",
+    # rdf:Property is the RDFS fallback used by vocabularies like Schema.org
+    "object_property":     f"{{ ?entity a owl:ObjectProperty }} UNION {{ ?entity a {_RDF_PROPERTY} }}",
     "data_property":       "{ ?entity a owl:DatatypeProperty }",
     "annotation_property": "{ ?entity a owl:AnnotationProperty }",
 }
 
 # Subtype → subPropertyOf child type filter (for child queries)
 _PROP_SUBTYPE_CHILD_FILTER = {
-    "object_property":     "{ ?class a owl:ObjectProperty }",
+    "object_property":     f"{{ ?class a owl:ObjectProperty }} UNION {{ ?class a {_RDF_PROPERTY} }}",
     "data_property":       "{ ?class a owl:DatatypeProperty }",
     "annotation_property": "{ ?class a owl:AnnotationProperty }",
 }
@@ -926,7 +929,7 @@ async def list_terms(
                 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
                 SELECT ?class ?label WHERE {{
                     GRAPH <{g}> {{
-                        ?class a owl:Class .
+                        {{ ?class a owl:Class }} UNION {{ ?class a rdfs:Class }}
                         FILTER(isIRI(?class))
                         {_NOT_DEPRECATED}
                         OPTIONAL {{ ?class rdfs:label ?label }}
@@ -940,8 +943,8 @@ async def list_terms(
                 SELECT DISTINCT ?class WHERE {{
                     GRAPH <{g}> {{
                         ?class rdfs:subClassOf ?parent .
-                        ?class a owl:Class .
-                        ?parent a owl:Class .
+                        {{ ?class a owl:Class }} UNION {{ ?class a rdfs:Class }}
+                        {{ ?parent a owl:Class }} UNION {{ ?parent a rdfs:Class }}
                         FILTER(isIRI(?class) && isIRI(?parent) && str(?parent) != "{_OWL_THING_STR}")
                     }}
                 }}
@@ -1010,7 +1013,7 @@ async def list_terms(
             PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
             SELECT ?class ?label WHERE {{
                 GRAPH <{g}> {{
-                    ?class a owl:Class .
+                    {{ ?class a owl:Class }} UNION {{ ?class a rdfs:Class }}
                     FILTER(isIRI(?class))
                     {_NOT_DEPRECATED_CLASS}
                     ?class rdfs:subClassOf <{parent}> .
@@ -1030,7 +1033,7 @@ async def list_terms(
             PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
             SELECT ?class ?label WHERE {{
                 GRAPH <{g}> {{
-                    ?class a owl:Class .
+                    {{ ?class a owl:Class }} UNION {{ ?class a rdfs:Class }}
                     FILTER(isIRI(?class))
                     {_NOT_DEPRECATED_CLASS}
                     OPTIONAL {{ ?class rdfs:label ?label }}
@@ -1082,7 +1085,7 @@ async def list_terms(
                 SELECT DISTINCT ?parent WHERE {{
                     GRAPH <{g}> {{
                         ?child rdfs:subClassOf ?parent .
-                        ?child a owl:Class .
+                        {{ ?child a owl:Class }} UNION {{ ?child a rdfs:Class }}
                         FILTER(isIRI(?child))
                         VALUES ?parent {{ {values_block} }}
                     }}

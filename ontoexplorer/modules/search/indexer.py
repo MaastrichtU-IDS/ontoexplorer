@@ -515,14 +515,15 @@ def _build_tree_cache(
     deprecated_iris = {sol["c"].value for sol in sparql_query(deprecated_q)}
 
     # Classes with a named-class parent — these are NOT roots
+    # Includes rdfs:Class for RDFS-only vocabularies (e.g. Schema.org)
     non_root_class_q = f"""
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
         SELECT DISTINCT ?child WHERE {{
             GRAPH <{named_graph}> {{
                 ?child rdfs:subClassOf ?parent .
-                ?child a owl:Class .
-                ?parent a owl:Class .
+                {{ ?child a owl:Class }} UNION {{ ?child a rdfs:Class }}
+                {{ ?parent a owl:Class }} UNION {{ ?parent a rdfs:Class }}
                 FILTER(isIRI(?child) && isIRI(?parent) && str(?parent) != "{_OWL_THING}")
             }}
         }}
@@ -536,15 +537,17 @@ def _build_tree_cache(
         SELECT DISTINCT ?parent WHERE {{
             GRAPH <{named_graph}> {{
                 ?child rdfs:subClassOf ?parent .
-                ?child a owl:Class .
-                ?parent a owl:Class .
+                {{ ?child a owl:Class }} UNION {{ ?child a rdfs:Class }}
+                {{ ?parent a owl:Class }} UNION {{ ?parent a rdfs:Class }}
                 FILTER(isIRI(?child) && isIRI(?parent))
             }}
         }}
     """
     has_children_classes = {sol["parent"].value for sol in sparql_query(has_children_class_q)}
 
+    _RDF_PROPERTY_IRI = "http://www.w3.org/1999/02/22-rdf-syntax-ns#Property"
     # Properties with a named parent — not roots
+    # Includes rdf:Property for RDFS-only vocabularies (e.g. Schema.org)
     non_root_prop_q = f"""
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -554,7 +557,8 @@ def _build_tree_cache(
                 FILTER(isIRI(?child) && isIRI(?parent))
                 {{ ?child a owl:ObjectProperty }} UNION
                 {{ ?child a owl:DatatypeProperty }} UNION
-                {{ ?child a owl:AnnotationProperty }}
+                {{ ?child a owl:AnnotationProperty }} UNION
+                {{ ?child a <{_RDF_PROPERTY_IRI}> }}
             }}
         }}
     """
@@ -570,7 +574,8 @@ def _build_tree_cache(
                 FILTER(isIRI(?child) && isIRI(?parent))
                 {{ ?child a owl:ObjectProperty }} UNION
                 {{ ?child a owl:DatatypeProperty }} UNION
-                {{ ?child a owl:AnnotationProperty }}
+                {{ ?child a owl:AnnotationProperty }} UNION
+                {{ ?child a <{_RDF_PROPERTY_IRI}> }}
             }}
         }}
     """
