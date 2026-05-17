@@ -274,3 +274,32 @@ def test_restriction_has_self_true():
     )
     out = render_class_expression(store, _GRAPH, r, labels={})
     assert out == "hasPartOf Self"
+
+
+def test_restriction_has_self_false_falls_through():
+    """hasSelf "false"^^xsd:boolean must not render as `p Self`."""
+    p = ox.NamedNode("http://example.org/hasPartOf")
+    r = ox.BlankNode("r_self_false")
+    xsd_false = ox.Literal("false", datatype=ox.NamedNode("http://www.w3.org/2001/XMLSchema#boolean"))
+    store = _store(
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_HAS_SELF, xsd_false),
+    )
+    out = render_class_expression(store, _GRAPH, r, labels={})
+    assert "Self" not in out
+    assert out.startswith("[restriction:") or out.startswith("hasPartOf")
+
+
+def test_restriction_has_self_plain_string_does_not_render_as_self():
+    """A plain "true" string without xsd:boolean datatype must not render as Self."""
+    p = ox.NamedNode("http://example.org/hasPartOf")
+    r = ox.BlankNode("r_self_plainstr")
+    plain_true = ox.Literal("true")  # default xsd:string datatype, not boolean
+    store = _store(
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_HAS_SELF, plain_true),
+    )
+    out = render_class_expression(store, _GRAPH, r, labels={})
+    assert "Self" not in out

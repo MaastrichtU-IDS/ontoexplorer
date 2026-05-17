@@ -270,9 +270,14 @@ def _render_restriction(
         return f"{prop_label} value {v}"
     if _OWL_HAS_SELF in preds:
         v = preds[_OWL_HAS_SELF]
-        if isinstance(v, ox.Literal) and v.value == _XSD_TRUE_LITERAL:
+        if (
+            isinstance(v, ox.Literal)
+            and v.value == _XSD_TRUE_LITERAL
+            and v.datatype is not None
+            and v.datatype.value == _XSD_BOOLEAN
+        ):
             return f"{prop_label} Self"
-        # `hasSelf false` is not a standard Manchester construct; fall through.
+        # `hasSelf false` or non-boolean literals fall through.
 
     # Cardinality patterns are handled in a later task; until then, fallback.
     return f"[restriction:{prop_label}]"
