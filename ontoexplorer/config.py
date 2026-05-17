@@ -86,8 +86,8 @@ class Settings(BaseSettings):
     # MOD-API
     mod_catalogue_title: str = "OntoExplorer Catalogue"
     mod_catalogue_description: str = "A FAIR ontology repository"
-    mod_rate_limit_anon: int = 1000
-    mod_rate_limit_auth: int = 10000
+    mod_rate_limit_anon: int = 1000   # requests / day — unauthenticated (per IP)
+    mod_rate_limit_auth: int = 10000  # requests / day — authenticated (per API key)
 
     @field_validator("database_url")
     @classmethod
