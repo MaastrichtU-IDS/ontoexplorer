@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 from ontoexplorer.modules.search.mos_parser import (
     NamedClass, And, Or, Not,
-    SomeValuesFrom, AllValuesFrom, MinCardinality,
+    SomeValuesFrom, AllValuesFrom, HasValue, HasSelf,
+    MinCardinality, MaxCardinality, ExactCardinality,
 )
 from ontoexplorer.modules.search.evaluator import (
     AmbiguousLabelError,
@@ -14,8 +15,14 @@ from ontoexplorer.modules.search.evaluator import (
 )
 from ontoexplorer.modules.search.indexer import _prefix_key, _iri_key
 
+CELL   = "http://ex.org/Cell"
+EUKARYOTE = "http://ex.org/EukaryoticCell"
+PROK   = "http://ex.org/ProkaryoticCell"
+HP_IRI = "http://bfo.org/HP"
+NUC    = "http://ex.org/Nucleus"
 
-def _make_classification(subclasses: dict) -> dict:
+
+def _make_classification(subclasses: dict, direct_subclasses: dict | None = None) -> dict:
     return {
         "version_id": "v1",
         "classified_at": "2026-01-01T00:00:00+00:00",
@@ -23,7 +30,7 @@ def _make_classification(subclasses: dict) -> dict:
         "superclasses": {},
         "subclasses": subclasses,
         "direct_superclasses": {},
-        "direct_subclasses": {},
+        "direct_subclasses": direct_subclasses if direct_subclasses is not None else {},
         "unsatisfiable": [],
         "proof_traces": {},
         "duration_ms": 1.0,
@@ -39,6 +46,28 @@ def _make_redis_with_entity(version_id: str, label: str, iri: str, entity_type: 
         "iri": iri, "short": iri.split("/")[-1], "synonyms": "",
     })
     return r
+
+
+def _make_redis_multi(version_id: str, entities: list[tuple[str, str, str]]) -> fakeredis.FakeRedis:
+    """Populate a FakeRedis with multiple (label, iri, entity_type) entries."""
+    r = fakeredis.FakeRedis(decode_responses=True)
+    for label, iri, etype in entities:
+        r.zadd(_prefix_key(version_id), {f"{label.lower()}|{etype}|{iri}": 0})
+        r.hset(_iri_key(version_id, iri), mapping={
+            "label": label, "type": etype,
+            "iri": iri, "short": iri.split("/")[-1], "synonyms": "",
+        })
+    return r
+
+
+def _mock_sparql(iris: list[str]):
+    """Return a mock sparql_query result yielding the given IRIs."""
+    solutions = []
+    for iri in iris:
+        sol = MagicMock()
+        sol.__getitem__ = lambda self, k, _i=iri: MagicMock(value=_i)
+        solutions.append(sol)
+    return solutions
 
 
 @pytest.mark.anyio
@@ -147,3 +176,249 @@ async def test_evaluate_some_values_from_calls_sparql():
         )
     assert mock_sparql.called
     assert any(r.match_type == "sparql" for r in results)
+
+
+# ── direct flag ───────────────────────────────────────────────────────────────
+
+@pytest.mark.anyio
+async def test_evaluate_direct_uses_direct_subclasses_index():
+    r = _make_redis_with_entity("v1", "Cell", CELL)
+    # all subclasses: Eukaryote + Prokaryote; direct: Eukaryote only
+    classification = _make_classification(
+        subclasses={CELL: [EUKARYOTE, PROK]},
+        direct_subclasses={CELL: [EUKARYOTE]},
+    )
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)):
+        results = await evaluate(NamedClass("Cell", None), "v1", "ont1", direct=True)
+    iris = {r.iri for r in results}
+    assert EUKARYOTE in iris
+    assert PROK not in iris
+
+
+@pytest.mark.anyio
+async def test_evaluate_direct_false_uses_all_subclasses():
+    r = _make_redis_with_entity("v1", "Cell", CELL)
+    classification = _make_classification(
+        subclasses={CELL: [EUKARYOTE, PROK]},
+        direct_subclasses={CELL: [EUKARYOTE]},
+    )
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)):
+        results = await evaluate(NamedClass("Cell", None), "v1", "ont1", direct=False)
+    iris = {r.iri for r in results}
+    assert EUKARYOTE in iris
+    assert PROK in iris
+
+
+@pytest.mark.anyio
+async def test_evaluate_direct_fallback_when_key_absent():
+    # When direct_subclasses key is missing entirely, fall back to subclasses.
+    r = _make_redis_with_entity("v1", "Cell", CELL)
+    classification = _make_classification(subclasses={CELL: [EUKARYOTE, PROK]})
+    # Remove the key entirely to simulate an older ELK service
+    classification.pop("direct_subclasses")
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)):
+        results = await evaluate(NamedClass("Cell", None), "v1", "ont1", direct=True)
+    iris = {r.iri for r in results}
+    # Falls back to full subclasses index
+    assert EUKARYOTE in iris
+    assert PROK in iris
+
+
+@pytest.mark.anyio
+async def test_evaluate_direct_empty_direct_subclasses_not_treated_as_absent():
+    # direct_subclasses={} (present but empty) must NOT fall back to subclasses.
+    # Empty means "no direct subclasses", not "key absent".
+    r = _make_redis_with_entity("v1", "Cell", CELL)
+    classification = _make_classification(
+        subclasses={CELL: [EUKARYOTE, PROK]},
+        direct_subclasses={},  # present but empty — Cell has no direct subclasses listed
+    )
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)):
+        results = await evaluate(NamedClass("Cell", None), "v1", "ont1", direct=True)
+    iris = {r.iri for r in results}
+    # Only the queried class itself is returned (added via subs.add(iri))
+    assert EUKARYOTE not in iris
+    assert PROK not in iris
+
+
+# ── Not node ─────────────────────────────────────────────────────────────────
+
+@pytest.mark.anyio
+async def test_evaluate_not_excludes_subclasses():
+    r = _make_redis_multi("v1", [
+        ("Cell", CELL, "class"),
+        ("Virus", "http://ex.org/Virus", "class"),
+    ])
+    # all_class_iris = {Cell, Eukaryote, Prokaryote, Virus}
+    classification = _make_classification({
+        CELL: [EUKARYOTE, PROK],
+        "http://ex.org/Virus": [],
+    })
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)):
+        results = await evaluate(Not(NamedClass("Cell", None)), "v1", "ont1")
+    iris = {r.iri for r in results}
+    # Not Cell = all minus {Cell, Eukaryote, Prokaryote}
+    assert CELL not in iris
+    assert EUKARYOTE not in iris
+    assert PROK not in iris
+    assert "http://ex.org/Virus" in iris
+
+
+@pytest.mark.anyio
+async def test_evaluate_not_ignores_direct_flag():
+    # Not always operates on full all_class_iris regardless of direct=True
+    r = _make_redis_multi("v1", [
+        ("Cell", CELL, "class"),
+        ("Virus", "http://ex.org/Virus", "class"),
+    ])
+    classification = _make_classification(
+        subclasses={CELL: [EUKARYOTE, PROK], "http://ex.org/Virus": []},
+        direct_subclasses={CELL: [EUKARYOTE]},
+    )
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)):
+        results_direct = await evaluate(Not(NamedClass("Cell", None)), "v1", "ont1", direct=True)
+        results_all    = await evaluate(Not(NamedClass("Cell", None)), "v1", "ont1", direct=False)
+    # Not should give the same result regardless of direct flag
+    assert {r.iri for r in results_direct} == {r.iri for r in results_all}
+
+
+# ── ELK expansion for inherited restrictions ─────────────────────────────────
+
+@pytest.mark.anyio
+async def test_evaluate_restriction_expands_with_elk_subclasses():
+    # SPARQL returns Cell as a direct asserter of (hasPart some Nucleus).
+    # ELK says Eukaryote is a subclass of Cell.
+    # direct=False (default) should include Eukaryote in the result.
+    r = _make_redis_multi("v1", [
+        ("hasPart", HP_IRI, "object_property"),
+        ("Nucleus",  NUC,   "class"),
+    ])
+    classification = _make_classification(subclasses={CELL: [EUKARYOTE]})
+
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)), \
+         patch("ontoexplorer.modules.search.evaluator.sparql_query",
+               return_value=_mock_sparql([CELL])):
+        results = await evaluate(
+            SomeValuesFrom(NamedClass("hasPart", None), NamedClass("Nucleus", None)),
+            "v1", "ont1",
+        )
+    iris = {r.iri for r in results}
+    assert CELL in iris
+    assert EUKARYOTE in iris   # inherited via ELK expansion
+
+
+@pytest.mark.anyio
+async def test_evaluate_restriction_direct_skips_elk_expansion():
+    # direct=True: only the SPARQL asserters, no ELK subclass expansion.
+    r = _make_redis_multi("v1", [
+        ("hasPart", HP_IRI, "object_property"),
+        ("Nucleus",  NUC,   "class"),
+    ])
+    classification = _make_classification(
+        subclasses={CELL: [EUKARYOTE]},
+        direct_subclasses={CELL: [EUKARYOTE]},
+    )
+
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)), \
+         patch("ontoexplorer.modules.search.evaluator.sparql_query",
+               return_value=_mock_sparql([CELL])):
+        results = await evaluate(
+            SomeValuesFrom(NamedClass("hasPart", None), NamedClass("Nucleus", None)),
+            "v1", "ont1", direct=True,
+        )
+    iris = {r.iri for r in results}
+    assert CELL in iris
+    assert EUKARYOTE not in iris   # not expanded in direct mode
+
+
+# ── HasValue and HasSelf SPARQL branches ──────────────────────────────────────
+
+@pytest.mark.anyio
+async def test_evaluate_has_value_calls_sparql():
+    r = _make_redis_multi("v1", [
+        ("locatedIn", "http://ex.org/locatedIn", "object_property"),
+        ("Brain",     "http://ex.org/Brain",     "class"),
+    ])
+    classification = _make_classification({})
+
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)), \
+         patch("ontoexplorer.modules.search.evaluator.sparql_query",
+               return_value=_mock_sparql([CELL])) as mock_sparql:
+        results = await evaluate(
+            HasValue(NamedClass("locatedIn", None), NamedClass("Brain", None)),
+            "v1", "ont1",
+        )
+    assert mock_sparql.called
+    query_text = mock_sparql.call_args[0][0]
+    assert "hasValue" in query_text
+    iris = {r.iri for r in results}
+    assert CELL in iris
+
+
+@pytest.mark.anyio
+async def test_evaluate_has_self_calls_sparql():
+    r = _make_redis_multi("v1", [
+        ("loves", "http://ex.org/loves", "object_property"),
+    ])
+    classification = _make_classification({})
+
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)), \
+         patch("ontoexplorer.modules.search.evaluator.sparql_query",
+               return_value=_mock_sparql([CELL])) as mock_sparql:
+        results = await evaluate(
+            HasSelf(NamedClass("loves", None)),
+            "v1", "ont1",
+        )
+    assert mock_sparql.called
+    query_text = mock_sparql.call_args[0][0]
+    assert "hasSelf" in query_text
+    iris = {r.iri for r in results}
+    assert CELL in iris
+
+
+# ── Qualified cardinality SPARQL queries ─────────────────────────────────────
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("node,expected_predicate", [
+    (MinCardinality(NamedClass("hasPart", None), 2, NamedClass("Nucleus", None)),
+     "minQualifiedCardinality"),
+    (MaxCardinality(NamedClass("hasPart", None), 3, NamedClass("Nucleus", None)),
+     "maxQualifiedCardinality"),
+    (ExactCardinality(NamedClass("hasPart", None), 1, NamedClass("Nucleus", None)),
+     "qualifiedCardinality"),
+])
+async def test_evaluate_cardinality_query_includes_qualified_form(node, expected_predicate):
+    r = _make_redis_multi("v1", [
+        ("hasPart", HP_IRI, "object_property"),
+        ("Nucleus",  NUC,   "class"),
+    ])
+    classification = _make_classification({})
+
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)), \
+         patch("ontoexplorer.modules.search.evaluator.sparql_query",
+               return_value=[]) as mock_sparql:
+        await evaluate(node, "v1", "ont1")
+    query_text = mock_sparql.call_args[0][0]
+    assert expected_predicate in query_text

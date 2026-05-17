@@ -215,37 +215,44 @@ async def evaluate(
     subclasses_index: dict[str, list[str]] = classification.get("subclasses", {})
     # direct_subclasses_index falls back to subclasses_index if the key is absent
     # (older ELK service versions may not include it).
+    _ds = classification.get("direct_subclasses")
     direct_subclasses_index: dict[str, list[str]] = (
-        classification.get("direct_subclasses") or subclasses_index
+        _ds if _ds is not None else subclasses_index
     ) if direct else subclasses_index
     all_class_iris: set[str] = set(subclasses_index.keys()) | {
         iri for subs in subclasses_index.values() for iri in subs
     }
 
-    async def _eval(n) -> set[str]:
+    async def _eval_with_index(n, idx: dict) -> set[str]:
         if isinstance(n, NamedClass):
             iri = _resolve_label(r, version_id, n)
             if iri == _OWL_THING:
-                # owl:Thing = all classes; read directly from the indexed type set
-                # (ELK's subclasses index omits root classes that only have
-                # asserted rdfs:subClassOf owl:Thing)
                 return r.smembers(_type_key(version_id, "class"))
-            subs = set(direct_subclasses_index.get(iri, []))
+            subs = set(idx.get(iri, []))
             subs.add(iri)
             return subs
 
         if isinstance(n, And):
-            left, right = await asyncio.gather(_eval(n.left), _eval(n.right))
+            left, right = await asyncio.gather(
+                _eval_with_index(n.left, idx), _eval_with_index(n.right, idx)
+            )
             return left & right
 
         if isinstance(n, Or):
-            left, right = await asyncio.gather(_eval(n.left), _eval(n.right))
+            left, right = await asyncio.gather(
+                _eval_with_index(n.left, idx), _eval_with_index(n.right, idx)
+            )
             return left | right
 
         if isinstance(n, Not):
-            # Not always uses full all_class_iris regardless of direct flag —
-            # "not A" means all classes that are not A, not "direct non-subclasses".
-            return all_class_iris - await _eval(n.operand)
+            # Always subtract using the full subclass index — "not A" means
+            # all classes that are not A or any of its subclasses, regardless
+            # of the direct flag on the outer query.
+            return all_class_iris - await _eval_with_index(n.operand, subclasses_index)
+
+    async def _eval(n) -> set[str]:
+        if isinstance(n, (NamedClass, And, Or, Not)):
+            return await _eval_with_index(n, direct_subclasses_index)
 
         if isinstance(n, (SomeValuesFrom, AllValuesFrom, HasValue, HasSelf,
                           MinCardinality, MaxCardinality, ExactCardinality)):
