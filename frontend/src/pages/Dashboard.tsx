@@ -351,6 +351,32 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
 
               <span style={FIELD_LABEL}>groups</span>
               <GroupsEditor ontology={ontology} />
+
+              <span style={FIELD_LABEL}>version IRI</span>
+              {latest?.version_iri ? (
+                /^https?:\/\//.test(latest.version_iri) ? (
+                  <a
+                    href={latest.version_iri}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      color: 'var(--accent-blue)',
+                      fontFamily: 'monospace',
+                      fontSize: 'var(--font-size-sm)',
+                      wordBreak: 'break-all',
+                      textDecoration: 'none',
+                    }}
+                  >
+                    {latest.version_iri}
+                  </a>
+                ) : (
+                  <span style={{ fontFamily: 'monospace', fontSize: 'var(--font-size-sm)', color: 'var(--text)', wordBreak: 'break-all' }}>
+                    {latest.version_iri}
+                  </span>
+                )
+              ) : (
+                <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>—</span>
+              )}
             </div>
 
             {/* Date */}
