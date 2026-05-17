@@ -17,11 +17,47 @@ import AdminPage from './pages/AdminPage'
 import Sparql from './pages/Sparql'
 import SparqlGallery from './pages/SparqlGallery'
 
+function Footer() {
+  return (
+    <footer style={{
+      borderTop: '1px solid var(--border)',
+      background: '#0a0f1a',
+      padding: '0.6rem 1.5rem',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '1.25rem',
+    }}>
+      <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>APIs</span>
+      <a
+        href="/api/docs"
+        target="_blank"
+        rel="noreferrer"
+        style={{ color: 'var(--text-dim)', fontSize: 12, textDecoration: 'none' }}
+        onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
+        onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-dim)')}
+      >
+        REST API
+      </a>
+      <a
+        href="/mod/"
+        target="_blank"
+        rel="noreferrer"
+        style={{ color: 'var(--text-dim)', fontSize: 12, textDecoration: 'none' }}
+        onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
+        onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-dim)')}
+      >
+        MOD API
+      </a>
+    </footer>
+  )
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ paddingTop: 'var(--nav-height)', minHeight: '100vh' }}>
+    <div style={{ paddingTop: 'var(--nav-height)', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <NavBar />
-      {children}
+      <div style={{ flex: 1 }}>{children}</div>
+      <Footer />
     </div>
   )
 }
