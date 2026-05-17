@@ -550,3 +550,22 @@ def test_datatype_restriction_pattern():
     )
     out = render_class_expression(store, _GRAPH, dt_expr, labels={})
     assert out == 'xsd:string[pattern "[A-Z]+"]'
+
+
+def test_depth_limit_returns_ellipsis():
+    """A deeply nested intersection chain renders as `…` once depth exceeds _MAX_DEPTH."""
+    p = ox.NamedNode("http://example.org/p")
+    a = ox.NamedNode("http://example.org/A")
+    quads = []
+    # Build 12 nested restrictions: r0 → r1 → r2 → ... → A
+    # r_i: p some r_{i+1}
+    last = a
+    for i in reversed(range(12)):
+        r = ox.BlankNode(f"deep_{i}")
+        quads.append((r, _RDF_TYPE_N, _OWL_RESTRICTION))
+        quads.append((r, _OWL_ON_PROPERTY, p))
+        quads.append((r, _OWL_SOME, last))
+        last = r
+    store = _store(*quads)
+    out = render_class_expression(store, _GRAPH, last, labels={})
+    assert "…" in out, f"expected depth-limit ellipsis, got: {out}"
