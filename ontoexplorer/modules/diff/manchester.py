@@ -414,12 +414,32 @@ def render_axiom(
     object_term: ox.Term,
     *,
     labels: dict[str, str],
+    entity_type: str | None = None,
 ) -> str | None:
     """Render a single (predicate, object) pair as a Manchester axiom line.
 
-    Returns None when the predicate is outside the coverage table; the caller
-    is expected to render a `<predicate> <object>` fallback in that case.
+    `entity_type` (one of 'class', 'object_property', 'data_property',
+    'annotation_property', 'individual') changes the meaning of rdf:type and
+    of unknown predicates:
+
+      * On individuals: rdf:type → `Types: X`; any other predicate → `Facts: p o`.
+      * On properties: rdf:type with an OWL characteristic class → `Characteristics: Functional` etc.
+      * Other unrecognized predicates → None (caller falls back).
     """
+    # Individuals: rdf:type → Types, anything else → Facts.
+    if entity_type == "individual":
+        if predicate_iri == _RDF_TYPE:
+            filler = render_class_expression(store, graph, object_term, labels=labels)
+            return f"Types: {filler}"
+        if predicate_iri in _INDIVIDUAL_AXIOMS:
+            keyword = _INDIVIDUAL_AXIOMS[predicate_iri]
+            filler = render_class_expression(store, graph, object_term, labels=labels)
+            return f"{keyword}: {filler}"
+        # Property assertion: predicate is some property, object is the value.
+        prop_label = iri_to_label(store, graph, predicate_iri, labels=labels)
+        value_label = render_class_expression(store, graph, object_term, labels=labels)
+        return f"Facts: {prop_label} {value_label}"
+
     # Property characteristics: rdf:type with an OWL characteristic class.
     if predicate_iri == _RDF_TYPE and isinstance(object_term, ox.NamedNode):
         char = _CHARACTERISTICS.get(object_term.value)
@@ -434,7 +454,6 @@ def render_axiom(
     )
     if keyword is None:
         return None
-
     filler = render_class_expression(store, graph, object_term, labels=labels)
     return f"{keyword}: {filler}"
 

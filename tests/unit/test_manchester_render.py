@@ -744,3 +744,50 @@ def test_axiom_different_from():
         labels={},
     )
     assert out == "DifferentFrom: Bob"
+
+
+def test_axiom_individual_types():
+    """For an individual, rdf:type X renders as `Types: X`."""
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/Alice", _RDF_TYPE_N.value,
+        ox.NamedNode("http://example.org/Person"),
+        labels={},
+        entity_type="individual",
+    )
+    assert out == "Types: Person"
+
+
+def test_axiom_individual_property_assertion():
+    """For an individual, an arbitrary predicate renders as `Facts: predicate object`."""
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/Alice", "http://example.org/hasFriend",
+        ox.NamedNode("http://example.org/Bob"),
+        labels={},
+        entity_type="individual",
+    )
+    assert out == "Facts: hasFriend Bob"
+
+
+def test_axiom_individual_property_assertion_literal():
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/Alice", "http://example.org/age",
+        ox.Literal("30", datatype=ox.NamedNode("http://www.w3.org/2001/XMLSchema#integer")),
+        labels={},
+        entity_type="individual",
+    )
+    assert out == 'Facts: age "30"^^xsd:integer'
+
+
+def test_axiom_non_individual_unknown_predicate_still_returns_none():
+    """For non-individuals, unknown predicates should NOT auto-convert to Facts:."""
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/Foo", "http://example.org/random",
+        ox.NamedNode("http://example.org/Bar"),
+        labels={},
+        entity_type="class",
+    )
+    assert out is None
