@@ -215,6 +215,7 @@ async def ontology_search(
     limit: int = Query(20, ge=1, le=200),
     lang: str | None = Query(None, description="BCP-47 language tag"),
     semantic: bool = Query(False, description="Include vector semantic results"),
+    direct: bool = Query(False, description="Return direct subclasses only (no transitive expansion)"),
     _user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -259,7 +260,7 @@ async def ontology_search(
         }
 
     try:
-        search_results = await evaluate(ast, version_id, ontology_id, lang=effective_lang)
+        search_results = await evaluate(ast, version_id, ontology_id, lang=effective_lang, direct=direct)
     except AmbiguousLabelError as exc:
         return JSONResponse(status_code=422, content={
             "error": "ambiguous_label", "label": exc.label, "candidates": exc.candidates,

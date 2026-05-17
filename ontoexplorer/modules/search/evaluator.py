@@ -195,15 +195,29 @@ def _needs_elk(node) -> bool:
     return False
 
 
-async def evaluate(node, version_id: str, ontology_id: str, lang: str | None = None) -> list[SearchResult]:
-    """Evaluate a MOS AST node against the given version, returning matching classes."""
+async def evaluate(
+    node,
+    version_id: str,
+    ontology_id: str,
+    lang: str | None = None,
+    direct: bool = False,
+) -> list[SearchResult]:
+    """Evaluate a MOS AST node against the given version, returning matching classes.
+
+    direct=True returns only immediate subclasses (one hop in the hierarchy) and
+    classes that directly assert a restriction, without expanding via ELK subclasses.
+    """
     r = _get_redis()
 
-    # Always load ELK: needed for NamedClass/And/Or/Not, and to expand SPARQL
-    # restriction results with inherited subclasses (a class that inherits
-    # P some C from a superclass won't assert it directly, so SPARQL alone misses it).
+    # Always load ELK: needed for NamedClass/And/Or/Not, and (when direct=False) to
+    # expand SPARQL restriction results with inherited subclasses.
     classification = await get_classification(version_id)
     subclasses_index: dict[str, list[str]] = classification.get("subclasses", {})
+    # direct_subclasses_index falls back to subclasses_index if the key is absent
+    # (older ELK service versions may not include it).
+    direct_subclasses_index: dict[str, list[str]] = (
+        classification.get("direct_subclasses") or subclasses_index
+    ) if direct else subclasses_index
     all_class_iris: set[str] = set(subclasses_index.keys()) | {
         iri for subs in subclasses_index.values() for iri in subs
     }
@@ -216,7 +230,7 @@ async def evaluate(node, version_id: str, ontology_id: str, lang: str | None = N
                 # (ELK's subclasses index omits root classes that only have
                 # asserted rdfs:subClassOf owl:Thing)
                 return r.smembers(_type_key(version_id, "class"))
-            subs = set(subclasses_index.get(iri, []))
+            subs = set(direct_subclasses_index.get(iri, []))
             subs.add(iri)
             return subs
 
@@ -229,15 +243,21 @@ async def evaluate(node, version_id: str, ontology_id: str, lang: str | None = N
             return left | right
 
         if isinstance(n, Not):
+            # Not always uses full all_class_iris regardless of direct flag —
+            # "not A" means all classes that are not A, not "direct non-subclasses".
             return all_class_iris - await _eval(n.operand)
 
         if isinstance(n, (SomeValuesFrom, AllValuesFrom, HasValue, HasSelf,
                           MinCardinality, MaxCardinality, ExactCardinality)):
-            direct = await asyncio.to_thread(_sparql_eval, n, version_id, ontology_id, r)
-            # Expand with ELK subclasses: a class inheriting a restriction from a
-            # superclass won't directly assert it, so SPARQL alone misses it.
-            expanded = set(direct)
-            for iri in direct:
+            asserters = await asyncio.to_thread(_sparql_eval, n, version_id, ontology_id, r)
+            if direct:
+                # Direct mode: only classes that explicitly assert the restriction,
+                # no ELK subclass expansion.
+                return asserters
+            # Non-direct: expand with ELK subclasses so classes that inherit the
+            # restriction from a superclass are also included.
+            expanded = set(asserters)
+            for iri in asserters:
                 expanded.update(subclasses_index.get(iri, []))
             return expanded
 

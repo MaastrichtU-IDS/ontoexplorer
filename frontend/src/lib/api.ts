@@ -315,6 +315,7 @@ export interface AutocompleteCompletion {
   insert: string
   lang?: string | null
   cross_language?: boolean
+  ontology_shortname?: string | null
 }
 
 export interface AutocompleteResponse {
@@ -716,7 +717,7 @@ export const api = {
       request<RawTermDetail>(
         `/ontologies/${oid}/${vid}/terms/${encodeURIComponent(iri)}${lang ? `?lang=${lang}` : ''}`
       ),
-    search: (oid: string, vid: string, q: string, mode = 'auto', lang?: string, semantic = false) =>
+    search: (oid: string, vid: string, q: string, mode = 'auto', lang?: string, semantic = false, direct = false) =>
       request<{
         mode: string
         results: SearchResult[]
@@ -724,7 +725,7 @@ export const api = {
         truncated: boolean
         semantic_results?: SearchResult[]
       }>(
-        `/ontologies/${oid}/${vid}/search?q=${encodeURIComponent(q)}&mode=${mode}${lang ? `&lang=${lang}` : ''}${semantic ? '&semantic=true' : ''}`
+        `/ontologies/${oid}/${vid}/search?q=${encodeURIComponent(q)}&mode=${mode}${lang ? `&lang=${lang}` : ''}${semantic ? '&semantic=true' : ''}${direct ? '&direct=true' : ''}`
       ),
     autocomplete: (oid: string, vid: string, q: string, cursor = -1, lang?: string) =>
       request<AutocompleteResponse>(
@@ -853,6 +854,11 @@ export const api = {
           truncated: boolean
           semantic_results?: SearchResult[]
         }>
+    },
+    autocomplete: (q: string, cursor = -1, ontologyIds: string[] = []) => {
+      const params = new URLSearchParams({ q, cursor: String(cursor) })
+      ontologyIds.forEach(id => params.append('ontology_ids', id))
+      return request<AutocompleteResponse>(`/autocomplete?${params}`)
     },
   },
 

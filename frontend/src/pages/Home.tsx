@@ -245,11 +245,11 @@ function KeywordSearch() {
 
 // ── Query tab (MOS) ───────────────────────────────────────────────────────────
 
-function useMOSFanout(pairs: { oid: string; vid: string }[], query: string) {
+function useMOSFanout(pairs: { oid: string; vid: string }[], query: string, direct: boolean) {
   return useQueries({
     queries: pairs.map(({ oid, vid }) => ({
-      queryKey: ['mos-search', oid, vid, query],
-      queryFn: () => api.ontologies.search(oid, vid, query, 'expression'),
+      queryKey: ['mos-search', oid, vid, query, direct],
+      queryFn: () => api.ontologies.search(oid, vid, query, 'expression', undefined, false, direct),
       staleTime: 10_000,
       enabled: query.length >= 2,
       retry: false,
@@ -261,6 +261,7 @@ function MOSQuery() {
   const { ontologies } = useOntologies()
   const [selectedOids, setSelectedOids] = useState<string[]>([])
   const [mosQuery, setMosQuery] = useState('')
+  const [direct, setDirect] = useState(false)
 
   // latest_version is now returned inline by the list endpoint — no extra calls needed
   const allPairs: { oid: string; vid: string }[] = ontologies.flatMap(o => {
@@ -273,12 +274,8 @@ function MOSQuery() {
     ? allPairs.filter(p => selectedOids.includes(p.oid))
     : allPairs
 
-  // Autocomplete context: use ontologyId only (autocompleteLatest endpoint),
-  // so it works immediately without waiting for version queries to resolve.
-  const acOid = (selectedOids.length > 0 ? selectedOids[0] : ontologies[0]?.id) ?? null
-
   // Fan-out MOS search across scoped ontologies
-  const searchResults = useMOSFanout(scopePairs, mosQuery)
+  const searchResults = useMOSFanout(scopePairs, mosQuery, direct)
   // Tag each result with the oid/vid of the ontology it came from
   const allResults: SearchResult[] = searchResults.flatMap((r, i) =>
     (r.data?.results ?? []).map(res => ({
@@ -311,10 +308,20 @@ function MOSQuery() {
     })
   }
 
+  // Deduplicate by IRI — same class can appear in multiple ontologies
+  const dedupedResults: SearchResult[] = []
+  const _seenIris = new Set<string>()
+  for (const r of allResults) {
+    if (!_seenIris.has(r.iri)) {
+      _seenIris.add(r.iri)
+      dedupedResults.push(r)
+    }
+  }
+
   // Surface error message only when all queries failed (no results at all)
   const firstError = searchResults.find(r => r.error)?.error as (Error & { status?: number; body?: { error?: string; detail?: string } }) | undefined
   const allNotClassified = mosQuery.length >= 2 && searchResults.length > 0 && searchResults.every(r => (r.error as (Error & { body?: { error?: string } }) | undefined)?.body?.error === 'not_classified')
-  const errorMsg = allResults.length === 0 && firstError
+  const errorMsg = dedupedResults.length === 0 && firstError
     ? allNotClassified
       ? 'Ontology classification is not ready yet — reasoning is still running. Try again in a few minutes.'
       : (firstError.body?.detail ?? firstError.body?.error ?? firstError.message)
@@ -324,6 +331,14 @@ function MOSQuery() {
     const ont = ontologies.find(o => o.id === r.ontology_id)
     if (!ont || !r.version_id) return null
     return `/ontologies/${slugFromIri(ont.iri)}/${r.version_id}?term=${encodeURIComponent(r.iri)}`
+  }
+
+  function ontologyNameFor(r: SearchResult): string | null {
+    const ont = ontologies.find(o => o.id === r.ontology_id)
+    if (!ont) return null
+    if (ont.shortname) return ont.shortname
+    const last = ont.iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? ont.iri
+    return last.replace(/\.(owl|ttl|rdf|obo|json|xml|nt)$/i, '')
   }
 
   return (
@@ -337,30 +352,44 @@ function MOSQuery() {
       </div>
 
       <SearchBar
-        ontologyId={acOid}
+        ontologyId={null}
         versionId={null}
         onSearch={setMosQuery}
         placeholder="MOS expression, e.g. cell, 'cell death', GO:0008150"
+        scopeOntologyIds={selectedOids}
       />
 
-      <p style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: 6, marginBottom: 8 }}>
-        Use <code>and</code>, <code>or</code>, <code>not</code>, <code>some</code>, <code>only</code> · quote multi-word names: <code>'cell death'</code> ·{' '}
-        {selectedOids.length > 0
-          ? `searching ${selectedOids.length} selected ontolog${selectedOids.length > 1 ? 'ies' : 'y'}`
-          : 'searching all ontologies'}
-      </p>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6, marginBottom: 8 }}>
+        <p style={{ color: 'var(--text-dim)', fontSize: 11, margin: 0 }}>
+          Use <code>and</code>, <code>or</code>, <code>not</code>, <code>some</code>, <code>only</code> · quote multi-word names: <code>'cell death'</code> ·{' '}
+          {selectedOids.length > 0
+            ? `searching ${selectedOids.length} selected ontolog${selectedOids.length > 1 ? 'ies' : 'y'}`
+            : 'searching all ontologies'}
+        </p>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', flexShrink: 0, marginLeft: 12 }}>
+          <input
+            type="checkbox"
+            checked={direct}
+            onChange={e => setDirect(e.target.checked)}
+            style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
+          />
+          <span style={{ fontSize: 11, color: direct ? 'var(--text)' : 'var(--text-dim)', whiteSpace: 'nowrap' }}>
+            Direct only
+          </span>
+        </label>
+      </div>
 
       {mosQuery && errorMsg && (
         <p style={{ color: 'var(--error, #e06c75)', fontSize: 'var(--font-size-sm)', textAlign: 'center', marginTop: '2rem' }}>
           {errorMsg}
         </p>
       )}
-      {mosQuery && !errorMsg && allResults.length === 0 && (
+      {mosQuery && !errorMsg && dedupedResults.length === 0 && (
         <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', textAlign: 'center', marginTop: '2rem' }}>
           No results for "{mosQuery}"
         </p>
       )}
-      <ResultList results={allResults} pathFor={pathFor} />
+      <ResultList results={dedupedResults} pathFor={pathFor} ontologyNameFor={ontologyNameFor} />
     </>
   )
 }
