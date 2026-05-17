@@ -56,11 +56,11 @@ function StatusDot({ status, label }: { status: string; label?: string }) {
 
 // ── Section heading ───────────────────────────────────────────────────────────
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function SectionLabel({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <div style={{
       color: 'var(--text-dim)', fontSize: 10, textTransform: 'uppercase',
-      letterSpacing: '.8px', marginBottom: 6,
+      letterSpacing: '.8px', marginBottom: 6, ...style,
     }}>
       {children}
     </div>
@@ -148,10 +148,14 @@ function OntologyTable({
   rows,
   updateStates,
   onUpdate,
+  reindexStates,
+  onReindex,
 }: {
   rows: AdminOntologyEntry[]
   updateStates: Record<string, UpdateState>
   onUpdate: (id: string) => void
+  reindexStates: Record<string, UpdateState>
+  onReindex: (id: string) => void
 }) {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<{ col: SortCol; dir: 'asc' | 'desc' }>({ col: 'ontology', dir: 'asc' })
@@ -246,7 +250,8 @@ function OntologyTable({
               <SortTh col="embeddings" label="Embeddings" />
               <SortTh col="reasoning"  label="Reasoning" />
               <SortTh col="updated"    label="Updated" />
-              <th style={{ ...thBase, textAlign: 'center', cursor: 'default', color: 'var(--text-dim)' }}>Update</th>
+              <th style={{ ...thBase, textAlign: 'center', cursor: 'default', color: 'var(--text-dim)' }}>Ingest</th>
+              <th style={{ ...thBase, textAlign: 'center', cursor: 'default', color: 'var(--text-dim)' }}>Index</th>
             </tr>
           </thead>
           <tbody>
@@ -285,11 +290,32 @@ function OntologyTable({
                     onUpdate={onUpdate}
                   />
                 </td>
+                <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                  {row.ingestion_status === 'ingested' || row.ingestion_status === 'done' || row.ingestion_status === 'ok' ? (
+                    reindexStates[row.id] === 'queued'
+                      ? <span style={{ color: '#ffa657', fontSize: 10 }}>↑ queued</span>
+                      : <button
+                          onClick={() => onReindex(row.id)}
+                          title="Re-index search (updates deprecated term filter, labels, synonyms)"
+                          style={{
+                            background: reindexStates[row.id] === 'error' ? 'rgba(248,81,73,0.1)' : 'none',
+                            border: `1px solid ${reindexStates[row.id] === 'error' ? 'rgba(248,81,73,0.3)' : 'var(--border)'}`,
+                            borderRadius: 4, cursor: 'pointer',
+                            color: reindexStates[row.id] === 'error' ? '#f85149' : 'var(--text-dim)',
+                            fontSize: 10, padding: '2px 8px',
+                          }}
+                        >
+                          {reindexStates[row.id] === 'error' ? '✕ retry' : '↺ index'}
+                        </button>
+                  ) : (
+                    <span style={{ color: 'var(--text-dim)', fontSize: 10 }}>—</span>
+                  )}
+                </td>
               </tr>
             ))}
             {paged.length === 0 && (
               <tr>
-                <td colSpan={8} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                <td colSpan={9} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
                   {search ? 'No matching ontologies' : 'No ontologies'}
                 </td>
               </tr>
@@ -505,6 +531,8 @@ export default function AdminPage() {
   const { data, isLoading, dataUpdatedAt } = useAdminOverview()
   const [secondsAgo, setSecondsAgo] = useState(0)
   const [updateStates, setUpdateStates] = useState<Record<string, UpdateState>>({})
+  const [reindexStates, setReindexStates] = useState<Record<string, UpdateState>>({})
+  const [reindexAllState, setReindexAllState] = useState<'idle' | 'queued' | 'error'>('idle')
 
   async function handleUpdate(ontologyId: string) {
     setUpdateStates(s => ({ ...s, [ontologyId]: 'queued' }))
@@ -512,6 +540,24 @@ export default function AdminPage() {
       await api.admin.queueIngest(ontologyId)
     } catch {
       setUpdateStates(s => ({ ...s, [ontologyId]: 'error' }))
+    }
+  }
+
+  async function handleReindex(ontologyId: string) {
+    setReindexStates(s => ({ ...s, [ontologyId]: 'queued' }))
+    try {
+      await api.admin.queueIndex(ontologyId)
+    } catch {
+      setReindexStates(s => ({ ...s, [ontologyId]: 'error' }))
+    }
+  }
+
+  async function handleReindexAll() {
+    setReindexAllState('queued')
+    try {
+      await api.admin.reindexAll()
+    } catch {
+      setReindexAllState('error')
     }
   }
 
@@ -575,9 +621,33 @@ export default function AdminPage() {
       </div>
 
       {/* Ontology pipeline */}
-      <SectionLabel>Ontology Pipeline ({data!.ontologies.length})</SectionLabel>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <SectionLabel style={{ margin: 0 }}>Ontology Pipeline ({data!.ontologies.length})</SectionLabel>
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={handleReindexAll}
+          disabled={reindexAllState === 'queued'}
+          title="Queue index_ontology for every ingested version (rebuilds search index and deprecated-term filter)"
+          style={{
+            background: reindexAllState === 'error' ? 'rgba(248,81,73,0.1)' : 'none',
+            border: `1px solid ${reindexAllState === 'error' ? 'rgba(248,81,73,0.3)' : 'var(--border)'}`,
+            borderRadius: 4, cursor: reindexAllState === 'queued' ? 'default' : 'pointer',
+            color: reindexAllState === 'error' ? '#f85149' : reindexAllState === 'queued' ? '#ffa657' : 'var(--text-dim)',
+            fontSize: 11, padding: '4px 12px',
+            opacity: reindexAllState === 'queued' ? 0.7 : 1,
+          }}
+        >
+          {reindexAllState === 'queued' ? '↑ queuing…' : reindexAllState === 'error' ? '✕ retry re-index all' : '↺ Re-index all'}
+        </button>
+      </div>
       <div style={{ marginBottom: 24 }}>
-        <OntologyTable rows={data!.ontologies} updateStates={updateStates} onUpdate={handleUpdate} />
+        <OntologyTable
+          rows={data!.ontologies}
+          updateStates={updateStates}
+          onUpdate={handleUpdate}
+          reindexStates={reindexStates}
+          onReindex={handleReindex}
+        />
       </div>
 
       {/* Workers */}

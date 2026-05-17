@@ -975,6 +975,16 @@ export const api = {
         `/admin/ontologies/${ontologyId}/ingest`,
         { method: 'POST' }
       ),
+    queueIndex: (ontologyId: string) =>
+      request<{ status: string; task_id: string }>(
+        `/admin/ontologies/${ontologyId}/index`,
+        { method: 'POST' }
+      ),
+    reindexAll: () =>
+      request<{ index_queued: number; meta_detection_queued: number; message: string }>(
+        `/admin/reindex`,
+        { method: 'POST' }
+      ),
   },
 
   meta: {

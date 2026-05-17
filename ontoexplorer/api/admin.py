@@ -463,7 +463,35 @@ async def admin_queue_ingest(
     return {"status": "queued", "task_id": task.id, "method": "iri" if use_iri else "url"}
 
 
-# ── Reindex ───────────────────────────────────────────────────────────────────
+# ── Per-ontology re-index ─────────────────────────────────────────────────────
+
+@router.post("/ontologies/{ontology_id}/index", summary="Queue search re-index for one ontology")
+async def admin_queue_index(
+    ontology_id: str,
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue index_ontology for the latest ingested version of an ontology."""
+    from sqlalchemy import select
+    from ontoexplorer.models.db import OntologyVersion
+    from ontoexplorer.modules.jobs.tasks import index_ontology
+
+    version = (await db.execute(
+        select(OntologyVersion)
+        .where(OntologyVersion.ontology_id == ontology_id)
+        .where(OntologyVersion.status == "ingested")
+        .order_by(OntologyVersion.created_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+
+    if not version:
+        raise HTTPException(status_code=404, detail="No ingested version found for this ontology")
+
+    task = index_ontology.delay(str(version.id), ontology_id=ontology_id)
+    return {"status": "queued", "task_id": task.id}
+
+
+# ── Reindex all ───────────────────────────────────────────────────────────────
 
 @router.post("/reindex", summary="Queue search re-index for all ingested versions")
 async def admin_reindex(
