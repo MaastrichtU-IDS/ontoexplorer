@@ -80,6 +80,46 @@ _FACETS: dict[str, str] = {
 _MAX_DEPTH = 10
 
 
+def _rdf_list_items(
+    store: ox.Store, graph: ox.NamedNode, head: ox.Term
+) -> list[ox.Term]:
+    """Walk an RDF collection from `head` and return its items in order.
+
+    Stops at rdf:nil, at the first cycle, or if a node has no rdf:first/rdf:rest.
+    Returns an empty list for rdf:nil.
+    """
+    first_pred = ox.NamedNode(_RDF_FIRST)
+    rest_pred  = ox.NamedNode(_RDF_REST)
+    items: list[ox.Term] = []
+    visited: set[str] = set()
+    node: ox.Term = head
+    while True:
+        # Stop at rdf:nil
+        if isinstance(node, ox.NamedNode) and node.value == _RDF_NIL:
+            break
+        if not isinstance(node, ox.BlankNode):
+            break
+        if node.value in visited:
+            break
+        visited.add(node.value)
+
+        first_obj: ox.Term | None = None
+        rest_obj: ox.Term | None = None
+        for q in store.quads_for_pattern(node, first_pred, None, graph):
+            first_obj = q.object
+            break
+        for q in store.quads_for_pattern(node, rest_pred, None, graph):
+            rest_obj = q.object
+            break
+        if first_obj is None:
+            break
+        items.append(first_obj)
+        if rest_obj is None:
+            break
+        node = rest_obj
+    return items
+
+
 def iri_to_label(
     store: ox.Store, graph: ox.NamedNode, iri: str, *, labels: dict[str, str]
 ) -> str:

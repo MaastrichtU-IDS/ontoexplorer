@@ -82,3 +82,62 @@ def test_iri_to_label_takes_any_label_when_no_en():
         (ox.NamedNode(iri), label_pred, ox.Literal("Le Foo", language="fr")),
     )
     assert iri_to_label(store, _GRAPH, iri, labels={}) == "Le Foo"
+
+
+from ontoexplorer.modules.diff.manchester import _rdf_list_items
+
+
+def _list_quads(items: list) -> tuple[ox.BlankNode, list[tuple]]:
+    """Build RDF list quads for `items`. Returns (head_bnode, [quads])."""
+    quads: list[tuple] = []
+    nil = ox.NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#nil")
+    first_pred = ox.NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#first")
+    rest_pred  = ox.NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#rest")
+    nodes = [ox.BlankNode(f"list_{i}") for i in range(len(items))]
+    for i, item in enumerate(items):
+        quads.append((nodes[i], first_pred, item))
+        nxt = nodes[i + 1] if i + 1 < len(nodes) else nil
+        quads.append((nodes[i], rest_pred, nxt))
+    return nodes[0], quads
+
+
+def test_rdf_list_items_empty_returns_empty():
+    store = _store()
+    nil = ox.NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#nil")
+    assert _rdf_list_items(store, _GRAPH, nil) == []
+
+
+def test_rdf_list_items_returns_ordered_named_nodes():
+    a = ox.NamedNode("http://example.org/A")
+    b = ox.NamedNode("http://example.org/B")
+    c = ox.NamedNode("http://example.org/C")
+    head, quads = _list_quads([a, b, c])
+    store = _store(*quads)
+    items = _rdf_list_items(store, _GRAPH, head)
+    assert [t.value for t in items] == [a.value, b.value, c.value]
+
+
+def test_rdf_list_items_handles_literal_items():
+    lit = ox.Literal("hello", language="en")
+    iri = ox.NamedNode("http://example.org/X")
+    head, quads = _list_quads([lit, iri])
+    store = _store(*quads)
+    items = _rdf_list_items(store, _GRAPH, head)
+    assert len(items) == 2
+    assert isinstance(items[0], ox.Literal)
+    assert items[0].value == "hello"
+    assert isinstance(items[1], ox.NamedNode)
+
+
+def test_rdf_list_items_stops_at_cycle():
+    # Pathological cycle: list_0 → list_0 (self-rest). Helper must not loop.
+    first_pred = ox.NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#first")
+    rest_pred  = ox.NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#rest")
+    head = ox.BlankNode("list_0")
+    a = ox.NamedNode("http://example.org/A")
+    store = _store(
+        (head, first_pred, a),
+        (head, rest_pred,  head),  # cycle
+    )
+    items = _rdf_list_items(store, _GRAPH, head)
+    assert [t.value for t in items] == [a.value]
