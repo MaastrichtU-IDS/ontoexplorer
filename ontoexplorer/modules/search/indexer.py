@@ -217,18 +217,23 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
                 return name
         return ""
 
-    # Collect entity IRIs with their types
+    # Collect entity IRIs with their types.
+    # OWL types are checked first; RDFS fallbacks only fill gaps for non-OWL
+    # vocabularies (e.g. Schema.org uses rdfs:Class / rdf:Property).
     entities: dict[str, str] = {}  # iri -> "class" | "object_property" | "data_property" | "annotation_property"
-    for entity_type, owl_type in [
+    for entity_type, rdf_type in [
         ("class",               "http://www.w3.org/2002/07/owl#Class"),
         ("object_property",     "http://www.w3.org/2002/07/owl#ObjectProperty"),
         ("data_property",       "http://www.w3.org/2002/07/owl#DatatypeProperty"),
         ("annotation_property", "http://www.w3.org/2002/07/owl#AnnotationProperty"),
+        # RDFS fallbacks — only fire when no OWL typing is present
+        ("class",               "http://www.w3.org/2000/01/rdf-schema#Class"),
+        ("object_property",     "http://www.w3.org/1999/02/22-rdf-syntax-ns#Property"),
     ]:
         q = f"""
             SELECT DISTINCT ?entity WHERE {{
                 GRAPH <{named_graph}> {{
-                    ?entity a <{owl_type}> .
+                    ?entity a <{rdf_type}> .
                     FILTER(isIRI(?entity))
                 }}
             }}
