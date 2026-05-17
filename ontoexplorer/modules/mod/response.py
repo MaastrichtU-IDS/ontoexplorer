@@ -1,4 +1,5 @@
 import json
+from collections import defaultdict
 
 from fastapi import Response
 from rdflib import Graph
@@ -10,28 +11,32 @@ HTML_TEMPLATE = """\
 <head><meta charset="utf-8"><title>{{ title }}</title>
 <style>
 body{font-family:sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;color:#222}
-h1{font-size:1.4rem;margin-bottom:1rem}
-table{border-collapse:collapse;width:100%}
-th,td{border:1px solid #ddd;padding:6px 10px;text-align:left;vertical-align:top;font-size:.85rem}
-th{background:#f5f5f5;font-weight:600}
-td:first-child{white-space:nowrap;color:#555}
+h1{font-size:1.5rem;margin-bottom:1.5rem}
+h2{font-size:1rem;font-weight:600;margin:1.5rem 0 .4rem;padding:.3rem .5rem;background:#f0f4f8;border-left:3px solid #0066cc}
+h2 a{color:#003d7a;text-decoration:none}
+h2 a:hover{text-decoration:underline}
+table{border-collapse:collapse;width:100%;margin-bottom:.5rem}
+th,td{border:1px solid #ddd;padding:5px 10px;text-align:left;vertical-align:top;font-size:.82rem}
+th{background:#f5f5f5;font-weight:600;width:220px}
 a{color:#0066cc;text-decoration:none}
 a:hover{text-decoration:underline}
 </style>
 </head>
 <body>
 <h1>{{ title }}</h1>
+{% for subject, rows in groups %}
+<h2>{% if subject.startswith("http") %}<a href="{{ subject }}">{{ subject_label(subject) }}</a>{% else %}{{ subject }}{% endif %}</h2>
 <table>
-<thead><tr><th>Property</th><th>Value</th></tr></thead>
 <tbody>
 {% for pred, obj in rows %}
 <tr>
-  <td><a href="{{ pred }}">{{ pred_label(pred) }}</a></td>
+  <th><a href="{{ pred }}">{{ pred_label(pred) }}</a></th>
   <td>{% if obj.startswith("http") %}<a href="{{ obj }}">{{ obj }}</a>{% else %}{{ obj }}{% endif %}</td>
 </tr>
 {% endfor %}
 </tbody>
 </table>
+{% endfor %}
 </body>
 </html>"""
 
@@ -50,25 +55,42 @@ def _negotiate_format(fmt_param: str | None, accept: str | None) -> str:
     return "jsonld"
 
 
+def _short_label(uri: str) -> str:
+    if "#" in uri:
+        return uri.split("#")[-1]
+    return uri.rstrip("/").split("/")[-1]
+
+
 def _render_html(graph: Graph) -> str:
     from jinja2 import Environment
     env = Environment(autoescape=True)
-
-    def pred_label(uri: str) -> str:
-        if "#" in uri:
-            return uri.split("#")[-1]
-        return uri.rstrip("/").split("/")[-1]
-
-    env.globals["pred_label"] = pred_label
+    env.globals["pred_label"] = _short_label
+    env.globals["subject_label"] = _short_label
 
     title_pred = "http://purl.org/dc/terms/title"
     title = next(
         (str(o) for _, p, o in graph if str(p) == title_pred),
         "RDF Graph",
     )
-    rows = sorted((str(p), str(o)) for _, p, o in graph)
+
+    # Group triples by subject, skip rdf:type triples that just clutter every row
+    rdf_type = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+    by_subject: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for s, p, o in graph:
+        by_subject[str(s)].append((str(p), str(o)))
+    for rows in by_subject.values():
+        rows.sort()
+
+    # Put subjects with a dcterms:title first; sort the rest alphabetically
+    def _sort_key(item: tuple[str, list]) -> tuple[int, str]:
+        subj, rows = item
+        has_title = any(p == title_pred for p, _ in rows)
+        return (0 if has_title else 1, subj)
+
+    groups = sorted(by_subject.items(), key=_sort_key)
+
     tmpl = env.from_string(HTML_TEMPLATE)
-    return tmpl.render(title=title, rows=rows)
+    return tmpl.render(title=title, groups=groups)
 
 
 def _serialize(graph: Graph, fmt: str) -> tuple[bytes, str]:
@@ -78,14 +100,10 @@ def _serialize(graph: Graph, fmt: str) -> tuple[bytes, str]:
         return graph.serialize(format="xml").encode("utf-8"), "application/rdf+xml; charset=utf-8"
     if fmt == "html":
         return _render_html(graph).encode("utf-8"), "text/html; charset=utf-8"
-    # JSON-LD
+    # JSON-LD — pass context to rdflib so it compacts prefixes
     from ontoexplorer.modules.mod.context import MOD_CONTEXT
-    raw = json.loads(graph.serialize(format="json-ld"))
-    if isinstance(raw, list):
-        data: dict = {"@context": MOD_CONTEXT["@context"], "@graph": raw}
-    else:
-        data = {"@context": MOD_CONTEXT["@context"], **raw}
-    return json.dumps(data, indent=2).encode("utf-8"), "application/ld+json; charset=utf-8"
+    raw = json.loads(graph.serialize(format="json-ld", context=MOD_CONTEXT["@context"]))
+    return json.dumps(raw, indent=2).encode("utf-8"), "application/ld+json; charset=utf-8"
 
 
 class RDFResponse(Response):
