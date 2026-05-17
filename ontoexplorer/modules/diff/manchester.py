@@ -279,26 +279,34 @@ def _render_restriction(
             return f"{prop_label} Self"
         # `hasSelf false` or non-boolean literals fall through.
 
-    # Cardinality variants.
+    # Cardinality variants. Unqualified predicates NEVER carry a filler, per
+    # the OWL2 RDF mapping. Qualified predicates require owl:onClass or
+    # owl:onDataRange for a filler.
     for card_pred, kw in (
-        (_OWL_CARDINALITY,  "exactly"),
-        (_OWL_MIN_CARD,     "min"),
-        (_OWL_MAX_CARD,     "max"),
+        (_OWL_CARDINALITY, "exactly"),
+        (_OWL_MIN_CARD,    "min"),
+        (_OWL_MAX_CARD,    "max"),
+    ):
+        if card_pred in preds:
+            n = preds[card_pred]
+            if isinstance(n, ox.Literal):
+                return f"{prop_label} {kw} {n.value}"
+
+    for card_pred, kw in (
         (_OWL_QCARDINALITY, "exactly"),
         (_OWL_MIN_QCARD,    "min"),
         (_OWL_MAX_QCARD,    "max"),
     ):
         if card_pred in preds:
             n = preds[card_pred]
-            if not isinstance(n, ox.Literal):
-                continue
-            on_class = preds.get(_OWL_ON_CLASS) or preds.get(_OWL_ON_DATARANGE)
-            if on_class is not None:
-                filler = render_class_expression(
-                    store, graph, on_class, labels=labels, depth=depth + 1
-                )
-                return f"{prop_label} {kw} {n.value} {filler}"
-            return f"{prop_label} {kw} {n.value}"
+            if isinstance(n, ox.Literal):
+                on_class = preds.get(_OWL_ON_CLASS) or preds.get(_OWL_ON_DATARANGE)
+                if on_class is not None:
+                    filler = render_class_expression(
+                        store, graph, on_class, labels=labels, depth=depth + 1
+                    )
+                    return f"{prop_label} {kw} {n.value} {filler}"
+                return f"{prop_label} {kw} {n.value}"
 
     return f"[restriction:{prop_label}]"
 

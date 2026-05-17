@@ -389,3 +389,19 @@ def test_restriction_qualified_cardinality_exactly():
         (r, _OWL_ON_CLASS, c),
     )
     assert render_class_expression(store, _GRAPH, r, labels={}) == "hasTopping exactly 2 Vegetable"
+
+
+def test_restriction_unqualified_cardinality_ignores_onClass():
+    """Ill-formed RDF: owl:cardinality + owl:onClass should NOT render as qualified."""
+    p = ox.NamedNode("http://example.org/hasTopping")
+    c = ox.NamedNode("http://example.org/Vegetable")
+    r = ox.BlankNode("rc_illformed")
+    store = _store(
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_CARD, _int_lit(3)),
+        (r, _OWL_ON_CLASS, c),  # spec violation
+    )
+    out = render_class_expression(store, _GRAPH, r, labels={})
+    assert out == "hasTopping exactly 3", \
+        f"unqualified cardinality must not absorb onClass, got: {out}"
