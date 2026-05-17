@@ -278,6 +278,10 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
     RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
     if isinstance(node, SomeValuesFrom):
         prop_iri = resolve_prop(node.property_ref)
+        # Use rdfs:subPropertyOf* so that restrictions written on sub-properties
+        # of the queried property are also matched.  For example, querying
+        # 'has part some X' should find classes with 'has direct part some X'
+        # when 'has direct part' subPropertyOf 'has part'.
         if isinstance(node.filler, NamedClass):
             fill_iri = resolve(node.filler)
             q = f"""
@@ -285,13 +289,15 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
                     GRAPH <{g}> {{
                         {{
                             ?cls <{RDFS}subClassOf> ?restr .
-                            ?restr <{OWL}onProperty> <{prop_iri}> .
+                            ?restr <{OWL}onProperty> ?prop .
                             ?restr <{OWL}someValuesFrom> <{fill_iri}> .
+                            ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
                         }} UNION {{
                             ?cls <{OWL}equivalentClass> ?inter .
                             ?inter <{OWL}intersectionOf>/<{RDF}rest>*/<{RDF}first> ?restr .
-                            ?restr <{OWL}onProperty> <{prop_iri}> .
+                            ?restr <{OWL}onProperty> ?prop .
                             ?restr <{OWL}someValuesFrom> <{fill_iri}> .
+                            ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
                         }}
                     }}
                 }}
@@ -302,13 +308,15 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
                     GRAPH <{g}> {{
                         {{
                             ?cls <{RDFS}subClassOf> ?restr .
-                            ?restr <{OWL}onProperty> <{prop_iri}> .
+                            ?restr <{OWL}onProperty> ?prop .
                             ?restr <{OWL}someValuesFrom> ?fill .
+                            ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
                         }} UNION {{
                             ?cls <{OWL}equivalentClass> ?inter .
                             ?inter <{OWL}intersectionOf>/<{RDF}rest>*/<{RDF}first> ?restr .
-                            ?restr <{OWL}onProperty> <{prop_iri}> .
+                            ?restr <{OWL}onProperty> ?prop .
                             ?restr <{OWL}someValuesFrom> ?fill .
+                            ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
                         }}
                     }}
                 }}
