@@ -256,9 +256,16 @@ def _tokenize_prefix(text: str) -> list[tuple[str, str]]:
             tokens.append(("CLOSE_PAREN", ")"))
             i += 1
             continue
-        # Try keywords and identifiers
+        # Try CURIE first (requires colon, so keywords are never misclassified)
         rest = text[i:]
-        word_m = re.match(r"[A-Za-z_][A-Za-z0-9_:\-\.]*", rest)
+        curie_m = _CURIE_RE.match(rest)
+        if curie_m:
+            tokens.append(("CURIE", curie_m.group(0)))
+            i += len(curie_m.group(0))
+            continue
+        # Then keywords and bare labels (BARE_LABEL: letters/digits/underscore only,
+        # matching the grammar terminal exactly — no hyphens or dots)
+        word_m = re.match(r"[A-Za-z_][A-Za-z0-9_]*", rest)
         if word_m:
             word = word_m.group(0)
             if word in _KEYWORD_RESTRICTION:
@@ -267,8 +274,6 @@ def _tokenize_prefix(text: str) -> list[tuple[str, str]]:
                 tokens.append(("KW_BOOLEAN", word))
             elif word == "not":
                 tokens.append(("KW_NOT", word))
-            elif _CURIE_RE.fullmatch(word):
-                tokens.append(("CURIE", word))
             else:
                 tokens.append(("WORD", word))
             i += len(word)

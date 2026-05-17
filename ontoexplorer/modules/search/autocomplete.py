@@ -76,7 +76,7 @@ def get_completions(
                 )
                 for c in raw
             ]
-        kws = _keyword_completions(["'"])  # trigger quote
+        kws = _keyword_completions(["not", "'"])  # not is valid before any entity
         return kws
 
     if result.token_type == "EXPECT_KEYWORD":

@@ -62,15 +62,47 @@ def test_completions_unambiguous_label_no_curie():
     assert any(ins == "cell division'" for ins in inserts)
 
 
-def test_completions_after_entity_returns_restriction_and_boolean_keywords():
+def test_completions_after_entity_returns_only_boolean_keywords():
     r = _setup_redis("v1")
     with patch("ontoexplorer.modules.search.autocomplete._get_redis", return_value=r):
         completions = get_completions("'Cell'", cursor=6, version_id="v1", limit=20)
     kw_texts = {c.text for c in completions if c.type == "keyword"}
-    assert "some" in kw_texts
-    assert "only" in kw_texts
     assert "and" in kw_texts
     assert "or" in kw_texts
+    assert "not" in kw_texts
+    assert "(" in kw_texts
+    assert ")" in kw_texts
+    # Restriction keywords must NOT appear after a closed entity
+    assert "some" not in kw_texts
+    assert "only" not in kw_texts
+
+
+def test_completions_no_partial_includes_not():
+    r = _setup_redis("v1")
+    with patch("ontoexplorer.modules.search.autocomplete._get_redis", return_value=r):
+        # After 'and' with no partial — EXPECT_ENTITY with no partial text
+        completions = get_completions("'Cell' and ", cursor=11, version_id="v1", limit=20)
+    kw_texts = {c.text for c in completions if c.type == "keyword"}
+    assert "not" in kw_texts
+    assert "'" in kw_texts
+
+
+def test_completions_after_open_paren_includes_not():
+    r = _setup_redis("v1")
+    with patch("ontoexplorer.modules.search.autocomplete._get_redis", return_value=r):
+        completions = get_completions("(", cursor=1, version_id="v1", limit=20)
+    kw_texts = {c.text for c in completions if c.type == "keyword"}
+    assert "not" in kw_texts
+
+
+def test_completions_after_close_paren_returns_boolean_keywords():
+    r = _setup_redis("v1")
+    with patch("ontoexplorer.modules.search.autocomplete._get_redis", return_value=r):
+        completions = get_completions("('Cell')", cursor=7, version_id="v1", limit=20)
+    kw_texts = {c.text for c in completions if c.type == "keyword"}
+    assert "and" in kw_texts
+    assert "or" in kw_texts
+    assert "some" not in kw_texts
 
 
 def test_completions_after_some_returns_only_classes():

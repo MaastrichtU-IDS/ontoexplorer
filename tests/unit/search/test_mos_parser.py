@@ -168,3 +168,80 @@ def test_partial_parse_after_and_expect_entity():
     result = partial_parse("'Cell' and ", 11)
     assert result.token_type == "EXPECT_ENTITY"
     assert result.partial == ""
+
+
+# ── Additional partial_parse state coverage (drift-catching) ─────────────────
+
+def test_partial_parse_after_close_paren_expect_keyword():
+    result = partial_parse("('Cell')", 7)
+    assert result.token_type == "EXPECT_KEYWORD"
+    assert result.partial == ""
+
+
+def test_partial_parse_after_open_paren_expect_entity():
+    result = partial_parse("(", 1)
+    assert result.token_type == "EXPECT_ENTITY"
+    assert result.partial == ""
+
+
+def test_partial_parse_after_curie_expect_keyword():
+    result = partial_parse("GO:0008219 ", 11)
+    assert result.token_type == "EXPECT_KEYWORD"
+    assert result.partial == ""
+
+
+def test_partial_parse_after_full_iri_expect_keyword():
+    result = partial_parse("<http://example.org/Cell> ", 26)
+    assert result.token_type == "EXPECT_KEYWORD"
+    assert result.partial == ""
+
+
+def test_partial_parse_word_in_progress_returns_partial():
+    result = partial_parse("'Cell' and nuc", 14)
+    assert result.token_type == "EXPECT_ENTITY"
+    assert result.partial == "nuc"
+    assert result.token_start == 11
+
+
+def test_partial_parse_hyphen_in_bare_word_breaks_token():
+    # Grammar's BARE_LABEL has no hyphens; tokenizer must agree and break at the hyphen.
+    # "some-prop" → tokenizes as WORD("some") then skips "-" then WORD("prop")
+    # Last completed token is WORD("prop"), so still EXPECT_KEYWORD (word + space would be)
+    # Without trailing space the word is still in progress → EXPECT_ENTITY with partial "prop"
+    result = partial_parse("some-prop", 9)
+    assert result.token_type == "EXPECT_ENTITY"
+    assert result.partial == "prop"
+
+
+def test_partial_parse_and_not_expect_entity():
+    result = partial_parse("'Cell' and not ", 15)
+    assert result.token_type == "EXPECT_ENTITY"
+    assert result.partial == ""
+
+
+def test_partial_parse_nested_paren_not():
+    result = partial_parse("('Cell' and (not ", 17)
+    assert result.token_type == "EXPECT_ENTITY"
+    assert result.partial == ""
+
+
+def test_partial_parse_token_start_open_quote():
+    result = partial_parse("'Cell' and 'nuc", 15)
+    assert result.token_type == "OPEN_QUOTE"
+    assert result.partial == "nuc"
+    assert result.token_start == 12  # index after the opening quote
+
+
+def test_partial_parse_or_expect_entity():
+    result = partial_parse("'Cell' or ", 10)
+    assert result.token_type == "EXPECT_ENTITY"
+    assert result.partial == ""
+
+
+def test_partial_parse_curie_treated_as_complete():
+    # CURIE tokens are always classified as complete (unlike bare WORDs which have
+    # in-progress detection). Typing GO:000 with no trailing space returns EXPECT_KEYWORD,
+    # not EXPECT_ENTITY — so partial-CURIE completions are not offered.
+    result = partial_parse("GO:000", 6)
+    assert result.token_type == "EXPECT_KEYWORD"
+    assert result.partial == ""
