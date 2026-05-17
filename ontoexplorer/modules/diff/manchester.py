@@ -409,14 +409,13 @@ def _render_datatype_restriction(
             if facet_iri not in _FACETS:
                 continue
             op = _FACETS[facet_iri]
-            value_str = _render_literal(q.object) if isinstance(q.object, ox.Literal) else str(q.object.value)
             if op == "pattern":
-                facet_strs.append(f'pattern {value_str}')
-            elif op in ("length", "minLength", "maxLength"):
-                inner = q.object.value if isinstance(q.object, ox.Literal) else value_str
-                facet_strs.append(f"{op} {inner}")
+                value_str = _render_literal(q.object) if isinstance(q.object, ox.Literal) else str(q.object.value)
+                facet_strs.append(f"pattern {value_str}")
             else:
-                inner = q.object.value if isinstance(q.object, ox.Literal) else value_str
+                # Numeric comparators (>=, <=, >, <) and length facets — emit the
+                # lexical form so "0" doesn't become '"0"^^xsd:integer'.
+                inner = q.object.value if isinstance(q.object, ox.Literal) else str(q.object.value)
                 facet_strs.append(f"{op} {inner}")
     if not facet_strs:
         return base_label
