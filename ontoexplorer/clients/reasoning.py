@@ -2,10 +2,19 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import httpx
 import rdflib
 
 from ontoexplorer.config import get_settings
+
+# In-process cache for get_classification: avoids re-fetching the (often 40+ MB)
+# classification JSON on every inferred-tree or MOS-search request.
+# Keyed by version_id → (fetched_at, data). TTL is 10 minutes; classification
+# results are immutable once computed so this is safe.
+_CLASSIFICATION_CACHE: dict[str, tuple[float, dict]] = {}
+_CLASSIFICATION_LOCKS: dict[str, asyncio.Lock] = {}
+_CLASSIFICATION_TTL = 600.0  # seconds
 
 
 def _elk_url(path: str) -> str:
@@ -132,7 +141,9 @@ async def request_justification(
 
 
 async def invalidate_cache(version_id: str) -> None:
-    """Invalidate ELK Redis cache for a version (called on deprecation)."""
+    """Invalidate ELK Redis cache and in-process cache for a version."""
+    _CLASSIFICATION_CACHE.pop(version_id, None)
+    _CLASSIFICATION_LOCKS.pop(version_id, None)
     async with httpx.AsyncClient(timeout=10.0) as client:
         await client.delete(_elk_url(f"/classify/{version_id}"))
 
@@ -152,15 +163,35 @@ async def get_classification(version_id: str) -> dict:
     Returns the raw dict with keys: superclasses, subclasses, direct_superclasses,
     direct_subclasses, unsatisfiable, class_count, proof_traces, etc.
 
+    Results are cached in-process for _CLASSIFICATION_TTL seconds to avoid
+    repeatedly fetching large (40+ MB) payloads on every tree or search request.
+
     Raises ReasoningNotReadyError if the version has not been classified yet.
     """
-    url = f"{_elk_url('')}/classify/{version_id}"
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(url)
-    if resp.status_code in (404, 409):
-        raise ReasoningNotReadyError(version_id)
-    resp.raise_for_status()
-    return resp.json()
+    now = time.monotonic()
+    cached = _CLASSIFICATION_CACHE.get(version_id)
+    if cached and (now - cached[0]) < _CLASSIFICATION_TTL:
+        return cached[1]
+
+    # Per-version lock prevents a thundering herd when multiple requests arrive
+    # simultaneously for the same uncached version.
+    if version_id not in _CLASSIFICATION_LOCKS:
+        _CLASSIFICATION_LOCKS[version_id] = asyncio.Lock()
+    async with _CLASSIFICATION_LOCKS[version_id]:
+        # Re-check under lock in case another coroutine just populated it.
+        cached = _CLASSIFICATION_CACHE.get(version_id)
+        if cached and (now - cached[0]) < _CLASSIFICATION_TTL:
+            return cached[1]
+
+        url = f"{_elk_url('')}/classify/{version_id}"
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.get(url)
+        if resp.status_code in (404, 409):
+            raise ReasoningNotReadyError(version_id)
+        resp.raise_for_status()
+        data = resp.json()
+        _CLASSIFICATION_CACHE[version_id] = (time.monotonic(), data)
+        return data
 
 
 class ReasoningNotReadyError(Exception):

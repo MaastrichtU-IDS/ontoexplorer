@@ -1,5 +1,6 @@
 """Ontologies REST API — submit, list, metadata, versions, terms, download, deprecate."""
 
+import asyncio
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
@@ -1746,61 +1747,67 @@ async def inferred_children(
     except Exception:
         return {"terms": [], "reasoning_available": False}
 
-    # ELK splits its hierarchy across two keys:
-    #   direct_superclasses — pre-computed direct parents for most classes
-    #   superclasses        — partial transitive closure; catches classes ELK's
-    #                         direct-parent computation missed (e.g. CCO_0000015)
-    # We combine both: prefer direct_superclasses, fall back to deriving from superclasses.
-    elk_direct: dict[str, list[str]] = classification.get("direct_superclasses", {})
-    elk_all:    dict[str, list[str]] = classification.get("superclasses", {})
-    _excluded = {_OWL_THING, _OWL_NOTHING}
-
-    def _direct_parents(c: str) -> list[str]:
-        if c in elk_direct:
-            return [p for p in elk_direct[c] if p not in _excluded]
-        # Derive from superclasses: keep most-specific (drop p if any sibling q has p in elk_all[q])
-        raw = [p for p in elk_all.get(c, []) if p not in _excluded]
-        return [p for p in raw
-                if not any(p in elk_all.get(q, []) for q in raw if q != p)]
-
-    all_classes = set(elk_direct.keys()) | set(elk_all.keys())
-
-    if cls == _OWL_THING:
-        child_iris = sorted(c for c in all_classes if not _direct_parents(c))
-    else:
-        child_iris = sorted(c for c in all_classes if cls in _direct_parents(c))
-
     r = _get_redis()
 
-    def _label_and_lang(iri: str) -> tuple[str, str | None]:
-        detail = r.hgetall(_iri_key(version_id, iri))
-        if detail:
-            if lang and detail.get("labels"):
-                labels = _json.loads(detail["labels"])
-                match = next((e for e in labels if e.get("lang") == lang), None)
-                if match:
-                    return match["value"], lang
-                untagged = next((e for e in labels if not e.get("lang")), None)
-                if untagged:
-                    return untagged["value"], None
-            if detail.get("label"):
-                return detail["label"], None
-        fragment = iri.rstrip("/")
-        label = fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
-        return label, None
+    def _compute() -> dict:
+        elk_direct: dict[str, list[str]] = classification.get("direct_superclasses", {})
+        elk_all:    dict[str, list[str]] = classification.get("superclasses", {})
+        _excluded = {_OWL_THING, _OWL_NOTHING}
 
-    def _has_inferred_children(iri: str) -> bool:
-        return any(iri in _direct_parents(c) for c in all_classes)
+        def _direct_parents(c: str) -> list[str]:
+            if c in elk_direct:
+                return [p for p in elk_direct[c] if p not in _excluded]
+            raw = [p for p in elk_all.get(c, []) if p not in _excluded]
+            return [p for p in raw
+                    if not any(p in elk_all.get(q, []) for q in raw if q != p)]
 
-    terms = []
-    for iri in child_iris:
-        label, lang_tag = _label_and_lang(iri)
-        term: dict = {"iri": iri, "label": label, "has_children": _has_inferred_children(iri)}
-        if lang_tag:
-            term["lang"] = lang_tag
-        terms.append(term)
+        all_classes = set(elk_direct.keys()) | set(elk_all.keys())
 
-    return {"terms": terms, "reasoning_available": True}
+        # Pre-build children index (O(N)) so has_children lookups are O(1) not O(N²).
+        children_of: dict[str, set[str]] = {}
+        for c in all_classes:
+            for p in _direct_parents(c):
+                children_of.setdefault(p, set()).add(c)
+
+        if cls == _OWL_THING:
+            child_iris = sorted(c for c in all_classes if not _direct_parents(c))
+        else:
+            child_iris = sorted(children_of.get(cls, []))
+
+        # Batch all Redis label lookups into a single pipeline round-trip.
+        pipe = r.pipeline(transaction=False)
+        for iri in child_iris:
+            pipe.hgetall(_iri_key(version_id, iri))
+        details_list = pipe.execute()
+
+        def _label_and_lang(detail: dict) -> tuple[str, str | None]:
+            if detail:
+                if lang and detail.get("labels"):
+                    labels = _json.loads(detail["labels"])
+                    match = next((e for e in labels if e.get("lang") == lang), None)
+                    if match:
+                        return match["value"], lang
+                    untagged = next((e for e in labels if not e.get("lang")), None)
+                    if untagged:
+                        return untagged["value"], None
+                if detail.get("label"):
+                    return detail["label"], None
+            return None, None
+
+        terms = []
+        for iri, detail in zip(child_iris, details_list):
+            label, lang_tag = _label_and_lang(detail)
+            if label is None:
+                fragment = iri.rstrip("/")
+                label = fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
+            term: dict = {"iri": iri, "label": label, "has_children": bool(children_of.get(iri))}
+            if lang_tag:
+                term["lang"] = lang_tag
+            terms.append(term)
+
+        return {"terms": terms, "reasoning_available": True}
+
+    return await asyncio.to_thread(_compute)
 
 
 @router.get("/{ontology_id}/{version_id}/ancestors",
@@ -1862,7 +1869,6 @@ async def term_ancestors(
         }
 
     # Asserted: SPARQL property path rdfs:subClassOf+
-    import asyncio
     from ontoexplorer.clients.oxigraph import get_store
     store = get_store()
     g = f"urn:ontology:{ontology_id}:{version_id}"
