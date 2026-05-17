@@ -83,6 +83,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     json_logs: bool = True
 
+    # MOD-API
+    mod_catalogue_title: str = "OntoExplorer Catalogue"
+    mod_catalogue_description: str = "A FAIR ontology repository"
+    mod_rate_limit_anon: int = 1000
+    mod_rate_limit_auth: int = 10000
+
     @field_validator("database_url")
     @classmethod
     def validate_database_url(cls, v: str) -> str:
