@@ -491,6 +491,34 @@ async def admin_queue_index(
     return {"status": "queued", "task_id": task.id}
 
 
+# ── Per-ontology embed ────────────────────────────────────────────────────────
+
+@router.post("/ontologies/{ontology_id}/embed", summary="Queue embedding generation for one ontology")
+async def admin_queue_embed(
+    ontology_id: str,
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue embed_ontology for the latest non-deprecated version of an ontology."""
+    from sqlalchemy import select
+    from ontoexplorer.models.db import OntologyVersion
+    from ontoexplorer.modules.jobs.tasks import embed_ontology
+
+    version = (await db.execute(
+        select(OntologyVersion)
+        .where(OntologyVersion.ontology_id == ontology_id)
+        .where(OntologyVersion.status != "deprecated")
+        .order_by(OntologyVersion.created_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+
+    if not version:
+        raise HTTPException(status_code=404, detail="No non-deprecated version found for this ontology")
+
+    task = embed_ontology.delay(str(version.id), ontology_id=ontology_id)
+    return {"status": "queued", "task_id": task.id}
+
+
 # ── Reindex all ───────────────────────────────────────────────────────────────
 
 @router.post("/reindex", summary="Queue search re-index for all ingested versions")

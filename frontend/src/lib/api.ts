@@ -980,6 +980,11 @@ export const api = {
         `/admin/ontologies/${ontologyId}/index`,
         { method: 'POST' }
       ),
+    queueEmbed: (ontologyId: string) =>
+      request<{ status: string; task_id: string }>(
+        `/admin/ontologies/${ontologyId}/embed`,
+        { method: 'POST' }
+      ),
     reindexAll: () =>
       request<{ index_queued: number; meta_detection_queued: number; message: string }>(
         `/admin/reindex`,

@@ -150,12 +150,16 @@ function OntologyTable({
   onUpdate,
   reindexStates,
   onReindex,
+  embedStates,
+  onEmbed,
 }: {
   rows: AdminOntologyEntry[]
   updateStates: Record<string, UpdateState>
   onUpdate: (id: string) => void
   reindexStates: Record<string, UpdateState>
   onReindex: (id: string) => void
+  embedStates: Record<string, UpdateState>
+  onEmbed: (id: string) => void
 }) {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<{ col: SortCol; dir: 'asc' | 'desc' }>({ col: 'ontology', dir: 'asc' })
@@ -252,6 +256,7 @@ function OntologyTable({
               <SortTh col="updated"    label="Updated" />
               <th style={{ ...thBase, textAlign: 'center', cursor: 'default', color: 'var(--text-dim)' }}>Ingest</th>
               <th style={{ ...thBase, textAlign: 'center', cursor: 'default', color: 'var(--text-dim)' }}>Index</th>
+              <th style={{ ...thBase, textAlign: 'center', cursor: 'default', color: 'var(--text-dim)' }}>Embed</th>
             </tr>
           </thead>
           <tbody>
@@ -311,11 +316,32 @@ function OntologyTable({
                     <span style={{ color: 'var(--text-dim)', fontSize: 10 }}>—</span>
                   )}
                 </td>
+                <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                  {row.ingestion_status !== 'deprecated' && row.ingestion_status !== 'pending' ? (
+                    embedStates[row.id] === 'queued'
+                      ? <span style={{ color: '#ffa657', fontSize: 10 }}>↑ queued</span>
+                      : <button
+                          onClick={() => onEmbed(row.id)}
+                          title="Generate vector embeddings for semantic search"
+                          style={{
+                            background: embedStates[row.id] === 'error' ? 'rgba(248,81,73,0.1)' : 'none',
+                            border: `1px solid ${embedStates[row.id] === 'error' ? 'rgba(248,81,73,0.3)' : 'var(--border)'}`,
+                            borderRadius: 4, cursor: 'pointer',
+                            color: embedStates[row.id] === 'error' ? '#f85149' : 'var(--text-dim)',
+                            fontSize: 10, padding: '2px 8px',
+                          }}
+                        >
+                          {embedStates[row.id] === 'error' ? '✕ retry' : '⬡ embed'}
+                        </button>
+                  ) : (
+                    <span style={{ color: 'var(--text-dim)', fontSize: 10 }}>—</span>
+                  )}
+                </td>
               </tr>
             ))}
             {paged.length === 0 && (
               <tr>
-                <td colSpan={9} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                <td colSpan={10} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
                   {search ? 'No matching ontologies' : 'No ontologies'}
                 </td>
               </tr>
@@ -533,6 +559,7 @@ export default function AdminPage() {
   const [updateStates, setUpdateStates] = useState<Record<string, UpdateState>>({})
   const [reindexStates, setReindexStates] = useState<Record<string, UpdateState>>({})
   const [reindexAllState, setReindexAllState] = useState<'idle' | 'queued' | 'error'>('idle')
+  const [embedStates, setEmbedStates] = useState<Record<string, UpdateState>>({})
 
   async function handleUpdate(ontologyId: string) {
     setUpdateStates(s => ({ ...s, [ontologyId]: 'queued' }))
@@ -549,6 +576,15 @@ export default function AdminPage() {
       await api.admin.queueIndex(ontologyId)
     } catch {
       setReindexStates(s => ({ ...s, [ontologyId]: 'error' }))
+    }
+  }
+
+  async function handleEmbed(ontologyId: string) {
+    setEmbedStates(s => ({ ...s, [ontologyId]: 'queued' }))
+    try {
+      await api.admin.queueEmbed(ontologyId)
+    } catch {
+      setEmbedStates(s => ({ ...s, [ontologyId]: 'error' }))
     }
   }
 
@@ -647,6 +683,8 @@ export default function AdminPage() {
           onUpdate={handleUpdate}
           reindexStates={reindexStates}
           onReindex={handleReindex}
+          embedStates={embedStates}
+          onEmbed={handleEmbed}
         />
       </div>
 
