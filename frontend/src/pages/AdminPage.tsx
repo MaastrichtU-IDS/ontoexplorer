@@ -103,41 +103,34 @@ function ontologyDisplayName(row: AdminOntologyEntry): string {
     || row.iri
 }
 
-function UpdateButton({
-  ontologyId,
-  sourceUrl,
-  iri,
+function ActionButton({
+  label,
+  title,
   state,
-  onUpdate,
+  onClick,
 }: {
-  ontologyId: string
-  sourceUrl: string | null
-  iri: string
+  label: string
+  title: string
   state: UpdateState
-  onUpdate: (id: string) => void
+  onClick: () => void
 }) {
-  const hasSource = !!(sourceUrl || iri)
-  if (!hasSource) {
-    return <span style={{ color: 'var(--text-dim)', fontSize: 10 }}>—</span>
-  }
   if (state === 'queued') {
     return <span style={{ color: '#ffa657', fontSize: 10 }}>↑ queued</span>
   }
-  const method = sourceUrl ? 'url' : 'iri'
   const isError = state === 'error'
   return (
     <button
-      onClick={() => onUpdate(ontologyId)}
-      title={method === 'url' ? `Re-ingest via URL: ${sourceUrl}` : `Re-ingest via IRI (content negotiation): ${iri}`}
+      onClick={onClick}
+      title={title}
       style={{
         background: isError ? 'rgba(248,81,73,0.1)' : 'none',
         border: `1px solid ${isError ? 'rgba(248,81,73,0.3)' : 'var(--border)'}`,
         borderRadius: 4, cursor: 'pointer',
         color: isError ? '#f85149' : 'var(--text-dim)',
-        fontSize: 10, padding: '2px 8px',
+        fontSize: 10, padding: '2px 6px', marginTop: 3,
       }}
     >
-      {isError ? '✕ retry' : `↑ ${method}`}
+      {isError ? '✕ retry' : label}
     </button>
   )
 }
@@ -152,6 +145,8 @@ function OntologyTable({
   onReindex,
   embedStates,
   onEmbed,
+  reasonStates,
+  onReason,
 }: {
   rows: AdminOntologyEntry[]
   updateStates: Record<string, UpdateState>
@@ -160,6 +155,8 @@ function OntologyTable({
   onReindex: (id: string) => void
   embedStates: Record<string, UpdateState>
   onEmbed: (id: string) => void
+  reasonStates: Record<string, UpdateState>
+  onReason: (id: string) => void
 }) {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<{ col: SortCol; dir: 'asc' | 'desc' }>({ col: 'ontology', dir: 'asc' })
@@ -254,94 +251,86 @@ function OntologyTable({
               <SortTh col="embeddings" label="Embeddings" />
               <SortTh col="reasoning"  label="Reasoning" />
               <SortTh col="updated"    label="Updated" />
-              <th style={{ ...thBase, textAlign: 'center', cursor: 'default', color: 'var(--text-dim)' }}>Ingest</th>
-              <th style={{ ...thBase, textAlign: 'center', cursor: 'default', color: 'var(--text-dim)' }}>Index</th>
-              <th style={{ ...thBase, textAlign: 'center', cursor: 'default', color: 'var(--text-dim)' }}>Embed</th>
             </tr>
           </thead>
           <tbody>
-            {paged.map(row => (
-              <tr key={row.version_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                <td style={{ padding: '6px 10px', color: 'var(--text)' }}>
-                  <div>{ontologyDisplayName(row)}</div>
-                  {row.label && row.label !== ontologyDisplayName(row) && (
-                    <div style={{ color: 'var(--text-dim)', fontSize: 10 }}>{row.label}</div>
-                  )}
-                </td>
-                <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                  {fmtTriples(row.triple_count)}
-                </td>
-                <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-                  <StatusDot status={row.ingestion_status} />
-                </td>
-                <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-                  <StatusDot status={row.indexed ? 'done' : 'not_started'} label={row.indexed ? 'yes' : 'no'} />
-                </td>
-                <td style={{ padding: '6px 10px', textAlign: 'center', color: row.embed_count > 0 ? 'var(--accent-green, #3fb950)' : 'var(--text-dim)', fontSize: 11 }}>
-                  {row.embed_count > 0 ? fmtTriples(row.embed_count) : '—'}
-                </td>
-                <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-                  <StatusDot status={row.reasoning_status} label={row.reasoning_status.replace('_', ' ')} />
-                </td>
-                <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
-                  {fmtAge(row.version_created_at)}
-                </td>
-                <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-                  <UpdateButton
-                    ontologyId={row.id}
-                    sourceUrl={row.source_url}
-                    iri={row.iri}
-                    state={updateStates[row.id] ?? 'idle'}
-                    onUpdate={onUpdate}
-                  />
-                </td>
-                <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-                  {row.ingestion_status !== 'deprecated' && row.ingestion_status !== 'pending' ? (
-                    reindexStates[row.id] === 'queued'
-                      ? <span style={{ color: '#ffa657', fontSize: 10 }}>↑ queued</span>
-                      : <button
-                          onClick={() => onReindex(row.id)}
+            {paged.map(row => {
+              const canAct = row.ingestion_status !== 'deprecated' && row.ingestion_status !== 'pending'
+              const ingestMethod = row.source_url ? 'url' : 'iri'
+              return (
+                <tr key={row.version_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                  <td style={{ padding: '6px 10px', color: 'var(--text)' }}>
+                    <div>{ontologyDisplayName(row)}</div>
+                    {row.label && row.label !== ontologyDisplayName(row) && (
+                      <div style={{ color: 'var(--text-dim)', fontSize: 10 }}>{row.label}</div>
+                    )}
+                  </td>
+                  <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    {fmtTriples(row.triple_count)}
+                  </td>
+                  <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                      <StatusDot status={row.ingestion_status} />
+                      {(row.source_url || row.iri) && (
+                        <ActionButton
+                          label={`↑ ${ingestMethod}`}
+                          title={row.source_url ? `Re-ingest via URL: ${row.source_url}` : `Re-ingest via IRI: ${row.iri}`}
+                          state={updateStates[row.id] ?? 'idle'}
+                          onClick={() => onUpdate(row.id)}
+                        />
+                      )}
+                    </div>
+                  </td>
+                  <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                      <StatusDot status={row.indexed ? 'done' : 'not_started'} label={row.indexed ? 'yes' : 'no'} />
+                      {canAct && (
+                        <ActionButton
+                          label="↺ index"
                           title="Re-index search (updates deprecated term filter, labels, synonyms)"
-                          style={{
-                            background: reindexStates[row.id] === 'error' ? 'rgba(248,81,73,0.1)' : 'none',
-                            border: `1px solid ${reindexStates[row.id] === 'error' ? 'rgba(248,81,73,0.3)' : 'var(--border)'}`,
-                            borderRadius: 4, cursor: 'pointer',
-                            color: reindexStates[row.id] === 'error' ? '#f85149' : 'var(--text-dim)',
-                            fontSize: 10, padding: '2px 8px',
-                          }}
-                        >
-                          {reindexStates[row.id] === 'error' ? '✕ retry' : '↺ index'}
-                        </button>
-                  ) : (
-                    <span style={{ color: 'var(--text-dim)', fontSize: 10 }}>—</span>
-                  )}
-                </td>
-                <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-                  {row.ingestion_status !== 'deprecated' && row.ingestion_status !== 'pending' ? (
-                    embedStates[row.id] === 'queued'
-                      ? <span style={{ color: '#ffa657', fontSize: 10 }}>↑ queued</span>
-                      : <button
-                          onClick={() => onEmbed(row.id)}
+                          state={reindexStates[row.id] ?? 'idle'}
+                          onClick={() => onReindex(row.id)}
+                        />
+                      )}
+                    </div>
+                  </td>
+                  <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                      <span style={{ color: row.embed_count > 0 ? 'var(--accent-green, #3fb950)' : 'var(--text-dim)', fontSize: 11 }}>
+                        {row.embed_count > 0 ? fmtTriples(row.embed_count) : '—'}
+                      </span>
+                      {canAct && (
+                        <ActionButton
+                          label="⬡ embed"
                           title="Generate vector embeddings for semantic search"
-                          style={{
-                            background: embedStates[row.id] === 'error' ? 'rgba(248,81,73,0.1)' : 'none',
-                            border: `1px solid ${embedStates[row.id] === 'error' ? 'rgba(248,81,73,0.3)' : 'var(--border)'}`,
-                            borderRadius: 4, cursor: 'pointer',
-                            color: embedStates[row.id] === 'error' ? '#f85149' : 'var(--text-dim)',
-                            fontSize: 10, padding: '2px 8px',
-                          }}
-                        >
-                          {embedStates[row.id] === 'error' ? '✕ retry' : '⬡ embed'}
-                        </button>
-                  ) : (
-                    <span style={{ color: 'var(--text-dim)', fontSize: 10 }}>—</span>
-                  )}
-                </td>
-              </tr>
-            ))}
+                          state={embedStates[row.id] ?? 'idle'}
+                          onClick={() => onEmbed(row.id)}
+                        />
+                      )}
+                    </div>
+                  </td>
+                  <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                      <StatusDot status={row.reasoning_status} label={row.reasoning_status.replace('_', ' ')} />
+                      {canAct && (
+                        <ActionButton
+                          label="⚙ reason"
+                          title="Run OWL-EL classification (ELK reasoner)"
+                          state={reasonStates[row.id] ?? 'idle'}
+                          onClick={() => onReason(row.id)}
+                        />
+                      )}
+                    </div>
+                  </td>
+                  <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
+                    {fmtAge(row.version_created_at)}
+                  </td>
+                </tr>
+              )
+            })}
             {paged.length === 0 && (
               <tr>
-                <td colSpan={10} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                <td colSpan={7} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
                   {search ? 'No matching ontologies' : 'No ontologies'}
                 </td>
               </tr>
@@ -560,6 +549,7 @@ export default function AdminPage() {
   const [reindexStates, setReindexStates] = useState<Record<string, UpdateState>>({})
   const [reindexAllState, setReindexAllState] = useState<'idle' | 'queued' | 'error'>('idle')
   const [embedStates, setEmbedStates] = useState<Record<string, UpdateState>>({})
+  const [reasonStates, setReasonStates] = useState<Record<string, UpdateState>>({})
 
   async function handleUpdate(ontologyId: string) {
     setUpdateStates(s => ({ ...s, [ontologyId]: 'queued' }))
@@ -585,6 +575,15 @@ export default function AdminPage() {
       await api.admin.queueEmbed(ontologyId)
     } catch {
       setEmbedStates(s => ({ ...s, [ontologyId]: 'error' }))
+    }
+  }
+
+  async function handleReason(ontologyId: string) {
+    setReasonStates(s => ({ ...s, [ontologyId]: 'queued' }))
+    try {
+      await api.admin.queueReason(ontologyId)
+    } catch {
+      setReasonStates(s => ({ ...s, [ontologyId]: 'error' }))
     }
   }
 
@@ -685,6 +684,8 @@ export default function AdminPage() {
           onReindex={handleReindex}
           embedStates={embedStates}
           onEmbed={handleEmbed}
+          reasonStates={reasonStates}
+          onReason={handleReason}
         />
       </div>
 
