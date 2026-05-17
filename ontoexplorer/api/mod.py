@@ -67,7 +67,7 @@ async def _resolve_artefact(
         select(Ontology, OntologyVersion)
         .join(OntologyVersion, OntologyVersion.ontology_id == Ontology.id)
         .where(
-            (Ontology.shortname == decoded) | (Ontology.iri == decoded),
+            (Ontology.shortname == decoded) | (Ontology.iri == decoded) | (Ontology.id == decoded),
             OntologyVersion.status == "ready",
         )
         .order_by(OntologyVersion.created_at.desc())
@@ -224,7 +224,7 @@ async def get_distribution(
         select(Ontology, OntologyVersion)
         .join(OntologyVersion, OntologyVersion.ontology_id == Ontology.id)
         .where(
-            (Ontology.shortname == decoded) | (Ontology.iri == decoded),
+            (Ontology.shortname == decoded) | (Ontology.iri == decoded) | (Ontology.id == decoded),
             OntologyVersion.id == distribution_id,
         )
         .limit(1)
@@ -245,7 +245,7 @@ async def list_distributions(
 ):
     decoded = unquote(artefact_id)
     ont_result = await db.execute(
-        select(Ontology).where((Ontology.shortname == decoded) | (Ontology.iri == decoded))
+        select(Ontology).where((Ontology.shortname == decoded) | (Ontology.iri == decoded) | (Ontology.id == decoded))
     )
     ontology = ont_result.scalar_one_or_none()
     if not ontology:
