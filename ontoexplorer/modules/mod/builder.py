@@ -53,6 +53,12 @@ def _add_str(g: Graph, s: URIRef, p: Any, val: Any) -> None:
         g.add((s, p, Literal(str(val))))
 
 
+def _add_list(g: Graph, s: URIRef, p: Any, vals: list | None) -> None:
+    for v in vals or []:
+        if v:
+            g.add((s, p, Literal(str(v))))
+
+
 def _add_uri_or_str(g: Graph, s: URIRef, p: Any, val: str | None) -> None:
     if val:
         g.add((s, p, URIRef(val) if val.startswith("http") else Literal(val)))
@@ -102,9 +108,9 @@ def build_artefact_graph(
         g.add((a, MOD.acronym, Literal(ontology.shortname)))
     _add_str(g, a, DCTERMS.title, meta.get("title") or ontology.title)
     _add_str(g, a, DCTERMS.description, meta.get("description"))
-    _add_str(g, a, DCTERMS.creator, meta.get("creator"))
-    _add_str(g, a, DCTERMS.contributor, meta.get("contributor"))
-    _add_str(g, a, DCTERMS.publisher, meta.get("publisher"))
+    _add_list(g, a, DCTERMS.creator, meta.get("creators"))
+    _add_list(g, a, DCTERMS.contributor, meta.get("contributors"))
+    _add_list(g, a, DCTERMS.publisher, meta.get("publishers"))
     _add_uri_or_str(g, a, DCTERMS.license, meta.get("license"))
     _add_uri_or_str(g, a, FOAF.homepage, meta.get("homepage"))
     _add_str(g, a, OWL.versionInfo, meta.get("version_info"))
@@ -184,6 +190,7 @@ def build_records_list_graph(
     col = URIRef(f"{base_url}/mod/records")
     g.add((col, RDF.type, HYDRA.Collection))
     g.add((col, HYDRA.totalItems, Literal(total, datatype=XSD.integer)))
+    g.add((col, HYDRA.itemsPerPage, Literal(page_size, datatype=XSD.integer)))
     _add_pagination(g, col, f"{base_url}/mod/records", total, page, page_size)
     for ontology, version in records:
         rec_g = build_record_graph(ontology=ontology, version=version, base_url=base_url)
@@ -198,8 +205,9 @@ def build_distribution_graph(*, ontology: Any, version: Any, base_url: str) -> G
     _bind(g)
     aid = _artefact_id(ontology)
     dist = URIRef(f"{base_url}/mod/artefacts/{aid}/distributions/{version.id}")
+    g.add((dist, RDF.type, MOD.SemanticArtefactDistribution))
     g.add((dist, RDF.type, DCAT.Distribution))
-    download_url = URIRef(f"{base_url}/api/v1/ontologies/{ontology.id}/versions/{version.id}/download")
+    download_url = URIRef(f"{base_url}/api/v1/ontologies/{ontology.id}/{version.id}/download")
     g.add((dist, DCAT.accessURL, download_url))
     g.add((dist, DCAT.downloadURL, download_url))
     g.add((dist, DCTERMS.format, Literal(version.format)))
@@ -267,6 +275,7 @@ def build_resource_list_graph(
     col = URIRef(col_url)
     g.add((col, RDF.type, HYDRA.Collection))
     g.add((col, HYDRA.totalItems, Literal(total, datatype=XSD.integer)))
+    g.add((col, HYDRA.itemsPerPage, Literal(page_size, datatype=XSD.integer)))
     _add_pagination(g, col, col_url, total, page, page_size)
     rdf_type = ENTITY_TYPE_TO_RDF.get(entity_type, OWL.Class)
     for term in terms:
@@ -303,6 +312,7 @@ def build_search_results_graph(
     col = URIRef(f"{base_url}/mod/search")
     g.add((col, RDF.type, HYDRA.Collection))
     g.add((col, HYDRA.totalItems, Literal(total, datatype=XSD.integer)))
+    g.add((col, HYDRA.itemsPerPage, Literal(page_size, datatype=XSD.integer)))
     for result in results:
         iri = result.get("iri") or result.get("ontology_iri")
         if iri:

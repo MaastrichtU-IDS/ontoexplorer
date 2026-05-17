@@ -27,7 +27,7 @@ from ontoexplorer.modules.mod.response import RDFResponse
 
 router = APIRouter(tags=["mod"])
 
-_FORMAT_PARAM = Query(None, description="Response format: jsonld, ttl, rdfxml, html")
+_FORMAT_PARAM = Query(None, alias="format", description="Response format: jsonld, ttl, rdfxml, html")
 
 _ENTITY_TYPE_SPARQL = {
     "class": "owl:Class",
@@ -292,15 +292,13 @@ SELECT DISTINCT ?uri ?label WHERE {{
 
     def _run() -> list[dict]:
         from ontoexplorer.clients.oxigraph import get_store
-        store = get_store()
-        results = store.query(sparql)
-        terms = []
-        for row in results:
-            terms.append({
-                "iri": str(row["uri"]),
-                "label": str(row["label"]) if row.get("label") else None,
-            })
-        return terms
+        return [
+            {
+                "iri": row["uri"].value,
+                "label": row["label"].value if row["label"] is not None else None,
+            }
+            for row in get_store().query(sparql)
+        ]
 
     return await asyncio.to_thread(_run)
 
@@ -319,11 +317,8 @@ SELECT (COUNT(DISTINCT ?uri) AS ?count) WHERE {{
 
     def _run() -> int:
         from ontoexplorer.clients.oxigraph import get_store
-        store = get_store()
-        results = list(store.query(sparql))
-        if results:
-            return int(str(results[0]["count"]))
-        return 0
+        rows = [row["count"].value for row in get_store().query(sparql)]
+        return int(rows[0]) if rows else 0
 
     return await asyncio.to_thread(_run)
 
@@ -410,10 +405,9 @@ SELECT ?uri ?label WHERE {{
 
     def _run() -> list[dict]:
         from ontoexplorer.clients.oxigraph import get_store
-        results = get_store().query(sparql)
         return [
-            {"iri": str(r["uri"]), "label": str(r["label"]), "lang": r["label"].language or None}
-            for r in results
+            {"iri": r["uri"].value, "label": r["label"].value, "lang": r["label"].language or None}
+            for r in get_store().query(sparql)
         ]
 
     terms = await asyncio.to_thread(_run)
@@ -421,7 +415,7 @@ SELECT ?uri ?label WHERE {{
     return RDFResponse(graph, format_param=fmt, accept=request.headers.get("accept"))
 
 
-async def _mod_search(q: str, db: AsyncSession, content_only: bool = False, metadata_only: bool = False) -> list[dict]:
+async def _mod_search(q: str, db: AsyncSession, content_only: bool = False, metadata_only: bool = False) -> tuple[list[dict], int]:
     results: list[dict] = []
     if not metadata_only:
         # Get version IDs for ready ontologies
@@ -453,7 +447,7 @@ async def _mod_search(q: str, db: AsyncSession, content_only: bool = False, meta
         )
         for ont in rows.scalars():
             results.append({"iri": ont.iri, "label": ont.title or ont.shortname or "", "ontology_id": ont.id})
-    return results
+    return results, len(results)
 
 
 @router.get("/mod/search", dependencies=[Depends(mod_rate_limit)])
@@ -466,8 +460,8 @@ async def mod_search(
     db: AsyncSession = Depends(get_db),
 ):
     base = _base_url(request)
-    results = await _mod_search(q, db)
-    graph = build_search_results_graph(results=results, q=q, total=len(results), page=page, page_size=page_size, base_url=base)
+    results, total = await _mod_search(q, db)
+    graph = build_search_results_graph(results=results, q=q, total=total, page=page, page_size=page_size, base_url=base)
     return RDFResponse(graph, format_param=fmt, accept=request.headers.get("accept"))
 
 
@@ -481,8 +475,8 @@ async def mod_search_content(
     db: AsyncSession = Depends(get_db),
 ):
     base = _base_url(request)
-    results = await _mod_search(q, db, content_only=True)
-    graph = build_search_results_graph(results=results, q=q, total=len(results), page=page, page_size=page_size, base_url=base)
+    results, total = await _mod_search(q, db, content_only=True)
+    graph = build_search_results_graph(results=results, q=q, total=total, page=page, page_size=page_size, base_url=base)
     return RDFResponse(graph, format_param=fmt, accept=request.headers.get("accept"))
 
 
@@ -496,6 +490,6 @@ async def mod_search_metadata(
     db: AsyncSession = Depends(get_db),
 ):
     base = _base_url(request)
-    results = await _mod_search(q, db, metadata_only=True)
-    graph = build_search_results_graph(results=results, q=q, total=len(results), page=page, page_size=page_size, base_url=base)
+    results, total = await _mod_search(q, db, metadata_only=True)
+    graph = build_search_results_graph(results=results, q=q, total=total, page=page, page_size=page_size, base_url=base)
     return RDFResponse(graph, format_param=fmt, accept=request.headers.get("accept"))

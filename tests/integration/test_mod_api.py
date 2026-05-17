@@ -87,7 +87,7 @@ async def test_catalogue_returns_jsonld(client, ready_ontology):
 async def test_catalogue_returns_turtle(client, ready_ontology):
     with patch("ontoexplorer.api.mod._get_stats", return_value={}), \
          patch("ontoexplorer.modules.mod.ratelimit._get_redis", return_value=_fake_redis()):
-        resp = await client.get("/mod/?fmt=ttl")
+        resp = await client.get("/mod/?format=ttl")
     assert resp.status_code == 200
     assert "text/turtle" in resp.headers["content-type"]
 
@@ -173,7 +173,7 @@ async def test_artefact_record_subpath(client, ready_ontology):
 async def test_catalogue_html(client, ready_ontology):
     with patch("ontoexplorer.api.mod._get_stats", return_value={}), \
          patch("ontoexplorer.modules.mod.ratelimit._get_redis", return_value=_fake_redis()):
-        resp = await client.get("/mod/?fmt=html")
+        resp = await client.get("/mod/?format=html")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     assert b"<table" in resp.content
