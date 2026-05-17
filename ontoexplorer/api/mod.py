@@ -28,6 +28,15 @@ from ontoexplorer.modules.mod.response import RDFResponse
 router = APIRouter(tags=["mod"])
 
 _FORMAT_PARAM = Query(None, description="Response format: jsonld, ttl, rdfxml, html")
+
+_ENTITY_TYPE_SPARQL = {
+    "class": "owl:Class",
+    "property": "rdf:Property",
+    "individual": "owl:NamedIndividual",
+    "concept": "skos:Concept",
+    "scheme": "skos:ConceptScheme",
+    "collection": "skos:Collection",
+}
 _PAGE_PARAM = Query(1, ge=1, description="Page number")
 _PAGE_SIZE_PARAM = Query(20, ge=1, le=200, description="Items per page")
 
@@ -172,8 +181,7 @@ async def list_artefacts(
     pairs, total = await _ready_ontologies_with_latest(db, q=q, page=page, page_size=page_size)
     artefacts = []
     for ontology, version in pairs:
-        meta = await _fetch_meta(version.id, db)
-        stats = await _fetch_stats(version.id)
+        meta, stats = await asyncio.gather(_fetch_meta(version.id, db), _fetch_stats(version.id))
         artefacts.append((ontology, version, meta, stats))
     graph = build_artefacts_list_graph(artefacts=artefacts, total=total, page=page, page_size=page_size, base_url=base)
     return RDFResponse(graph, format_param=fmt, accept=request.headers.get("accept"))
@@ -267,15 +275,7 @@ async def get_artefact(
 
 
 async def _sparql_terms(ontology_id: str, version_id: str, entity_type: str, limit: int, offset: int) -> list[dict]:
-    TYPE_SPARQL = {
-        "class": "owl:Class",
-        "property": "rdf:Property",
-        "individual": "owl:NamedIndividual",
-        "concept": "skos:Concept",
-        "scheme": "skos:ConceptScheme",
-        "collection": "skos:Collection",
-    }
-    rdf_type = TYPE_SPARQL.get(entity_type, "owl:Class")
+    rdf_type = _ENTITY_TYPE_SPARQL.get(entity_type, "owl:Class")
     graph_iri = f"urn:ontology:{ontology_id}:{version_id}"
     sparql = f"""
 PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -306,15 +306,7 @@ SELECT DISTINCT ?uri ?label WHERE {{
 
 
 async def _sparql_term_count(ontology_id: str, version_id: str, entity_type: str) -> int:
-    TYPE_SPARQL = {
-        "class": "owl:Class",
-        "property": "rdf:Property",
-        "individual": "owl:NamedIndividual",
-        "concept": "skos:Concept",
-        "scheme": "skos:ConceptScheme",
-        "collection": "skos:Collection",
-    }
-    rdf_type = TYPE_SPARQL.get(entity_type, "owl:Class")
+    rdf_type = _ENTITY_TYPE_SPARQL.get(entity_type, "owl:Class")
     graph_iri = f"urn:ontology:{ontology_id}:{version_id}"
     sparql = f"""
 PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -432,16 +424,23 @@ SELECT ?uri ?label WHERE {{
 async def _mod_search(q: str, db: AsyncSession, content_only: bool = False, metadata_only: bool = False) -> list[dict]:
     results: list[dict] = []
     if not metadata_only:
-        from ontoexplorer.api.global_search import _latest_ingested_versions, _entity_search
-        versions = await _latest_ingested_versions(db)
-        for version in versions[:10]:
+        # Get version IDs for ready ontologies
+        rows = await db.execute(
+            select(OntologyVersion.id, OntologyVersion.ontology_id)
+            .where(OntologyVersion.status == "ready")
+            .order_by(OntologyVersion.created_at.desc())
+            .limit(10)
+        )
+        versions_data = rows.all()
+        for ver_id, ont_id in versions_data:
             try:
-                hits = await _entity_search(version, q, lang=None, limit=5)
+                from ontoexplorer.modules.search.indexer import entity_lookup
+                hits = await asyncio.to_thread(entity_lookup, ver_id, q, None, 5)
                 for hit in hits:
                     results.append({
                         "iri": hit.get("iri", ""),
                         "label": hit.get("label", ""),
-                        "ontology_id": version.ontology_id,
+                        "ontology_id": ont_id,
                     })
             except Exception:
                 pass
