@@ -84,6 +84,50 @@ SYNTAX_PROPS: list[str] = [
     "https://w3id.org/mod#hasRepresentationLanguage",
 ]
 
+VERSION_IRI_PROPS: list[str] = [
+    "http://www.w3.org/2002/07/owl#versionIRI",
+]
+
+SEE_ALSO_PROPS: list[str] = [
+    "http://www.w3.org/2000/01/rdf-schema#seeAlso",
+]
+
+IS_DEFINED_BY_PROPS: list[str] = [
+    "http://www.w3.org/2000/01/rdf-schema#isDefinedBy",
+]
+
+COMPETENCY_QUESTION_PROPS: list[str] = [
+    "https://w3id.org/mod#competencyQuestion",
+]
+
+ENDORSED_BY_PROPS: list[str] = [
+    "https://w3id.org/mod#endorsedBy",
+]
+
+RELIES_ON_PROPS: list[str] = [
+    "https://w3id.org/mod#reliesOn",
+]
+
+SIMILAR_PROPS: list[str] = [
+    "https://w3id.org/mod#similar",
+]
+
+GENERALIZES_PROPS: list[str] = [
+    "https://w3id.org/mod#generalizes",
+]
+
+SPECIALIZES_PROPS: list[str] = [
+    "https://w3id.org/mod#specializes",
+]
+
+KNOWN_USAGE_PROPS: list[str] = [
+    "https://w3id.org/mod#knownUsage",
+]
+
+USED_IN_PROJECT_PROPS: list[str] = [
+    "https://w3id.org/mod#usedInProject",
+]
+
 ALL_META_ROLES: dict[str, list[str]] = {
     "title": TITLE_PROPS,
     "shortname": SHORTNAME_PROPS,
@@ -94,6 +138,7 @@ ALL_META_ROLES: dict[str, list[str]] = {
     "license": LICENSE_PROPS,
     "homepage": HOMEPAGE_PROPS,
     "version_info": VERSION_INFO_PROPS,
+    "version_iri": VERSION_IRI_PROPS,
     "prefix": PREFIX_PROPS,
     "namespace_uri": NAMESPACE_URI_PROPS,
     "created": CREATED_PROPS,
@@ -103,9 +148,23 @@ ALL_META_ROLES: dict[str, list[str]] = {
     "funding": FUNDING_PROPS,
     "status": STATUS_PROPS,
     "syntax": SYNTAX_PROPS,
+    "see_also": SEE_ALSO_PROPS,
+    "is_defined_by": IS_DEFINED_BY_PROPS,
+    "competency_question": COMPETENCY_QUESTION_PROPS,
+    "endorsed_by": ENDORSED_BY_PROPS,
+    "relies_on": RELIES_ON_PROPS,
+    "similar": SIMILAR_PROPS,
+    "generalizes": GENERALIZES_PROPS,
+    "specializes": SPECIALIZES_PROPS,
+    "known_usage": KNOWN_USAGE_PROPS,
+    "used_in_project": USED_IN_PROJECT_PROPS,
 }
 
-MULTI_VALUE_ROLES: set[str] = {"creator", "contributor", "publisher"}
+MULTI_VALUE_ROLES: set[str] = {
+    "creator", "contributor", "publisher",
+    "see_also", "competency_question", "endorsed_by", "relies_on",
+    "similar", "generalizes", "specializes", "known_usage", "used_in_project",
+}
 
 ROLE_RESOLVED_KEY: dict[str, str] = {
     "title": "title",
@@ -117,6 +176,7 @@ ROLE_RESOLVED_KEY: dict[str, str] = {
     "license": "license",
     "homepage": "homepage",
     "version_info": "version_info",
+    "version_iri": "version_iri",
     "prefix": "prefix",
     "namespace_uri": "namespace_uri",
     "created": "created",
@@ -126,6 +186,16 @@ ROLE_RESOLVED_KEY: dict[str, str] = {
     "funding": "funding",
     "status": "status",
     "syntax": "syntax",
+    "see_also": "see_also",
+    "is_defined_by": "is_defined_by",
+    "competency_question": "competency_questions",
+    "endorsed_by": "endorsed_by",
+    "relies_on": "relies_on",
+    "similar": "similar",
+    "generalizes": "generalizes",
+    "specializes": "specializes",
+    "known_usage": "known_usage",
+    "used_in_project": "used_in_project",
 }
 
 ALL_KNOWN_IRIS: set[str] = {iri for iris in ALL_META_ROLES.values() for iri in iris}

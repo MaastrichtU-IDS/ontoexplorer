@@ -1,27 +1,6 @@
 import { useState } from 'react'
 import { useOntologyMeta, useMetaCandidates, usePatchMeta, useDetectMeta } from '../hooks/useOntologyMeta'
-import { MetaProfilePatch } from '../lib/api'
-
-const ROLE_LABELS: Record<string, string> = {
-  title_props: 'Title',
-  shortname_props: 'Shortname / Acronym',
-  description_props: 'Description',
-  creator_props: 'Creator',
-  contributor_props: 'Contributor',
-  publisher_props: 'Publisher',
-  license_props: 'License',
-  homepage_props: 'Homepage',
-  version_info_props: 'Version Info',
-  prefix_props: 'Namespace Prefix',
-  namespace_uri_props: 'Namespace URI',
-  created_props: 'Created',
-  modified_props: 'Modified',
-  language_props: 'Language',
-  citation_props: 'Citation',
-  funding_props: 'Funding',
-  status_props: 'Status',
-  syntax_props: 'Syntax',
-}
+import { OntologyMetaProfile, MetaProfilePatch } from '../lib/api'
 
 const IRI_LABELS: Record<string, string> = {
   'http://purl.org/dc/terms/title': 'dcterms:title',
@@ -54,106 +33,123 @@ const IRI_LABELS: Record<string, string> = {
   'https://w3id.org/mod#status': 'mod:status',
   'https://w3id.org/mod#hasSyntax': 'mod:hasSyntax',
   'https://w3id.org/mod#hasRepresentationLanguage': 'mod:hasRepresentationLanguage',
+  'http://www.w3.org/2002/07/owl#versionIRI': 'owl:versionIRI',
+  'http://www.w3.org/2000/01/rdf-schema#seeAlso': 'rdfs:seeAlso',
+  'http://www.w3.org/2000/01/rdf-schema#isDefinedBy': 'rdfs:isDefinedBy',
+  'https://w3id.org/mod#competencyQuestion': 'mod:competencyQuestion',
+  'https://w3id.org/mod#endorsedBy': 'mod:endorsedBy',
+  'https://w3id.org/mod#reliesOn': 'mod:reliesOn',
+  'https://w3id.org/mod#similar': 'mod:similar',
+  'https://w3id.org/mod#generalizes': 'mod:generalizes',
+  'https://w3id.org/mod#specializes': 'mod:specializes',
+  'https://w3id.org/mod#knownUsage': 'mod:knownUsage',
+  'https://w3id.org/mod#usedInProject': 'mod:usedInProject',
 }
-
-const ALL_ROLE_COLS = Object.keys(ROLE_LABELS) as (keyof MetaProfilePatch)[]
 
 function shortIri(iri: string): string {
   return IRI_LABELS[iri] ?? iri.split(/[/#]/).pop() ?? iri
 }
 
-function PropChip({
-  iri, onRemove,
-}: { iri: string; onRemove: () => void }) {
-  return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 4,
-      background: 'var(--bg)', border: '1px solid var(--border)',
-      borderRadius: 4, padding: '2px 6px', fontSize: 11, color: 'var(--text)',
-    }}>
-      <span title={iri}>{shortIri(iri)}</span>
-      <button
-        onClick={onRemove}
-        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', fontSize: 11, padding: 0 }}
-      >
-        ×
-      </button>
-    </span>
-  )
+type MetaRole = keyof MetaProfilePatch
+
+const META_ROLE_COLS: MetaRole[] = [
+  'title_props', 'shortname_props', 'description_props', 'creator_props',
+  'contributor_props', 'publisher_props', 'license_props', 'homepage_props',
+  'version_info_props', 'version_iri_props', 'prefix_props', 'namespace_uri_props',
+  'created_props', 'modified_props', 'language_props', 'citation_props', 'funding_props',
+  'status_props', 'syntax_props',
+  'see_also_props', 'is_defined_by_props',
+  'competency_question_props', 'endorsed_by_props', 'relies_on_props',
+  'similar_props', 'generalizes_props', 'specializes_props',
+  'known_usage_props', 'used_in_project_props',
+]
+
+const ROLE_LABEL: Record<MetaRole, string> = {
+  title_props: 'Title',
+  shortname_props: 'Shortname',
+  description_props: 'Description',
+  creator_props: 'Creator',
+  contributor_props: 'Contributor',
+  publisher_props: 'Publisher',
+  license_props: 'License',
+  homepage_props: 'Homepage',
+  version_info_props: 'Version Info',
+  version_iri_props: 'Version IRI',
+  prefix_props: 'NS Prefix',
+  namespace_uri_props: 'NS URI',
+  created_props: 'Created',
+  modified_props: 'Modified',
+  language_props: 'Language',
+  citation_props: 'Citation',
+  funding_props: 'Funding',
+  status_props: 'Status',
+  syntax_props: 'Syntax',
+  see_also_props: 'See Also',
+  is_defined_by_props: 'Is Defined By',
+  competency_question_props: 'Competency Question',
+  endorsed_by_props: 'Endorsed By',
+  relies_on_props: 'Relies On',
+  similar_props: 'Similar',
+  generalizes_props: 'Generalizes',
+  specializes_props: 'Specializes',
+  known_usage_props: 'Known Usage',
+  used_in_project_props: 'Used In Project',
 }
 
-function RoleSection({
-  col, props, candidateIris, onRemove, onAdd,
-}: {
-  col: keyof MetaProfilePatch
-  props: string[]
-  candidateIris: string[]
-  onRemove: (iri: string) => void
-  onAdd: (iri: string) => void
-}) {
-  const [adding, setAdding] = useState(false)
-  const [custom, setCustom] = useState('')
-  const available = candidateIris.filter(iri => !props.includes(iri))
+interface MetaProp {
+  iri: string
+  label: string
+  propLabel: string | null
+  values: string[]
+  role: MetaRole | null
+}
 
-  return (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{ color: 'var(--text-dim)', fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 5 }}>
-        {ROLE_LABELS[col]}
-      </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 3 }}>
-        {props.length === 0 && (
-          <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>(none)</span>
-        )}
-        {props.map(iri => (
-          <PropChip key={iri} iri={iri} onRemove={() => onRemove(iri)} />
-        ))}
-        <button
-          onClick={() => setAdding(a => !a)}
-          style={{
-            fontSize: 10, padding: '2px 6px', borderRadius: 4,
-            border: '1px dashed var(--border)', background: 'none',
-            color: 'var(--accent)', cursor: 'pointer',
-          }}
-        >
-          + Add
-        </button>
-      </div>
-      {adding && (
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', paddingLeft: 4 }}>
-          {available.map(iri => (
-            <button
-              key={iri}
-              onClick={() => { onAdd(iri); setAdding(false) }}
-              style={{
-                fontSize: 10, padding: '2px 6px', borderRadius: 4,
-                border: '1px solid var(--border)', background: 'var(--bg-secondary)',
-                color: 'var(--text-muted)', cursor: 'pointer',
-              }}
-            >
-              {shortIri(iri)}
-            </button>
-          ))}
-          <input
-            value={custom}
-            onChange={e => setCustom(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && custom.trim()) {
-                onAdd(custom.trim())
-                setCustom('')
-                setAdding(false)
-              }
-            }}
-            placeholder="Custom IRI…"
-            style={{
-              fontSize: 10, padding: '2px 6px', borderRadius: 4,
-              border: '1px solid var(--border)', background: 'var(--bg)',
-              color: 'var(--text)', width: 160,
-            }}
-          />
-        </div>
-      )}
-    </div>
-  )
+function valuePreview(values: string[]): string {
+  if (values.length === 0) return '—'
+  const v = String(values[0])
+  return v.length > 40 ? v.slice(0, 38) + '…' : v
+}
+
+function buildMetaProps(
+  profile: OntologyMetaProfile,
+  candidatesData: Record<string, unknown>,
+): MetaProp[] {
+  const roleMap = new Map<string, MetaRole>()
+  for (const col of META_ROLE_COLS) {
+    for (const iri of ((profile as any)[col] as string[] | undefined) ?? []) {
+      roleMap.set(iri, col)
+    }
+  }
+
+  const seen = new Set<string>()
+  const all: MetaProp[] = []
+
+  // Candidates keyed by role name (e.g. "title") and "unknown"
+  for (const [roleKey, items] of Object.entries(candidatesData)) {
+    if (roleKey === 'version_id' || !Array.isArray(items)) continue
+    for (const item of items as { iri: string; values: Array<{ value: string } | string>; label?: string | null }[]) {
+      if (!seen.has(item.iri)) {
+        seen.add(item.iri)
+        const valueStrings = (item.values ?? []).map(v => typeof v === 'string' ? v : v.value)
+        all.push({
+          iri: item.iri,
+          label: shortIri(item.iri),
+          propLabel: item.label ?? null,
+          values: valueStrings,
+          role: roleMap.get(item.iri) ?? null,
+        })
+      }
+    }
+  }
+
+  // Include any assigned props not in detection candidates
+  for (const [iri, role] of roleMap.entries()) {
+    if (!seen.has(iri)) {
+      all.push({ iri, label: shortIri(iri), propLabel: null, values: [], role })
+    }
+  }
+
+  return all
 }
 
 export default function MetaProfileEditor({
@@ -167,8 +163,7 @@ export default function MetaProfileEditor({
   const { data: candidates } = useMetaCandidates(ontologyId, versionId)
   const patch = usePatchMeta(ontologyId, versionId)
   const detect = useDetectMeta(ontologyId, versionId)
-
-  const [edits, setEdits] = useState<Partial<MetaProfilePatch>>({})
+  const [roleEdits, setRoleEdits] = useState<Record<string, MetaRole | null>>({})
 
   if (profileLoading) {
     return <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 12 }}>Loading…</div>
@@ -177,42 +172,46 @@ export default function MetaProfileEditor({
   if (!profile) {
     return (
       <div style={{ padding: '1rem' }}>
-        <div style={{ color: 'var(--text-dim)', fontSize: 12, marginBottom: 12 }}>
-          No metadata profile detected yet.
-        </div>
+        <div style={{ color: 'var(--text-dim)', fontSize: 12, marginBottom: 12 }}>No metadata profile detected yet.</div>
         <button
           onClick={() => detect.mutate()}
           disabled={detect.isPending}
-          style={{
-            padding: '6px 14px', borderRadius: 4, border: 'none',
-            background: 'var(--accent)', color: '#000', fontSize: 12, cursor: 'pointer',
-          }}
+          style={{ padding: '6px 14px', borderRadius: 4, border: 'none', background: 'var(--accent)', color: '#000', fontSize: 12, cursor: 'pointer' }}
         >
           {detect.isPending ? 'Running…' : 'Detect Metadata'}
         </button>
+        {detect.isError && (
+          <div style={{ marginTop: 8, color: '#f85149', fontSize: 11 }}>
+            Detection failed: {(detect.error as Error)?.message ?? 'unknown error'}
+          </div>
+        )}
       </div>
     )
   }
 
-  const current = ALL_ROLE_COLS.reduce((acc, col) => {
-    acc[col] = (edits[col] ?? (profile as any)[col]) as string[]
-    return acc
-  }, {} as Record<keyof MetaProfilePatch, string[]>)
+  const candidatesData = (candidates ?? {}) as Record<string, unknown>
+  const props = buildMetaProps(profile, candidatesData)
+  const isDirty = Object.keys(roleEdits).length > 0
 
-  const candidatesByCol: Record<string, string[]> = {}
-  for (const col of ALL_ROLE_COLS) {
-    const role = col.replace(/_props$/, '')
-    const roleData = (candidates as any)?.[role]
-    candidatesByCol[col] = Array.isArray(roleData)
-      ? roleData.map((c: { iri: string }) => c.iri)
-      : []
+  function effectiveRole(p: MetaProp): MetaRole | null {
+    return p.iri in roleEdits ? roleEdits[p.iri] : p.role
   }
 
-  const isDirty = Object.keys(edits).length > 0
+  function handleSave() {
+    const groups = META_ROLE_COLS.reduce((acc, col) => {
+      acc[col] = []
+      return acc
+    }, {} as Record<MetaRole, string[]>)
+    for (const p of props) {
+      const r = effectiveRole(p)
+      if (r) groups[r].push(p.iri)
+    }
+    patch.mutate(groups, { onSuccess: () => setRoleEdits({}) })
+  }
 
   return (
-    <div style={{ padding: '12px 16px', overflowY: 'auto', flex: 1 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+    <div style={{ padding: '12px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
         <span style={{
           fontSize: 10, padding: '1px 8px', borderRadius: 10,
           background: profile.status === 'user_confirmed' ? 'rgba(63,185,80,0.1)' : 'rgba(88,166,255,0.1)',
@@ -228,30 +227,80 @@ export default function MetaProfileEditor({
         >
           {detect.isPending ? 'Re-detecting…' : 'Re-detect'}
         </button>
+        {detect.isError && (
+          <span style={{ fontSize: 10, color: '#f85149' }}>
+            {(detect.error as Error)?.message ?? 'error'}
+          </span>
+        )}
       </div>
 
-      {ALL_ROLE_COLS.map(col => (
-        <RoleSection
-          key={col}
-          col={col}
-          props={current[col] ?? []}
-          candidateIris={candidatesByCol[col] ?? []}
-          onRemove={iri => setEdits(prev => ({ ...prev, [col]: (current[col] ?? []).filter(p => p !== iri) }))}
-          onAdd={iri => setEdits(prev => ({ ...prev, [col]: [...(current[col] ?? []), iri] }))}
-        />
-      ))}
+      {props.length === 0 ? (
+        <div>
+          <div style={{ color: 'var(--text-dim)', fontSize: 12, marginBottom: 10 }}>
+            No ontology-level properties found in the ontology header.
+          </div>
+          <button
+            onClick={() => detect.mutate()}
+            disabled={detect.isPending}
+            style={{ padding: '6px 14px', borderRadius: 4, border: 'none', background: 'var(--accent)', color: '#000', fontSize: 12, cursor: 'pointer' }}
+          >
+            {detect.isPending ? 'Scanning…' : 'Scan Now'}
+          </button>
+        </div>
+      ) : (
+        <>
+          <div style={{
+            display: 'grid', gridTemplateColumns: '1fr 1fr 120px', gap: 8,
+            paddingBottom: 6, marginBottom: 2, borderBottom: '1px solid var(--border)',
+          }}>
+            <span style={{ fontSize: 10, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 0.6 }}>Property</span>
+            <span style={{ fontSize: 10, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 0.6 }}>Value</span>
+            <span style={{ fontSize: 10, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 0.6 }}>Role</span>
+          </div>
+          {props.map(p => (
+            <div key={p.iri} style={{
+              display: 'grid', gridTemplateColumns: '1fr 1fr 120px', gap: 8,
+              padding: '4px 0', alignItems: 'center',
+              borderBottom: '1px solid color-mix(in srgb, var(--border) 40%, transparent)',
+            }}>
+              <div title={p.iri} style={{ overflow: 'hidden' }}>
+                <div style={{ fontSize: 11, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {p.propLabel ?? p.label}
+                </div>
+                {p.propLabel && (
+                  <div style={{ fontSize: 9, color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {p.label}
+                  </div>
+                )}
+              </div>
+              <span title={p.values.join('; ')} style={{ fontSize: 11, color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {valuePreview(p.values)}
+              </span>
+              <select
+                value={effectiveRole(p) ?? ''}
+                onChange={e => setRoleEdits(prev => ({
+                  ...prev,
+                  [p.iri]: (e.target.value || null) as MetaRole | null,
+                }))}
+                style={{
+                  fontSize: 11, padding: '2px 4px', borderRadius: 4,
+                  border: '1px solid var(--border)', background: 'var(--bg)',
+                  color: 'var(--text)', cursor: 'pointer', width: '100%',
+                }}
+              >
+                <option value="">—</option>
+                {META_ROLE_COLS.map(col => (
+                  <option key={col} value={col}>{ROLE_LABEL[col]}</option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </>
+      )}
 
       <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
         <button
-          onClick={() =>
-            patch.mutate(
-              ALL_ROLE_COLS.reduce((acc, col) => {
-                acc[col] = current[col]
-                return acc
-              }, {} as MetaProfilePatch),
-              { onSuccess: () => setEdits({}) }
-            )
-          }
+          onClick={handleSave}
           disabled={!isDirty || patch.isPending}
           style={{
             padding: '6px 16px', borderRadius: 4, border: 'none',
@@ -260,11 +309,10 @@ export default function MetaProfileEditor({
             fontSize: 12, cursor: isDirty ? 'pointer' : 'default',
           }}
         >
-          {patch.isPending ? 'Saving…' : 'Save and re-resolve'}
+          {patch.isPending ? 'Saving…' : 'Save and re-index'}
         </button>
-        {patch.isSuccess && (
-          <span style={{ marginLeft: 10, color: '#3fb950', fontSize: 11 }}>✓ Saved</span>
-        )}
+        {patch.isSuccess && <span style={{ marginLeft: 10, color: '#3fb950', fontSize: 11 }}>✓ Saved</span>}
+        {patch.isError && <span style={{ marginLeft: 10, color: '#f85149', fontSize: 11 }}>{(patch.error as Error)?.message ?? 'Save failed'}</span>}
       </div>
     </div>
   )

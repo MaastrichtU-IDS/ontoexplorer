@@ -15,6 +15,8 @@ from ontoexplorer.modules.meta_profile.registry import (
     ROLE_RESOLVED_KEY,
 )
 
+_RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
+
 
 async def run_meta_detection(
     db: AsyncSession, version_id: str, ontology_id: str = ""
@@ -38,16 +40,19 @@ async def run_meta_detection(
     }
     resolved = _resolve_values(triples, role_props)
 
+    all_pred_iris = list(triples.keys())
+    labels = await asyncio.to_thread(_get_prop_labels, named_graph, all_pred_iris)
+
     candidates: dict = {
         role: [
-            {"iri": iri, "values": triples[iri]}
+            {"iri": iri, "values": triples[iri], "label": labels.get(iri)}
             for iri in iris
             if iri in triples
         ]
         for role, iris in ALL_META_ROLES.items()
     }
     candidates["unknown"] = [
-        {"iri": pred, "values": vals}
+        {"iri": pred, "values": vals, "label": labels.get(pred)}
         for pred, vals in triples.items()
         if pred not in ALL_KNOWN_IRIS
     ]
@@ -88,25 +93,77 @@ async def run_meta_detection(
                 await db.rollback()
 
 
-def _fetch_onto_triples(named_graph: str, onto_iri: str) -> dict[str, list[dict]]:
-    """Return all predicate->value entries on the owl:Ontology node."""
+def _get_prop_labels(named_graph: str, iris: list[str]) -> dict[str, str]:
+    """Return rdfs:label values for a list of predicate IRIs found in the named graph."""
+    if not iris:
+        return {}
+    values_clause = " ".join(f"<{iri}>" for iri in iris)
     q = f"""
+        SELECT ?prop ?label WHERE {{
+            GRAPH <{named_graph}> {{
+                VALUES ?prop {{ {values_clause} }}
+                ?prop <{_RDFS_LABEL}> ?label .
+                FILTER(LANG(?label) = "en" || LANG(?label) = "")
+            }}
+        }}
+    """
+    result: dict[str, str] = {}
+    for row in sparql_query(q):
+        iri = row["prop"].value
+        if iri not in result:
+            result[iri] = row["label"].value
+    return result
+
+
+_OWL_ONTOLOGY = "http://www.w3.org/2002/07/owl#Ontology"
+_OWL_IMPORTS = "http://www.w3.org/2002/07/owl#imports"
+
+
+def _fetch_onto_triples(named_graph: str, onto_iri: str) -> dict[str, list[dict]]:
+    """Return all predicate->value entries on the owl:Ontology node.
+
+    Queries the stored IRI directly first.  Falls back to any owl:Ontology node that
+    is not an owl:imports target — this handles ontologies that declare the ontology
+    header on a blank node ([] a owl:Ontology ; rdfs:label "…") where onto_iri is
+    the submission URL, not the actual blank-node subject.
+    """
+    triples: dict[str, list[dict]] = {}
+
+    def _collect(sparql: str) -> None:
+        for row in sparql_query(sparql):
+            pred = row["pred"].value
+            obj = row["obj"]
+            triples.setdefault(pred, []).append({
+                "value": obj.value,
+                "is_iri": isinstance(obj, pyoxigraph.NamedNode),
+                "language": getattr(obj, "language", None),
+            })
+
+    _collect(f"""
         SELECT ?pred ?obj WHERE {{
             GRAPH <{named_graph}> {{
                 <{onto_iri}> ?pred ?obj .
             }}
         }}
-    """
-    triples: dict[str, list[dict]] = {}
-    for row in sparql_query(q):
-        pred = row["pred"].value
-        obj = row["obj"]
-        entry = {
-            "value": obj.value,
-            "is_iri": isinstance(obj, pyoxigraph.NamedNode),
-            "language": getattr(obj, "language", None),
-        }
-        triples.setdefault(pred, []).append(entry)
+    """)
+
+    # If the direct-IRI query found no title predicates, the ontology header is likely
+    # on a blank node.  Re-query for any owl:Ontology subject that isn't an import target
+    # so we don't accidentally pick up metadata from a loaded owl:imports dependency.
+    title_iris = ALL_META_ROLES["title"]
+    if not any(iri in triples for iri in title_iris):
+        _collect(f"""
+            SELECT ?pred ?obj WHERE {{
+                GRAPH <{named_graph}> {{
+                    ?onto a <{_OWL_ONTOLOGY}> .
+                    FILTER NOT EXISTS {{
+                        GRAPH <{named_graph}> {{ ?other <{_OWL_IMPORTS}> ?onto . }}
+                    }}
+                    ?onto ?pred ?obj .
+                }}
+            }}
+        """)
+
     return triples
 
 

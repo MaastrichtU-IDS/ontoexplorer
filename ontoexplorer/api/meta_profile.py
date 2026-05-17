@@ -66,6 +66,7 @@ class MetaProfilePatch(BaseModel):
     license_props: list[str] | None = None
     homepage_props: list[str] | None = None
     version_info_props: list[str] | None = None
+    version_iri_props: list[str] | None = None
     prefix_props: list[str] | None = None
     namespace_uri_props: list[str] | None = None
     created_props: list[str] | None = None
@@ -75,13 +76,17 @@ class MetaProfilePatch(BaseModel):
     funding_props: list[str] | None = None
     status_props: list[str] | None = None
     syntax_props: list[str] | None = None
+    see_also_props: list[str] | None = None
+    is_defined_by_props: list[str] | None = None
+    competency_question_props: list[str] | None = None
+    endorsed_by_props: list[str] | None = None
+    relies_on_props: list[str] | None = None
+    similar_props: list[str] | None = None
+    generalizes_props: list[str] | None = None
+    specializes_props: list[str] | None = None
+    known_usage_props: list[str] | None = None
+    used_in_project_props: list[str] | None = None
 
-    @field_validator("title_props")
-    @classmethod
-    def title_props_not_empty(cls, v):
-        if v is not None and len(v) == 0:
-            raise ValueError("At least one title property is required")
-        return v
 
 
 @router.patch("/ontologies/{ontology_id}/{version_id}/meta")
@@ -137,9 +142,10 @@ async def trigger_meta_detect(
     _user: User = Depends(require_auth),
 ):
     await _get_version_or_404(version_id, db)
-    from ontoexplorer.modules.jobs.tasks import detect_meta_profile
-    task = detect_meta_profile.delay(version_id, ontology_id=ontology_id)
-    return {"task_id": task.id, "status": "queued"}
+    from ontoexplorer.modules.meta_profile.detector import run_meta_detection
+    await run_meta_detection(db, version_id, ontology_id=ontology_id)
+    profile = await _get_meta_profile_or_404(version_id, db)
+    return _meta_profile_response(profile)
 
 
 @router.get("/ontologies/{ontology_id}/{version_id}/meta/candidates")
