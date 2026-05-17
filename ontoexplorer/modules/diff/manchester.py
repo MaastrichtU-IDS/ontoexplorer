@@ -5,9 +5,6 @@ See docs/superpowers/specs/2026-05-17-manchester-diff-rendering-design.md.
 """
 from __future__ import annotations
 
-import hashlib
-from typing import Literal
-
 import pyoxigraph as ox
 
 # Common IRI constants
