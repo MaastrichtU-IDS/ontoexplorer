@@ -80,8 +80,7 @@ def get_completions(
         return kws
 
     if result.token_type == "EXPECT_KEYWORD":
-        # Boolean operators first (and/or/not more common after a class), then restrictions
-        kws = _keyword_completions(_BOOLEAN_KEYWORDS + _RESTRICTION_KEYWORDS)
+        kws = _keyword_completions(_BOOLEAN_KEYWORDS)
         return kws
 
     if result.token_type == "EXPECT_INT":

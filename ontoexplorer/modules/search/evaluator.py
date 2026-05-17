@@ -1,6 +1,7 @@
 """MOS expression evaluator: AST → matching class IRIs via hybrid ELK + Oxigraph SPARQL."""
 from __future__ import annotations
 
+import asyncio
 import json as _json
 import re
 import urllib.parse
@@ -221,17 +222,19 @@ async def evaluate(node, version_id: str, ontology_id: str, lang: str | None = N
             return subs
 
         if isinstance(n, And):
-            return await _eval(n.left) & await _eval(n.right)
+            left, right = await asyncio.gather(_eval(n.left), _eval(n.right))
+            return left & right
 
         if isinstance(n, Or):
-            return await _eval(n.left) | await _eval(n.right)
+            left, right = await asyncio.gather(_eval(n.left), _eval(n.right))
+            return left | right
 
         if isinstance(n, Not):
             return all_class_iris - await _eval(n.operand)
 
         if isinstance(n, (SomeValuesFrom, AllValuesFrom, HasValue, HasSelf,
                           MinCardinality, MaxCardinality, ExactCardinality)):
-            return _sparql_eval(n, version_id, ontology_id, r)
+            return await asyncio.to_thread(_sparql_eval, n, version_id, ontology_id, r)
 
         return set()
 
@@ -328,8 +331,35 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
             SELECT DISTINCT ?cls WHERE {{
                 GRAPH <{g}> {{
                     ?cls <{RDFS}subClassOf> ?restr .
-                    ?restr <{OWL}onProperty> <{prop_iri}> .
+                    ?restr <{OWL}onProperty> ?prop .
                     ?restr <{OWL}allValuesFrom> <{fill_iri}> .
+                    ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
+                }}
+            }}
+        """
+    elif isinstance(node, HasValue):
+        prop_iri = resolve_prop(node.property_ref)
+        val_iri = resolve(node.value_ref)
+        q = f"""
+            SELECT DISTINCT ?cls WHERE {{
+                GRAPH <{g}> {{
+                    ?cls <{RDFS}subClassOf> ?restr .
+                    ?restr <{OWL}onProperty> ?prop .
+                    ?restr <{OWL}hasValue> <{val_iri}> .
+                    ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
+                }}
+            }}
+        """
+    elif isinstance(node, HasSelf):
+        prop_iri = resolve_prop(node.property_ref)
+        XSD = "http://www.w3.org/2001/XMLSchema#"
+        q = f"""
+            SELECT DISTINCT ?cls WHERE {{
+                GRAPH <{g}> {{
+                    ?cls <{RDFS}subClassOf> ?restr .
+                    ?restr <{OWL}onProperty> ?prop .
+                    ?restr <{OWL}hasSelf> "true"^^<{XSD}boolean> .
+                    ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
                 }}
             }}
         """

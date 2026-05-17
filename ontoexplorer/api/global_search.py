@@ -25,10 +25,10 @@ def _is_expression(node) -> bool:
 
 
 async def _latest_ingested_versions(db: AsyncSession) -> list[OntologyVersion]:
-    """Return the most-recently-ingested non-deprecated version for every ontology."""
+    """Return the most-recently-indexed non-deprecated version for every ontology."""
     result = await db.execute(
         select(OntologyVersion)
-        .where(OntologyVersion.status == "ingested")
+        .where(OntologyVersion.status.notin_(["pending", "failed", "deprecated"]))
         .order_by(OntologyVersion.ontology_id, OntologyVersion.created_at.desc())
     )
     seen: set[str] = set()
@@ -45,13 +45,13 @@ async def _get_latest_version_or_404(db: AsyncSession, ontology_id: str) -> Onto
     result = await db.execute(
         select(OntologyVersion)
         .where(OntologyVersion.ontology_id == ontology_id,
-               OntologyVersion.status == "ingested")
+               OntologyVersion.status.notin_(["pending", "failed", "deprecated"]))
         .order_by(OntologyVersion.created_at.desc())
         .limit(1)
     )
     v = result.scalar_one_or_none()
     if not v:
-        raise HTTPException(status_code=404, detail="Ontology not found or has no ingested version")
+        raise HTTPException(status_code=404, detail="Ontology not found or has no indexed version")
     return v
 
 
@@ -166,6 +166,8 @@ async def global_search(
         }
 
     # Expression mode — evaluate against each version separately
+    warnings: list[dict] = []
+
     async def search_one_expression(v: OntologyVersion) -> list[dict]:
         try:
             results = await evaluate(ast, str(v.id), str(v.ontology_id), lang=effective_lang)
@@ -175,9 +177,15 @@ async def global_search(
                  "lang": r.lang, "cross_language": r.cross_language}
                 for r in results
             ]
-        except (ReasoningNotReadyError, AmbiguousLabelError):
+        except AmbiguousLabelError as exc:
+            warnings.append({
+                "type": "ambiguous_label",
+                "label": exc.label,
+                "ontology_id": str(v.ontology_id),
+                "candidates": [{"iri": c.get("iri"), "short": c.get("short")} for c in exc.candidates],
+            })
             return []
-        except Exception:
+        except (ReasoningNotReadyError, Exception):
             return []
 
     nested = await asyncio.gather(*[search_one_expression(v) for v in versions])
@@ -193,7 +201,7 @@ async def global_search(
 
     return {"mode": "expression", "query": q, "results": merged[:limit],
             "count": len(merged[:limit]), "truncated": len(merged) > limit,
-            "semantic_results": []}
+            "semantic_results": [], "warnings": warnings}
 
 
 # ── Per-ontology search (latest version) ──────────────────────────────────────
@@ -269,6 +277,103 @@ async def ontology_search(
         ],
         "count": len(trimmed), "truncated": len(search_results) > limit,
         "semantic_results": [],
+    }
+
+
+# ── Global cross-ontology autocomplete ────────────────────────────────────────
+
+@router.get("/autocomplete", summary="Cross-ontology MOS autocomplete")
+async def global_autocomplete(
+    q: str = Query(..., description="Partial MOS expression text"),
+    cursor: int = Query(-1, description="Byte offset of cursor (-1 = end of q)"),
+    limit: int = Query(10, ge=1, le=50),
+    ontology_ids: list[str] = Query(default=[]),
+    lang: str | None = Query(None, description="BCP-47 language tag"),
+    _user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from ontoexplorer.modules.search.mos_parser import partial_parse
+
+    effective_cursor = cursor if cursor >= 0 else len(q)
+    ctx = partial_parse(q, effective_cursor)
+
+    if ontology_ids:
+        gathered = await asyncio.gather(
+            *[_get_latest_version_or_404(db, oid) for oid in ontology_ids],
+            return_exceptions=True,
+        )
+        versions = [v for v in gathered if isinstance(v, OntologyVersion)]
+    else:
+        versions = await _latest_ingested_versions(db)
+
+    if not versions:
+        return {
+            "completions": [],
+            "context": ctx.token_type.lower(),
+            "replace_from": ctx.token_start,
+            "replace_to": effective_cursor,
+        }
+
+    # Load ontology shortnames for all versions in one query
+    ont_ids = list({str(v.ontology_id) for v in versions})
+    ont_rows = (await db.execute(
+        select(Ontology).where(Ontology.id.in_(ont_ids))
+    )).scalars().all()
+
+    def _shortname(ont: Ontology) -> str:
+        if ont.shortname:
+            return ont.shortname
+        last = ont.iri.rstrip("/#").rsplit("/", 1)[-1].rsplit("#", 1)[-1]
+        return last
+
+    ont_by_id = {str(o.id): _shortname(o) for o in ont_rows}
+    # Map version_id → ontology_shortname
+    ver_shortname = {str(v.id): ont_by_id.get(str(v.ontology_id), "") for v in versions}
+
+    all_nested = await asyncio.gather(*[
+        asyncio.to_thread(get_completions, q, effective_cursor, str(v.id), limit, lang)
+        for v in versions
+    ])
+
+    seen_iris: set[str] = set()
+    seen_kws: set[str] = set()
+    merged: list[tuple] = []  # (Completion, ontology_shortname)
+    for v, completions in zip(versions, all_nested):
+        sn = ver_shortname.get(str(v.id), "")
+        for c in completions:
+            if c.iri is None:
+                if c.text not in seen_kws:
+                    seen_kws.add(c.text)
+                    merged.append((c, None))
+            elif c.iri not in seen_iris:
+                seen_iris.add(c.iri)
+                merged.append((c, sn))
+
+    norm_q = normalise_label(ctx.partial or "")
+
+    def _rank(item: tuple) -> tuple:
+        c, _ = item
+        if c.iri is None:
+            return (0, c.text)
+        lbl = normalise_label(c.text)
+        if lbl == norm_q:
+            return (1, lbl)
+        if lbl.startswith(norm_q):
+            return (2, lbl)
+        return (3, lbl)
+
+    merged.sort(key=_rank)
+    merged = merged[:limit]
+
+    return {
+        "completions": [
+            {"text": c.text, "type": c.type, "iri": c.iri, "short": c.short, "insert": c.insert,
+             "lang": c.lang, "cross_language": c.cross_language, "ontology_shortname": sn}
+            for c, sn in merged
+        ],
+        "context": ctx.token_type.lower(),
+        "replace_from": ctx.token_start,
+        "replace_to": effective_cursor,
     }
 
 

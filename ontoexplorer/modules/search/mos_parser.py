@@ -313,8 +313,8 @@ def partial_parse(text: str, cursor: int) -> PartialParseResult:
 
     last_type, last_val = tokens[-1]
 
-    # After a complete entity reference → expect restriction or boolean keyword
-    if last_type in ("QUOTED_LABEL", "CURIE", "FULL_IRI"):
+    # After a complete entity reference or closing paren → expect boolean keyword
+    if last_type in ("QUOTED_LABEL", "CURIE", "FULL_IRI", "CLOSE_PAREN"):
         return PartialParseResult(token_type="EXPECT_KEYWORD", partial="", token_start=cursor)
 
     # After min/max/exactly → expect integer
