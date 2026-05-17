@@ -233,6 +233,19 @@ def _render_bnode_expression(
             inner = f"({inner})"
         return f"not {inner}"
 
+    if _OWL_ONE_OF in preds:
+        items = _rdf_list_items(store, graph, preds[_OWL_ONE_OF])
+        parts = [
+            render_class_expression(store, graph, it, labels=labels, depth=depth + 1)
+            for it in items
+        ]
+        return "{" + ", ".join(parts) + "}"
+
+    if _OWL_ON_DATATYPE in preds and _OWL_WITH_RESTRICTIONS in preds:
+        return _render_datatype_restriction(
+            store, graph, preds, labels=labels, depth=depth
+        )
+
     # Property restrictions: detected by presence of owl:onProperty.
     if _OWL_ON_PROPERTY in preds:
         return _render_restriction(store, graph, preds, labels=labels, depth=depth)
@@ -367,3 +380,44 @@ def _render_junction(
         for it in items
     ]
     return "(" + f" {op} ".join(parts) + ")"
+
+
+def _render_datatype_restriction(
+    store: ox.Store,
+    graph: ox.NamedNode,
+    preds: dict[str, ox.Term],
+    *,
+    labels: dict[str, str],
+    depth: int,
+) -> str:
+    """Render rdfs:Datatype + owl:onDatatype + owl:withRestrictions as
+    `<datatype>[facet1 v1, facet2 v2]`. Falls back to bare datatype label when
+    the facet list is empty or unrecognized.
+    """
+    base = preds[_OWL_ON_DATATYPE]
+    base_label = render_class_expression(store, graph, base, labels=labels, depth=depth + 1)
+    if isinstance(base, ox.NamedNode) and base.value.startswith(_XSD):
+        base_label = f"xsd:{base.value[len(_XSD):]}"
+
+    items = _rdf_list_items(store, graph, preds[_OWL_WITH_RESTRICTIONS])
+    facet_strs: list[str] = []
+    for item in items:
+        if not isinstance(item, ox.BlankNode):
+            continue
+        for q in store.quads_for_pattern(item, None, None, graph):
+            facet_iri = q.predicate.value
+            if facet_iri not in _FACETS:
+                continue
+            op = _FACETS[facet_iri]
+            value_str = _render_literal(q.object) if isinstance(q.object, ox.Literal) else str(q.object.value)
+            if op == "pattern":
+                facet_strs.append(f'pattern {value_str}')
+            elif op in ("length", "minLength", "maxLength"):
+                inner = q.object.value if isinstance(q.object, ox.Literal) else value_str
+                facet_strs.append(f"{op} {inner}")
+            else:
+                inner = q.object.value if isinstance(q.object, ox.Literal) else value_str
+                facet_strs.append(f"{op} {inner}")
+    if not facet_strs:
+        return base_label
+    return f"{base_label}[" + ", ".join(facet_strs) + "]"

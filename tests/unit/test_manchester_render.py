@@ -493,3 +493,60 @@ def test_complement_of_junction_does_not_double_parenthesize():
     )
     out = render_class_expression(store, _GRAPH, expr, labels={})
     assert out == "not (A and B)"
+
+
+_OWL_ONE_OF_N = ox.NamedNode("http://www.w3.org/2002/07/owl#oneOf")
+_OWL_ON_DT = ox.NamedNode("http://www.w3.org/2002/07/owl#onDatatype")
+_OWL_WITH_R = ox.NamedNode("http://www.w3.org/2002/07/owl#withRestrictions")
+_XSD_INT = ox.NamedNode("http://www.w3.org/2001/XMLSchema#integer")
+_XSD_MIN_INC = ox.NamedNode("http://www.w3.org/2001/XMLSchema#minInclusive")
+_XSD_MAX_INC = ox.NamedNode("http://www.w3.org/2001/XMLSchema#maxInclusive")
+
+
+def test_one_of_named_individuals():
+    a = ox.NamedNode("http://example.org/Alice")
+    b = ox.NamedNode("http://example.org/Bob")
+    c = ox.NamedNode("http://example.org/Carol")
+    head, list_quads = _list_quads([a, b, c])
+    expr = ox.BlankNode("enum1")
+    store = _store(
+        (expr, _OWL_ONE_OF_N, head),
+        *list_quads,
+    )
+    assert render_class_expression(store, _GRAPH, expr, labels={}) == "{Alice, Bob, Carol}"
+
+
+def test_datatype_restriction_range():
+    """xsd:integer[>= 0, <= 120]"""
+    dt_expr = ox.BlankNode("dt1")
+    facet1 = ox.BlankNode("facet1")
+    facet2 = ox.BlankNode("facet2")
+    head, list_quads = _list_quads([facet1, facet2])
+    store = _store(
+        (dt_expr, _RDF_TYPE_N, ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#Datatype")),
+        (dt_expr, _OWL_ON_DT, _XSD_INT),
+        (dt_expr, _OWL_WITH_R, head),
+        (facet1, _XSD_MIN_INC, _int_lit(0)),
+        (facet2, _XSD_MAX_INC, _int_lit(120)),
+        *list_quads,
+    )
+    out = render_class_expression(store, _GRAPH, dt_expr, labels={})
+    assert out == "xsd:integer[>= 0, <= 120]"
+
+
+def test_datatype_restriction_pattern():
+    """xsd:string[pattern "[A-Z]+"]"""
+    dt_expr = ox.BlankNode("dt2")
+    facet = ox.BlankNode("facet_p")
+    head, list_quads = _list_quads([facet])
+    xsd_string = ox.NamedNode("http://www.w3.org/2001/XMLSchema#string")
+    xsd_pattern = ox.NamedNode("http://www.w3.org/2001/XMLSchema#pattern")
+    store = _store(
+        (dt_expr, _RDF_TYPE_N, ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#Datatype")),
+        (dt_expr, _OWL_ON_DT, xsd_string),
+        (dt_expr, _OWL_WITH_R, head),
+        (facet, xsd_pattern, ox.Literal("[A-Z]+")),
+        *list_quads,
+    )
+    out = render_class_expression(store, _GRAPH, dt_expr, labels={})
+    assert out == 'xsd:string[pattern "[A-Z]+"]'
