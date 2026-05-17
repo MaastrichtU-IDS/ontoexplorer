@@ -279,7 +279,27 @@ def _render_restriction(
             return f"{prop_label} Self"
         # `hasSelf false` or non-boolean literals fall through.
 
-    # Cardinality patterns are handled in a later task; until then, fallback.
+    # Cardinality variants.
+    for card_pred, kw in (
+        (_OWL_CARDINALITY,  "exactly"),
+        (_OWL_MIN_CARD,     "min"),
+        (_OWL_MAX_CARD,     "max"),
+        (_OWL_QCARDINALITY, "exactly"),
+        (_OWL_MIN_QCARD,    "min"),
+        (_OWL_MAX_QCARD,    "max"),
+    ):
+        if card_pred in preds:
+            n = preds[card_pred]
+            if not isinstance(n, ox.Literal):
+                continue
+            on_class = preds.get(_OWL_ON_CLASS) or preds.get(_OWL_ON_DATARANGE)
+            if on_class is not None:
+                filler = render_class_expression(
+                    store, graph, on_class, labels=labels, depth=depth + 1
+                )
+                return f"{prop_label} {kw} {n.value} {filler}"
+            return f"{prop_label} {kw} {n.value}"
+
     return f"[restriction:{prop_label}]"
 
 

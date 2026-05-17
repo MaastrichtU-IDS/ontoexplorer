@@ -303,3 +303,89 @@ def test_restriction_has_self_plain_string_does_not_render_as_self():
     )
     out = render_class_expression(store, _GRAPH, r, labels={})
     assert "Self" not in out
+
+
+_OWL_CARD = ox.NamedNode("http://www.w3.org/2002/07/owl#cardinality")
+_OWL_MIN_CARD = ox.NamedNode("http://www.w3.org/2002/07/owl#minCardinality")
+_OWL_MAX_CARD = ox.NamedNode("http://www.w3.org/2002/07/owl#maxCardinality")
+_OWL_QCARD = ox.NamedNode("http://www.w3.org/2002/07/owl#qualifiedCardinality")
+_OWL_MIN_QCARD = ox.NamedNode("http://www.w3.org/2002/07/owl#minQualifiedCardinality")
+_OWL_MAX_QCARD = ox.NamedNode("http://www.w3.org/2002/07/owl#maxQualifiedCardinality")
+_OWL_ON_CLASS = ox.NamedNode("http://www.w3.org/2002/07/owl#onClass")
+_XSD_NONNEG_INT = ox.NamedNode("http://www.w3.org/2001/XMLSchema#nonNegativeInteger")
+
+
+def _int_lit(n: int) -> ox.Literal:
+    return ox.Literal(str(n), datatype=_XSD_NONNEG_INT)
+
+
+def test_restriction_cardinality_unqualified():
+    p = ox.NamedNode("http://example.org/hasTopping")
+    r = ox.BlankNode("rc1")
+    store = _store(
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_CARD, _int_lit(3)),
+    )
+    assert render_class_expression(store, _GRAPH, r, labels={}) == "hasTopping exactly 3"
+
+
+def test_restriction_min_cardinality():
+    p = ox.NamedNode("http://example.org/hasTopping")
+    r = ox.BlankNode("rc2")
+    store = _store(
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_MIN_CARD, _int_lit(1)),
+    )
+    assert render_class_expression(store, _GRAPH, r, labels={}) == "hasTopping min 1"
+
+
+def test_restriction_max_cardinality():
+    p = ox.NamedNode("http://example.org/hasTopping")
+    r = ox.BlankNode("rc3")
+    store = _store(
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_MAX_CARD, _int_lit(5)),
+    )
+    assert render_class_expression(store, _GRAPH, r, labels={}) == "hasTopping max 5"
+
+
+def test_restriction_min_qualified_cardinality():
+    p = ox.NamedNode("http://example.org/hasTopping")
+    c = ox.NamedNode("http://example.org/Vegetable")
+    r = ox.BlankNode("rc4")
+    store = _store(
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_MIN_QCARD, _int_lit(2)),
+        (r, _OWL_ON_CLASS, c),
+    )
+    assert render_class_expression(store, _GRAPH, r, labels={}) == "hasTopping min 2 Vegetable"
+
+
+def test_restriction_max_qualified_cardinality():
+    p = ox.NamedNode("http://example.org/hasTopping")
+    c = ox.NamedNode("http://example.org/Vegetable")
+    r = ox.BlankNode("rc5")
+    store = _store(
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_MAX_QCARD, _int_lit(4)),
+        (r, _OWL_ON_CLASS, c),
+    )
+    assert render_class_expression(store, _GRAPH, r, labels={}) == "hasTopping max 4 Vegetable"
+
+
+def test_restriction_qualified_cardinality_exactly():
+    p = ox.NamedNode("http://example.org/hasTopping")
+    c = ox.NamedNode("http://example.org/Vegetable")
+    r = ox.BlankNode("rc6")
+    store = _store(
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_QCARD, _int_lit(2)),
+        (r, _OWL_ON_CLASS, c),
+    )
+    assert render_class_expression(store, _GRAPH, r, labels={}) == "hasTopping exactly 2 Vegetable"
