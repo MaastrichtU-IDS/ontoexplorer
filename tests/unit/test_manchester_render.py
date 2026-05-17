@@ -405,3 +405,59 @@ def test_restriction_unqualified_cardinality_ignores_onClass():
     out = render_class_expression(store, _GRAPH, r, labels={})
     assert out == "hasTopping exactly 3", \
         f"unqualified cardinality must not absorb onClass, got: {out}"
+
+
+_OWL_INTERSECTION_N = ox.NamedNode("http://www.w3.org/2002/07/owl#intersectionOf")
+_OWL_UNION_N = ox.NamedNode("http://www.w3.org/2002/07/owl#unionOf")
+_OWL_COMPLEMENT_N = ox.NamedNode("http://www.w3.org/2002/07/owl#complementOf")
+
+
+def test_intersection_of_named_classes():
+    a = ox.NamedNode("http://example.org/A")
+    b = ox.NamedNode("http://example.org/B")
+    head, list_quads = _list_quads([a, b])
+    expr = ox.BlankNode("expr1")
+    store = _store(
+        (expr, _OWL_INTERSECTION_N, head),
+        *list_quads,
+    )
+    assert render_class_expression(store, _GRAPH, expr, labels={}) == "(A and B)"
+
+
+def test_union_of_named_classes():
+    a = ox.NamedNode("http://example.org/A")
+    b = ox.NamedNode("http://example.org/B")
+    c = ox.NamedNode("http://example.org/C")
+    head, list_quads = _list_quads([a, b, c])
+    expr = ox.BlankNode("expr2")
+    store = _store(
+        (expr, _OWL_UNION_N, head),
+        *list_quads,
+    )
+    assert render_class_expression(store, _GRAPH, expr, labels={}) == "(A or B or C)"
+
+
+def test_complement_of_named_class():
+    a = ox.NamedNode("http://example.org/A")
+    expr = ox.BlankNode("expr3")
+    store = _store((expr, _OWL_COMPLEMENT_N, a))
+    assert render_class_expression(store, _GRAPH, expr, labels={}) == "not A"
+
+
+def test_intersection_inside_restriction():
+    """Nested: hasTopping some (A and B)."""
+    p = ox.NamedNode("http://example.org/hasTopping")
+    a = ox.NamedNode("http://example.org/A")
+    b = ox.NamedNode("http://example.org/B")
+    head, list_quads = _list_quads([a, b])
+    inter = ox.BlankNode("inter")
+    r = ox.BlankNode("r_nested")
+    store = _store(
+        (inter, _OWL_INTERSECTION_N, head),
+        *list_quads,
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_SOME, inter),
+    )
+    out = render_class_expression(store, _GRAPH, r, labels={})
+    assert out == "hasTopping some (A and B)"

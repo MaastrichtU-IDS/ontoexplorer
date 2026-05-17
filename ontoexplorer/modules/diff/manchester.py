@@ -213,6 +213,20 @@ def _render_bnode_expression(
     """
     preds = _bnode_predicates(store, graph, node)
 
+    if _OWL_INTERSECTION in preds:
+        return _render_junction(
+            store, graph, preds[_OWL_INTERSECTION], "and", labels=labels, depth=depth
+        )
+    if _OWL_UNION in preds:
+        return _render_junction(
+            store, graph, preds[_OWL_UNION], "or", labels=labels, depth=depth
+        )
+    if _OWL_COMPLEMENT in preds:
+        inner = render_class_expression(
+            store, graph, preds[_OWL_COMPLEMENT], labels=labels, depth=depth + 1
+        )
+        return f"not {inner}"
+
     # Property restrictions: detected by presence of owl:onProperty.
     if _OWL_ON_PROPERTY in preds:
         return _render_restriction(store, graph, preds, labels=labels, depth=depth)
@@ -327,3 +341,23 @@ def _bnode_fallback(
     parts.sort()
     fp = hashlib.sha1("\n".join(parts).encode()).hexdigest()[:8]
     return f"[bnode:{fp}]"
+
+
+def _render_junction(
+    store: ox.Store,
+    graph: ox.NamedNode,
+    list_head: ox.Term,
+    op: str,
+    *,
+    labels: dict[str, str],
+    depth: int,
+) -> str:
+    """Render intersectionOf / unionOf as `(A op B op C)`."""
+    items = _rdf_list_items(store, graph, list_head)
+    if not items:
+        return f"({op})"
+    parts = [
+        render_class_expression(store, graph, it, labels=labels, depth=depth + 1)
+        for it in items
+    ]
+    return "(" + f" {op} ".join(parts) + ")"
