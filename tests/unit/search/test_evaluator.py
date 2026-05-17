@@ -422,3 +422,30 @@ async def test_evaluate_cardinality_query_includes_qualified_form(node, expected
         await evaluate(node, "v1", "ont1")
     query_text = mock_sparql.call_args[0][0]
     assert expected_predicate in query_text
+
+
+# ── Mixed ELK + SPARQL operands ───────────────────────────────────────────────
+
+@pytest.mark.anyio
+async def test_evaluate_and_named_class_with_restriction():
+    # Regression: And(NamedClass, SomeValuesFrom) must not return None for either
+    # operand — the restriction branch is handled by _eval (SPARQL), not _eval_with_index.
+    r = _make_redis_multi("v1", [
+        ("Cell",    CELL,   "class"),
+        ("hasPart", HP_IRI, "object_property"),
+        ("Nucleus", NUC,    "class"),
+    ])
+    classification = _make_classification(subclasses={CELL: [EUKARYOTE]})
+
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)), \
+         patch("ontoexplorer.modules.search.evaluator.sparql_query",
+               return_value=_mock_sparql([EUKARYOTE])):
+        results = await evaluate(
+            And(NamedClass("Cell", None), SomeValuesFrom(NamedClass("hasPart", None), NamedClass("Nucleus", None))),
+            "v1", "ont1",
+        )
+    iris = {r.iri for r in results}
+    # Cell subclasses ∩ has-part-some-nucleus asserters = {EUKARYOTE}
+    assert iris == {EUKARYOTE}

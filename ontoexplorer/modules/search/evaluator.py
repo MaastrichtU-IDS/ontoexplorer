@@ -250,6 +250,10 @@ async def evaluate(
             # of the direct flag on the outer query.
             return all_class_iris - await _eval_with_index(n.operand, subclasses_index)
 
+        # Restriction nodes (SomeValuesFrom, HasValue, etc.) are not ELK-based;
+        # delegate to _eval which handles SPARQL evaluation for them.
+        return await _eval(n)
+
     async def _eval(n) -> set[str]:
         if isinstance(n, (NamedClass, And, Or, Not)):
             return await _eval_with_index(n, direct_subclasses_index)
