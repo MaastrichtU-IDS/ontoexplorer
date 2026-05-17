@@ -461,3 +461,35 @@ def test_intersection_inside_restriction():
     )
     out = render_class_expression(store, _GRAPH, r, labels={})
     assert out == "hasTopping some (A and B)"
+
+
+def test_complement_of_restriction_is_parenthesized():
+    """not (hasTopping some Meat) — restriction inside complement must be wrapped."""
+    p = ox.NamedNode("http://example.org/hasTopping")
+    meat = ox.NamedNode("http://example.org/Meat")
+    r = ox.BlankNode("inner_rest")
+    expr = ox.BlankNode("compl_with_rest")
+    store = _store(
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_SOME, meat),
+        (expr, _OWL_COMPLEMENT_N, r),
+    )
+    out = render_class_expression(store, _GRAPH, expr, labels={})
+    assert out == "not (hasTopping some Meat)"
+
+
+def test_complement_of_junction_does_not_double_parenthesize():
+    """not (A and B) — junction already self-parenthesizes; complement must not double-wrap."""
+    a = ox.NamedNode("http://example.org/A")
+    b = ox.NamedNode("http://example.org/B")
+    head, list_quads = _list_quads([a, b])
+    inter = ox.BlankNode("inter_in_compl")
+    expr = ox.BlankNode("compl_with_inter")
+    store = _store(
+        (inter, _OWL_INTERSECTION_N, head),
+        *list_quads,
+        (expr, _OWL_COMPLEMENT_N, inter),
+    )
+    out = render_class_expression(store, _GRAPH, expr, labels={})
+    assert out == "not (A and B)"

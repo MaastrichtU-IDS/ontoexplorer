@@ -222,9 +222,15 @@ def _render_bnode_expression(
             store, graph, preds[_OWL_UNION], "or", labels=labels, depth=depth
         )
     if _OWL_COMPLEMENT in preds:
+        inner_term = preds[_OWL_COMPLEMENT]
         inner = render_class_expression(
-            store, graph, preds[_OWL_COMPLEMENT], labels=labels, depth=depth + 1
+            store, graph, inner_term, labels=labels, depth=depth + 1
         )
+        # Parenthesize complex inner expressions to avoid Manchester precedence
+        # ambiguity. Junctions already self-parenthesize via _render_junction;
+        # restrictions, datatype expressions, and other bnode forms do not.
+        if isinstance(inner_term, ox.BlankNode) and not (inner.startswith("(") or inner.startswith("{")):
+            inner = f"({inner})"
         return f"not {inner}"
 
     # Property restrictions: detected by presence of owl:onProperty.
