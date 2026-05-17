@@ -392,6 +392,19 @@ _CLASS_AXIOMS: dict[str, str] = {
     _OWL_DISJOINT_UNION: "DisjointUnionOf",
 }
 
+_PROPERTY_AXIOMS: dict[str, str] = {
+    _RDFS_SUBPROP:    "SubPropertyOf",
+    _OWL_EQUIV_PROP:  "EquivalentTo",
+    _OWL_INVERSE_OF:  "InverseOf",
+    _RDFS_DOMAIN:     "Domain",
+    _RDFS_RANGE:      "Range",
+}
+
+_INDIVIDUAL_AXIOMS: dict[str, str] = {
+    _OWL_SAME_AS:     "SameAs",
+    _OWL_DIFFERENT:   "DifferentFrom",
+}
+
 
 def render_axiom(
     store: ox.Store,
@@ -402,14 +415,26 @@ def render_axiom(
     *,
     labels: dict[str, str],
 ) -> str | None:
-    """Render a single axiom (predicate + object) as a Manchester line.
+    """Render a single (predicate, object) pair as a Manchester axiom line.
 
-    Returns None when the predicate is not in the coverage table; callers should
-    treat None as "fall back to `<predicate> <object>` rendering".
+    Returns None when the predicate is outside the coverage table; the caller
+    is expected to render a `<predicate> <object>` fallback in that case.
     """
-    keyword = _CLASS_AXIOMS.get(predicate_iri)
+    # Property characteristics: rdf:type with an OWL characteristic class.
+    if predicate_iri == _RDF_TYPE and isinstance(object_term, ox.NamedNode):
+        char = _CHARACTERISTICS.get(object_term.value)
+        if char is not None:
+            return f"Characteristics: {char}"
+        return None  # other rdf:type triples belong in the frame header
+
+    keyword = (
+        _CLASS_AXIOMS.get(predicate_iri)
+        or _PROPERTY_AXIOMS.get(predicate_iri)
+        or _INDIVIDUAL_AXIOMS.get(predicate_iri)
+    )
     if keyword is None:
         return None
+
     filler = render_class_expression(store, graph, object_term, labels=labels)
     return f"{keyword}: {filler}"
 

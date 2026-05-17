@@ -628,3 +628,119 @@ def test_axiom_unknown_predicate_returns_none():
         store, _GRAPH, subj, "http://example.org/unknownPred", obj, labels={}
     )
     assert out is None
+
+
+_RDFS_SUBPROP_N = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#subPropertyOf")
+_OWL_EQUIV_PROP_N = ox.NamedNode("http://www.w3.org/2002/07/owl#equivalentProperty")
+_OWL_INVERSE_OF_N = ox.NamedNode("http://www.w3.org/2002/07/owl#inverseOf")
+_RDFS_DOMAIN_N = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#domain")
+_RDFS_RANGE_N = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#range")
+_OWL_SAME_AS_N = ox.NamedNode("http://www.w3.org/2002/07/owl#sameAs")
+_OWL_DIFFERENT_N = ox.NamedNode("http://www.w3.org/2002/07/owl#differentFrom")
+_OWL_FUNCTIONAL_N = ox.NamedNode("http://www.w3.org/2002/07/owl#FunctionalProperty")
+_OWL_TRANSITIVE_N = ox.NamedNode("http://www.w3.org/2002/07/owl#TransitiveProperty")
+
+
+def test_axiom_subproperty_of():
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/hasTopping", _RDFS_SUBPROP_N.value,
+        ox.NamedNode("http://example.org/hasIngredient"),
+        labels={},
+    )
+    assert out == "SubPropertyOf: hasIngredient"
+
+
+def test_axiom_equivalent_property():
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/hasTopping", _OWL_EQUIV_PROP_N.value,
+        ox.NamedNode("http://example.org/hasCovering"),
+        labels={},
+    )
+    assert out == "EquivalentTo: hasCovering"
+
+
+def test_axiom_inverse_of():
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/hasTopping", _OWL_INVERSE_OF_N.value,
+        ox.NamedNode("http://example.org/toppingOf"),
+        labels={},
+    )
+    assert out == "InverseOf: toppingOf"
+
+
+def test_axiom_domain():
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/hasTopping", _RDFS_DOMAIN_N.value,
+        ox.NamedNode("http://example.org/Pizza"),
+        labels={},
+    )
+    assert out == "Domain: Pizza"
+
+
+def test_axiom_range():
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/hasTopping", _RDFS_RANGE_N.value,
+        ox.NamedNode("http://example.org/Topping"),
+        labels={},
+    )
+    assert out == "Range: Topping"
+
+
+def test_axiom_characteristics_functional():
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/hasTopping", _RDF_TYPE_N.value,
+        _OWL_FUNCTIONAL_N,
+        labels={},
+    )
+    assert out == "Characteristics: Functional"
+
+
+def test_axiom_characteristics_transitive():
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/hasTopping", _RDF_TYPE_N.value,
+        _OWL_TRANSITIVE_N,
+        labels={},
+    )
+    assert out == "Characteristics: Transitive"
+
+
+def test_axiom_rdf_type_non_characteristic_returns_none():
+    """rdf:type whose object isn't one of the 7 OWL property characteristics → None.
+
+    The frame header already shows the entity's declared type; non-characteristic
+    rdf:type triples are not surfaced as Manchester axioms.
+    """
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/Foo", _RDF_TYPE_N.value,
+        ox.NamedNode("http://www.w3.org/2002/07/owl#Class"),
+        labels={},
+    )
+    assert out is None
+
+
+def test_axiom_same_as():
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/Alice", _OWL_SAME_AS_N.value,
+        ox.NamedNode("http://example.org/AliceFoo"),
+        labels={},
+    )
+    assert out == "SameAs: AliceFoo"
+
+
+def test_axiom_different_from():
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/Alice", _OWL_DIFFERENT_N.value,
+        ox.NamedNode("http://example.org/Bob"),
+        labels={},
+    )
+    assert out == "DifferentFrom: Bob"
