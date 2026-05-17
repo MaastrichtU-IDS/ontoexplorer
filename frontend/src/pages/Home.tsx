@@ -112,7 +112,7 @@ function KeywordSearch() {
   const [query, setQuery] = useState('')
   const [submitted, setSubmitted] = useState('')
   const { ontologies } = useOntologies()
-  const { data } = useGlobalSearch(submitted, submitted.length >= 3)
+  const { data, isFetching } = useGlobalSearch(submitted, submitted.length >= 3)
   const results = data?.results ?? []
   const semanticResults = data?.semantic_results ?? []
 
@@ -174,7 +174,12 @@ function KeywordSearch() {
         </div>
       )}
 
-      {submitted && results.length === 0 && (
+      {submitted && isFetching && results.length === 0 && (
+        <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', textAlign: 'center', marginTop: '2rem' }}>
+          Searching…
+        </p>
+      )}
+      {submitted && !isFetching && results.length === 0 && (
         <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', textAlign: 'center', marginTop: '2rem' }}>
           No results for "{submitted}"
         </p>
@@ -318,6 +323,8 @@ function MOSQuery() {
     }
   }
 
+  const isSearching = mosQuery.length >= 2 && searchResults.some(r => r.isFetching)
+
   // Surface error message only when all queries failed (no results at all)
   const firstError = searchResults.find(r => r.error)?.error as (Error & { status?: number; body?: { error?: string; detail?: string } }) | undefined
   const allNotClassified = mosQuery.length >= 2 && searchResults.length > 0 && searchResults.every(r => (r.error as (Error & { body?: { error?: string } }) | undefined)?.body?.error === 'not_classified')
@@ -384,7 +391,12 @@ function MOSQuery() {
           {errorMsg}
         </p>
       )}
-      {mosQuery && !errorMsg && dedupedResults.length === 0 && (
+      {mosQuery && !errorMsg && isSearching && dedupedResults.length === 0 && (
+        <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', textAlign: 'center', marginTop: '2rem' }}>
+          Searching…
+        </p>
+      )}
+      {mosQuery && !errorMsg && !isSearching && dedupedResults.length === 0 && (
         <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', textAlign: 'center', marginTop: '2rem' }}>
           No results for "{mosQuery}"
         </p>
