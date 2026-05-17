@@ -1,10 +1,19 @@
 """Compute term-level diff between two ontology versions using Oxigraph quad iteration."""
+import hashlib
+
 import pyoxigraph as ox
 
 from ontoexplorer.clients.oxigraph import graph_iri
 
 _RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 _RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
+
+# Blank node IDs (b123) are assigned at parse time and differ between versions
+# even when the underlying structure is identical, so we replace each bnode in
+# a triple with a fingerprint of its outgoing-triple closure. Depth-bounded so
+# pathological cycles can't blow up — most OWL bnodes (Restrictions, RDF lists,
+# class expressions) are shallow.
+_BNODE_FP_MAX_DEPTH = 10
 
 _ENTITY_TYPES: dict[str, str] = {
     "class":               "http://www.w3.org/2002/07/owl#Class",
@@ -47,12 +56,57 @@ def _literal_triples(
 def _structural_triples(
     store: ox.Store, graph: ox.NamedNode, iri: str
 ) -> set[tuple[str, str]]:
-    """Return (predicate_iri, object_value) for all URI/blank-node-valued triples."""
-    return {
-        (q.predicate.value, q.object.value)
-        for q in store.quads_for_pattern(ox.NamedNode(iri), None, None, graph)
-        if isinstance(q.object, (ox.NamedNode, ox.BlankNode))
-    }
+    """Return (predicate_iri, object_repr) for all URI/blank-node-valued triples.
+
+    For blank-node objects, object_repr is a content fingerprint of the
+    bnode's outgoing-triple closure (see _bnode_fingerprint). Two bnodes with
+    structurally identical content (e.g. equivalent owl:Restriction nodes
+    across two versions) collapse to the same fingerprint and don't appear as
+    spurious diffs.
+    """
+    triples: set[tuple[str, str]] = set()
+    for q in store.quads_for_pattern(ox.NamedNode(iri), None, None, graph):
+        if isinstance(q.object, ox.NamedNode):
+            triples.add((q.predicate.value, q.object.value))
+        elif isinstance(q.object, ox.BlankNode):
+            fp = _bnode_fingerprint(store, graph, q.object.value)
+            triples.add((q.predicate.value, f"_:fp:{fp}"))
+    return triples
+
+
+def _bnode_fingerprint(
+    store: ox.Store,
+    graph: ox.NamedNode,
+    bnode_id: str,
+    visited: frozenset[str] = frozenset(),
+    depth: int = 0,
+) -> str:
+    """Deterministic SHA-1-derived fingerprint of a bnode's outgoing triples.
+
+    Recursively descends into bnode-valued objects; depth-bounded and
+    cycle-aware. Literals are encoded with language tag + datatype so they
+    round-trip; NamedNode objects use their stable URI; nested bnodes recurse.
+    """
+    if depth >= _BNODE_FP_MAX_DEPTH or bnode_id in visited:
+        return "max"
+    new_visited = visited | {bnode_id}
+    parts: list[str] = []
+    for q in store.quads_for_pattern(ox.BlankNode(bnode_id), None, None, graph):
+        p = q.predicate.value
+        if isinstance(q.object, ox.NamedNode):
+            o = f"<{q.object.value}>"
+        elif isinstance(q.object, ox.Literal):
+            lang = q.object.language or ""
+            dt = q.object.datatype.value if q.object.datatype else ""
+            o = f'"{q.object.value}"@{lang}^^<{dt}>'
+        elif isinstance(q.object, ox.BlankNode):
+            sub_fp = _bnode_fingerprint(store, graph, q.object.value, new_visited, depth + 1)
+            o = f"_:fp:{sub_fp}"
+        else:
+            o = "?"
+        parts.append(f"{p}\t{o}")
+    parts.sort()
+    return hashlib.sha1("\n".join(parts).encode()).hexdigest()[:16]
 
 
 def run_diff(

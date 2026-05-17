@@ -124,6 +124,71 @@ def test_by_entity_type_counts():
     assert summary["by_entity_type"]["object_property"]["added"] == 1
 
 
+_OWL_RESTRICTION  = ox.NamedNode("http://www.w3.org/2002/07/owl#Restriction")
+_OWL_ON_PROPERTY  = ox.NamedNode("http://www.w3.org/2002/07/owl#onProperty")
+_OWL_SOME_VALUES  = ox.NamedNode("http://www.w3.org/2002/07/owl#someValuesFrom")
+
+
+def test_bnode_restriction_with_different_ids_is_not_a_diff():
+    """Two structurally identical owl:Restriction bnodes (different IDs) must not appear as a diff."""
+    pizza = ox.NamedNode("http://example.org/Pizza")
+    hasTopping = ox.NamedNode("http://example.org/hasTopping")
+    tomato = ox.NamedNode("http://example.org/Tomato")
+
+    # FROM: restriction is bnode "b1"
+    b1 = ox.BlankNode("b1")
+    from_quads = [
+        (pizza, _RDF_TYPE, _OWL_CLASS),
+        (pizza, _RDFS_SC, b1),
+        (b1, _RDF_TYPE, _OWL_RESTRICTION),
+        (b1, _OWL_ON_PROPERTY, hasTopping),
+        (b1, _OWL_SOME_VALUES, tomato),
+    ]
+    # TO: same restriction but bnode is "different_id_xyz"
+    b2 = ox.BlankNode("different_id_xyz")
+    to_quads = [
+        (pizza, _RDF_TYPE, _OWL_CLASS),
+        (pizza, _RDFS_SC, b2),
+        (b2, _RDF_TYPE, _OWL_RESTRICTION),
+        (b2, _OWL_ON_PROPERTY, hasTopping),
+        (b2, _OWL_SOME_VALUES, tomato),
+    ]
+    s = _store(from_quads=from_quads, to_quads=to_quads)
+    summary, _ = run_diff(s, OID, FROM_VID, TO_VID)
+    assert summary["modified"] == 0, "structurally identical restrictions must not diff on bnode id"
+    assert summary["added"] == 0
+    assert summary["removed"] == 0
+
+
+def test_bnode_restriction_with_real_change_is_detected():
+    """Genuine difference inside a bnode restriction (different filler) must surface as a diff."""
+    pizza = ox.NamedNode("http://example.org/Pizza")
+    hasTopping = ox.NamedNode("http://example.org/hasTopping")
+    tomato = ox.NamedNode("http://example.org/Tomato")
+    cheese = ox.NamedNode("http://example.org/Cheese")
+
+    b1 = ox.BlankNode("b1")
+    from_quads = [
+        (pizza, _RDF_TYPE, _OWL_CLASS),
+        (pizza, _RDFS_SC, b1),
+        (b1, _RDF_TYPE, _OWL_RESTRICTION),
+        (b1, _OWL_ON_PROPERTY, hasTopping),
+        (b1, _OWL_SOME_VALUES, tomato),
+    ]
+    b2 = ox.BlankNode("b2")
+    to_quads = [
+        (pizza, _RDF_TYPE, _OWL_CLASS),
+        (pizza, _RDFS_SC, b2),
+        (b2, _RDF_TYPE, _OWL_RESTRICTION),
+        (b2, _OWL_ON_PROPERTY, hasTopping),
+        (b2, _OWL_SOME_VALUES, cheese),
+    ]
+    s = _store(from_quads=from_quads, to_quads=to_quads)
+    summary, diff_data = run_diff(s, OID, FROM_VID, TO_VID)
+    assert summary["modified"] == 1
+    assert summary["axiom_changes"] == 1
+
+
 def test_literal_lang_tag_change():
     """run_diff must not crash when a literal gains or loses a language tag."""
     iri = ox.NamedNode("http://example.org/TaggedClass")
