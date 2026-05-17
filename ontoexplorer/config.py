@@ -37,8 +37,6 @@ class Settings(BaseSettings):
     oxigraph_data_path: str = "/data/oxigraph"
     oxigraph_read_only: bool = False  # set True in API container; worker keeps write access
 
-    # Oxigraph SPARQL server (isolated read-only container)
-    oxigraph_sparql_url: str = "http://oxigraph-sparql:7878"
     sparql_query_timeout_seconds: int = 30
 
     # ELK reasoning service

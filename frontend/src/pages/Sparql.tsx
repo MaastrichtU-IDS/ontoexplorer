@@ -239,7 +239,7 @@ export default function Sparql() {
       )}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden', minHeight: 0 }}>
         <QuerySidebar yasguiRef={yasguiRef} />
-        <div ref={containerRef} style={{ flex: 1, minHeight: 0 }} />
+        <div ref={containerRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto' }} />
       </div>
     </div>
   )

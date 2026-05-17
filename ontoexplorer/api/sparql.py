@@ -1,13 +1,15 @@
-"""SPARQL 1.1 proxy endpoints.
+"""SPARQL 1.1 endpoints.
 
 GET/POST /sparql         → QLever/Fuseki (FAIR metadata)
-GET/POST /sparql/content → oxigraph-sparql container (asserted ontology triples)
+GET/POST /sparql/content → in-process Oxigraph store (asserted ontology triples)
 """
 
+import asyncio
+import json
 import re
 import time
 
-import httpx
+import pyoxigraph
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -28,7 +30,7 @@ def _check_query_guard(query: str) -> None:
     """Raise ValueError if query contains SPARQL Update keywords.
 
     Best-effort guard: strips IRIs and string literals before checking.
-    Primary enforcement is the oxigraph-server --read-only flag.
+    Primary enforcement is the read-only Oxigraph store (RocksDB secondary mode).
     """
     # Strip IRIs (<...>), quoted strings ("..." and '...'), then comments (#...)
     stripped = re.sub(r"<[^>]*>", " ", query)
@@ -72,27 +74,43 @@ async def sparql_content(request: Request):
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
+    from ontoexplorer.clients.oxigraph import get_store
+
     settings = get_settings()
     metrics.sparql_requests_total.labels(endpoint="oxigraph", method=request.method).inc()
     t0 = time.monotonic()
+
+    primary_accept = accept.split(",")[0].split(";")[0].strip()
+
+    def _run() -> tuple[bytes, str]:
+        result = get_store().query(query)
+        if isinstance(result, bool):
+            body = json.dumps({"head": {}, "boolean": result}).encode()
+            return body, pyoxigraph.QueryResultsFormat.JSON.media_type
+        if isinstance(result, pyoxigraph.QueryTriples):
+            try:
+                fmt = pyoxigraph.RdfFormat.from_media_type(primary_accept)
+            except (ValueError, KeyError):
+                fmt = pyoxigraph.RdfFormat.TURTLE
+            return result.serialize(format=fmt), fmt.media_type
+        try:
+            fmt = pyoxigraph.QueryResultsFormat.from_media_type(primary_accept)
+        except (ValueError, KeyError):
+            fmt = pyoxigraph.QueryResultsFormat.JSON
+        return result.serialize(format=fmt), fmt.media_type
+
     try:
-        async with httpx.AsyncClient(timeout=settings.sparql_query_timeout_seconds) as http:
-            resp = await http.post(
-                f"{settings.oxigraph_sparql_url}/query",
-                content=query.encode(),
-                headers={"Content-Type": "application/sparql-query", "Accept": accept},
-            )
-        return Response(
-            content=resp.content,
-            status_code=resp.status_code,
-            media_type=resp.headers.get("content-type", accept),
+        body, content_type = await asyncio.wait_for(
+            asyncio.to_thread(_run),
+            timeout=settings.sparql_query_timeout_seconds,
         )
-    except httpx.TimeoutException:
+        return Response(content=body, media_type=content_type)
+    except asyncio.TimeoutError:
         metrics.sparql_errors_total.labels(endpoint="oxigraph").inc()
         return JSONResponse(status_code=504, content={"detail": "Query timed out"})
-    except Exception:
+    except Exception as exc:
         metrics.sparql_errors_total.labels(endpoint="oxigraph").inc()
-        raise
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
     finally:
         metrics.sparql_latency_seconds.labels(endpoint="oxigraph").observe(time.monotonic() - t0)
 
