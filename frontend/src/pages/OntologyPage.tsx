@@ -563,24 +563,27 @@ function ExpandToggleBtn({ onExpand, onCollapse }: { onExpand: () => void; onCol
   )
 }
 
-function CollapsibleSection({ label, defaultOpen = true, children }: {
-  label: string; defaultOpen?: boolean; children: React.ReactNode
+function CollapsibleSection({ label, defaultOpen = true, children, headerExtra }: {
+  label: string; defaultOpen?: boolean; children: React.ReactNode; headerExtra?: React.ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
     <div style={{ borderBottom: '1px solid var(--border)' }}>
-      <button
-        onClick={() => setOpen(v => !v)}
-        style={{
-          width: '100%', textAlign: 'left',
-          padding: '7px 10px', display: 'flex', alignItems: 'center', gap: 6,
-          background: 'none', border: 'none', cursor: 'pointer',
-          color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
-        }}
-      >
-        <span style={{ fontSize: 9, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>
-        {label}
-      </button>
+      <div style={{ display: 'flex', alignItems: 'center' }}>
+        <button
+          onClick={() => setOpen(v => !v)}
+          style={{
+            flex: 1, textAlign: 'left',
+            padding: '7px 10px', display: 'flex', alignItems: 'center', gap: 6,
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
+          }}
+        >
+          <span style={{ fontSize: 9, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>
+          {label}
+        </button>
+        {headerExtra && <div style={{ paddingRight: 10, flexShrink: 0 }}>{headerExtra}</div>}
+      </div>
       {open && children}
     </div>
   )
@@ -884,7 +887,7 @@ export default function OntologyPage() {
 
   const [classMode, setClassMode] = useState<HierarchyMode>('asserted')
   const [mobilePane, setMobilePane] = useState<'tree' | 'detail'>('tree')
-  const [detailTab, setDetailTab] = useState<'info' | 'metadata' | 'profile' | 'history'>('info')
+  const [detailTab, setDetailTab] = useState<'info' | 'profile' | 'history'>('info')
   const [leftTab, setLeftTab] = useState<'browse' | 'query'>('browse')
 
   const [hideInverseProps, setHideInverseProps] = useState(true)
@@ -1006,6 +1009,24 @@ export default function OntologyPage() {
         <OntologySearchBar ontologyId={oid} versionId={activeVid} onSelect={selectTerm} lang={effectiveLang} />
       )}
 
+      {/* Hierarchy controls */}
+      <div style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+        <button
+          onClick={() => setHideObsolete(v => !v)}
+          title={hideObsolete ? 'Show obsolete terms' : 'Hide obsolete terms'}
+          style={{
+            fontSize: 9, padding: '2px 6px', borderRadius: 3,
+            border: '1px solid var(--border)', background: 'none',
+            color: hideObsolete ? 'var(--text-dim)' : 'var(--accent)',
+            cursor: 'pointer', textTransform: 'uppercase', letterSpacing: 0.5,
+          }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--text-muted)' }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
+        >
+          {hideObsolete ? 'Show Obsolete' : 'Hide Obsolete'}
+        </button>
+      </div>
+
       {/* Version selector */}
       {versions.length > 1 && (
         <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)' }}>
@@ -1029,20 +1050,6 @@ export default function OntologyPage() {
               <span style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, flex: 1 }}>
                 Classes
               </span>
-              <button
-                onClick={() => setHideObsolete(v => !v)}
-                title={hideObsolete ? 'Show obsolete terms' : 'Hide obsolete terms'}
-                style={{
-                  fontSize: 9, padding: '2px 6px', borderRadius: 3,
-                  border: '1px solid var(--border)', background: 'none',
-                  color: hideObsolete ? 'var(--text-dim)' : 'var(--accent)',
-                  cursor: 'pointer', textTransform: 'uppercase', letterSpacing: 0.5,
-                }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--text-muted)' }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
-              >
-                {hideObsolete ? 'Show Obs' : 'Hide Obs'}
-              </button>
               <ExpandToggleBtn
                 onExpand={() => setClassExpand(v => v + 1)}
                 onCollapse={() => setClassCollapse(v => v + 1)}
@@ -1053,7 +1060,7 @@ export default function OntologyPage() {
                     key={m}
                     onClick={() => setClassMode(m)}
                     style={{
-                      padding: '2px 8px', fontSize: 10, border: 'none', cursor: 'pointer',
+                      padding: '2px 6px', fontSize: 10, border: 'none', cursor: 'pointer',
                       background: classMode === m ? 'var(--accent)' : 'transparent',
                       color: classMode === m ? '#000' : 'var(--text-dim)',
                       textTransform: 'capitalize',
@@ -1073,12 +1080,11 @@ export default function OntologyPage() {
               lang={effectiveLang}
             />
           </div>
-          <CollapsibleSection label="Object Properties" defaultOpen={true}>
-            <div style={{ padding: '4px 10px 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <ExpandToggleBtn
-                onExpand={() => setObjExpand(v => v + 1)}
-                onCollapse={() => setObjCollapse(v => v + 1)}
-              />
+          <CollapsibleSection label="Object Properties" defaultOpen={true} headerExtra={<ExpandToggleBtn
+              onExpand={() => setObjExpand(v => v + 1)}
+              onCollapse={() => setObjCollapse(v => v + 1)}
+            />}>
+            <div style={{ padding: '4px 10px 2px' }}>
               <button
                 onClick={() => setHideInverseProps(v => !v)}
                 style={{
@@ -1090,7 +1096,7 @@ export default function OntologyPage() {
                 onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--text-muted)' }}
                 onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
               >
-                {hideInverseProps ? 'Show Inv' : 'Hide Inv'}
+                {hideInverseProps ? 'Show Inverses' : 'Hide Inverses'}
               </button>
             </div>
             <ClassTree
@@ -1102,13 +1108,10 @@ export default function OntologyPage() {
               lang={effectiveLang}
             />
           </CollapsibleSection>
-          <CollapsibleSection label="Data Properties" defaultOpen={true}>
-            <div style={{ padding: '4px 10px 2px' }}>
-              <ExpandToggleBtn
-                onExpand={() => setDataExpand(v => v + 1)}
-                onCollapse={() => setDataCollapse(v => v + 1)}
-              />
-            </div>
+          <CollapsibleSection label="Data Properties" defaultOpen={true} headerExtra={<ExpandToggleBtn
+              onExpand={() => setDataExpand(v => v + 1)}
+              onCollapse={() => setDataCollapse(v => v + 1)}
+            />}>
             <ClassTree
               ontologyId={oid} versionId={activeVid}
               selectedIri={selectedTermIri} onSelect={selectTerm}
@@ -1197,7 +1200,7 @@ export default function OntologyPage() {
             display: 'flex', borderBottom: '1px solid var(--border)',
             background: 'var(--bg-secondary)', flexShrink: 0,
           }}>
-            {(['info', 'metadata', 'profile', 'history'] as const).map(tab => (
+            {(['info', 'profile', 'history'] as const).map(tab => (
               <button
                 key={tab}
                 onClick={() => setDetailTab(tab)}
@@ -1221,12 +1224,8 @@ export default function OntologyPage() {
                 version={activeVersion}
                 lang={effectiveLang}
                 onProfileReview={() => setDetailTab('profile')}
-                onMetaReview={() => setDetailTab('metadata')}
+                onMetaReview={() => setDetailTab('profile')}
               />
-            ) : detailTab === 'metadata' ? (
-              oid && activeVid
-                ? <MetaProfileEditor ontologyId={oid} versionId={activeVid} />
-                : null
             ) : detailTab === 'history' ? (
               oid && activeVid && versions.length > 1
                 ? <HistoryTab
@@ -1239,7 +1238,23 @@ export default function OntologyPage() {
                   </div>
             ) : (
               oid && activeVid
-                ? <ProfileEditor ontologyId={oid} versionId={activeVid} />
+                ? <>
+                    <div style={{
+                      padding: '8px 16px 4px', fontSize: 10, fontWeight: 600,
+                      color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 0.8,
+                    }}>
+                      Ontology Metadata
+                    </div>
+                    <MetaProfileEditor ontologyId={oid} versionId={activeVid} />
+                    <div style={{
+                      padding: '8px 16px 4px', fontSize: 10, fontWeight: 600,
+                      color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 0.8,
+                      borderTop: '1px solid var(--border)',
+                    }}>
+                      Term Profile
+                    </div>
+                    <ProfileEditor ontologyId={oid} versionId={activeVid} />
+                  </>
                 : null
             )}
           </div>

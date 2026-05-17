@@ -7,11 +7,12 @@ export function useInferredTreeNodes(
   ontologyId: string | null,
   versionId: string | null,
   parent: string | null,  // null = root (owl:Thing)
+  lang?: string | null,
 ) {
   const cls = parent ?? OWL_THING
   return useQuery({
-    queryKey: ['inferred-tree', ontologyId, versionId, cls],
-    queryFn: () => api.ontologies.inferredChildren(ontologyId!, versionId!, cls),
+    queryKey: ['inferred-tree', ontologyId, versionId, cls, lang ?? ''],
+    queryFn: () => api.ontologies.inferredChildren(ontologyId!, versionId!, cls, lang),
     enabled: !!ontologyId && !!versionId,
     staleTime: 60_000,
   })

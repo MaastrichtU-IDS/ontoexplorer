@@ -33,8 +33,9 @@ export function useDetectProfile(ontologyId: string, versionId: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => api.ontologies.profile.detect(ontologyId, versionId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['profile', ontologyId, versionId] })
+    onSuccess: (data) => {
+      qc.setQueryData(['profile', ontologyId, versionId], data)
+      qc.invalidateQueries({ queryKey: ['profile-candidates', ontologyId, versionId] })
     },
   })
 }

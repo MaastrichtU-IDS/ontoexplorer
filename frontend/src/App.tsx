@@ -29,6 +29,14 @@ function Footer() {
     }}>
       <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>APIs</span>
       <a
+        href="/sparql"
+        style={{ color: 'var(--text-dim)', fontSize: 12, textDecoration: 'none' }}
+        onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
+        onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-dim)')}
+      >
+        SPARQL
+      </a>
+      <a
         href="/api/docs"
         target="_blank"
         rel="noreferrer"

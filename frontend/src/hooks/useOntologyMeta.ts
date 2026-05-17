@@ -40,8 +40,9 @@ export function useDetectMeta(ontologyId: string, versionId: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => api.ontologies.meta.detect(ontologyId, versionId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['meta-profile', ontologyId, versionId] })
+    onSuccess: (data) => {
+      qc.setQueryData(['meta-profile', ontologyId, versionId], data)
+      qc.invalidateQueries({ queryKey: ['meta-candidates', ontologyId, versionId] })
     },
   })
 }

@@ -51,6 +51,7 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, focusedIri,
     mode === 'inferred' && expanded ? ontologyId : null,
     mode === 'inferred' && expanded ? versionId : null,
     mode === 'inferred' && expanded ? term.iri : null,
+    lang,
   )
 
   const { data: childData, isLoading } = mode === 'asserted' ? asserted : inferred
@@ -158,7 +159,7 @@ const EMPTY_SET = new Set<string>()
 
 export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect, entityType = 'class', mode = 'asserted', revealIri, hideInverse = false, hideObsolete = true, expandSignal = 0, collapseSignal = 0, lang }: Props) {
   const asserted = useClassTreeNodes(mode === 'asserted' ? ontologyId : null, mode === 'asserted' ? versionId : null, null, entityType, hideInverse, hideObsolete, lang)
-  const inferred = useInferredTreeNodes(mode === 'inferred' ? ontologyId : null, mode === 'inferred' ? versionId : null, null)
+  const inferred = useInferredTreeNodes(mode === 'inferred' ? ontologyId : null, mode === 'inferred' ? versionId : null, null, lang)
 
   const { data, isLoading } = mode === 'asserted' ? asserted : inferred
   const roots: Term[] = (data as any)?.terms ?? []
@@ -216,7 +217,7 @@ export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect
     const container = containerRef.current
     if (!container) return
 
-    const navKeys = ['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', ' ', 'Enter']
+    const navKeys = ['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Enter']
     if (!navKeys.includes(e.key)) return
     e.preventDefault()
 
@@ -255,19 +256,9 @@ export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect
       return
     }
 
-    if (e.key === ' ') {
+    if (e.key === 'ArrowLeft') {
       if (nodeDiv.dataset.expandable === 'true' && nodeDiv.dataset.expanded === 'true') {
         ;(nodeDiv.querySelector('[data-toggle]') as HTMLElement | null)?.click()
-      }
-      return
-    }
-
-    if (e.key === 'ArrowLeft') {
-      const parentLi = nodeDiv.closest('li')?.parentElement?.closest('li')
-      const parentDiv = parentLi?.querySelector(':scope > div[data-iri]') as HTMLElement | null
-      if (parentDiv?.dataset.iri) {
-        setFocusedIri(parentDiv.dataset.iri)
-        parentDiv.scrollIntoView({ block: 'nearest' })
       }
       return
     }

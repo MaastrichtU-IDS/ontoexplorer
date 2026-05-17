@@ -29,6 +29,20 @@ export function useAutocomplete(
   })
 }
 
+export function useGlobalAutocomplete(
+  query: string,
+  cursor: number,
+  enabled: boolean,
+  ontologyIds: string[] = [],
+) {
+  return useQuery<AutocompleteResponse>({
+    queryKey: ['global-autocomplete', query, cursor, ontologyIds],
+    queryFn: () => api.globalSearch.autocomplete(query, cursor, ontologyIds),
+    enabled: enabled && query.length >= 1,
+    staleTime: 5_000,
+  })
+}
+
 export function useGlobalSearch(query: string, semantic = false) {
   return useQuery({
     queryKey: ['global-search', query, semantic],

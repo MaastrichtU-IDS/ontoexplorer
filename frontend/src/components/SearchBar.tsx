@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { useAutocomplete } from '../hooks/useSearch'
+import { useAutocomplete, useGlobalAutocomplete } from '../hooks/useSearch'
 
 interface Props {
   ontologyId: string | null
@@ -7,19 +7,24 @@ interface Props {
   onSearch: (query: string) => void
   placeholder?: string
   initialValue?: string
+  /** When provided, use global cross-ontology autocomplete scoped to these IDs (empty = all ontologies) */
+  scopeOntologyIds?: string[]
 }
 
-export default function SearchBar({ ontologyId, versionId, onSearch, placeholder, initialValue }: Props) {
+export default function SearchBar({ ontologyId, versionId, onSearch, placeholder, initialValue, scopeOntologyIds }: Props) {
   const [value, setValue] = useState(initialValue ?? '')
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [cursor, setCursor] = useState(-1)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const autocompleteEnabled = showSuggestions && value.length >= 1
-  const { data: acData } = useAutocomplete(ontologyId, versionId, value, cursor, autocompleteEnabled)
-  const completions = acData?.completions ?? []
-  const replaceFrom = acData?.replace_from ?? value.length
-  const replaceTo   = acData?.replace_to   ?? value.length
+  const globalMode = scopeOntologyIds !== undefined
+  const { data: acData } = useAutocomplete(ontologyId, versionId, value, cursor, autocompleteEnabled && !globalMode)
+  const { data: globalAcData } = useGlobalAutocomplete(value, cursor, autocompleteEnabled && globalMode, scopeOntologyIds ?? [])
+  const activeAcData = globalMode ? globalAcData : acData
+  const completions = activeAcData?.completions ?? []
+  const replaceFrom = activeAcData?.replace_from ?? value.length
+  const replaceTo   = activeAcData?.replace_to   ?? value.length
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Tab' && completions.length > 0) {
@@ -107,8 +112,17 @@ export default function SearchBar({ ontologyId, versionId, onSearch, placeholder
               </span>
               <span style={{ color: 'var(--text)' }}>{c.text}</span>
               {c.short && (
-                <span style={{ color: 'var(--text-dim)', fontSize: 11, marginLeft: 'auto' }}>
+                <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>
                   {c.short}
+                </span>
+              )}
+              {c.ontology_shortname && (
+                <span style={{
+                  fontSize: 10, padding: '1px 6px', borderRadius: 3,
+                  background: 'var(--bg)', border: '1px solid var(--border)',
+                  color: 'var(--text-dim)', marginLeft: 'auto', flexShrink: 0,
+                }}>
+                  {c.ontology_shortname}
                 </span>
               )}
             </li>
