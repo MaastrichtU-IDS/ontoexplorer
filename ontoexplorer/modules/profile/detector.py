@@ -12,6 +12,8 @@ from ontoexplorer.modules.profile.registry import (
     ALL_PROPS, IRI_TO_ROLE, MOD_DEFINITION, MOD_PREF_LABEL, default_profile,
 )
 
+_RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
+
 
 async def load_profile(db: AsyncSession, version_id: str) -> dict[str, list[str]]:
     """Return stored profile props for a version, or curated defaults if none exists."""
@@ -27,6 +29,7 @@ async def load_profile(db: AsyncSession, version_id: str) -> dict[str, list[str]
         "definition_props": row.definition_props or p["definition_props"],
         "synonym_props": row.synonym_props or p["synonym_props"],
         "deprecated_props": row.deprecated_props or p["deprecated_props"],
+        "example_props": row.example_props or p["example_props"],
     }
 
 
@@ -55,10 +58,16 @@ async def run_detection(db: AsyncSession, version_id: str, ontology_id: str = ""
         "definition": _build_role_list(ALL_PROPS["definition"], counts, mod_def),
         "synonym": _build_role_list(ALL_PROPS["synonym"], counts, None),
         "deprecated": _build_role_list(ALL_PROPS["deprecated"], counts, None),
+        "example": _build_role_list(ALL_PROPS["example"], counts, None),
     }
 
     threshold = max(1, int(class_count * 0.05))
     unknown = await asyncio.to_thread(_find_unknown_props, named_graph, class_count, threshold)
+
+    all_candidate_iris = list({
+        iri for iris in ALL_PROPS.values() for iri in iris if counts.get(iri, 0) > 0
+    } | {u["iri"] for u in unknown})
+    labels = await asyncio.to_thread(_get_prop_labels, named_graph, all_candidate_iris)
 
     candidates: dict = {
         role: [
@@ -66,13 +75,14 @@ async def run_detection(db: AsyncSession, version_id: str, ontology_id: str = ""
                 "iri": iri,
                 "count": counts.get(iri, 0),
                 "mod_declared": iri in (mod_label, mod_def),
+                "label": labels.get(iri),
             }
             for iri in ALL_PROPS[role]
             if counts.get(iri, 0) > 0
         ]
         for role in ALL_PROPS
     }
-    candidates["unknown"] = unknown
+    candidates["unknown"] = [{**u, "label": labels.get(u["iri"])} for u in unknown]
 
     existing = (
         await db.execute(
@@ -85,6 +95,7 @@ async def run_detection(db: AsyncSession, version_id: str, ontology_id: str = ""
         existing.definition_props = role_props["definition"]
         existing.synonym_props = role_props["synonym"]
         existing.deprecated_props = role_props["deprecated"]
+        existing.example_props = role_props["example"]
         existing.candidates_data = candidates
         existing.status = "auto_detected"
         existing.updated_at = datetime.now(UTC)
@@ -95,11 +106,34 @@ async def run_detection(db: AsyncSession, version_id: str, ontology_id: str = ""
             definition_props=role_props["definition"],
             synonym_props=role_props["synonym"],
             deprecated_props=role_props["deprecated"],
+            example_props=role_props["example"],
             candidates_data=candidates,
             status="auto_detected",
         ))
 
     await db.commit()
+
+
+def _get_prop_labels(named_graph: str, iris: list[str]) -> dict[str, str]:
+    """Return rdfs:label values for a list of property IRIs found in the named graph."""
+    if not iris:
+        return {}
+    values_clause = " ".join(f"<{iri}>" for iri in iris)
+    q = f"""
+        SELECT ?prop ?label WHERE {{
+            GRAPH <{named_graph}> {{
+                VALUES ?prop {{ {values_clause} }}
+                ?prop <{_RDFS_LABEL}> ?label .
+                FILTER(LANG(?label) = "en" || LANG(?label) = "")
+            }}
+        }}
+    """
+    result: dict[str, str] = {}
+    for row in sparql_query(q):
+        iri = row["prop"].value
+        if iri not in result:
+            result[iri] = row["label"].value
+    return result
 
 
 def _count_property_usage(named_graph: str, property_iri: str) -> int:
@@ -168,14 +202,18 @@ def _build_role_list(
 def _find_unknown_props(
     named_graph: str, class_count: int, threshold: int
 ) -> list[dict]:
-    """Return annotation properties used on > threshold classes and not in the curated registry."""
+    """Return annotation properties used on > threshold classes and not in the curated registry.
+
+    Does not require the property to be declared as owl:AnnotationProperty in the named graph,
+    since built-in vocabulary (rdfs:label, rdfs:comment, etc.) is used without re-declaration.
+    """
     q = f"""
         SELECT ?prop (COUNT(DISTINCT ?s) AS ?n) WHERE {{
             GRAPH <{named_graph}> {{
                 ?s a <http://www.w3.org/2002/07/owl#Class> .
-                ?prop a <http://www.w3.org/2002/07/owl#AnnotationProperty> .
                 ?s ?prop ?o .
                 FILTER(isIRI(?s))
+                FILTER(isLiteral(?o))
             }}
         }}
         GROUP BY ?prop

@@ -42,6 +42,7 @@ def _profile_response(p: OntologyProfile) -> dict:
         "definition_props": p.definition_props,
         "synonym_props": p.synonym_props,
         "deprecated_props": p.deprecated_props,
+        "example_props": p.example_props,
         "status": p.status,
         "updated_at": p.updated_at.isoformat() if p.updated_at else None,
     }
@@ -63,13 +64,8 @@ class ProfilePatch(BaseModel):
     definition_props: list[str] | None = None
     synonym_props: list[str] | None = None
     deprecated_props: list[str] | None = None
+    example_props: list[str] | None = None
 
-    @field_validator("label_props")
-    @classmethod
-    def label_props_not_empty(cls, v):
-        if v is not None and len(v) == 0:
-            raise ValueError("At least one label property is required")
-        return v
 
 
 @router.patch("/{ontology_id}/{version_id}/profile")
@@ -89,6 +85,8 @@ async def patch_profile(
         profile.synonym_props = body.synonym_props
     if body.deprecated_props is not None:
         profile.deprecated_props = body.deprecated_props
+    if body.example_props is not None:
+        profile.example_props = body.example_props
     profile.status = "user_confirmed"
     profile.updated_at = datetime.now(UTC)
     await db.commit()
@@ -109,9 +107,10 @@ async def trigger_detect(
 ):
     await _get_version_or_404(version_id, db)
 
-    from ontoexplorer.modules.jobs.tasks import detect_profile
-    task = detect_profile.delay(version_id, ontology_id=ontology_id)
-    return {"task_id": task.id, "status": "queued"}
+    from ontoexplorer.modules.profile.detector import run_detection
+    await run_detection(db, version_id, ontology_id=ontology_id)
+    profile = await _get_profile_or_404(version_id, db)
+    return _profile_response(profile)
 
 
 @router.get("/{ontology_id}/{version_id}/profile/candidates")

@@ -27,11 +27,16 @@ DEPRECATED_PROPS: list[str] = [
     "http://www.w3.org/2002/07/owl#deprecated",
 ]
 
+EXAMPLE_PROPS: list[str] = [
+    "http://www.w3.org/2004/02/skos/core#example",
+]
+
 ALL_PROPS: dict[str, list[str]] = {
     "label": LABEL_PROPS,
     "definition": DEFINITION_PROPS,
     "synonym": SYNONYM_PROPS,
     "deprecated": DEPRECATED_PROPS,
+    "example": EXAMPLE_PROPS,
 }
 
 IRI_TO_ROLE: dict[str, str] = {
@@ -51,4 +56,5 @@ def default_profile() -> dict[str, list[str]]:
         "definition_props": DEFINITION_PROPS[:],
         "synonym_props": SYNONYM_PROPS[:],
         "deprecated_props": DEPRECATED_PROPS[:],
+        "example_props": EXAMPLE_PROPS[:],
     }
