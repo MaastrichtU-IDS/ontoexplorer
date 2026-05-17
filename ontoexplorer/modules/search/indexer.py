@@ -49,6 +49,10 @@ def _meta_key(version_id: str) -> str:
     return f"search:meta:{version_id}"
 
 
+def _deprecated_key(version_id: str) -> str:
+    return f"search:entities:{version_id}:deprecated"
+
+
 def _langs_key(version_id: str) -> str:
     return f"search:entities:{version_id}:langs"
 
@@ -449,6 +453,12 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         "individual_count": str(individual_count),
     })
     pipe.expire(_meta_key(version_id), _SEARCH_TTL)
+    # Store deprecated IRI set for use by the inferred-tree endpoint.
+    dep_key = _deprecated_key(version_id)
+    pipe.delete(dep_key)
+    if deprecated_iris:
+        pipe.sadd(dep_key, *deprecated_iris)
+        pipe.expire(dep_key, _SEARCH_TTL)
     pipe.execute()
 
     # Write per-language label counts

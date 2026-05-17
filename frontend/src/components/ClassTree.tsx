@@ -52,6 +52,7 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, focusedIri,
     mode === 'inferred' && expanded ? versionId : null,
     mode === 'inferred' && expanded ? term.iri : null,
     lang,
+    hideObsolete,
   )
 
   const { data: childData, isLoading } = mode === 'asserted' ? asserted : inferred
@@ -159,7 +160,7 @@ const EMPTY_SET = new Set<string>()
 
 export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect, entityType = 'class', mode = 'asserted', revealIri, hideInverse = false, hideObsolete = true, expandSignal = 0, collapseSignal = 0, lang }: Props) {
   const asserted = useClassTreeNodes(mode === 'asserted' ? ontologyId : null, mode === 'asserted' ? versionId : null, null, entityType, hideInverse, hideObsolete, lang)
-  const inferred = useInferredTreeNodes(mode === 'inferred' ? ontologyId : null, mode === 'inferred' ? versionId : null, null, lang)
+  const inferred = useInferredTreeNodes(mode === 'inferred' ? ontologyId : null, mode === 'inferred' ? versionId : null, null, lang, hideObsolete)
 
   const { data, isLoading } = mode === 'asserted' ? asserted : inferred
   const roots: Term[] = (data as any)?.terms ?? []

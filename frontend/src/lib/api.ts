@@ -748,9 +748,10 @@ export const api = {
       request<AutocompleteResponse>(
         `/ontologies/${oid}/autocomplete?q=${encodeURIComponent(q)}&cursor=${cursor}`
       ),
-    inferredChildren: (oid: string, vid: string, cls = 'http://www.w3.org/2002/07/owl#Thing', lang?: string | null) => {
+    inferredChildren: (oid: string, vid: string, cls = 'http://www.w3.org/2002/07/owl#Thing', lang?: string | null, hideObsolete = true) => {
       const params = new URLSearchParams({ cls })
       if (lang) params.set('lang', lang)
+      if (!hideObsolete) params.set('hide_obsolete', 'false')
       return request<{ terms: Term[]; reasoning_available: boolean }>(
         `/ontologies/${oid}/${vid}/inferred-children?${params}`
       )

@@ -1730,6 +1730,7 @@ async def inferred_children(
     version_id: str,
     cls: str = Query(_OWL_THING, description="Parent class IRI; defaults to owl:Thing for root"),
     lang: str | None = Query(None, description="Preferred BCP-47 language tag for labels"),
+    hide_obsolete: bool = Query(True, description="Exclude owl:deprecated terms"),
     db: AsyncSession = Depends(get_db),
 ):
     """Return direct inferred subclasses from ELK with labels resolved from the Redis index.
@@ -1740,7 +1741,7 @@ async def inferred_children(
     import json as _json
     await _get_version_or_404(db, ontology_id, version_id)
     from ontoexplorer.clients.reasoning import get_classification
-    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
+    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _deprecated_key
 
     try:
         classification = await get_classification(version_id)
@@ -1748,6 +1749,7 @@ async def inferred_children(
         return {"terms": [], "reasoning_available": False}
 
     r = _get_redis()
+    deprecated_iris: set[str] = r.smembers(_deprecated_key(version_id)) if hide_obsolete else set()
 
     def _compute() -> dict:
         elk_direct: dict[str, list[str]] = classification.get("direct_superclasses", {})
@@ -1762,6 +1764,8 @@ async def inferred_children(
                     if not any(p in elk_all.get(q, []) for q in raw if q != p)]
 
         all_classes = set(elk_direct.keys()) | set(elk_all.keys())
+        if hide_obsolete:
+            all_classes -= deprecated_iris
 
         # Pre-build children index (O(N)) so has_children lookups are O(1) not O(N²).
         children_of: dict[str, set[str]] = {}
