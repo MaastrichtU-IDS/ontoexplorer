@@ -5,15 +5,15 @@ A next-generation FAIR ontology repository — ingest, browse, query, and reason
 ## What it does
 
 - **Ingest** ontologies by IRI, URL, or file upload (OWL/XML, Turtle, RDF/XML, OBO, JSON-LD)
-- **Browse** class and property hierarchies with asserted and OWL-EL inferred views; keyboard-navigable (↑↓→←, Space, Enter)
+- **Browse** class and property hierarchies with asserted and OWL-EL inferred views; keyboard-navigable (↑↓→←→, Enter)
 - **Search** across all ontologies from the home page — keyword prefix search, structured MOS expression query, and **vector semantic search** (type ≥ 3 characters to get semantically similar results alongside prefix matches)
 - **Semantic search** — nomic-ai/nomic-embed-text-v1.5 embeddings stored in pgvector; cosine-similarity search over term labels, definitions, synonyms, and ontological context (superclasses/subclasses)
 - **Reason** using ELK (OWL-EL) — superclasses, subclasses, consistency, justifications
 - **Inspect** ontology document metadata (dcterms, pav, vann, schema.org, etc.) and VoID statistics
 - **Query** via SPARQL 1.1 endpoints over both metadata (Fuseki) and content (Oxigraph)
 - **Authenticate** via ORCID, GitHub, or Google OAuth 2.0
-- **Profile** annotation properties per version — auto-detect which IRIs carry labels, definitions, synonyms, and deprecated flags; confirm or adjust via a Profile tab; the search index rebuilds automatically
-- **Standardize metadata** — auto-detect which vocabulary expresses each ontology's title, description, version, license, homepage, and creators from the `owl:Ontology` block; confirm or override via a Metadata tab
+- **Profile** annotation properties per version — auto-detect which IRIs carry labels, definitions, synonyms, deprecated flags, and examples; the **Profile tab** shows every detected annotation property as a row (with its `rdfs:label` from the RDF data as the display name), lets you assign or reassign roles, and rebuilds the search index on save
+- **Standardize metadata** — auto-detect which vocabulary expresses each ontology's title, description, version, license, homepage, creators, and 29 total roles (including MOD-API properties such as `mod:competencyQuestion`, `mod:reliesOn`, `mod:similar`) from the `owl:Ontology` block; confirm or override via the same **Profile tab**
 - **Browse in your language** — pick a language from the global navbar picker (sourced live from indexed ontologies); class, property, and individual trees show labels in the preferred language; term detail panels filter definitions, synonyms, and annotations to that language; each tree node carries a small language badge so you always know which label variant is shown
 - **Sync** ontologies automatically — hourly polling and GitHub push webhooks trigger re-ingestion when content changes
 - **Track** ingestion jobs, register webhooks, and manage API keys
@@ -84,6 +84,12 @@ docker compose up -d
 ```bash
 docker compose exec api alembic upgrade head
 ```
+
+> **WSL2 note:** New migration files created in the WSL2 filesystem are not automatically visible inside already-running Docker containers that use bind mounts. If `alembic upgrade head` reports an older revision as head, copy the missing file in first:
+> ```bash
+> docker compose cp alembic/versions/<revision>_<name>.py api:/app/alembic/versions/
+> docker compose exec api alembic upgrade head
+> ```
 
 > **Note:** The stack uses `pgvector/pgvector:pg16` (not `postgres:16`) so the `vector` extension is available for semantic search embeddings.
 
@@ -210,7 +216,9 @@ The script prints `✓ queued`, `~ already registered`, or `✗ error` per entry
 
 ### Home page (`/`)
 
-The home page is the primary entry point for searching across all ontologies. It shows live aggregate stats (ontology count, total classes, properties, individuals) and two search modes toggled via a tab bar:
+The home page is the primary entry point for searching across all ontologies. It shows live aggregate stats and two search modes toggled via a tab bar:
+
+**Aggregate statistics** — a row of cards shows the total count per entity type across all ready ontologies (Ontologies, Classes, Object Properties, Data Properties, Annotation Properties, Individuals, Axioms). Each card for entity types also shows a **unique** count beneath the total — the number of distinct IRIs present across all ontologies combined (computed via Redis `SUNION` over the per-version entity-type sets). Cards with a zero count are hidden.
 
 **Keyword Search** — prefix-matches term labels, CURIEs, and IRIs against the Redis search index for every ontology that has been indexed. Results are globally re-ranked (exact label → prefix match → substring) and each hit shows the term label, its short IRI, and the source ontology name or shortname as a right-pinned pill. Semantically similar terms (vector search, when embeddings are available) appear below a divider with cosine-similarity scores.
 
@@ -240,14 +248,15 @@ Long descriptions are clamped to three lines; click **more…** to expand.
 
 Open an ontology page (`/ontologies/<name>`) to see the class and property trees in the left panel. Click any node to load its details in the right panel.
 
+**Left panel controls** — just below the search bar, a shared controls row contains the **Show Obsolete / Hide Obsolete** toggle (applies to all sections). Each collapsible section header (Classes, Object Properties, Data Properties) has its own **Expand / Collapse** button inline. The Classes section additionally has an **Asserted / Inferred** toggle and Object Properties has a **Show Inverses / Hide Inverses** toggle.
+
 **Keyboard navigation** — click anywhere in a tree to give it focus, then use:
 
 | Key | Action |
 |-----|--------|
 | ↓ / ↑ | Move the cursor to the next / previous visible node |
 | → | Expand the focused node (no-op if already expanded or leaf) |
-| Space | Collapse the focused node (no-op if already collapsed or leaf) |
-| ← | Jump to the parent node |
+| ← | Collapse the focused node (no-op if already collapsed or leaf) |
 | Enter | Load the focused node's details in the right panel |
 
 The keyboard cursor (accent outline) is independent from the selected node shown in the right panel — you can arrow around freely and press Enter only when you want to navigate. Each tree section (Classes, Object Properties, Data Properties, Annotation Properties) has its own independent focus; Tab moves between them.
@@ -309,7 +318,7 @@ Use the search bar at the top of the left panel to find classes and properties b
 
 ### Asserted vs. inferred views
 
-The Classes tree has an **Asserted / Inferred** toggle. The inferred view requires ELK reasoning to have completed for that ontology version (status shown on the ontology page).
+The Classes section header has an **Asserted / Inferred** toggle. The inferred view requires ELK reasoning to have completed for that ontology version (status shown on the ontology page). Language-filtered labels are applied to the inferred tree the same way as the asserted tree.
 
 ## Annotation Profiles
 
@@ -325,18 +334,20 @@ After each ingest, a `detect_profile` Celery task scans the ontology's named gra
 | Definitions | `IAO:0000115`, `skos:definition`, `rdfs:comment`, `dcterms:description` |
 | Synonyms | `skos:altLabel`, `oboInOwl:hasExactSynonym`, `hasRelatedSynonym`, `hasBroadSynonym`, `hasNarrowSynonym` |
 | Deprecated | `owl:deprecated` |
+| Examples | `skos:example` |
 
 If the ontology header declares `mod:prefLabelProperty` or `mod:definitionProperty`, those IRIs are promoted to first position. Properties used on > 5 % of classes that aren't in the registry are surfaced as **unknown** for manual role assignment.
 
 ### Reviewing and editing
 
-Once detection completes, a banner appears on the ontology page:
+Once detection completes, open the **Profile** tab on the ontology page. The editor lists every detected annotation property as a row. The primary display name for each row is the property's `rdfs:label` from the ontology's own RDF data (falling back to a short CURIE when no label is declared). A term-usage count and a role dropdown appear on each row.
 
-- **Blue** — profile auto-detected, summary shown.
-- **Amber** — unknown properties need role assignment.
+Status badges:
+
+- **Blue** — profile auto-detected.
 - **Green** — user-confirmed.
 
-Click **Review →** (or the **Profile** tab) to open the editor. You can add, remove, and reassign properties to roles, then click **Save and re-index** to rebuild the search index with the updated mapping.
+Change any role assignment and click **Save and re-index** to write the updated profile and rebuild the search index.
 
 ### Pipeline
 
@@ -356,20 +367,21 @@ After each ingest, a `detect_meta_profile` Celery task scans the `owl:Ontology` 
 
 ### What's detected
 
-| Role | Curated sources |
-|------|-----------------|
-| Title | `dcterms:title`, `rdfs:label`, `skos:prefLabel`, `schema:name` |
-| Description | `dcterms:description`, `rdfs:comment`, `skos:definition` |
-| Version | `owl:versionInfo`, `pav:version`, `dcterms:hasVersion` |
-| Homepage | `foaf:homepage`, `schema:url`, `dcterms:source` |
-| License | `dcterms:license`, `schema:license`, `xhv:license` |
-| Creators | `dcterms:creator`, `pav:createdBy`, `schema:creator` |
+29 roles are detected in total (see `ontoexplorer/modules/meta_profile/registry.py`). Key roles:
 
-18 roles are detected in total — see `ontoexplorer/modules/meta_profile/registry.py` for the full list.
+| Role group | Roles |
+|------------|-------|
+| Identification | Title, Shortname, NS Prefix, NS URI, Version Info, Version IRI |
+| Provenance | Creator, Contributor, Publisher, Created, Modified |
+| Content | Description, Language, Citation |
+| Access | License, Homepage |
+| Relationships (MOD-API) | See Also, Is Defined By, Competency Question, Endorsed By, Relies On, Similar, Generalizes, Specializes, Known Usage, Used In Project |
+
+For each role, a curated list of candidate IRIs is scored against the `owl:Ontology` block. All detected property IRIs are looked up via `rdfs:label` from the ontology's own RDF data and displayed by human-readable name in the editor.
 
 ### Reviewing and confirming
 
-Auto-detected values appear immediately on the ontology detail page under a **Metadata** tab. The tab shows the resolved value for each role alongside the source IRI. Click **Confirm** to lock in the auto-detected values, or edit individual role IRIs before confirming.
+Auto-detected values appear on the ontology detail page under the **Profile** tab (the same tab used for annotation profiles). The metadata section shows every detected property as a row — its label, current value, and an editable role assignment. Click **Save and re-index** to persist changes and trigger re-indexing.
 
 The bulk endpoint `GET /meta?ids=...` returns resolved metadata for multiple versions in one request and is used by the admin panel and list views.
 
@@ -378,7 +390,7 @@ The bulk endpoint `GET /meta?ids=...` returns resolved metadata for multiple ver
 ```
 ingest → detect_meta_profile → (ready for display)
                 ↑
-   PATCH /meta → re-resolve
+   PATCH /meta → re-index
 ```
 
 ## API Reference
@@ -534,8 +546,8 @@ tests/
 | Stats caching | Redis, pre-populated at index time | COUNT(*) over millions of triples is slow; 30-day TTL, invalidated on deprecation |
 | Auto-sync dedup | SHA-256 comparison before re-queue | Polling fetches the full file; comparing hash avoids spurious ingestion when nothing changed |
 | GitHub sync | HMAC-SHA256 on `X-Hub-Signature-256` | Standard GitHub webhook verification; 401 on mismatch prevents replay attacks |
-| Annotation profiles | SPARQL COUNT per curated IRI, stored in `ontology_profiles` table | Different ontologies use different predicates for labels/definitions; auto-detection + user override avoids hardcoding |
-| Metadata profiles | Scored candidate extraction from `owl:Ontology` block, stored in `ontology_meta_profiles` | Unifies title/description/license across dcterms, pav, schema.org, SKOS without hardcoding per-ontology mappings |
+| Annotation profiles | SPARQL COUNT per curated IRI, stored in `ontology_profiles` table; 5 roles (label, definition, synonym, deprecated, example) | Different ontologies use different predicates for labels/definitions; auto-detection + user override avoids hardcoding; property `rdfs:label` from the RDF data shown as the display name in the editor |
+| Metadata profiles | Scored candidate extraction from `owl:Ontology` block, stored in `ontology_meta_profiles`; 29 roles including MOD-API properties | Unifies title/description/license/relationships across dcterms, pav, schema.org, SKOS, MOD without hardcoding per-ontology mappings; both profile types share a single **Profile** tab |
 | Language filtering | Preferred lang → untagged → English → all; dedup by value | Ontologies mix predicates (IAO:0000115, skos:definition, rdfs:comment) carrying the same text — dedup prevents repeated entries; fallback chain ensures something always renders even if the term has no label in the session language |
 | Language index | Redis hash `search:entities:{vid}:langs` (lang → count) per version | Aggregated at index time; `GET /languages` sums across all versions in O(versions) without a SPARQL scan |
 | Search index | Redis sorted set (lexicographic) | Sub-millisecond prefix search over 100k+ terms |

@@ -12,7 +12,7 @@ const EXAMPLES = ['cell death', 'apoptosis', 'protein binding', 'nucleus', 'memb
 
 type Mode = 'search' | 'query'
 
-function StatCard({ label, value, to }: { label: string; value: number | string; to?: string }) {
+function StatCard({ label, value, subtitle, to }: { label: string; value: number | string; subtitle?: string; to?: string }) {
   const inner = (
     <>
       <div style={{ fontSize: 26, fontWeight: 700, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
@@ -21,6 +21,11 @@ function StatCard({ label, value, to }: { label: string; value: number | string;
       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
         {label}
       </div>
+      {subtitle && (
+        <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 3, opacity: 0.7 }}>
+          {subtitle}
+        </div>
+      )}
     </>
   )
   const base: React.CSSProperties = {
@@ -41,9 +46,10 @@ function StatCard({ label, value, to }: { label: string; value: number | string;
   )
 }
 
-function ResultList({ results, pathFor }: {
+function ResultList({ results, pathFor, ontologyNameFor }: {
   results: SearchResult[]
   pathFor: (r: SearchResult) => string | null
+  ontologyNameFor?: (r: SearchResult) => string | null
 }) {
   if (results.length === 0) return null
   return (
@@ -51,6 +57,7 @@ function ResultList({ results, pathFor }: {
       {results.map(r => {
         const path = pathFor(r)
         const isInd = r.type === 'individual'
+        const ontName = ontologyNameFor?.(r) ?? null
         const inner = (
           <>
             <span style={{ color: 'var(--accent)', fontWeight: 500, flexShrink: 0 }}>{r.label}</span>
@@ -63,6 +70,13 @@ function ResultList({ results, pathFor }: {
             )}
             {r.source && <SourceBadge source={r.source} />}
             <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{r.short}</span>
+            {ontName && (
+              <span style={{
+                fontSize: 10, padding: '1px 6px', borderRadius: 3,
+                background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                color: 'var(--text-dim)', marginLeft: 'auto', flexShrink: 0, fontWeight: 500,
+              }}>{ontName}</span>
+            )}
           </>
         )
         const sharedStyle: React.CSSProperties = {
@@ -113,6 +127,14 @@ function KeywordSearch() {
     return `/ontologies/${slugFromIri(ont.iri)}/${r.version_id}?term=${encodeURIComponent(r.iri)}`
   }
 
+  function ontologyNameFor(r: SearchResult): string | null {
+    const ont = ontologies.find(o => o.id === r.ontology_id)
+    if (!ont) return null
+    if (ont.shortname) return ont.shortname
+    const last = ont.iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? ont.iri
+    return last.replace(/\.(owl|ttl|rdf|obo|json|xml|nt)$/i, '')
+  }
+
   return (
     <>
       <form onSubmit={handleSubmit} style={{ display: 'flex', gap: 8, marginBottom: '0.75rem' }}>
@@ -157,7 +179,7 @@ function KeywordSearch() {
           No results for "{submitted}"
         </p>
       )}
-      <ResultList results={results} pathFor={pathFor} />
+      <ResultList results={results} pathFor={pathFor} ontologyNameFor={ontologyNameFor} />
       {semanticResults.length > 0 && (
         <>
           <div style={{
@@ -173,6 +195,7 @@ function KeywordSearch() {
             {semanticResults.map(r => {
               const path = pathFor(r)
               const alreadyInResults = results.some(p => p.iri === r.iri)
+              const semOntName = ontologyNameFor(r)
               const inner = (
                 <>
                   <span style={{
@@ -181,10 +204,17 @@ function KeywordSearch() {
                   }}>{r.label}</span>
                   {r.source && <SourceBadge source={r.source} />}
                   <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{r.short}</span>
+                  {semOntName && (
+                    <span style={{
+                      fontSize: 10, padding: '1px 6px', borderRadius: 3,
+                      background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                      color: 'var(--text-dim)', marginLeft: 'auto', flexShrink: 0, fontWeight: 500,
+                    }}>{semOntName}</span>
+                  )}
                   <span style={{
                     fontSize: 10, padding: '1px 5px', borderRadius: 3,
                     background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-                    color: 'var(--text-dim)', marginLeft: 'auto', flexShrink: 0,
+                    color: 'var(--text-dim)', flexShrink: 0,
                   }}>{r.score?.toFixed(2)}</span>
                 </>
               )
@@ -356,12 +386,33 @@ export default function Home() {
       </p>
 
       {publicStats && (
-        <div style={{ display: 'flex', gap: 12, marginBottom: '2rem' }}>
+        <div style={{ display: 'flex', gap: 12, marginBottom: '2rem', flexWrap: 'wrap' }}>
           <StatCard label="Ontologies" value={publicStats.total_ontologies} to="/ontologies" />
-          <StatCard label="Classes" value={publicStats.total_classes} to="/ontologies" />
-          <StatCard label="Properties" value={publicStats.total_properties} to="/ontologies" />
+          <StatCard label="Classes" value={publicStats.total_classes}
+            subtitle={publicStats.unique_classes != null ? `${publicStats.unique_classes.toLocaleString()} unique` : undefined}
+            to="/ontologies" />
+          {publicStats.total_object_properties > 0 && (
+            <StatCard label="Object Properties" value={publicStats.total_object_properties}
+              subtitle={publicStats.unique_object_properties != null ? `${publicStats.unique_object_properties.toLocaleString()} unique` : undefined}
+              to="/ontologies" />
+          )}
+          {publicStats.total_data_properties > 0 && (
+            <StatCard label="Data Properties" value={publicStats.total_data_properties}
+              subtitle={publicStats.unique_data_properties != null ? `${publicStats.unique_data_properties.toLocaleString()} unique` : undefined}
+              to="/ontologies" />
+          )}
+          {publicStats.total_annotation_properties > 0 && (
+            <StatCard label="Annotation Properties" value={publicStats.total_annotation_properties}
+              subtitle={publicStats.unique_annotation_properties != null ? `${publicStats.unique_annotation_properties.toLocaleString()} unique` : undefined}
+              to="/ontologies" />
+          )}
           {publicStats.total_individuals > 0 && (
-            <StatCard label="Individuals" value={publicStats.total_individuals} to="/ontologies" />
+            <StatCard label="Individuals" value={publicStats.total_individuals}
+              subtitle={publicStats.unique_individuals != null ? `${publicStats.unique_individuals.toLocaleString()} unique` : undefined}
+              to="/ontologies" />
+          )}
+          {publicStats.total_axioms > 0 && (
+            <StatCard label="Axioms" value={publicStats.total_axioms} to="/ontologies" />
           )}
         </div>
       )}

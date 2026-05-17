@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOntologySearch } from '../hooks/useOntologySearch'
+import { useRepositoryLanguages } from '../hooks/useRepositoryLanguages'
 import { Ontology, slugFromIri } from '../lib/api'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -67,7 +68,7 @@ function OntologyRow({ o }: { o: Ontology }) {
   const navigate = useNavigate()
   const [descExpanded, setDescExpanded] = useState(false)
   const latest = o.latest_version
-  const hasStats = o.class_count != null || o.property_count != null || o.triple_count != null || o.individual_count != null
+  const hasStats = o.class_count != null || o.property_count != null || o.triple_count != null || o.individual_count != null || o.object_property_count != null
   const knownGroups = (o.groups ?? []).filter(g => g in GROUP_LABELS)
 
   return (
@@ -139,13 +140,21 @@ function OntologyRow({ o }: { o: Ontology }) {
         {hasStats ? (
           <>
             {fmtCount(o.class_count)} cls
-            <span style={{ color: 'var(--border)', margin: '0 4px' }}>·</span>
-            {fmtCount(o.property_count)} props
+            {o.object_property_count != null && o.object_property_count > 0 && (
+              <><span style={{ color: 'var(--border)', margin: '0 4px' }}>·</span>{fmtCount(o.object_property_count)} obj</>
+            )}
+            {o.datatype_property_count != null && o.datatype_property_count > 0 && (
+              <><span style={{ color: 'var(--border)', margin: '0 4px' }}>·</span>{fmtCount(o.datatype_property_count)} data</>
+            )}
+            {o.annotation_property_count != null && o.annotation_property_count > 0 && (
+              <><span style={{ color: 'var(--border)', margin: '0 4px' }}>·</span>{fmtCount(o.annotation_property_count)} ann</>
+            )}
             {o.individual_count != null && o.individual_count > 0 && (
               <><span style={{ color: 'var(--border)', margin: '0 4px' }}>·</span>{fmtCount(o.individual_count)} ind</>
             )}
-            <span style={{ color: 'var(--border)', margin: '0 4px' }}>·</span>
-            {fmtCount(o.triple_count)} axioms
+            {o.triple_count != null && (
+              <><span style={{ color: 'var(--border)', margin: '0 4px' }}>·</span>{fmtCount(o.triple_count)} axioms</>
+            )}
           </>
         ) : '—'}
       </td>
@@ -157,6 +166,13 @@ function OntologyRow({ o }: { o: Ontology }) {
     </tr>
   )
 }
+
+// ── Sort ─────────────────────────────────────────────────────────────────────
+
+type SortCol = 'name' | 'date' | 'status'
+type SortDir = 'asc' | 'desc'
+
+const STATUS_RANK: Record<string, number> = { ready: 0, ingested: 1, indexing: 2, reasoning: 2, failed: 3 }
 
 // ── Group filter ─────────────────────────────────────────────────────────────
 
@@ -174,8 +190,44 @@ const GROUPS: { value: string; label: string }[] = [
 export default function Ontologies() {
   const [query, setQuery] = useState('')
   const [group, setGroup] = useState('')
+  const [langs, setLangs] = useState<Set<string>>(new Set())
+  const [sortCol, setSortCol] = useState<SortCol>('name')
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
   const { data, isLoading } = useOntologySearch(query, group || undefined)
-  const ontologies = data?.ontologies ?? []
+  const repoLangs = useRepositoryLanguages()
+
+  function toggleLang(lang: string) {
+    setLangs(prev => {
+      const next = new Set(prev)
+      next.has(lang) ? next.delete(lang) : next.add(lang)
+      return next
+    })
+  }
+
+  function handleSort(col: SortCol) {
+    if (col === sortCol) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortCol(col); setSortDir('asc') }
+  }
+
+  const ontologies = useMemo(() => {
+    const list = data?.ontologies ?? []
+    const langFiltered = langs.size === 0
+      ? list
+      : list.filter(o => (o.languages ?? []).some(l => langs.has(l.lang)))
+    return [...langFiltered].sort((a, b) => {
+      let cmp = 0
+      if (sortCol === 'name') {
+        cmp = displayName(a).localeCompare(displayName(b))
+      } else if (sortCol === 'date') {
+        cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      } else {
+        const ra = STATUS_RANK[a.latest_version?.status ?? ''] ?? 4
+        const rb = STATUS_RANK[b.latest_version?.status ?? ''] ?? 4
+        cmp = ra - rb || displayName(a).localeCompare(displayName(b))
+      }
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+  }, [data, langs, sortCol, sortDir])
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '2rem 1.5rem' }}>
@@ -184,7 +236,7 @@ export default function Ontologies() {
       </h1>
 
       {/* Group filter chips */}
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: '1rem' }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: '0.6rem' }}>
         {GROUPS.map(g => (
           <button
             key={g.value}
@@ -201,6 +253,41 @@ export default function Ontologies() {
           </button>
         ))}
       </div>
+
+      {/* Language filter chips */}
+      {repoLangs.length > 0 && (
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center', marginBottom: '1rem' }}>
+          <span style={{ fontSize: 11, color: 'var(--text-dim)', marginRight: 2 }}>Lang:</span>
+          {repoLangs.map(({ lang, label_count }) => {
+            const active = langs.has(lang)
+            return (
+              <button
+                key={lang}
+                onClick={() => toggleLang(lang)}
+                title={`${label_count.toLocaleString()} labels`}
+                style={{
+                  fontSize: 11, padding: '2px 8px', borderRadius: 20, cursor: 'pointer',
+                  border: '1px solid',
+                  borderColor: active ? 'rgba(86,182,194,0.6)' : 'var(--border)',
+                  background: active ? 'rgba(86,182,194,0.15)' : 'transparent',
+                  color: active ? '#56b6c2' : 'var(--text-dim)',
+                  fontWeight: active ? 600 : 400,
+                }}
+              >
+                {lang || '—'}
+              </button>
+            )
+          })}
+          {langs.size > 0 && (
+            <button
+              onClick={() => setLangs(new Set())}
+              style={{ fontSize: 11, color: 'var(--text-dim)', padding: '2px 6px' }}
+            >
+              clear
+            </button>
+          )}
+        </div>
+      )}
 
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
@@ -226,6 +313,33 @@ export default function Ontologies() {
             ✕
           </button>
         )}
+      </div>
+
+      {/* Sort bar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginBottom: '1rem' }}>
+        <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)', marginRight: '0.25rem' }}>Sort:</span>
+        {(['name', 'date'] as SortCol[]).map(col => {
+          const active = sortCol === col
+          const arrow = active ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''
+          return (
+            <button
+              key={col}
+              onClick={() => handleSort(col)}
+              style={{
+                fontSize: 'var(--font-size-sm)',
+                padding: '2px 8px', borderRadius: 4,
+                border: '1px solid',
+                borderColor: active ? 'var(--accent)' : 'var(--border)',
+                color: active ? 'var(--accent)' : 'var(--text-dim)',
+                background: 'transparent',
+                cursor: 'pointer',
+                fontWeight: active ? 600 : 400,
+              }}
+            >
+              {col.charAt(0).toUpperCase() + col.slice(1)}{arrow}
+            </button>
+          )
+        })}
       </div>
 
       {isLoading ? (
@@ -257,7 +371,7 @@ export default function Ontologies() {
 
       <p style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: '1rem' }}>
         {ontologies.length} ontolog{ontologies.length === 1 ? 'y' : 'ies'}
-        {(query || group) && ' matching filter'}
+        {(query || group || langs.size > 0) && ' matching filter'}
       </p>
     </div>
   )

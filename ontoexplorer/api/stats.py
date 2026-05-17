@@ -25,38 +25,92 @@ router = APIRouter(prefix="/api/v1/stats", tags=["stats"])
 @router.get("/public", summary="Public aggregate statistics (no auth required)")
 async def get_public_stats(db: AsyncSession = Depends(get_db)):
     import json
-    from ontoexplorer.modules.search.indexer import _get_redis
+    import uuid as _uuid
+    from ontoexplorer.modules.search.indexer import _get_redis, _stats_cache_key, _type_key
+
+    # Latest ready version per ontology (same logic as list endpoint)
+    subq = (
+        select(
+            OntologyVersion.ontology_id,
+            func.max(OntologyVersion.created_at).label("max_created"),
+        )
+        .where(OntologyVersion.status == "ready")
+        .group_by(OntologyVersion.ontology_id)
+        .subquery()
+    )
+    vr = await db.execute(
+        select(OntologyVersion.id).join(
+            subq,
+            (OntologyVersion.ontology_id == subq.c.ontology_id)
+            & (OntologyVersion.created_at == subq.c.max_created),
+        )
+    )
+    version_ids = list(vr.scalars().all())
 
     total_ontologies = await db.scalar(select(func.count(Ontology.id)))
-    version_ids = list(await db.scalars(select(OntologyVersion.id)))
 
-    def _sum_stats(vids: list[str]) -> tuple[int, int, int]:
+    def _compute_stats(vids: list[str]) -> dict:
         if not vids:
-            return 0, 0, 0
-        from ontoexplorer.modules.search.indexer import _stats_cache_key
+            return {
+                "total_classes": 0, "unique_classes": 0,
+                "total_object_properties": 0, "unique_object_properties": 0,
+                "total_data_properties": 0, "unique_data_properties": 0,
+                "total_annotation_properties": 0, "unique_annotation_properties": 0,
+                "total_axioms": 0,
+                "total_individuals": 0, "unique_individuals": 0,
+            }
+
         r = _get_redis()
+
+        # Sum totals from stats cache
         values = r.mget([_stats_cache_key(vid) for vid in vids])
-        classes = properties = individuals = 0
+        classes = obj_props = data_props = ann_props = axioms = individuals = 0
         for raw in values:
             if not raw:
                 continue
             try:
                 meta = json.loads(raw)
-                classes += int(meta.get("class_count", 0))
-                properties += int(meta.get("property_count", 0))
+                classes     += int(meta.get("class_count", 0))
+                obj_props   += int(meta.get("object_property_count", 0))
+                data_props  += int(meta.get("datatype_property_count", 0))
+                ann_props   += int(meta.get("annotation_property_count", 0))
+                axioms      += int(meta.get("triple_count", 0))
                 individuals += int(meta.get("individual_count", 0))
             except (ValueError, TypeError, json.JSONDecodeError):
                 pass
-        return classes, properties, individuals
 
-    total_classes, total_properties, total_individuals = await asyncio.to_thread(_sum_stats, version_ids)
+        # Unique counts via SUNIONSTORE into temp keys (deleted immediately)
+        def _unique(entity_type: str) -> int:
+            keys = [_type_key(vid, entity_type) for vid in vids]
+            tmp = f"stats:unique:tmp:{_uuid.uuid4().hex}"
+            try:
+                r.sunionstore(tmp, *keys)
+                return r.scard(tmp)
+            except Exception:
+                return 0
+            finally:
+                try:
+                    r.delete(tmp)
+                except Exception:
+                    pass
 
-    return {
-        "total_ontologies": total_ontologies,
-        "total_classes": total_classes,
-        "total_properties": total_properties,
-        "total_individuals": total_individuals,
-    }
+        return {
+            "total_classes":              classes,
+            "unique_classes":             _unique("class"),
+            "total_object_properties":    obj_props,
+            "unique_object_properties":   _unique("object_property"),
+            "total_data_properties":      data_props,
+            "unique_data_properties":     _unique("data_property"),
+            "total_annotation_properties": ann_props,
+            "unique_annotation_properties": _unique("annotation_property"),
+            "total_axioms":               axioms,
+            "total_individuals":          individuals,
+            "unique_individuals":         _unique("individual"),
+        }
+
+    result = await asyncio.to_thread(_compute_stats, version_ids)
+    result["total_ontologies"] = total_ontologies
+    return result
 
 
 @router.get("", summary="Usage statistics for the authenticated user")

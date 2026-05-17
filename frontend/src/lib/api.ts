@@ -147,6 +147,9 @@ export interface Ontology {
   latest_version?: OntologyVersion | null
   class_count?: number | null
   property_count?: number | null
+  object_property_count?: number | null
+  datatype_property_count?: number | null
+  annotation_property_count?: number | null
   triple_count?: number | null
   individual_count?: number | null
   label?: string | null
@@ -381,6 +384,7 @@ export interface OntologyProfileData {
   definition_props: string[]
   synonym_props: string[]
   deprecated_props: string[]
+  example_props: string[]
   status: 'auto_detected' | 'user_confirmed'
   updated_at: string | null
 }
@@ -389,12 +393,14 @@ export interface ProfileCandidate {
   iri: string
   count: number
   mod_declared: boolean
+  label?: string | null
 }
 
 export interface ProfileUnknown {
   iri: string
   count: number
   pct_of_classes: number
+  label?: string | null
 }
 
 export interface ProfileCandidates {
@@ -411,6 +417,7 @@ export interface ProfilePatch {
   definition_props?: string[]
   synonym_props?: string[]
   deprecated_props?: string[]
+  example_props?: string[]
 }
 
 // ── Meta-profile types ────────────────────────────────────────────────────────
@@ -425,6 +432,7 @@ export interface OntologyMetaResolved {
   license: string | null
   homepage: string | null
   version_info: string | null
+  version_iri: string | null
   prefix: string | null
   namespace_uri: string | null
   created: string | null
@@ -434,6 +442,16 @@ export interface OntologyMetaResolved {
   funding: string | null
   status: string | null
   syntax: string | null
+  see_also: string[]
+  is_defined_by: string | null
+  competency_questions: string[]
+  endorsed_by: string[]
+  relies_on: string[]
+  similar: string[]
+  generalizes: string[]
+  specializes: string[]
+  known_usage: string[]
+  used_in_project: string[]
 }
 
 export interface OntologyMetaProfile {
@@ -447,6 +465,7 @@ export interface OntologyMetaProfile {
   license_props: string[]
   homepage_props: string[]
   version_info_props: string[]
+  version_iri_props: string[]
   prefix_props: string[]
   namespace_uri_props: string[]
   created_props: string[]
@@ -456,6 +475,16 @@ export interface OntologyMetaProfile {
   funding_props: string[]
   status_props: string[]
   syntax_props: string[]
+  see_also_props: string[]
+  is_defined_by_props: string[]
+  competency_question_props: string[]
+  endorsed_by_props: string[]
+  relies_on_props: string[]
+  similar_props: string[]
+  generalizes_props: string[]
+  specializes_props: string[]
+  known_usage_props: string[]
+  used_in_project_props: string[]
   resolved: OntologyMetaResolved
   status: 'auto_detected' | 'user_confirmed'
   updated_at: string | null
@@ -471,6 +500,7 @@ export interface MetaProfilePatch {
   license_props?: string[]
   homepage_props?: string[]
   version_info_props?: string[]
+  version_iri_props?: string[]
   prefix_props?: string[]
   namespace_uri_props?: string[]
   created_props?: string[]
@@ -480,6 +510,16 @@ export interface MetaProfilePatch {
   funding_props?: string[]
   status_props?: string[]
   syntax_props?: string[]
+  see_also_props?: string[]
+  is_defined_by_props?: string[]
+  competency_question_props?: string[]
+  endorsed_by_props?: string[]
+  relies_on_props?: string[]
+  similar_props?: string[]
+  generalizes_props?: string[]
+  specializes_props?: string[]
+  known_usage_props?: string[]
+  used_in_project_props?: string[]
 }
 
 export interface BulkMetaItem extends OntologyMetaResolved {
@@ -503,6 +543,7 @@ export interface AdminOntologyEntry {
   iri: string
   shortname: string | null
   label: string | null
+  source_url: string | null
   version_id: string
   triple_count: number | null
   ingestion_status: string
@@ -528,6 +569,15 @@ export interface AdminOverview {
   services: AdminServiceStatus
   ontologies: AdminOntologyEntry[]
   jobs: AdminJobEntry[]
+}
+
+export interface WorkerTask {
+  id: string
+  name: string
+  state: 'active' | 'reserved' | 'pending'
+  kwargs: Record<string, unknown>
+  time_start: number | null
+  worker: string
 }
 
 // ── Predicate constants ───────────────────────────────────────────────────────
@@ -697,10 +747,13 @@ export const api = {
       request<AutocompleteResponse>(
         `/ontologies/${oid}/autocomplete?q=${encodeURIComponent(q)}&cursor=${cursor}`
       ),
-    inferredChildren: (oid: string, vid: string, cls = 'http://www.w3.org/2002/07/owl#Thing') =>
-      request<{ terms: Term[]; reasoning_available: boolean }>(
-        `/ontologies/${oid}/${vid}/inferred-children?cls=${encodeURIComponent(cls)}`
-      ),
+    inferredChildren: (oid: string, vid: string, cls = 'http://www.w3.org/2002/07/owl#Thing', lang?: string | null) => {
+      const params = new URLSearchParams({ cls })
+      if (lang) params.set('lang', lang)
+      return request<{ terms: Term[]; reasoning_available: boolean }>(
+        `/ontologies/${oid}/${vid}/inferred-children?${params}`
+      )
+    },
     ancestors: (oid: string, vid: string, iri: string, mode: 'asserted' | 'inferred' = 'asserted') =>
       request<{ ancestors: Term[]; reasoning_available?: boolean }>(
         `/ontologies/${oid}/${vid}/ancestors?iri=${encodeURIComponent(iri)}&mode=${mode}`
@@ -761,7 +814,7 @@ export const api = {
           body: JSON.stringify(body),
         }),
       detect: (ontologyId: string, versionId: string) =>
-        request<{ task_id: string; status: string }>(
+        request<OntologyProfileData>(
           `/ontologies/${ontologyId}/${versionId}/profile/detect`,
           { method: 'POST' }
         ),
@@ -778,7 +831,7 @@ export const api = {
           body: JSON.stringify(body),
         }),
       detect: (ontologyId: string, versionId: string) =>
-        request<{ task_id: string; status: string }>(
+        request<OntologyMetaProfile>(
           `/ontologies/${ontologyId}/${versionId}/meta/detect`,
           { method: 'POST' }
         ),
@@ -882,13 +935,39 @@ export const api = {
         job_durations: Array<{ month: string; avg_seconds: number }>
       }>('/stats'),
     public: () =>
-      request<{ total_ontologies: number; total_classes: number; total_properties: number; total_individuals: number }>(
-        '/stats/public'
-      ),
+      request<{
+        total_ontologies: number
+        total_classes: number
+        unique_classes: number
+        total_object_properties: number
+        unique_object_properties: number
+        total_data_properties: number
+        unique_data_properties: number
+        total_annotation_properties: number
+        unique_annotation_properties: number
+        total_axioms: number
+        total_individuals: number
+        unique_individuals: number
+      }>('/stats/public'),
   },
 
   admin: {
     overview: () => request<AdminOverview>('/admin/overview'),
+    checkUpdate: (ontologyId: string) =>
+      request<{ status: 'up_to_date' | 'update_queued' | 'no_source_url'; task_id?: string }>(
+        `/admin/ontologies/${ontologyId}/check-update`,
+        { method: 'POST' }
+      ),
+    workers: () => request<{ tasks: WorkerTask[] }>('/admin/workers'),
+    revokeWorker: (taskId: string, versionId?: string) => {
+      const params = versionId ? `?version_id=${encodeURIComponent(versionId)}` : ''
+      return request<{ status: string; task_id: string }>(`/admin/workers/${taskId}${params}`, { method: 'DELETE' })
+    },
+    queueIngest: (ontologyId: string) =>
+      request<{ status: string; task_id: string; method: 'iri' | 'url' }>(
+        `/admin/ontologies/${ontologyId}/ingest`,
+        { method: 'POST' }
+      ),
   },
 
   meta: {

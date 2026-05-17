@@ -332,7 +332,7 @@ async def list_ontologies(
         if group == "other":
             stmt = stmt.where(func.jsonb_array_length(Ontology.groups) == 0)
         else:
-            stmt = stmt.where(text("groups @> :grp::jsonb").bindparams(grp=_json_grp.dumps([group])))
+            stmt = stmt.where(text("groups @> cast(:grp as jsonb)").bindparams(grp=_json_grp.dumps([group])))
     if not q:
         stmt = stmt.offset(offset).limit(limit)
     result = await db.execute(stmt)
@@ -429,6 +429,9 @@ async def list_ontologies(
             s = stats_by_vid.get(v.id, {})
             d["class_count"] = s.get("class_count")
             d["property_count"] = s.get("property_count")
+            d["object_property_count"] = s.get("object_property_count")
+            d["datatype_property_count"] = s.get("datatype_property_count")
+            d["annotation_property_count"] = s.get("annotation_property_count")
             d["triple_count"] = s.get("triple_count") or v.triple_count
             d["individual_count"] = s.get("individual_count")
             d["languages"] = langs_by_vid.get(v.id, [])
@@ -439,6 +442,9 @@ async def list_ontologies(
             d["latest_version"] = None
             d["class_count"] = None
             d["property_count"] = None
+            d["object_property_count"] = None
+            d["datatype_property_count"] = None
+            d["annotation_property_count"] = None
             d["triple_count"] = None
             d["individual_count"] = None
             d["languages"] = []
@@ -1722,6 +1728,7 @@ async def inferred_children(
     ontology_id: str,
     version_id: str,
     cls: str = Query(_OWL_THING, description="Parent class IRI; defaults to owl:Thing for root"),
+    lang: str | None = Query(None, description="Preferred BCP-47 language tag for labels"),
     db: AsyncSession = Depends(get_db),
 ):
     """Return direct inferred subclasses from ELK with labels resolved from the Redis index.
@@ -1729,6 +1736,7 @@ async def inferred_children(
     Uses the full cached classification result so a single ELK call covers all nodes.
     Root request (cls=owl:Thing) returns classes with no direct inferred superclass.
     """
+    import json as _json
     await _get_version_or_404(db, ontology_id, version_id)
     from ontoexplorer.clients.reasoning import get_classification
     from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
@@ -1749,7 +1757,7 @@ async def inferred_children(
 
     def _direct_parents(c: str) -> list[str]:
         if c in elk_direct:
-            return elk_direct[c]
+            return [p for p in elk_direct[c] if p not in _excluded]
         # Derive from superclasses: keep most-specific (drop p if any sibling q has p in elk_all[q])
         raw = [p for p in elk_all.get(c, []) if p not in _excluded]
         return [p for p in raw
@@ -1764,20 +1772,35 @@ async def inferred_children(
 
     r = _get_redis()
 
-    def _label(iri: str) -> str:
+    def _label_and_lang(iri: str) -> tuple[str, str | None]:
         detail = r.hgetall(_iri_key(version_id, iri))
-        if detail and detail.get("label"):
-            return detail["label"]
+        if detail:
+            if lang and detail.get("labels"):
+                labels = _json.loads(detail["labels"])
+                match = next((e for e in labels if e.get("lang") == lang), None)
+                if match:
+                    return match["value"], lang
+                untagged = next((e for e in labels if not e.get("lang")), None)
+                if untagged:
+                    return untagged["value"], None
+            if detail.get("label"):
+                return detail["label"], None
         fragment = iri.rstrip("/")
-        return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
+        label = fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
+        return label, None
 
     def _has_inferred_children(iri: str) -> bool:
         return any(iri in _direct_parents(c) for c in all_classes)
 
-    return {
-        "terms": [{"iri": iri, "label": _label(iri), "has_children": _has_inferred_children(iri)} for iri in child_iris],
-        "reasoning_available": True,
-    }
+    terms = []
+    for iri in child_iris:
+        label, lang_tag = _label_and_lang(iri)
+        term: dict = {"iri": iri, "label": label, "has_children": _has_inferred_children(iri)}
+        if lang_tag:
+            term["lang"] = lang_tag
+        terms.append(term)
+
+    return {"terms": terms, "reasoning_available": True}
 
 
 @router.get("/{ontology_id}/{version_id}/ancestors",
