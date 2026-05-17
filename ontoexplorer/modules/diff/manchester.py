@@ -5,6 +5,8 @@ See docs/superpowers/specs/2026-05-17-manchester-diff-rendering-design.md.
 """
 from __future__ import annotations
 
+import hashlib
+
 import pyoxigraph as ox
 
 # Common IRI constants
@@ -153,3 +155,97 @@ def iri_to_label(
             chosen = iri
     labels[iri] = chosen
     return chosen
+
+
+def render_class_expression(
+    store: ox.Store,
+    graph: ox.NamedNode,
+    node: ox.Term,
+    *,
+    labels: dict[str, str],
+    depth: int = 0,
+) -> str:
+    """Render an RDF term as a Manchester class expression.
+
+    Dispatches by term kind:
+      - NamedNode → label / local-name
+      - Literal   → "value"[@lang][^^xsd:datatype]
+      - BlankNode → introspect outgoing triples, match an OWL pattern, recurse
+
+    Depth-bounded; deeper than _MAX_DEPTH renders as `…`.
+    """
+    if depth >= _MAX_DEPTH:
+        return "…"
+    if isinstance(node, ox.NamedNode):
+        return iri_to_label(store, graph, node.value, labels=labels)
+    if isinstance(node, ox.Literal):
+        return _render_literal(node)
+    if isinstance(node, ox.BlankNode):
+        return _render_bnode_expression(store, graph, node, labels=labels, depth=depth)
+    return f"[unknown:{node!r}]"
+
+
+def _render_literal(lit: ox.Literal) -> str:
+    """Manchester-style literal: "value"[@lang][^^xsd:dtype]."""
+    text = f'"{lit.value}"'
+    if lit.language:
+        return f"{text}@{lit.language}"
+    if lit.datatype is not None and lit.datatype.value != _XSD_STRING:
+        dt = lit.datatype.value
+        if dt.startswith(_XSD):
+            return f"{text}^^xsd:{dt[len(_XSD):]}"
+        return f"{text}^^<{dt}>"
+    return text
+
+
+def _render_bnode_expression(
+    store: ox.Store,
+    graph: ox.NamedNode,
+    node: ox.BlankNode,
+    *,
+    labels: dict[str, str],
+    depth: int,
+) -> str:
+    """Dispatch a blank-node class expression to its specific renderer.
+
+    Order of detection matches OWL2's structural specification. Falls back to
+    `[bnode:<short-fp>]` when no pattern matches.
+    """
+    preds = _bnode_predicates(store, graph, node)
+
+    # Each branch added in a subsequent task; for now everything falls through.
+
+    return _bnode_fallback(store, graph, node)
+
+
+def _bnode_predicates(
+    store: ox.Store, graph: ox.NamedNode, node: ox.BlankNode
+) -> dict[str, ox.Term]:
+    """Map of predicate-IRI → first object found for this bnode.
+
+    Sufficient for the OWL constructs we render (each has at most one object
+    per predicate). RDF lists are walked separately via _rdf_list_items.
+    """
+    preds: dict[str, ox.Term] = {}
+    for q in store.quads_for_pattern(node, None, None, graph):
+        # First-wins; predicates we care about are functional in OWL2 anyway.
+        preds.setdefault(q.predicate.value, q.object)
+    return preds
+
+
+def _bnode_fallback(
+    store: ox.Store, graph: ox.NamedNode, node: ox.BlankNode
+) -> str:
+    """Short stable fingerprint for an unrecognized bnode (debugging aid)."""
+    parts: list[str] = []
+    for q in store.quads_for_pattern(node, None, None, graph):
+        if isinstance(q.object, ox.NamedNode):
+            o = q.object.value
+        elif isinstance(q.object, ox.Literal):
+            o = f'"{q.object.value}"'
+        else:
+            o = "_:b"
+        parts.append(f"{q.predicate.value}\t{o}")
+    parts.sort()
+    fp = hashlib.sha1("\n".join(parts).encode()).hexdigest()[:8]
+    return f"[bnode:{fp}]"

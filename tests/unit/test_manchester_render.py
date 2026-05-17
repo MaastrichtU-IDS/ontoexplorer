@@ -141,3 +141,62 @@ def test_rdf_list_items_stops_at_cycle():
     )
     items = _rdf_list_items(store, _GRAPH, head)
     assert [t.value for t in items] == [a.value]
+
+
+from ontoexplorer.modules.diff.manchester import render_class_expression
+
+
+def test_render_named_class_returns_label():
+    iri = "http://example.org/Pizza"
+    label_pred = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#label")
+    store = _store(
+        (ox.NamedNode(iri), label_pred, ox.Literal("Pizza", language="en")),
+    )
+    out = render_class_expression(store, _GRAPH, ox.NamedNode(iri), labels={})
+    assert out == "Pizza"
+
+
+def test_render_named_class_uses_local_name_when_no_label():
+    iri = "http://example.org/Pizza"
+    store = _store()
+    out = render_class_expression(store, _GRAPH, ox.NamedNode(iri), labels={})
+    assert out == "Pizza"
+
+
+def test_render_literal_object_renders_with_quotes_and_lang():
+    lit = ox.Literal("hello", language="en")
+    store = _store()
+    out = render_class_expression(store, _GRAPH, lit, labels={})
+    assert out == '"hello"@en'
+
+
+def test_render_literal_object_typed_renders_with_datatype():
+    lit = ox.Literal(
+        "42",
+        datatype=ox.NamedNode("http://www.w3.org/2001/XMLSchema#integer"),
+    )
+    store = _store()
+    out = render_class_expression(store, _GRAPH, lit, labels={})
+    assert out == '"42"^^xsd:integer'
+
+
+def test_render_xsd_string_literal_omits_datatype():
+    lit = ox.Literal(
+        "hello",
+        datatype=ox.NamedNode("http://www.w3.org/2001/XMLSchema#string"),
+    )
+    store = _store()
+    out = render_class_expression(store, _GRAPH, lit, labels={})
+    assert out == '"hello"'
+
+
+def test_render_unknown_bnode_returns_bnode_placeholder():
+    # Bnode with no recognized class-expression predicate falls through to fallback.
+    bnode = ox.BlankNode("unknown_xyz")
+    store = _store(
+        (bnode,
+         ox.NamedNode("http://example.org/randomPred"),
+         ox.NamedNode("http://example.org/Whatever")),
+    )
+    out = render_class_expression(store, _GRAPH, bnode, labels={})
+    assert out.startswith("[bnode:")
