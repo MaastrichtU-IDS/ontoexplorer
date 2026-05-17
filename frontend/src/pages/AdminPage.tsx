@@ -291,7 +291,7 @@ function OntologyTable({
                   />
                 </td>
                 <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-                  {row.ingestion_status === 'ingested' || row.ingestion_status === 'done' || row.ingestion_status === 'ok' ? (
+                  {row.ingestion_status !== 'deprecated' && row.ingestion_status !== 'pending' ? (
                     reindexStates[row.id] === 'queued'
                       ? <span style={{ color: '#ffa657', fontSize: 10 }}>↑ queued</span>
                       : <button

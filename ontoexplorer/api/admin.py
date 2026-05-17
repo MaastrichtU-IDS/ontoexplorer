@@ -479,13 +479,13 @@ async def admin_queue_index(
     version = (await db.execute(
         select(OntologyVersion)
         .where(OntologyVersion.ontology_id == ontology_id)
-        .where(OntologyVersion.status == "ingested")
+        .where(OntologyVersion.status != "deprecated")
         .order_by(OntologyVersion.created_at.desc())
         .limit(1)
     )).scalar_one_or_none()
 
     if not version:
-        raise HTTPException(status_code=404, detail="No ingested version found for this ontology")
+        raise HTTPException(status_code=404, detail="No non-deprecated version found for this ontology")
 
     task = index_ontology.delay(str(version.id), ontology_id=ontology_id)
     return {"status": "queued", "task_id": task.id}
@@ -519,7 +519,7 @@ async def admin_reindex(
         oid = str(row["ontology_id"])
         detect_meta_profile.delay(vid, ontology_id=oid)
         meta_queued += 1
-        if row["status"] == "ingested":
+        if row["status"] != "deprecated":
             index_ontology.delay(vid, ontology_id=oid)
             index_queued += 1
 
