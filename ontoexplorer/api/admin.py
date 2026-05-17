@@ -261,7 +261,12 @@ async def admin_workers(_: User = Depends(_require_admin)):
             try:
                 msg = _json.loads(msg_str)
                 body = _json.loads(base64.b64decode(msg["body"]).decode("utf-8"))
+                args = body[0] if len(body) > 0 else []
                 kwargs = body[1] if len(body) > 1 else {}
+                # Promote positional version_id (args[0]) into kwargs so the
+                # frontend versionMap lookup works regardless of dispatch style.
+                if "version_id" not in kwargs and args:
+                    kwargs = dict(kwargs, version_id=args[0])
                 headers = msg.get("headers", {})
                 task_id = headers.get("id") or msg.get("properties", {}).get("correlation_id", "")
                 task_name = headers.get("task", "")
@@ -487,7 +492,7 @@ async def admin_queue_index(
     if not version:
         raise HTTPException(status_code=404, detail="No non-deprecated version found for this ontology")
 
-    task = index_ontology.delay(str(version.id), ontology_id=ontology_id)
+    task = index_ontology.delay(version_id=str(version.id), ontology_id=ontology_id)
     return {"status": "queued", "task_id": task.id}
 
 
@@ -515,7 +520,7 @@ async def admin_queue_embed(
     if not version:
         raise HTTPException(status_code=404, detail="No non-deprecated version found for this ontology")
 
-    task = embed_ontology.delay(str(version.id), ontology_id=ontology_id)
+    task = embed_ontology.delay(version_id=str(version.id), ontology_id=ontology_id)
     return {"status": "queued", "task_id": task.id}
 
 
@@ -548,7 +553,7 @@ async def admin_reindex(
         detect_meta_profile.delay(vid, ontology_id=oid)
         meta_queued += 1
         if row["status"] != "deprecated":
-            index_ontology.delay(vid, ontology_id=oid)
+            index_ontology.delay(version_id=vid, ontology_id=oid)
             index_queued += 1
 
     return {
