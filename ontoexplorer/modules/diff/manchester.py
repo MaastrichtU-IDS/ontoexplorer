@@ -55,6 +55,59 @@ _XSD_STRING = _XSD + "string"
 _XSD_BOOLEAN = _XSD + "boolean"
 _XSD_TRUE_LITERAL = "true"
 
+# Well-known annotation properties — predicates whose value is metadata about
+# the subject rather than a logical axiom. The Manchester `Annotations:`
+# keyword block groups all of these.
+_DC = "http://purl.org/dc/elements/1.1/"
+_DCTERMS = "http://purl.org/dc/terms/"
+_SKOS = "http://www.w3.org/2004/02/skos/core#"
+_RDFS = "http://www.w3.org/2000/01/rdf-schema#"
+
+_RDFS_SEE_ALSO       = _RDFS + "seeAlso"
+_RDFS_IS_DEFINED_BY  = _RDFS + "isDefinedBy"
+_RDFS_COMMENT        = _RDFS + "comment"
+
+_OWL_ANNOTATION_PROPERTY = _OWL + "AnnotationProperty"
+_OWL_VERSION_INFO        = _OWL + "versionInfo"
+_OWL_DEPRECATED          = _OWL + "deprecated"
+_OWL_PRIOR_VERSION       = _OWL + "priorVersion"
+_OWL_INCOMPATIBLE_WITH   = _OWL + "incompatibleWith"
+
+# Predicates that always render as annotations regardless of graph context.
+# Dynamically-discovered owl:AnnotationProperty entries are added on top of
+# this set per run_diff invocation.
+_BUILTIN_ANNOTATION_PROPS: frozenset[str] = frozenset({
+    _RDFS_LABEL, _RDFS_COMMENT, _RDFS_SEE_ALSO, _RDFS_IS_DEFINED_BY,
+    _DC + "title", _DC + "description", _DC + "creator",
+    _DCTERMS + "title", _DCTERMS + "description",
+    _DCTERMS + "creator", _DCTERMS + "license",
+    _SKOS + "prefLabel", _SKOS + "altLabel", _SKOS + "definition",
+    _SKOS + "scopeNote", _SKOS + "example",
+    _OWL_VERSION_INFO, _OWL_DEPRECATED, _OWL_PRIOR_VERSION, _OWL_INCOMPATIBLE_WITH,
+})
+
+# Known namespaces for CURIE-style display of annotation predicates.
+# Order matters: longest prefixes (dcterms before dc) must be tried first
+# so dcterms:title doesn't shorten to dc:terms/title.
+_CURIE_PREFIXES: list[tuple[str, str]] = [
+    (_DCTERMS, "dcterms:"),
+    (_DC,      "dc:"),
+    (_SKOS,    "skos:"),
+    (_RDFS,    "rdfs:"),
+    (_OWL,     "owl:"),
+    (_XSD,     "xsd:"),
+]
+
+
+def _to_curie(iri: str) -> str:
+    """Return a `prefix:local` CURIE if iri starts with a known namespace,
+    otherwise `<full-iri>` in angle brackets.
+    """
+    for ns, prefix in _CURIE_PREFIXES:
+        if iri.startswith(ns):
+            return f"{prefix}{iri[len(ns):]}"
+    return f"<{iri}>"
+
 # Property characteristics: rdf:type values that map to Characteristics: keywords
 _CHARACTERISTICS: dict[str, str] = {
     _OWL + "FunctionalProperty":        "Functional",
