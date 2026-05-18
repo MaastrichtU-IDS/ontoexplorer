@@ -102,9 +102,11 @@ export interface DiffEntity {
   iri: string
   label: string | null
   entity_type: DiffEntityType
-  literal_changes: DiffLiteralChange[]
-  axiom_changes: DiffAxiomChange[]
-  manchester_frame: string | null
+  // Backend omits these fields for added/removed entities — they only appear
+  // on modified entities. Renderers must guard.
+  literal_changes?: DiffLiteralChange[]
+  axiom_changes?: DiffAxiomChange[]
+  manchester_frame?: string | null
 }
 
 export interface DiffSummary {

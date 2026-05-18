@@ -69,7 +69,10 @@ function EntityRow({
     'shared, axioms differ'
   const opLabel = variant === 'cross-compare' ? opTextCross : opTextVersion
 
-  const hasLiteral = entity.literal_changes.length > 0
+  // Added/removed entities ship only {iri, label, entity_type} — guard against
+  // missing literal/axiom arrays so the row still renders.
+  const literalChanges = entity.literal_changes ?? []
+  const hasLiteral = literalChanges.length > 0
 
   return (
     <div style={{ borderBottom: '1px solid var(--border)' }}>
@@ -94,7 +97,7 @@ function EntityRow({
           {hasLiteral && (
             <div>
               <div style={{ color: '#58a6ff', fontSize: 9, textTransform: 'uppercase', fontWeight: 'bold', marginBottom: 4 }}>Literal changes</div>
-              {entity.literal_changes.map((lc, i) => (
+              {literalChanges.map((lc, i) => (
                 <div key={i} style={{ fontSize: 10, marginBottom: 4 }}>
                   <div style={{ color: 'var(--text-dim)' }}>
                     {lc.predicate}{lc.lang ? ` @${lc.lang}` : ''}
@@ -154,16 +157,16 @@ export default function DiffResultView({ data, summary, variant, fromLabel, toLa
     const q = search.trim().toLowerCase()
     return allEntities.filter(e => {
       if (typeFilter !== 'all' && e.entity_type !== typeFilter) return false
-      if (changeFilter === 'literal' && e.op === 'modified' && !e.literal_changes.length) return false
-      if (changeFilter === 'axiom'   && e.op === 'modified' && !e.axiom_changes.length)   return false
+      if (changeFilter === 'literal' && e.op === 'modified' && !(e.literal_changes ?? []).length) return false
+      if (changeFilter === 'axiom'   && e.op === 'modified' && !(e.axiom_changes ?? []).length)   return false
       if (changeFilter !== 'all' && e.op !== 'modified') return false
       if (!q) return true
       const label = (e.label ?? '').toLowerCase()
       const iri   = e.iri.toLowerCase()
-      const inLit = e.literal_changes.some(lc =>
+      const inLit = (e.literal_changes ?? []).some(lc =>
         lc.removed?.toLowerCase().includes(q) || lc.added?.toLowerCase().includes(q)
       )
-      const inAxiom = e.axiom_changes.some(ac => ac.axiom.toLowerCase().includes(q))
+      const inAxiom = (e.axiom_changes ?? []).some(ac => ac.axiom.toLowerCase().includes(q))
       return label.includes(q) || iri.includes(q) || inLit || inAxiom
     })
   }, [allEntities, typeFilter, changeFilter, search])
