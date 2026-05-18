@@ -94,7 +94,14 @@ function VersionPicker({
   )
 
   useEffect(() => {
-    if (!value && versions.length > 0) onChange(versions[0].id)
+    if (versions.length === 0) return
+    // Reset to latest when value is empty OR when current value isn't a valid
+    // version of the loaded ontology. The latter catches a subtle bug where
+    // changing the ontology in OntologyPicker left a stale version ID from
+    // the previous ontology (or from URL params seeded before the user
+    // picked any ontology), causing the wrong comparison to be triggered.
+    const isValid = versions.some(v => v.id === value)
+    if (!value || !isValid) onChange(versions[0].id)
   }, [versions, value, onChange])
 
   return (
