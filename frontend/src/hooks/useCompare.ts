@@ -6,7 +6,7 @@ function isPending(data: OntologyComparison | ComparisonPending | undefined): bo
 }
 
 /**
- * Polls /compare every 3s until the result is ready or failed.
+ * Polls /compare every 2s until the result is ready or failed.
  * `enabled` controls when polling starts (both version IDs present + distinct).
  *
  * Caller flow: call api.compare.compute(...) once via useTriggerComparison,
@@ -32,7 +32,7 @@ export function useArbitraryComparison(
         throw err
       }
     },
-    refetchInterval: (query) => isPending(query.state.data) ? 3000 : false,
+    refetchInterval: (query) => isPending(query.state.data) ? 2000 : false,
     staleTime: 60_000,
   })
 }

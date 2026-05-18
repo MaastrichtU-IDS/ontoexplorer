@@ -13,6 +13,27 @@ function ontologyDisplayName(o: Ontology): string {
   )
 }
 
+/**
+ * "Computing comparison…" banner with an elapsed-time counter so the user
+ * gets feedback while the Celery task runs (which can take a minute or more
+ * on large ontology pairs).
+ */
+function PendingBanner() {
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setElapsed(e => e + 1), 1000)
+    return () => clearInterval(id)
+  }, [])
+  return (
+    <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 12 }}>
+      Computing comparison… ({elapsed}s)
+      <div style={{ fontSize: 11, marginTop: 2, opacity: 0.7 }}>
+        This can take up to a minute for large ontologies.
+      </div>
+    </div>
+  )
+}
+
 function OntologyPicker({
   ontologies,
   value,
@@ -276,6 +297,52 @@ export default function Compare() {
   const fromOntObj = ontologies.find(o => o.id === fromOnt) ?? fromOntFromCompare
   const toOntObj   = ontologies.find(o => o.id === toOnt)   ?? toOntFromCompare
 
+  // For label disambiguation when same ontology is compared, look up version
+  // IRIs. Uses the same query key as VersionPicker so it dedupes when both
+  // are visible. Enabled only when an ontology id is known.
+  const fromOntId = fromOnt || (fromOntFromCompare?.id ?? '')
+  const toOntId   = toOnt   || (toOntFromCompare?.id ?? '')
+  const fromVersionsQ = useQuery({
+    queryKey: ['versions', fromOntId],
+    queryFn: () => api.ontologies.versions(fromOntId),
+    enabled: !!fromOntId,
+  })
+  const toVersionsQ = useQuery({
+    queryKey: ['versions', toOntId],
+    queryFn: () => api.ontologies.versions(toOntId),
+    enabled: !!toOntId && toOntId !== fromOntId,
+  })
+
+  const sameOntology = !!fromOntId && fromOntId === toOntId
+
+  function shortVersionLabel(versionId: string, versions: OntologyVersion[] | undefined): string {
+    const v = versions?.find(x => x.id === versionId)
+    if (v?.version_iri) {
+      const seg = v.version_iri.replace(/[/#]+$/, '').split(/[/#]/).pop()
+      if (seg) return seg
+    }
+    return versionId.slice(0, 8)
+  }
+
+  function buildLabel(
+    ontObj: Ontology | undefined,
+    versionId: string,
+    versions: OntologyVersion[] | undefined,
+    fallback: string,
+  ): string {
+    if (!ontObj) return fallback
+    const base = ontologyDisplayName(ontObj)
+    if (!sameOntology) return base
+    const ver = shortVersionLabel(versionId, versions)
+    return ver ? `${base}@${ver}` : base
+  }
+
+  const effectiveFromVid = fromVid || (comparison?.status === 'ready' && 'version_from_id' in comparison ? comparison.version_from_id : '')
+  const effectiveToVid   = toVid   || (comparison?.status === 'ready' && 'version_to_id'   in comparison ? comparison.version_to_id   : '')
+  const sharedVersions = fromVersionsQ.data?.versions
+  const fromLabel = buildLabel(fromOntObj, effectiveFromVid, sharedVersions, 'A')
+  const toLabel   = buildLabel(toOntObj,   effectiveToVid,   sameOntology ? sharedVersions : toVersionsQ.data?.versions, 'B')
+
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '1.5rem 2rem', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <h1 style={{ fontSize: '1.4rem', fontWeight: 700, margin: 0 }}>Compare ontologies</h1>
@@ -335,9 +402,7 @@ export default function Compare() {
       {fromVid && toVid && fromVid !== toVid && comparison && (
         <>
           {comparison.status === 'pending' && (
-            <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 12 }}>
-              Computing comparison… this can take up to a minute for large ontologies.
-            </div>
+            <PendingBanner />
           )}
           {comparison.status === 'failed' && (
             <div style={{ padding: '1rem', color: '#f85149', fontSize: 12 }}>
@@ -349,8 +414,8 @@ export default function Compare() {
               data={comparison.diff_data}
               summary={comparison.summary}
               variant="cross-compare"
-              fromLabel={fromOntObj ? ontologyDisplayName(fromOntObj) : 'A'}
-              toLabel={toOntObj ? ontologyDisplayName(toOntObj) : 'B'}
+              fromLabel={fromLabel}
+              toLabel={toLabel}
             />
           )}
         </>
