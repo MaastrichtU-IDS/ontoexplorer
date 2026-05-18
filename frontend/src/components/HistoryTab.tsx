@@ -60,20 +60,28 @@ export default function HistoryTab({ ontologyId, currentVersionId, versions }: P
             <option key={v.id} value={v.id}>{v.version_iri ?? v.id.slice(0, 8)}</option>
           ))}
         </select>
-        {isConsecutivePair && diff?.diff_data && (
-          <button
-            onClick={() => generateNarrative()}
-            disabled={generatingNarrative}
-            style={{
-              marginLeft: 'auto',
-              background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-              borderRadius: 4, padding: '4px 12px',
-              color: 'var(--text)', fontSize: 11, cursor: generatingNarrative ? 'wait' : 'pointer',
-            }}
-          >
-            {generatingNarrative ? 'Generating…' : 'Generate narrative'}
-          </button>
-        )}
+        <button
+          onClick={() => generateNarrative()}
+          disabled={!isConsecutivePair || !diff?.diff_data || generatingNarrative}
+          title={
+            !isConsecutivePair
+              ? 'Narratives are only available for consecutive version pairs'
+              : !diff?.diff_data
+                ? 'Waiting for diff to compute'
+                : ''
+          }
+          style={{
+            marginLeft: 'auto',
+            background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+            borderRadius: 4, padding: '4px 12px',
+            color: (!isConsecutivePair || !diff?.diff_data) ? 'var(--text-dim)' : 'var(--text)',
+            fontSize: 11,
+            cursor: generatingNarrative ? 'wait' : ((!isConsecutivePair || !diff?.diff_data) ? 'not-allowed' : 'pointer'),
+            opacity: (!isConsecutivePair || !diff?.diff_data) ? 0.6 : 1,
+          }}
+        >
+          {generatingNarrative ? 'Generating…' : 'Generate narrative'}
+        </button>
       </div>
 
       {diff?.narrative && (
@@ -82,7 +90,16 @@ export default function HistoryTab({ ontologyId, currentVersionId, versions }: P
         </div>
       )}
 
-      {isLoading || !diff?.diff_data ? (
+      {diff?.status === 'failed' ? (
+        <div style={{
+          padding: '0.75rem 1rem', margin: '0 14px 10px 14px',
+          color: '#f85149', fontSize: 12,
+          background: 'rgba(248,81,73,0.08)', border: '1px solid rgba(248,81,73,0.3)',
+          borderRadius: 4,
+        }}>
+          Diff computation failed. The previous attempt did not complete; try selecting different versions.
+        </div>
+      ) : isLoading || !diff?.diff_data ? (
         <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 12 }}>
           {diff?.status === 'pending' ? 'Computing diff…' : 'Loading…'}
         </div>
