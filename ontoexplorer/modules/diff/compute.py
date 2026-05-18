@@ -55,23 +55,28 @@ def _literal_triples(
 
 def _structural_triples(
     store: ox.Store, graph: ox.NamedNode, iri: str
-) -> set[tuple[str, str]]:
-    """Return (predicate_iri, object_repr) for all URI/blank-node-valued triples.
+) -> tuple[set[tuple[str, str]], dict[tuple[str, str], ox.NamedNode | ox.BlankNode]]:
+    """Return (comparable set, term lookup) for (predicate, object) triples.
 
-    For blank-node objects, object_repr is a content fingerprint of the
-    bnode's outgoing-triple closure (see _bnode_fingerprint). Two bnodes with
-    structurally identical content (e.g. equivalent owl:Restriction nodes
-    across two versions) collapse to the same fingerprint and don't appear as
-    spurious diffs.
+    The comparable set is what `run_diff` set-diffs across versions; bnode
+    objects are represented by their content fingerprint so structurally
+    identical bnodes collapse. The lookup maps each (predicate, repr) key back
+    to the original ox.Term, so the Manchester renderer can walk the bnode
+    subgraph for display.
     """
     triples: set[tuple[str, str]] = set()
+    terms: dict[tuple[str, str], ox.NamedNode | ox.BlankNode] = {}
     for q in store.quads_for_pattern(ox.NamedNode(iri), None, None, graph):
         if isinstance(q.object, ox.NamedNode):
-            triples.add((q.predicate.value, q.object.value))
+            key = (q.predicate.value, q.object.value)
+            triples.add(key)
+            terms[key] = q.object
         elif isinstance(q.object, ox.BlankNode):
             fp = _bnode_fingerprint(store, graph, q.object.value)
-            triples.add((q.predicate.value, f"_:fp:{fp}"))
-    return triples
+            key = (q.predicate.value, f"_:fp:{fp}")
+            triples.add(key)
+            terms[key] = q.object
+    return triples, terms
 
 
 def _bnode_fingerprint(
@@ -150,8 +155,8 @@ def run_diff(
         for iri in from_iris & to_iris:
             from_lits   = _literal_triples(store, from_graph, iri)
             to_lits     = _literal_triples(store, to_graph, iri)
-            from_struct = _structural_triples(store, from_graph, iri)
-            to_struct   = _structural_triples(store, to_graph, iri)
+            from_struct, from_terms = _structural_triples(store, from_graph, iri)
+            to_struct,   to_terms   = _structural_triples(store, to_graph, iri)
 
             if from_lits == to_lits and from_struct == to_struct:
                 continue

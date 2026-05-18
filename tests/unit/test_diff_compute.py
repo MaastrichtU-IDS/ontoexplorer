@@ -202,3 +202,34 @@ def test_literal_lang_tag_change():
     assert summary["literal_changes"] == 1
     m = diff_data["modified"][0]
     assert len(m["literal_changes"]) == 2  # removed untagged, added tagged
+
+
+def test_structural_triples_returns_terms_with_fingerprints():
+    """The refactored helper must return both the comparable (pred, repr) set
+    AND a lookup from (pred, repr) -> the actual ox.Term object, so the
+    Manchester renderer can walk bnode subgraphs later."""
+    from ontoexplorer.modules.diff.compute import _structural_triples
+    iri = ox.NamedNode("http://example.org/Foo")
+    obj_uri = ox.NamedNode("http://example.org/Bar")
+    obj_bn  = ox.BlankNode("b1")
+    store = ox.Store()
+    g = ox.NamedNode("urn:test")
+    store.add_graph(g)
+    store.add(ox.Quad(iri, _RDFS_SC, obj_uri, g))
+    store.add(ox.Quad(iri, _RDFS_SC, obj_bn,  g))
+    store.add(ox.Quad(obj_bn, _RDF_TYPE,
+                      ox.NamedNode("http://www.w3.org/2002/07/owl#Restriction"), g))
+
+    triples, terms = _structural_triples(store, g, iri.value)
+    # Comparable set: two entries
+    assert len(triples) == 2
+    # NamedNode entry — direct lookup
+    named_key = ("http://www.w3.org/2000/01/rdf-schema#subClassOf",
+                 "http://example.org/Bar")
+    assert named_key in triples
+    assert terms[named_key].value == "http://example.org/Bar"
+    assert isinstance(terms[named_key], ox.NamedNode)
+    # BlankNode entry — repr is a fingerprint
+    bn_keys = [k for k in triples if k[1].startswith("_:fp:")]
+    assert len(bn_keys) == 1
+    assert isinstance(terms[bn_keys[0]], ox.BlankNode)
