@@ -175,6 +175,100 @@ def compute_diff(version_from_id: str, version_to_id: str, ontology_id: str) -> 
     return {"status": "done"}
 
 
+@celery_app.task(name="ontoexplorer.compute_ontology_comparison", time_limit=600)
+def compute_ontology_comparison(version_from_id: str, version_to_id: str) -> dict:
+    """Compute a cross-ontology comparison between two version IDs.
+
+    Resolves each version's ontology_id from the DB, runs run_comparison,
+    and persists results to the ontology_comparisons table.
+    """
+    import uuid
+    from ontoexplorer.database import make_celery_db_session
+
+    async def _run() -> None:
+        from sqlalchemy import select
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from ontoexplorer.clients.oxigraph import get_store
+        from ontoexplorer.models.db import OntologyComparison, OntologyVersion
+        from ontoexplorer.modules.compare.compute import run_comparison as _run_comparison
+
+        async with make_celery_db_session()() as db:
+            from_ver = await db.scalar(
+                select(OntologyVersion).where(OntologyVersion.id == version_from_id)
+            )
+            to_ver = await db.scalar(
+                select(OntologyVersion).where(OntologyVersion.id == version_to_id)
+            )
+            if from_ver is None or to_ver is None:
+                log.error(
+                    "compute_ontology_comparison_missing_version",
+                    from_vid=version_from_id, to_vid=version_to_id,
+                )
+                return
+
+            existing = await db.scalar(
+                select(OntologyComparison).where(
+                    OntologyComparison.version_from_id == version_from_id,
+                    OntologyComparison.version_to_id == version_to_id,
+                )
+            )
+            if existing and existing.status == "ready":
+                return
+
+            await db.execute(
+                pg_insert(OntologyComparison)
+                .values(
+                    id=str(uuid.uuid4()),
+                    from_ontology_id=from_ver.ontology_id,
+                    to_ontology_id=to_ver.ontology_id,
+                    version_from_id=version_from_id,
+                    version_to_id=version_to_id,
+                    status="pending",
+                )
+                .on_conflict_do_nothing()
+            )
+            await db.commit()
+
+            row = await db.scalar(
+                select(OntologyComparison).where(
+                    OntologyComparison.version_from_id == version_from_id,
+                    OntologyComparison.version_to_id == version_to_id,
+                )
+            )
+            if row is None:
+                return  # should not happen, but guard
+
+            try:
+                store = get_store()
+                summary, diff_data = await asyncio.to_thread(
+                    _run_comparison,
+                    store,
+                    str(from_ver.ontology_id), version_from_id,
+                    str(to_ver.ontology_id),   version_to_id,
+                )
+                row.summary = summary
+                row.diff_data = diff_data
+                row.status = "ready"
+            except Exception as exc:
+                row.status = "failed"
+                log.error(
+                    "compute_ontology_comparison_failed",
+                    from_vid=version_from_id, to_vid=version_to_id, error=str(exc),
+                )
+            await db.commit()
+
+    try:
+        asyncio.run(_run())
+        log.info(
+            "compute_ontology_comparison_done",
+            from_vid=version_from_id, to_vid=version_to_id,
+        )
+    except Exception as exc:
+        log.error("compute_ontology_comparison_task_error", error=str(exc))
+        raise
+    return {"status": "done"}
+
+
 @celery_app.task(bind=True, name="ontoexplorer.ingest_ontology", max_retries=3)
 def ingest_ontology(
     self,
