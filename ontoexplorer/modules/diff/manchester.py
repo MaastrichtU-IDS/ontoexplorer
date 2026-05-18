@@ -589,6 +589,23 @@ _ENTITY_KEYWORD: dict[str, str] = {
 }
 
 
+def _discover_annotation_props(
+    store: ox.Store, graph: ox.NamedNode,
+) -> frozenset[str]:
+    """Return the set of IRIs declared as owl:AnnotationProperty in `graph`.
+
+    Augments `_BUILTIN_ANNOTATION_PROPS` for each run_diff invocation. Result
+    is intended to be cached at the call site for the duration of the run.
+    """
+    rdf_type = ox.NamedNode(_RDF_TYPE)
+    ap_class = ox.NamedNode(_OWL_ANNOTATION_PROPERTY)
+    return frozenset(
+        q.subject.value
+        for q in store.quads_for_pattern(None, rdf_type, ap_class, graph)
+        if isinstance(q.subject, ox.NamedNode)
+    )
+
+
 def render_frame(
     store: ox.Store,
     entity_iri: str,

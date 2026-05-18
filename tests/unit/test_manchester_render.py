@@ -793,6 +793,30 @@ def test_axiom_non_individual_unknown_predicate_still_returns_none():
     assert out is None
 
 
+from ontoexplorer.modules.diff.manchester import _discover_annotation_props
+
+
+def test_discover_annotation_props_returns_explicit_annotation_property_iris():
+    """SELECT ?p WHERE { ?p a owl:AnnotationProperty } over a graph."""
+    custom = ox.NamedNode("http://example.org/myCustomAnnotation")
+    other  = ox.NamedNode("http://example.org/notAnAnnotation")
+    annotation_property = ox.NamedNode("http://www.w3.org/2002/07/owl#AnnotationProperty")
+    class_node          = ox.NamedNode("http://www.w3.org/2002/07/owl#Class")
+    store = _store(
+        (custom, _RDF_TYPE_N, annotation_property),
+        (other,  _RDF_TYPE_N, class_node),
+    )
+    discovered = _discover_annotation_props(store, _GRAPH)
+    assert custom.value in discovered
+    assert other.value not in discovered
+
+
+def test_discover_annotation_props_returns_empty_for_graph_without_any():
+    store = _store()
+    discovered = _discover_annotation_props(store, _GRAPH)
+    assert discovered == frozenset()
+
+
 from ontoexplorer.modules.diff.manchester import render_frame
 
 
