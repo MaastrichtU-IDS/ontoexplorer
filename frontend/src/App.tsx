@@ -16,6 +16,7 @@ import AuthCallback from './pages/AuthCallback'
 import AdminPage from './pages/AdminPage'
 import Sparql from './pages/Sparql'
 import SparqlGallery from './pages/SparqlGallery'
+import Compare from './pages/Compare'
 
 function Footer() {
   return (
@@ -77,6 +78,7 @@ export default function App() {
       <Route path="/ontologies" element={<Shell><Ontologies /></Shell>} />
       <Route path="/ontologies/:slug" element={<Shell><OntologyPage /></Shell>} />
       <Route path="/ontologies/:slug/:version" element={<Shell><OntologyPage /></Shell>} />
+      <Route path="/compare" element={<Shell><Compare /></Shell>} />
       <Route path="/search" element={<Shell><Search /></Shell>} />
       <Route path="/sparql" element={<Shell><Sparql /></Shell>} />
       <Route path="/sparql/gallery" element={<Shell><SparqlGallery /></Shell>} />
