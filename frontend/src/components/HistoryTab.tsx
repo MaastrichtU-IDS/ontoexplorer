@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { OntologyVersion, DiffEntity, DiffEntityType } from '../lib/api'
 import { useArbitraryDiff, useGenerateNarrative } from '../hooks/useDiff'
+import ManchesterFrame from './ManchesterFrame'
 
 type Op = 'added' | 'removed' | 'modified'
 type ChangeFilter = 'all' | 'literal' | 'axiom'
@@ -114,18 +115,10 @@ function EntityRow({
             </div>
           )}
 
-          {hasAxiom && (
-            <div>
+          {entity.manchester_frame && (
+            <div style={{ marginTop: 6 }}>
               <div style={{ color: '#58a6ff', fontSize: 9, textTransform: 'uppercase', fontWeight: 'bold', marginBottom: 4 }}>Axiom changes</div>
-              {entity.axiom_changes.map((ac, i) => (
-                <div key={i} style={{ color: ac.op === 'added' ? '#3fb950' : '#f85149', fontSize: 10 }}>
-                  <HighlightedText
-                    text={`${ac.op === 'added' ? '+' : '−'} ${ac.axiom}`}
-                    query={search}
-                    color={ac.op === 'added' ? '#3fb950' : '#f85149'}
-                  />
-                </div>
-              ))}
+              <ManchesterFrame frame={entity.manchester_frame} />
             </div>
           )}
         </div>
