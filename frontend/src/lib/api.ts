@@ -104,6 +104,7 @@ export interface DiffEntity {
   entity_type: DiffEntityType
   literal_changes: DiffLiteralChange[]
   axiom_changes: DiffAxiomChange[]
+  manchester_frame: string | null
 }
 
 export interface DiffSummary {
@@ -186,6 +187,7 @@ export interface ClassRef {
 export interface PropertyUsage {
   class_iri: string
   class_label: string
+  relation: string
   restriction: string
   filler_iri: string | null
   filler_label: string | null
@@ -201,6 +203,18 @@ export interface ClassUsageEntry {
 
 export interface InferredExprEntry {
   expr: ClassExprNode
+  from_iri: string
+  from_label: string
+}
+
+export interface SchemaProperty {
+  prop_iri: string
+  prop_label: string
+  range_iri: string | null
+  range_label: string | null
+}
+
+export interface InheritedSchemaProperty extends SchemaProperty {
   from_iri: string
   from_label: string
 }
@@ -227,6 +241,8 @@ export interface RawTermDetail {
   general_class_axioms?: ClassExprNode[]
   usage: PropertyUsage[]
   class_usage?: ClassUsageEntry[]
+  schema_properties?: SchemaProperty[]
+  inherited_schema_properties?: InheritedSchemaProperty[]
 }
 
 export interface ParsedTerm {
@@ -257,6 +273,8 @@ export interface ParsedTerm {
   inverseOf: string[]
   usage: PropertyUsage[]
   classUsage: ClassUsageEntry[]
+  schemaProperties: SchemaProperty[]
+  inheritedSchemaProperties: InheritedSchemaProperty[]
 }
 
 export interface OntologyMetadataEntry {
@@ -636,6 +654,8 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
     entityType = 'annotation_property'
   } else if (types.includes(P.owlIndividual)) {
     entityType = 'individual'
+  } else if (types.includes('http://www.w3.org/1999/02/22-rdf-syntax-ns#Property')) {
+    entityType = 'property'
   }
   const characteristics = types.map(t => OWL_CHARACTERISTICS[t]).filter(Boolean) as string[]
   return {
@@ -665,12 +685,14 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
     inferredDisjointWith:  raw.inferred_disjoint_with   ?? [],
     disjointUnionOf:       raw.disjoint_union_of       ?? [],
     generalClassAxioms:    raw.general_class_axioms    ?? [],
-    domain:               getValues(P.domain),
-    range:                getValues(P.range),
+    domain:               [...new Set([...getValues(P.domain), ...getValues('https://schema.org/domainIncludes')])],
+    range:                [...new Set([...getValues(P.range),  ...getValues('https://schema.org/rangeIncludes')])],
     characteristics,
     inverseOf:            getValues(P.inverseOf),
     usage:           raw.usage        ?? [],
     classUsage:      raw.class_usage  ?? [],
+    schemaProperties:          raw.schema_properties           ?? [],
+    inheritedSchemaProperties: raw.inherited_schema_properties ?? [],
   }
 }
 
