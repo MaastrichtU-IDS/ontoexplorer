@@ -479,6 +479,9 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
 
     _build_tree_cache(version_id, ontology_id, entities, labels_by_iri, r)
     _populate_stats_cache(version_id, ontology_id, entities, r)
+    _populate_coverage_cache(
+        version_id, entities, deprecated_iris, labels_by_iri, defs_by_iri, r
+    )
 
     return IndexStats(
         version_id=version_id,
@@ -748,6 +751,24 @@ def _populate_stats_cache(
     r.setex(_stats_cache_key(version_id), _SEARCH_TTL, json.dumps(stats))
 
 
+def _populate_coverage_cache(
+    version_id: str,
+    entities: dict[str, str],
+    deprecated_iris: set[str],
+    labels_by_iri: dict[str, list[dict]],
+    defs_by_iri: dict[str, list[dict]],
+    r: redis.Redis,
+) -> None:
+    """Compute per-version coverage and write to Redis with the same TTL as stats."""
+    from datetime import datetime, timezone
+    from ontoexplorer.modules.search.coverage import compute_coverage, coverage_cache_key
+
+    payload = compute_coverage(entities, deprecated_iris, labels_by_iri, defs_by_iri)
+    payload["version_id"] = version_id
+    payload["indexed_at"] = datetime.now(timezone.utc).isoformat()
+    r.setex(coverage_cache_key(version_id), _SEARCH_TTL, json.dumps(payload))
+
+
 def invalidate_index(version_id: str) -> None:
     """Delete all search index keys for a version."""
     r = _get_redis()
@@ -760,6 +781,8 @@ def invalidate_index(version_id: str) -> None:
             break
     to_delete.append(_meta_key(version_id))
     to_delete.append(_stats_cache_key(version_id))
+    from ontoexplorer.modules.search.coverage import coverage_cache_key
+    to_delete.append(coverage_cache_key(version_id))
     keys_present = [k for k in to_delete if r.exists(k)]
     if keys_present:
         r.delete(*keys_present)
