@@ -204,6 +204,68 @@ def test_literal_lang_tag_change():
     assert len(m["literal_changes"]) == 2  # removed untagged, added tagged
 
 
+def test_run_diff_produces_manchester_frame_for_modified_entity():
+    """A class whose only change is a SubClassOf restriction swap should yield
+    a manchester_frame with header + keyword + - and + lines."""
+    pizza = ox.NamedNode("http://example.org/Pizza")
+    p = ox.NamedNode("http://example.org/hasTopping")
+    cheese = ox.NamedNode("http://example.org/Cheese")
+    tofu = ox.NamedNode("http://example.org/Tofu")
+    OR = ox.NamedNode("http://www.w3.org/2002/07/owl#Restriction")
+    ON_P = ox.NamedNode("http://www.w3.org/2002/07/owl#onProperty")
+    SOME = ox.NamedNode("http://www.w3.org/2002/07/owl#someValuesFrom")
+    label_pred = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#label")
+
+    s = _store(
+        from_quads=[
+            (pizza, _RDF_TYPE, _OWL_CLASS),
+            (pizza, label_pred, ox.Literal("Pizza", language="en")),
+            (pizza, _RDFS_SC, ox.BlankNode("rOld")),
+            (ox.BlankNode("rOld"), _RDF_TYPE, OR),
+            (ox.BlankNode("rOld"), ON_P, p),
+            (ox.BlankNode("rOld"), SOME, cheese),
+        ],
+        to_quads=[
+            (pizza, _RDF_TYPE, _OWL_CLASS),
+            (pizza, label_pred, ox.Literal("Pizza", language="en")),
+            (pizza, _RDFS_SC, ox.BlankNode("rNew")),
+            (ox.BlankNode("rNew"), _RDF_TYPE, OR),
+            (ox.BlankNode("rNew"), ON_P, p),
+            (ox.BlankNode("rNew"), SOME, tofu),
+        ],
+    )
+    summary, diff_data = run_diff(s, OID, FROM_VID, TO_VID)
+    assert summary["modified"] == 1
+    mod = diff_data["modified"][0]
+    assert mod["iri"] == pizza.value
+    frame = mod.get("manchester_frame")
+    assert frame is not None, "manchester_frame must be populated for modified entities"
+    expected = (
+        f"Class: Pizza  ({pizza.value})\n"
+        "    SubClassOf:\n"
+        "-       hasTopping some Cheese\n"
+        "+       hasTopping some Tofu"
+    )
+    assert frame == expected
+
+
+def test_run_diff_axiom_changes_use_manchester_strings():
+    """Each axiom_changes entry's axiom string is in Manchester format, not raw triple."""
+    pizza = ox.NamedNode("http://example.org/Pizza")
+    food = ox.NamedNode("http://example.org/Food")
+    s = _store(
+        from_quads=[(pizza, _RDF_TYPE, _OWL_CLASS)],
+        to_quads=[
+            (pizza, _RDF_TYPE, _OWL_CLASS),
+            (pizza, _RDFS_SC, food),
+        ],
+    )
+    summary, diff_data = run_diff(s, OID, FROM_VID, TO_VID)
+    mod = diff_data["modified"][0]
+    axiom_strs = [a["axiom"] for a in mod["axiom_changes"]]
+    assert axiom_strs == ["SubClassOf: Food"]
+
+
 def test_structural_triples_returns_terms_with_fingerprints():
     """The refactored helper must return both the comparable (pred, repr) set
     AND a lookup from (pred, repr) -> the actual ox.Term object, so the

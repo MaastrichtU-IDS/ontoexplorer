@@ -4,6 +4,7 @@ import hashlib
 import pyoxigraph as ox
 
 from ontoexplorer.clients.oxigraph import graph_iri
+from ontoexplorer.modules.diff import manchester as _mos
 
 _RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 _RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
@@ -133,6 +134,7 @@ def run_diff(
     added_list: list[dict] = []
     removed_list: list[dict] = []
     modified_list: list[dict] = []
+    labels: dict[str, str] = {}
 
     for entity_type, type_iri in _ENTITY_TYPES.items():
         from_iris = _collect_iris(store, from_graph, type_iri)
@@ -174,13 +176,40 @@ def run_diff(
                 for pred, lang in sorted(set(from_lits_map) | set(to_lits_map), key=lambda t: (t[0], t[1] or ""))
             ]
 
-            axiom_changes = [
-                {"op": "removed", "axiom": f"<{p}> <{o}>"}
-                for p, o in sorted(from_struct - to_struct)
-            ] + [
-                {"op": "added", "axiom": f"<{p}> <{o}>"}
-                for p, o in sorted(to_struct - from_struct)
-            ]
+            # Structural-axiom diff: build (op, predicate, object_term, graph)
+            # tuples first so the renderer can walk each bnode in its origin graph.
+            change_records: list[dict] = []
+            for p_iri, o_repr in sorted(from_struct - to_struct):
+                change_records.append({
+                    "op": "removed",
+                    "predicate": p_iri,
+                    "object": from_terms[(p_iri, o_repr)],
+                    "graph": from_graph,
+                })
+            for p_iri, o_repr in sorted(to_struct - from_struct):
+                change_records.append({
+                    "op": "added",
+                    "predicate": p_iri,
+                    "object": to_terms[(p_iri, o_repr)],
+                    "graph": to_graph,
+                })
+
+            # Manchester axiom_changes strings + frame.
+            axiom_changes: list[dict] = []
+            for rec in change_records:
+                axiom_str = _mos.render_axiom(
+                    store, rec["graph"], iri,
+                    rec["predicate"], rec["object"],
+                    labels=labels, entity_type=entity_type,
+                )
+                if axiom_str is None:
+                    obj_val = rec["object"].value if hasattr(rec["object"], "value") else str(rec["object"])
+                    axiom_str = f"<{rec['predicate']}> <{obj_val}>"
+                axiom_changes.append({"op": rec["op"], "axiom": axiom_str})
+
+            manchester_frame = _mos.render_frame(
+                store, iri, entity_type, change_records, labels=labels,
+            )
 
             label = _first_label(store, to_graph, iri) or _first_label(store, from_graph, iri)
             modified_list.append({
@@ -189,6 +218,7 @@ def run_diff(
                 "entity_type": entity_type,
                 "literal_changes": literal_changes,
                 "axiom_changes": axiom_changes,
+                "manchester_frame": manchester_frame,
             })
 
     by_type = {
