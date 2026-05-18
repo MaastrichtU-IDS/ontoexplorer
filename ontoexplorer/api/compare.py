@@ -77,8 +77,17 @@ async def trigger_compute(
             OntologyComparison.version_to_id == to_version_id,
         )
     )
-    if existing:
+    if existing and existing.status != "failed":
+        # Already computed (ready) or in-flight (pending) — idempotent.
         return JSONResponse(status_code=202, content={"status": existing.status})
+
+    if existing and existing.status == "failed":
+        # Retry: reset to pending and clear stale data so the worker
+        # re-runs cleanly.
+        existing.status = "pending"
+        existing.summary = None
+        existing.diff_data = None
+        await db.commit()
 
     from ontoexplorer.modules.jobs.tasks import compute_ontology_comparison
     compute_ontology_comparison.delay(from_version_id, to_version_id)
