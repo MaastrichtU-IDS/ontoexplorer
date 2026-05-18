@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams, useLocation } from 'react-router-dom'
 import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { useOntologies } from '../hooks/useOntologies'
 import { useVersions } from '../hooks/useVersions'
@@ -889,6 +889,12 @@ export default function OntologyPage() {
   const [classMode, setClassMode] = useState<HierarchyMode>('asserted')
   const [mobilePane, setMobilePane] = useState<'tree' | 'detail'>('tree')
   const [detailTab, setDetailTab] = useState<'info' | 'profile' | 'history' | 'coverage'>('info')
+  const location = useLocation()
+  useEffect(() => {
+    if (location.hash === '#coverage') {
+      setDetailTab('coverage')
+    }
+  }, [location.hash])
   const [leftTab, setLeftTab] = useState<'browse' | 'query'>('browse')
 
   const [hideInverseProps, setHideInverseProps] = useState(true)

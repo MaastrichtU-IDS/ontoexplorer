@@ -1,6 +1,7 @@
 """Coverage endpoints — read-only views over the Redis coverage cache."""
 from __future__ import annotations
 
+import asyncio
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -24,7 +25,7 @@ def _empty_totals() -> dict:
 @router.get("/ontologies/{ontology_id}/{version_id}/coverage", summary="Per-version coverage metrics")
 async def get_version_coverage(ontology_id: str, version_id: str):
     r = _get_redis()
-    raw = r.get(coverage_cache_key(version_id))
+    raw = await asyncio.to_thread(r.get, coverage_cache_key(version_id))
     if raw is None:
         raise HTTPException(status_code=404, detail="Coverage not computed — reindex pending")
     return json.loads(raw)
@@ -51,7 +52,7 @@ async def get_fleet_coverage(db: AsyncSession = Depends(get_db)):
 
     r = _get_redis()
     keys = [coverage_cache_key(row.id) for row in rows]
-    raws = r.mget(keys) if keys else []
+    raws = await asyncio.to_thread(r.mget, keys) if keys else []
 
     totals = _empty_totals()
     by_ontology: list[dict] = []
