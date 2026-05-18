@@ -566,6 +566,50 @@ export interface BulkMetaItem extends OntologyMetaResolved {
   profile_status: string
 }
 
+// ── Coverage types ────────────────────────────────────────────────────────────
+
+export type CoverageEntityType =
+  | 'class'
+  | 'object_property'
+  | 'data_property'
+  | 'annotation_property'
+  | 'individual'
+
+export interface CoverageBucket {
+  total: number
+  with_label: number
+  with_definition: number
+  multilingual: number
+  by_lang: Record<string, number>
+}
+
+export interface CoverageBucketCompact {
+  total: number
+  with_label: number
+  with_definition: number
+  multilingual: number
+}
+
+export interface CoverageRecord {
+  version_id: string
+  indexed_at: string
+  by_type: Record<CoverageEntityType, CoverageBucket>
+}
+
+export interface CoverageFleetEntry {
+  ontology_id: string
+  version_id: string
+  shortname: string | null
+  title: string | null
+  indexed_at: string
+  by_type: Record<CoverageEntityType, CoverageBucketCompact>
+}
+
+export interface CoverageFleet {
+  totals: Record<CoverageEntityType, CoverageBucketCompact>
+  by_ontology: CoverageFleetEntry[]
+}
+
 // ── Admin types ───────────────────────────────────────────────────────────────
 
 export interface AdminServiceStatus {
@@ -969,6 +1013,12 @@ export const api = {
 
     delete: (id: string) =>
       request<void>(`/sparql/queries/${id}`, { method: 'DELETE' }),
+  },
+
+  coverage: {
+    fleet: () => request<CoverageFleet>('/coverage/public'),
+    version: (ontologyId: string, versionId: string) =>
+      request<CoverageRecord>(`/ontologies/${ontologyId}/${versionId}/coverage`),
   },
 
   stats: {
