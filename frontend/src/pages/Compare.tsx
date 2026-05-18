@@ -157,8 +157,17 @@ export default function Compare() {
     trigger.mutate({ fromVid, toVid })
   }
 
-  const fromOntObj = ontologies.find(o => o.id === fromOnt)
-  const toOntObj   = ontologies.find(o => o.id === toOnt)
+  // Prefer the picker state. Fall back to the comparison response so that
+  // URL-driven loads (where fromOnt/toOnt aren't selected in the picker)
+  // still get the correct ontology labels.
+  const fromOntFromCompare = comparison && comparison.status === 'ready'
+    ? ontologies.find(o => o.id === comparison.from_ontology_id)
+    : undefined
+  const toOntFromCompare = comparison && comparison.status === 'ready'
+    ? ontologies.find(o => o.id === comparison.to_ontology_id)
+    : undefined
+  const fromOntObj = ontologies.find(o => o.id === fromOnt) ?? fromOntFromCompare
+  const toOntObj   = ontologies.find(o => o.id === toOnt)   ?? toOntFromCompare
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '1.5rem 2rem', display: 'flex', flexDirection: 'column', gap: 16 }}>
