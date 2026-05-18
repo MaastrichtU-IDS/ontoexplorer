@@ -244,6 +244,12 @@ Ontologies tagged `fair` (dcterms, DCAT, PROV-O, PAV, schema.org, SKOS, VoID) an
 
 Long descriptions are clamped to three lines; click **more…** to expand.
 
+### Coverage (`/coverage`)
+
+The Coverage page reports how well-populated each ontology is in terms of **labels**, **definitions**, and **multilingual labels**, broken out by entity type. Three summary cards show fleet-wide class coverage; below them, a sortable table lists every ontology with per-metric percentages. Clicking a row opens that ontology's detail page on a new **Coverage** tab that shows five scorecards (classes / object props / data props / annotation props / individuals) and a class-label language distribution bar.
+
+Coverage is computed at index time using the auto-detected `label_props` / `definition_props` from each ontology's annotation profile — no extra SPARQL at request time. Zero-total cells render as `—`. Ontologies whose coverage cache hasn't been populated yet (e.g., recently submitted, not yet reindexed) are silently skipped in the rollup.
+
 ### Navigating hierarchies
 
 Open an ontology page (`/ontologies/<name>`) to see the class and property trees in the left panel. Click any node to load its details in the right panel.
@@ -443,6 +449,10 @@ GET    /languages                                All language tags present acros
 GET    /stats/public                             Aggregate counts (ontologies, classes, properties, individuals) — no auth
 GET    /stats                                    Usage statistics for the authenticated user
 
+# Coverage
+GET    /coverage/public                          Fleet rollup: per-ontology label/definition/multilingual coverage — no auth
+GET    /ontologies/{id}/{vid}/coverage           Per-version coverage scorecard (by entity type, with by_lang breakdown)
+
 # Admin
 GET    /admin/overview                           System overview (requires admin role)
 POST   /admin/ontologies/{id}/ingest             Queue re-ingestion for one ontology (requires admin role)
@@ -499,6 +509,7 @@ ontoexplorer/                    Python package
     webhooks.py                  Webhook management
     api_keys.py                  API key management
     stats.py                     Aggregate and per-user usage statistics
+    coverage.py                  Per-version + fleet coverage of labels / definitions / multilingual labels
     admin.py                     Admin overview, per-ontology pipeline actions (ingest/index/embed/reason), and bulk re-index endpoints
     sparql.py                    SPARQL proxy endpoints
     inbound.py                   Inbound webhook receivers (GitHub push events)
@@ -511,7 +522,7 @@ ontoexplorer/                    Python package
     jobs/                        Celery tasks (ingest, detect_profile, index, reason, justify, poll)
     profile/                     Annotation property registry + SPARQL-based detector
     meta_profile/                Ontology document metadata registry + auto-detector
-    search/                      Redis entity index (build_index, entity_lookup), fastembed embedder, pgvector semantic search
+    search/                      Redis entity index (build_index, entity_lookup), fastembed embedder, pgvector semantic search; coverage.py — pure compute_coverage helper used at index time
     webhooks/                    HMAC-signed outbound delivery
   clients/
     oxigraph.py                  pyoxigraph Store wrapper

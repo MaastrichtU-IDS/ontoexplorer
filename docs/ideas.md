@@ -30,7 +30,7 @@
 
 ## Analytics
 - **Search analytics** — most-queried terms, trending ontologies
-- **Coverage metrics** — how well-populated are labels, definitions, synonyms across the loaded set
+- ~~**Coverage metrics** — how well-populated are labels, definitions, synonyms across the loaded set~~ (shipped 2026-05-18: `/coverage` fleet page + per-version tab on OntologyPage)
 
 ---
 
