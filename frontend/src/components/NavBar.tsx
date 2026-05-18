@@ -7,6 +7,7 @@ import { logout } from '../lib/auth'
 
 const navLinks = [
   { to: '/ontologies', label: 'Ontologies' },
+  { to: '/compare',    label: 'Compare' },
 ]
 
 const LANG_NAMES: Record<string, string> = {
