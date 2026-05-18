@@ -1139,6 +1139,7 @@ def _sparql_usage(store, q: str, label_fn) -> list[dict]:
     result = []
     for row in store.query(q):
         cls_iri = row["class"].value
+        relation = row["relation"].value if row["relation"] is not None else "subClassOf"
         rtype = row["restrictType"].value if row["restrictType"] else "?"
         filler = row["filler"]
         filler_val = filler.value if filler is not None else None
@@ -1148,6 +1149,7 @@ def _sparql_usage(store, q: str, label_fn) -> list[dict]:
         result.append({
             "class_iri":    cls_iri,
             "class_label":  label_fn(cls_iri),
+            "relation":     relation,
             "restriction":  rtype,
             "filler_iri":   filler_val if filler_val and filler_val.startswith("http") else None,
             "filler_label": filler_label or filler_val,
@@ -1161,14 +1163,16 @@ def _sparql_class_usage(store, cu_q: str, disj_q: str, label_fn, adc_map: dict, 
     result: list[dict] = []
     for row in store.query(cu_q):
         cls_iri = row["class"].value
+        relation = row["relation"].value if row["relation"] is not None else "subClassOf"
         prop_iri = row["prop"].value if row["prop"] else None
         rtype = row["restrictType"].value if row["restrictType"] else "?"
-        key = f"{cls_iri}||{prop_iri}||{rtype}"
+        key = f"{cls_iri}||{relation}||{prop_iri}||{rtype}"
         if key not in seen:
             seen.add(key)
             result.append({
                 "class_iri":      cls_iri,
                 "class_label":    label_fn(cls_iri),
+                "relation":       relation,
                 "property_iri":   prop_iri,
                 "property_label": label_fn(prop_iri) if prop_iri else None,
                 "restriction":    rtype,
@@ -1181,9 +1185,10 @@ def _sparql_class_usage(store, cu_q: str, disj_q: str, label_fn, adc_map: dict, 
             result.append({
                 "class_iri":      cls_iri,
                 "class_label":    label_fn(cls_iri),
+                "relation":       "disjointWith",
                 "property_iri":   None,
                 "property_label": None,
-                "restriction":    "disjointWith",
+                "restriction":    "",
             })
     for co_iri in adc_map.get(term_iri, []):
         key = f"{co_iri}||disjointWith"
@@ -1192,9 +1197,10 @@ def _sparql_class_usage(store, cu_q: str, disj_q: str, label_fn, adc_map: dict, 
             result.append({
                 "class_iri":      co_iri,
                 "class_label":    label_fn(co_iri),
+                "relation":       "disjointWith",
                 "property_iri":   None,
                 "property_label": None,
-                "restriction":    "disjointWith",
+                "restriction":    "",
             })
     result.sort(key=lambda x: (x["class_label"] or x["class_iri"]).lower())
     return result
@@ -1437,9 +1443,15 @@ async def get_term(
         usage_query = f"""
             PREFIX owl:  <http://www.w3.org/2002/07/owl#>
             PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-            SELECT ?class ?restrictType ?filler WHERE {{
+            SELECT ?class ?relation ?restrictType ?filler WHERE {{
                 GRAPH <{g_iri}> {{
-                    ?class rdfs:subClassOf ?r .
+                    {{
+                        ?class rdfs:subClassOf ?r .
+                        BIND("subClassOf" AS ?relation)
+                    }} UNION {{
+                        ?class owl:equivalentClass ?r .
+                        BIND("equivalentClass" AS ?relation)
+                    }}
                     ?r owl:onProperty <{term_iri}> .
                     FILTER(isIRI(?class))
                     {{
@@ -1472,7 +1484,7 @@ async def get_term(
                     }}
                 }}
             }}
-            ORDER BY ?class ?restrictType
+            ORDER BY ?class ?relation ?restrictType
             LIMIT 200
         """
         usage = await asyncio.to_thread(_sparql_usage, store, usage_query, _label)
@@ -1483,7 +1495,7 @@ async def get_term(
         _cu_query = f"""
             PREFIX owl:  <http://www.w3.org/2002/07/owl#>
             PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-            SELECT DISTINCT ?class ?prop ?restrictType WHERE {{
+            SELECT DISTINCT ?class ?relation ?prop ?restrictType WHERE {{
                 GRAPH <{g_iri}> {{
                     {{
                         ?r owl:someValuesFrom <{term_iri}> . ?r owl:onProperty ?prop .
@@ -1495,11 +1507,16 @@ async def get_term(
                         ?r owl:hasValue <{term_iri}> . ?r owl:onProperty ?prop .
                         BIND("value" AS ?restrictType)
                     }}
-                    {{ ?class rdfs:subClassOf ?r . FILTER(isIRI(?class)) }}
-                    UNION {{ ?class owl:equivalentClass ?r . FILTER(isIRI(?class)) }}
+                    {{
+                        ?class rdfs:subClassOf ?r . FILTER(isIRI(?class))
+                        BIND("subClassOf" AS ?relation)
+                    }} UNION {{
+                        ?class owl:equivalentClass ?r . FILTER(isIRI(?class))
+                        BIND("equivalentClass" AS ?relation)
+                    }}
                 }}
             }}
-            ORDER BY ?class ?prop
+            ORDER BY ?class ?relation ?prop
             LIMIT 200
         """
         _disj_query = f"""
@@ -1516,6 +1533,96 @@ async def get_term(
         class_usage = await asyncio.to_thread(
             _sparql_class_usage, store, _cu_query, _disj_query, _label, _adc_map, term_iri
         )
+
+    # Domain properties — properties whose rdfs:domain or schema:domainIncludes is this term (or an ancestor)
+    schema_properties: list[dict] = []
+    inherited_schema_properties: list[dict] = []
+    if not is_property:
+        _dp_q = f"""
+            PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+            SELECT DISTINCT ?prop ?range WHERE {{
+                GRAPH <{g_iri}> {{
+                    {{ ?prop rdfs:domain <{term_iri}> }}
+                    UNION
+                    {{ ?prop <https://schema.org/domainIncludes> <{term_iri}> }}
+                    OPTIONAL {{
+                        {{ ?prop rdfs:range ?range }}
+                        UNION
+                        {{ ?prop <https://schema.org/rangeIncludes> ?range }}
+                        FILTER(isIRI(?range))
+                    }}
+                    FILTER(isIRI(?prop))
+                }}
+            }}
+            ORDER BY ?prop
+            LIMIT 200
+        """
+
+        def _query_dp(s):
+            return [
+                {
+                    "prop_iri": row["prop"].value,
+                    "range_iri": row["range"].value if row["range"] is not None else None,
+                }
+                for row in s.query(_dp_q)
+            ]
+
+        for row in await asyncio.to_thread(_query_dp, store):
+            schema_properties.append({
+                "prop_iri": row["prop_iri"],
+                "prop_label": _label(row["prop_iri"]),
+                "range_iri": row["range_iri"],
+                "range_label": _label(row["range_iri"]) if row["range_iri"] else None,
+            })
+
+        _anc_iris = _all_ancestor_iris[:30]
+        if _anc_iris:
+            _anc_values = " ".join(f"<{iri}>" for iri in _anc_iris)
+            _idp_q = f"""
+                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+                SELECT DISTINCT ?prop ?range ?ancestor WHERE {{
+                    GRAPH <{g_iri}> {{
+                        {{ ?prop rdfs:domain ?ancestor }}
+                        UNION
+                        {{ ?prop <https://schema.org/domainIncludes> ?ancestor }}
+                        OPTIONAL {{
+                            {{ ?prop rdfs:range ?range }}
+                            UNION
+                            {{ ?prop <https://schema.org/rangeIncludes> ?range }}
+                            FILTER(isIRI(?range))
+                        }}
+                        FILTER(isIRI(?prop))
+                        VALUES ?ancestor {{ {_anc_values} }}
+                    }}
+                }}
+                ORDER BY ?ancestor ?prop
+                LIMIT 500
+            """
+
+            def _query_idp(s):
+                return [
+                    {
+                        "prop_iri": row["prop"].value,
+                        "range_iri": row["range"].value if row["range"] is not None else None,
+                        "from_iri": row["ancestor"].value,
+                    }
+                    for row in s.query(_idp_q)
+                ]
+
+            _direct_iris = {sp["prop_iri"] for sp in schema_properties}
+            _seen_inh: set[tuple] = set()
+            for row in await asyncio.to_thread(_query_idp, store):
+                key = (row["prop_iri"], row["from_iri"])
+                if key not in _seen_inh and row["prop_iri"] not in _direct_iris:
+                    _seen_inh.add(key)
+                    inherited_schema_properties.append({
+                        "prop_iri": row["prop_iri"],
+                        "prop_label": _label(row["prop_iri"]),
+                        "range_iri": row["range_iri"],
+                        "range_label": _label(row["range_iri"]) if row["range_iri"] else None,
+                        "from_iri": row["from_iri"],
+                        "from_label": _label(row["from_iri"]),
+                    })
 
     # Is this term the object of owl:inverseOf declared by another property?
     def _check_is_inverse_target(s) -> bool:
@@ -1630,6 +1737,8 @@ async def get_term(
         "general_class_axioms": general_class_axioms,
         "usage": usage,
         "class_usage": class_usage,
+        "schema_properties": schema_properties,
+        "inherited_schema_properties": inherited_schema_properties,
     }
 
 

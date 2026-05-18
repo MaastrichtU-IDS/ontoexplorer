@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useTerm } from '../hooks/useTerm'
-import { ClassRef, ClassExprNode, InferredExprEntry, JustificationAxiom, PropertyUsage, ClassUsageEntry, api } from '../lib/api'
+import { ClassRef, ClassExprNode, InferredExprEntry, JustificationAxiom, PropertyUsage, ClassUsageEntry, SchemaProperty, InheritedSchemaProperty, api } from '../lib/api'
 import SourceBadge from './SourceBadge'
 
 function CopyChip({ text, label, title }: { text: string; label?: string; title?: string }) {
@@ -424,6 +424,116 @@ function InferredExprList({ entries, slug, vid, ontologyId, versionId, termIri, 
   )
 }
 
+function propLabel(p: SchemaProperty): string {
+  return p.prop_label || p.prop_iri.split(/[#/]/).pop() || p.prop_iri
+}
+
+function RangeLinks({ ranges, slug, vid }: { ranges: Array<{ iri: string; label: string | null }>; slug: string; vid: string }) {
+  if (ranges.length === 0) return <span style={{ color: 'var(--text-dim)' }}>—</span>
+  return (
+    <span style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 2px' }}>
+      {ranges.map((r, i) => (
+        <span key={i} style={{ display: 'flex', alignItems: 'center' }}>
+          <IriLink iri={r.iri} label={r.label || r.iri.split(/[#/]/).pop() || r.iri} slug={slug} vid={vid} />
+          {i < ranges.length - 1 && <span style={{ color: 'var(--text-dim)', marginLeft: 1 }}>,</span>}
+        </span>
+      ))}
+    </span>
+  )
+}
+
+function DomainPropertiesTable({ props: items, slug, vid }: { props: SchemaProperty[]; slug: string; vid: string }) {
+  if (items.length === 0) return null
+  // Group by prop_iri, collecting all distinct ranges
+  const grouped = new Map<string, { prop: SchemaProperty; ranges: Array<{ iri: string; label: string | null }> }>()
+  for (const item of items) {
+    if (!grouped.has(item.prop_iri)) {
+      grouped.set(item.prop_iri, { prop: item, ranges: [] })
+    }
+    if (item.range_iri) {
+      const g = grouped.get(item.prop_iri)!
+      if (!g.ranges.some(r => r.iri === item.range_iri)) {
+        g.ranges.push({ iri: item.range_iri, label: item.range_label })
+      }
+    }
+  }
+  const rows = Array.from(grouped.values())
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-size-sm)' }}>
+      <thead>
+        <tr style={{ borderBottom: '1px solid var(--border)' }}>
+          {['Property', 'Range'].map(h => (
+            <th key={h} style={{
+              padding: '4px 8px', textAlign: 'left',
+              color: 'var(--text-dim)', fontSize: 10, textTransform: 'uppercase', fontWeight: 500,
+            }}>{h}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(({ prop, ranges }, i) => (
+          <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+            <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
+              <IriLink iri={prop.prop_iri} label={propLabel(prop)} slug={slug} vid={vid} />
+            </td>
+            <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
+              <RangeLinks ranges={ranges} slug={slug} vid={vid} />
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function InheritedDomainPropertiesTable({ props: items, slug, vid }: { props: InheritedSchemaProperty[]; slug: string; vid: string }) {
+  if (items.length === 0) return null
+  // Group by (prop_iri, from_iri), collecting all distinct ranges
+  const grouped = new Map<string, { prop: InheritedSchemaProperty; ranges: Array<{ iri: string; label: string | null }> }>()
+  for (const item of items) {
+    const key = `${item.prop_iri}\0${item.from_iri}`
+    if (!grouped.has(key)) {
+      grouped.set(key, { prop: item, ranges: [] })
+    }
+    if (item.range_iri) {
+      const g = grouped.get(key)!
+      if (!g.ranges.some(r => r.iri === item.range_iri)) {
+        g.ranges.push({ iri: item.range_iri, label: item.range_label })
+      }
+    }
+  }
+  const rows = Array.from(grouped.values())
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-size-sm)' }}>
+      <thead>
+        <tr style={{ borderBottom: '1px solid var(--border)' }}>
+          {['Property', 'Range', 'Inherited from'].map(h => (
+            <th key={h} style={{
+              padding: '4px 8px', textAlign: 'left',
+              color: 'var(--text-dim)', fontSize: 10, textTransform: 'uppercase', fontWeight: 500,
+            }}>{h}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(({ prop, ranges }, i) => (
+          <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+            <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
+              <IriLink iri={prop.prop_iri} label={propLabel(prop)} slug={slug} vid={vid} />
+            </td>
+            <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
+              <RangeLinks ranges={ranges} slug={slug} vid={vid} />
+            </td>
+            <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
+              <IriLink iri={prop.from_iri} label={prop.from_label || prop.from_iri.split(/[#/]/).pop() || prop.from_iri} slug={slug} vid={vid} />
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 16 }}>
@@ -435,14 +545,16 @@ function Section({ label, children }: { label: string; children: React.ReactNode
   )
 }
 
-function UsageTable({ usage, slug, vid }: { usage: PropertyUsage[]; slug: string; vid: string }) {
+function UsageTable({ usage, propIri, propLabel, slug, vid }: {
+  usage: PropertyUsage[]; propIri: string; propLabel: string; slug: string; vid: string
+}) {
   if (usage.length === 0) return <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>No axioms found</span>
 
   return (
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-size-sm)' }}>
       <thead>
         <tr style={{ borderBottom: '1px solid var(--border)' }}>
-          {['Class', 'Restriction', 'Filler'].map(h => (
+          {['Class', 'Axiom', 'Relation', 'Restriction', 'Filler'].map(h => (
             <th key={h} style={{
               padding: '4px 8px', textAlign: 'left',
               color: 'var(--text-dim)', fontSize: 10, textTransform: 'uppercase', fontWeight: 500,
@@ -455,6 +567,12 @@ function UsageTable({ usage, slug, vid }: { usage: PropertyUsage[]; slug: string
           <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
             <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
               <IriLink iri={u.class_iri} label={u.class_label} slug={slug} vid={vid} />
+            </td>
+            <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
+              <code style={{ color: 'var(--accent-purple)', fontSize: 11 }}>{u.relation ?? 'subClassOf'}</code>
+            </td>
+            <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
+              <IriLink iri={propIri} label={propLabel} slug={slug} vid={vid} />
             </td>
             <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
               <code style={{ color: 'var(--accent-blue)', fontSize: 11 }}>{u.restriction}</code>
@@ -473,14 +591,16 @@ function UsageTable({ usage, slug, vid }: { usage: PropertyUsage[]; slug: string
   )
 }
 
-function ClassUsageTable({ usage, slug, vid }: { usage: ClassUsageEntry[]; slug: string; vid: string }) {
+function ClassUsageTable({ usage, classIri, classLabel, slug, vid }: {
+  usage: ClassUsageEntry[]; classIri: string; classLabel: string; slug: string; vid: string
+}) {
   if (usage.length === 0) return <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>No axioms found</span>
 
   return (
     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-size-sm)' }}>
       <thead>
         <tr style={{ borderBottom: '1px solid var(--border)' }}>
-          {['Class', 'Property', 'Restriction'].map(h => (
+          {['Class', 'Axiom', 'Relation', 'Restriction', 'Filler'].map(h => (
             <th key={h} style={{
               padding: '4px 8px', textAlign: 'left',
               color: 'var(--text-dim)', fontSize: 10, textTransform: 'uppercase', fontWeight: 500,
@@ -495,6 +615,9 @@ function ClassUsageTable({ usage, slug, vid }: { usage: ClassUsageEntry[]; slug:
               <IriLink iri={u.class_iri} label={u.class_label} slug={slug} vid={vid} />
             </td>
             <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
+              <code style={{ color: 'var(--accent-purple)', fontSize: 11 }}>{u.relation ?? 'subClassOf'}</code>
+            </td>
+            <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
               {u.property_iri ? (
                 <IriLink iri={u.property_iri} label={u.property_label ?? u.property_iri} slug={slug} vid={vid} />
               ) : (
@@ -502,7 +625,14 @@ function ClassUsageTable({ usage, slug, vid }: { usage: ClassUsageEntry[]; slug:
               )}
             </td>
             <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
-              <code style={{ color: 'var(--accent-blue)', fontSize: 11 }}>{u.restriction}</code>
+              {u.restriction ? (
+                <code style={{ color: 'var(--accent-blue)', fontSize: 11 }}>{u.restriction}</code>
+              ) : (
+                <span style={{ color: 'var(--text-dim)' }}>—</span>
+              )}
+            </td>
+            <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
+              <IriLink iri={classIri} label={classLabel} slug={slug} vid={vid} />
             </td>
           </tr>
         ))}
@@ -716,7 +846,13 @@ function PropertyBody({ data, slug, versionId, lang }: {
       })()}
 
       <Section label={`Used in axioms${data.usage.length > 0 ? ` (${data.usage.length})` : ''}`}>
-        <UsageTable usage={data.usage} slug={slug} vid={versionId} />
+        <UsageTable
+          usage={data.usage}
+          propIri={data.iri}
+          propLabel={data.label || data.iri.split(/[#/]/).pop() || data.iri}
+          slug={slug}
+          vid={versionId}
+        />
       </Section>
     </div>
   )
@@ -752,6 +888,8 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
   const hasDisjointWith     = data.disjointWith.length > 0 || data.inferredDisjointWith.length > 0
   const hasDisjointUnionOf  = data.disjointUnionOf.length > 0
   const hasGCAs             = data.generalClassAxioms.length > 0
+  const hasSchemaDomain          = data.schemaProperties.length > 0
+  const hasInheritedSchemaDomain = data.inheritedSchemaProperties.length > 0
 
   const pad = singlePane ? '10px 16px' : '10px 12px'
 
@@ -852,9 +990,27 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
           </Section>
         )}
 
+        {hasSchemaDomain && (
+          <Section label={`Domain of (${data.schemaProperties.length})`}>
+            <DomainPropertiesTable props={data.schemaProperties} slug={slug} vid={versionId} />
+          </Section>
+        )}
+
+        {hasInheritedSchemaDomain && (
+          <Section label={`Inherited domain of (${data.inheritedSchemaProperties.length})`}>
+            <InheritedDomainPropertiesTable props={data.inheritedSchemaProperties} slug={slug} vid={versionId} />
+          </Section>
+        )}
+
         {data.classUsage.length > 0 && (
           <Section label={`Used in axioms (${data.classUsage.length})`}>
-            <ClassUsageTable usage={data.classUsage} slug={slug} vid={versionId} />
+            <ClassUsageTable
+              usage={data.classUsage}
+              classIri={data.iri}
+              classLabel={data.label || data.iri.split(/[#/]/).pop() || data.iri}
+              slug={slug}
+              vid={versionId}
+            />
           </Section>
         )}
       </div>

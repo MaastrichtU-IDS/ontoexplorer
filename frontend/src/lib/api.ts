@@ -196,6 +196,7 @@ export interface PropertyUsage {
 export interface ClassUsageEntry {
   class_iri: string
   class_label: string
+  relation: string
   property_iri: string | null
   property_label: string | null
   restriction: string
