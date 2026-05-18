@@ -263,6 +263,34 @@ class OntologyDiff(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class OntologyComparison(Base):
+    """Cross-ontology comparison between two version IDs from (possibly)
+    different ontologies. Mirrors OntologyDiff but carries TWO ontology IDs.
+    """
+    __tablename__ = "ontology_comparisons"
+    __table_args__ = (UniqueConstraint("version_from_id", "version_to_id"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    from_ontology_id: Mapped[str] = mapped_column(
+        ForeignKey("ontologies.id", ondelete="CASCADE")
+    )
+    to_ontology_id: Mapped[str] = mapped_column(
+        ForeignKey("ontologies.id", ondelete="CASCADE")
+    )
+    version_from_id: Mapped[str] = mapped_column(
+        ForeignKey("versions.id", ondelete="CASCADE")
+    )
+    version_to_id: Mapped[str] = mapped_column(
+        ForeignKey("versions.id", ondelete="CASCADE")
+    )
+    status: Mapped[str] = mapped_column(String, default="pending")  # pending | ready | failed
+    summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    diff_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class TermEmbedding(Base):
     __tablename__ = "term_embeddings"
     __table_args__ = (UniqueConstraint("version_id", "entity_iri"),)
