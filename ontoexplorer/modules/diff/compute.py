@@ -115,22 +115,19 @@ def _bnode_fingerprint(
     return hashlib.sha1("\n".join(parts).encode()).hexdigest()[:16]
 
 
-def run_diff(
+def _run_diff_core(
     store: ox.Store,
-    ontology_id: str,
-    from_vid: str,
-    to_vid: str,
+    from_graph: ox.NamedNode,
+    to_graph: ox.NamedNode,
 ) -> tuple[dict, dict]:
-    """
-    Compute term-level diff between two named graphs in `store`.
+    """Diff two named graphs in `store`. Pure function over graph IRIs —
+    callers build the IRIs from their own identifiers (ontology_id+version
+    for intra-ontology diffs, two ontology_ids for cross-ontology compare).
 
-    Returns (summary, diff_data) matching the spec shapes defined in
-    docs/superpowers/specs/2026-05-16-ontology-version-diff-design.md.
-    Both graphs must already exist in the store.
+    Returns (summary, diff_data). diff_data has the shape
+        {"added": [...], "removed": [...], "modified": [...]}
+    matching the existing OntologyDiff JSON contract.
     """
-    from_graph = ox.NamedNode(graph_iri(ontology_id, from_vid))
-    to_graph   = ox.NamedNode(graph_iri(ontology_id, to_vid))
-
     added_list: list[dict] = []
     removed_list: list[dict] = []
     modified_list: list[dict] = []
@@ -163,7 +160,6 @@ def run_diff(
             if from_lits == to_lits and from_struct == to_struct:
                 continue
 
-            # Pair removed/added literals by (predicate, lang)
             from_lits_map = {(p, lang): v for p, lang, v in from_lits - to_lits}
             to_lits_map   = {(p, lang): v for p, lang, v in to_lits   - from_lits}
             literal_changes = [
@@ -173,11 +169,12 @@ def run_diff(
                     "removed": from_lits_map.get((pred, lang)),
                     "added":   to_lits_map.get((pred, lang)),
                 }
-                for pred, lang in sorted(set(from_lits_map) | set(to_lits_map), key=lambda t: (t[0], t[1] or ""))
+                for pred, lang in sorted(
+                    set(from_lits_map) | set(to_lits_map),
+                    key=lambda t: (t[0], t[1] or ""),
+                )
             ]
 
-            # Structural-axiom diff: build (op, predicate, object_term, graph)
-            # tuples first so the renderer can walk each bnode in its origin graph.
             change_records: list[dict] = []
             for p_iri, o_repr in sorted(from_struct - to_struct):
                 change_records.append({
@@ -194,7 +191,6 @@ def run_diff(
                     "graph": to_graph,
                 })
 
-            # Manchester axiom_changes strings + frame.
             axiom_changes: list[dict] = []
             for rec in change_records:
                 axiom_str = _mos.render_axiom(
@@ -243,3 +239,15 @@ def run_diff(
         "modified": modified_list,
     }
     return summary, diff_data
+
+
+def run_diff(
+    store: ox.Store,
+    ontology_id: str,
+    from_vid: str,
+    to_vid: str,
+) -> tuple[dict, dict]:
+    """Compute term-level diff between two named graphs of the same ontology."""
+    from_graph = ox.NamedNode(graph_iri(ontology_id, from_vid))
+    to_graph   = ox.NamedNode(graph_iri(ontology_id, to_vid))
+    return _run_diff_core(store, from_graph, to_graph)
