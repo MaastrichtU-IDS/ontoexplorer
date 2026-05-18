@@ -21,6 +21,7 @@ from ontoexplorer.api.meta_profile import router as meta_profile_router
 from ontoexplorer.api.diff import router as diff_router
 from ontoexplorer.api.mod import router as mod_router
 from ontoexplorer.api.compare import router as compare_router
+from ontoexplorer.api.coverage import router as coverage_router
 from ontoexplorer.config import get_settings
 from ontoexplorer.logging_config import configure_logging
 
@@ -69,6 +70,9 @@ def create_app() -> FastAPI:
     # take precedence over ontologies_router's /{id}/{version_id} parameter
     app.include_router(diff_router)
     app.include_router(compare_router)
+    # coverage_router before ontologies_router: /{id}/{vid}/coverage static segment must
+    # match before ontologies_router's parameterized sub-routes
+    app.include_router(coverage_router)
     app.include_router(ontologies_router)
     app.include_router(search_router)
     app.include_router(webhooks_router)
