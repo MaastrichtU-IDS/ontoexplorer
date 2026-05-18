@@ -496,3 +496,120 @@ def _render_datatype_restriction(
     if not facet_strs:
         return base_label
     return f"{base_label}[" + ", ".join(facet_strs) + "]"
+
+
+# Order in which keywords appear in the frame. Predicates not in the table are
+# emitted at the end under "Other:" (or omitted, for unrecognized ones).
+# Tuples: (predicate, manchester-keyword, applicable-entity-types).
+_FRAME_KEYWORD_ORDER: list[tuple[str, str, set[str] | None]] = [
+    # Class axioms
+    (_RDFS_SUBCLASS,      "SubClassOf",       {"class"}),
+    (_OWL_EQUIV_CLASS,    "EquivalentTo",     {"class"}),
+    (_OWL_DISJOINT_WITH,  "DisjointWith",     {"class"}),
+    (_OWL_DISJOINT_UNION, "DisjointUnionOf",  {"class"}),
+    # Property axioms
+    (_RDFS_SUBPROP,       "SubPropertyOf",
+        {"object_property", "data_property", "annotation_property"}),
+    (_OWL_EQUIV_PROP,     "EquivalentTo",
+        {"object_property", "data_property"}),
+    (_OWL_INVERSE_OF,     "InverseOf",        {"object_property"}),
+    (_RDFS_DOMAIN,        "Domain",
+        {"object_property", "data_property", "annotation_property"}),
+    (_RDFS_RANGE,         "Range",
+        {"object_property", "data_property", "annotation_property"}),
+    # Property characteristics — special predicate (rdf:type) handled via its own keyword.
+    (_RDF_TYPE,           "Characteristics",
+        {"object_property", "data_property"}),
+    # Individual axioms
+    (_RDF_TYPE,           "Types",            {"individual"}),
+    (_OWL_SAME_AS,        "SameAs",           {"individual"}),
+    (_OWL_DIFFERENT,      "DifferentFrom",    {"individual"}),
+    # Property assertions for individuals — wildcard predicate, handled below.
+]
+
+_ENTITY_KEYWORD: dict[str, str] = {
+    "class":               "Class",
+    "object_property":     "ObjectProperty",
+    "data_property":       "DataProperty",
+    "annotation_property": "AnnotationProperty",
+    "individual":          "Individual",
+}
+
+
+def render_frame(
+    store: ox.Store,
+    entity_iri: str,
+    entity_type: str,
+    axiom_changes: list[dict],
+    *,
+    labels: dict[str, str],
+) -> str | None:
+    """Render a Protégé-style Manchester frame for one modified entity.
+
+    `axiom_changes` is a list of dicts with keys:
+      op:        'added' | 'removed'
+      predicate: str (predicate IRI)
+      object:    ox.Term
+      graph:     ox.NamedNode (which named graph this change came from — needed
+                 because bnode IDs differ between from-graph and to-graph)
+
+    Returns None when no axiom_changes produce a renderable line.
+    """
+    # Render every change to a (keyword, op, line_text). Drop lines whose predicate
+    # isn't covered (render_axiom returns None) — they don't appear in the frame.
+    rendered: list[tuple[str, str, str]] = []  # (keyword, op, text)
+    for change in axiom_changes:
+        line = render_axiom(
+            store, change["graph"], entity_iri,
+            change["predicate"], change["object"],
+            labels=labels, entity_type=entity_type,
+        )
+        if line is None:
+            continue
+        keyword, _, body = line.partition(": ")
+        rendered.append((keyword, change["op"], body))
+
+    if not rendered:
+        return None
+
+    # Group by keyword, preserving _FRAME_KEYWORD_ORDER. Unknown keywords go
+    # to the end in insertion order.
+    keyword_order: list[str] = []
+    seen: set[str] = set()
+    for pred, kw, types in _FRAME_KEYWORD_ORDER:
+        if (types is None or entity_type in types) and kw not in seen:
+            keyword_order.append(kw)
+            seen.add(kw)
+    # Always include 'Facts' last for individuals (assertion lines).
+    if entity_type == "individual" and "Facts" not in seen:
+        keyword_order.append("Facts")
+        seen.add("Facts")
+    # Any leftover keywords we didn't anticipate.
+    for kw, _, _ in rendered:
+        if kw not in seen:
+            keyword_order.append(kw)
+            seen.add(kw)
+
+    # Build the frame. At this point `axiom_changes` is non-empty (else we
+    # returned None above), so we can safely take a graph from the first change
+    # to resolve the entity's label if not yet cached.
+    entity_keyword = _ENTITY_KEYWORD.get(entity_type, "Entity")
+    entity_label = iri_to_label(
+        store, axiom_changes[0]["graph"], entity_iri, labels=labels,
+    )
+    lines: list[str] = [f"{entity_keyword}: {entity_label}  ({entity_iri})"]
+
+    for kw in keyword_order:
+        kw_lines = [(op, body) for k, op, body in rendered if k == kw]
+        if not kw_lines:
+            continue
+        lines.append(f"    {kw}:")
+        # Removed first, then added, alphabetical within each.
+        removed = sorted([b for op, b in kw_lines if op == "removed"])
+        added   = sorted([b for op, b in kw_lines if op == "added"])
+        for body in removed:
+            lines.append(f"-       {body}")
+        for body in added:
+            lines.append(f"+       {body}")
+
+    return "\n".join(lines)

@@ -791,3 +791,162 @@ def test_axiom_non_individual_unknown_predicate_still_returns_none():
         entity_type="class",
     )
     assert out is None
+
+
+from ontoexplorer.modules.diff.manchester import render_frame
+
+
+def test_render_frame_class_header_with_label():
+    iri = "http://example.org/Pizza"
+    label_pred = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#label")
+    store = _store(
+        (ox.NamedNode(iri), label_pred, ox.Literal("Pizza", language="en")),
+    )
+    frame = render_frame(
+        store, iri, "class", axiom_changes=[], labels={}
+    )
+    # Empty axiom changes → None (per spec, empty frame is not surfaced).
+    assert frame is None
+
+
+def test_render_frame_class_with_single_subclass_change():
+    iri = "http://example.org/SaltyPizza"
+    p = ox.NamedNode("http://example.org/hasTopping")
+    c = ox.NamedNode("http://example.org/Anchovy")
+    r = ox.BlankNode("r_axiom")
+    label_pred = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#label")
+    store = _store(
+        (ox.NamedNode(iri), label_pred, ox.Literal("Salty Pizza", language="en")),
+        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r, _OWL_ON_PROPERTY, p),
+        (r, _OWL_SOME, c),
+    )
+    frame = render_frame(
+        store, iri, "class",
+        axiom_changes=[
+            {"op": "added", "predicate": "http://www.w3.org/2000/01/rdf-schema#subClassOf", "object": r,
+             "graph": _GRAPH},
+        ],
+        labels={},
+    )
+    assert frame is not None
+    expected = (
+        f"Class: Salty Pizza  ({iri})\n"
+        "    SubClassOf:\n"
+        "+       hasTopping some Anchovy"
+    )
+    assert frame == expected
+
+
+def test_render_frame_removed_then_added_under_same_keyword():
+    iri = "http://example.org/SaltyPizza"
+    p = ox.NamedNode("http://example.org/hasTopping")
+    cheese = ox.NamedNode("http://example.org/Cheese")
+    tofu = ox.NamedNode("http://example.org/Tofu")
+    r_old = ox.BlankNode("r_old")
+    r_new = ox.BlankNode("r_new")
+    store = _store(
+        (r_old, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r_old, _OWL_ON_PROPERTY, p),
+        (r_old, _OWL_SOME, cheese),
+        (r_new, _RDF_TYPE_N, _OWL_RESTRICTION),
+        (r_new, _OWL_ON_PROPERTY, p),
+        (r_new, _OWL_SOME, tofu),
+    )
+    frame = render_frame(
+        store, iri, "class",
+        axiom_changes=[
+            {"op": "added",   "predicate": "http://www.w3.org/2000/01/rdf-schema#subClassOf", "object": r_new, "graph": _GRAPH},
+            {"op": "removed", "predicate": "http://www.w3.org/2000/01/rdf-schema#subClassOf", "object": r_old, "graph": _GRAPH},
+        ],
+        labels={},
+    )
+    expected = (
+        f"Class: SaltyPizza  ({iri})\n"
+        "    SubClassOf:\n"
+        "-       hasTopping some Cheese\n"
+        "+       hasTopping some Tofu"
+    )
+    assert frame == expected
+
+
+def test_render_frame_multiple_keywords_ordered():
+    iri = "http://example.org/Foo"
+    a = ox.NamedNode("http://example.org/A")
+    b = ox.NamedNode("http://example.org/B")
+    store = _store()
+    frame = render_frame(
+        store, iri, "class",
+        axiom_changes=[
+            # Mixed order — render_frame must group and order them.
+            {"op": "added",   "predicate": "http://www.w3.org/2002/07/owl#equivalentClass",  "object": b, "graph": _GRAPH},
+            {"op": "added",   "predicate": "http://www.w3.org/2000/01/rdf-schema#subClassOf",    "object": a, "graph": _GRAPH},
+        ],
+        labels={},
+    )
+    expected = (
+        f"Class: Foo  ({iri})\n"
+        "    SubClassOf:\n"
+        "+       A\n"
+        "    EquivalentTo:\n"
+        "+       B"
+    )
+    assert frame == expected
+
+
+def test_render_frame_object_property_header():
+    iri = "http://example.org/hasTopping"
+    p2 = ox.NamedNode("http://example.org/hasCovering")
+    store = _store()
+    frame = render_frame(
+        store, iri, "object_property",
+        axiom_changes=[
+            {"op": "added", "predicate": "http://www.w3.org/2000/01/rdf-schema#subPropertyOf", "object": p2, "graph": _GRAPH},
+        ],
+        labels={},
+    )
+    expected = (
+        f"ObjectProperty: hasTopping  ({iri})\n"
+        "    SubPropertyOf:\n"
+        "+       hasCovering"
+    )
+    assert frame == expected
+
+
+def test_render_frame_individual_with_facts_and_types():
+    iri = "http://example.org/Alice"
+    person = ox.NamedNode("http://example.org/Person")
+    bob = ox.NamedNode("http://example.org/Bob")
+    store = _store()
+    frame = render_frame(
+        store, iri, "individual",
+        axiom_changes=[
+            {"op": "added", "predicate": "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",           "object": person, "graph": _GRAPH},
+            {"op": "added", "predicate": "http://example.org/hasFriend", "object": bob, "graph": _GRAPH},
+        ],
+        labels={},
+    )
+    expected = (
+        f"Individual: Alice  ({iri})\n"
+        "    Types:\n"
+        "+       Person\n"
+        "    Facts:\n"
+        "+       hasFriend Bob"
+    )
+    assert frame == expected
+
+
+def test_render_frame_unknown_predicate_falls_back_to_raw_form():
+    iri = "http://example.org/Foo"
+    obj = ox.NamedNode("http://example.org/Bar")
+    pred = "http://example.org/myCustomPred"
+    store = _store()
+    frame = render_frame(
+        store, iri, "class",
+        axiom_changes=[
+            {"op": "added", "predicate": pred, "object": obj, "graph": _GRAPH},
+        ],
+        labels={},
+    )
+    # Unknown predicate → frame omits that line; with no other changes the frame is None.
+    assert frame is None
