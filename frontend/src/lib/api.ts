@@ -127,6 +127,24 @@ export interface OntologyDiff {
   narrative: string | null
 }
 
+export interface OntologyComparison {
+  status: 'pending' | 'ready' | 'failed'
+  from_ontology_id: string
+  to_ontology_id: string
+  version_from_id: string
+  version_to_id: string
+  summary?: DiffSummary
+  diff_data?: {
+    added: DiffEntity[]
+    removed: DiffEntity[]
+    modified: DiffEntity[]
+  }
+}
+
+export interface ComparisonPending {
+  status: 'pending' | 'failed'
+}
+
 export interface UserProfile {
   id: string
   email: string | null
@@ -1023,5 +1041,17 @@ export const api = {
   meta: {
     bulk: (ids: string[]) =>
       request<BulkMetaItem[]>(`/meta?ids=${ids.join(',')}`),
+  },
+
+  compare: {
+    get: (fromVid: string, toVid: string) =>
+      request<OntologyComparison | ComparisonPending>(
+        `/compare?from_version_id=${encodeURIComponent(fromVid)}&to_version_id=${encodeURIComponent(toVid)}`
+      ),
+    compute: (fromVid: string, toVid: string) =>
+      request<{ status: string }>(
+        `/compare/compute?from_version_id=${encodeURIComponent(fromVid)}&to_version_id=${encodeURIComponent(toVid)}`,
+        { method: 'POST' }
+      ),
   },
 }
