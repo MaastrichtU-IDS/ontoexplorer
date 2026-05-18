@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api, Ontology, OntologyVersion } from '../lib/api'
@@ -26,7 +26,13 @@ function OntologyPicker({
   side: 'from' | 'to'
   disabledId?: string
 }) {
+  const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  const selected = ontologies.find(o => o.id === value)
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return ontologies
@@ -37,36 +43,110 @@ function OntologyPicker({
     )
   }, [ontologies, query])
 
+  // Close when clicking outside.
+  useEffect(() => {
+    if (!open) return
+    function handleClickOutside(e: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false)
+        setQuery('')
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
+
+  // Auto-focus the filter input when the dropdown opens.
+  useEffect(() => {
+    if (open) inputRef.current?.focus()
+  }, [open])
+
+  function pick(id: string) {
+    onChange(id)
+    setOpen(false)
+    setQuery('')
+  }
+
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div ref={rootRef} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6, position: 'relative' }}>
       <label style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5 }}>
         {side === 'from' ? 'From ontology' : 'To ontology'}
       </label>
-      <input
-        value={query}
-        onChange={e => setQuery(e.target.value)}
-        placeholder="Filter ontologies…"
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
         style={{
           background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-          borderRadius: 4, padding: '6px 10px', color: 'var(--text)', fontSize: 12,
-        }}
-      />
-      <select
-        size={Math.min(8, Math.max(3, filtered.length))}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        style={{
-          background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-          borderRadius: 4, padding: '4px 6px', color: 'var(--text)', fontSize: 12,
-          fontFamily: 'monospace', minHeight: 90,
+          borderRadius: 4, padding: '6px 10px', color: selected ? 'var(--text)' : 'var(--text-dim)',
+          fontSize: 12, textAlign: 'left', cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          fontFamily: 'inherit',
         }}
       >
-        {filtered.map(o => (
-          <option key={o.id} value={o.id} disabled={o.id === disabledId}>
-            {ontologyDisplayName(o)}{o.title ? ` — ${o.title}` : ''}
-          </option>
-        ))}
-      </select>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selected
+            ? `${ontologyDisplayName(selected)}${selected.title ? ` — ${selected.title}` : ''}`
+            : 'Select an ontology…'}
+        </span>
+        <span style={{ color: 'var(--text-dim)', fontSize: 10 }}>{open ? '▴' : '▾'}</span>
+      </button>
+      {open && (
+        <div
+          style={{
+            position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, zIndex: 50,
+            background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+            borderRadius: 4, boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+            display: 'flex', flexDirection: 'column',
+          }}
+        >
+          <div style={{ padding: 6, borderBottom: '1px solid var(--border)' }}>
+            <input
+              ref={inputRef}
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="Search ontologies…"
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                background: 'var(--bg)', border: '1px solid var(--border)',
+                borderRadius: 4, padding: '5px 8px', color: 'var(--text)', fontSize: 12, outline: 'none',
+              }}
+            />
+          </div>
+          <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+            {filtered.length === 0 && (
+              <div style={{ padding: 10, color: 'var(--text-dim)', fontSize: 12 }}>No matches</div>
+            )}
+            {filtered.map(o => {
+              const isDisabled = o.id === disabledId
+              const isSelected = o.id === value
+              return (
+                <button
+                  key={o.id}
+                  type="button"
+                  disabled={isDisabled}
+                  onClick={() => pick(o.id)}
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'left',
+                    padding: '6px 10px',
+                    background: isSelected ? 'rgba(97,175,239,0.08)' : 'transparent',
+                    border: 'none',
+                    borderLeft: isSelected ? '2px solid var(--accent)' : '2px solid transparent',
+                    color: isDisabled ? 'var(--text-dim)' : 'var(--text)',
+                    fontSize: 12, cursor: isDisabled ? 'not-allowed' : 'pointer',
+                    opacity: isDisabled ? 0.5 : 1,
+                  }}
+                  title={isDisabled ? 'Already selected on the other side' : o.iri}
+                >
+                  <div style={{ fontFamily: 'monospace' }}>{ontologyDisplayName(o)}</div>
+                  {o.title && (
+                    <div style={{ color: 'var(--text-dim)', fontSize: 10, marginTop: 1 }}>{o.title}</div>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
