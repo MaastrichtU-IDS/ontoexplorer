@@ -571,7 +571,7 @@ def test_depth_limit_returns_ellipsis():
     assert "…" in out, f"expected depth-limit ellipsis, got: {out}"
 
 
-from ontoexplorer.modules.diff.manchester import render_axiom
+from ontoexplorer.modules.diff.manchester import render_axiom, _BUILTIN_ANNOTATION_PROPS
 
 _RDFS_SUB_N = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
 _OWL_EQUIV_CLASS_N = ox.NamedNode("http://www.w3.org/2002/07/owl#equivalentClass")
@@ -974,3 +974,68 @@ def test_render_frame_unknown_predicate_falls_back_to_raw_form():
     )
     # Unknown predicate → frame omits that line; with no other changes the frame is None.
     assert frame is None
+
+
+_RDFS_LABEL_N = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#label")
+_RDFS_COMMENT_N = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#comment")
+_DC_DESCRIPTION_N = ox.NamedNode("http://purl.org/dc/elements/1.1/description")
+_OWL_VERSION_INFO_N = ox.NamedNode("http://www.w3.org/2002/07/owl#versionInfo")
+_CUSTOM_ANN_N = ox.NamedNode("http://example.org/myAnn")
+
+
+def test_render_axiom_rdfs_label_annotation():
+    """A built-in annotation property emits 'Annotations: rdfs:label "Foo"@en'."""
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/Foo", _RDFS_LABEL_N.value,
+        ox.Literal("Foo", language="en"),
+        labels={},
+        annotation_props=_BUILTIN_ANNOTATION_PROPS,
+    )
+    assert out == 'Annotations: rdfs:label "Foo"@en'
+
+
+def test_render_axiom_dc_description_annotation():
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/Foo", _DC_DESCRIPTION_N.value,
+        ox.Literal("A thing"),
+        labels={},
+        annotation_props=_BUILTIN_ANNOTATION_PROPS,
+    )
+    assert out == 'Annotations: dc:description "A thing"'
+
+
+def test_render_axiom_owl_version_info_annotation():
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/Ont", _OWL_VERSION_INFO_N.value,
+        ox.Literal("1.0.0"),
+        labels={},
+        annotation_props=_BUILTIN_ANNOTATION_PROPS,
+    )
+    assert out == 'Annotations: owl:versionInfo "1.0.0"'
+
+
+def test_render_axiom_custom_annotation_property_via_dynamic_set():
+    """A non-builtin predicate gets routed to Annotations: iff in annotation_props."""
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/Foo", _CUSTOM_ANN_N.value,
+        ox.Literal("custom note"),
+        labels={},
+        annotation_props=frozenset({_CUSTOM_ANN_N.value}),
+    )
+    assert out == 'Annotations: <http://example.org/myAnn> "custom note"'
+
+
+def test_render_axiom_custom_predicate_NOT_in_annotation_set_returns_none():
+    """If a custom predicate isn't in annotation_props it falls through (None)."""
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/Foo", "http://example.org/randomPred",
+        ox.NamedNode("http://example.org/Bar"),
+        labels={},
+        annotation_props=frozenset(),  # not declared as annotation
+    )
+    assert out is None

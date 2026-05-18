@@ -468,17 +468,24 @@ def render_axiom(
     *,
     labels: dict[str, str],
     entity_type: str | None = None,
+    annotation_props: frozenset[str] = _BUILTIN_ANNOTATION_PROPS,
 ) -> str | None:
     """Render a single (predicate, object) pair as a Manchester axiom line.
 
-    `entity_type` (one of 'class', 'object_property', 'data_property',
-    'annotation_property', 'individual') changes the meaning of rdf:type and
-    of unknown predicates:
-
-      * On individuals: rdf:type → `Types: X`; any other predicate → `Facts: p o`.
-      * On properties: rdf:type with an OWL characteristic class → `Characteristics: Functional` etc.
-      * Other unrecognized predicates → None (caller falls back).
+    `annotation_props` is the per-run set of predicates that should render
+    under the `Annotations:` keyword (built-ins plus any owl:AnnotationProperty
+    discovered in the graph). When the predicate is in this set, output is
+    `Annotations: <curie-or-iri> <value>`. Otherwise the existing dispatch
+    runs (logical/property/characteristic/individual axioms).
     """
+    # Annotation properties take precedence over everything else, so an
+    # ontology that types e.g. rdfs:seeAlso as both annotation + logical
+    # property still renders cleanly.
+    if predicate_iri in annotation_props:
+        pred_str = _to_curie(predicate_iri)
+        value_str = _render_annotation_value(store, graph, object_term, labels=labels)
+        return f"Annotations: {pred_str} {value_str}"
+
     # Individuals: rdf:type → Types, anything else → Facts.
     if entity_type == "individual":
         if predicate_iri == _RDF_TYPE:
@@ -509,6 +516,20 @@ def render_axiom(
         return None
     filler = render_class_expression(store, graph, object_term, labels=labels)
     return f"{keyword}: {filler}"
+
+
+def _render_annotation_value(
+    store: ox.Store, graph: ox.NamedNode, obj: ox.Term, *, labels: dict[str, str],
+) -> str:
+    """Render the object of an annotation axiom.
+
+    - Literal → `"value"[@lang][^^xsd:dtype]` (xsd:string suppressed).
+    - NamedNode → label / CURIE / local name via the existing class-expression renderer.
+    - BlankNode → fallback class-expression rendering (uncommon for annotations).
+    """
+    if isinstance(obj, ox.Literal):
+        return _render_literal(obj)
+    return render_class_expression(store, graph, obj, labels=labels)
 
 
 def _render_datatype_restriction(
