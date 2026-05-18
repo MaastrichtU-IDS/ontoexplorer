@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, Ontology, OntologyVersion } from '../lib/api'
 import { useArbitraryComparison, useTriggerComparison } from '../hooks/useCompare'
 import DiffResultView from '../components/DiffResultView'
@@ -237,6 +237,26 @@ export default function Compare() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Smart default: when the user picks the same ontology on both sides and
+  // both VersionPickers default to the latest version (so fromVid === toVid),
+  // demote the From side to the previous version so the comparison is
+  // meaningful by default. Uses the React Query cache populated by
+  // VersionPicker's own fetch.
+  const queryClient = useQueryClient()
+  useEffect(() => {
+    if (!fromOnt || fromOnt !== toOnt) return
+    if (!fromVid || !toVid || fromVid !== toVid) return
+    const data = queryClient.getQueryData<{ versions: OntologyVersion[] }>(
+      ['versions', fromOnt],
+    )
+    if (!data) return
+    const versions = data.versions.filter(v => v.status !== 'deprecated')
+    if (versions.length < 2) return
+    // versions are returned sorted by created_at DESC by the backend;
+    // versions[1] is the previous non-deprecated version.
+    setFromVid(versions[1].id)
+  }, [fromOnt, toOnt, fromVid, toVid, queryClient])
+
   const canCompare = !!fromVid && !!toVid && fromVid !== toVid
 
   function handleCompare() {
@@ -260,7 +280,8 @@ export default function Compare() {
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '1.5rem 2rem', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <h1 style={{ fontSize: '1.4rem', fontWeight: 700, margin: 0 }}>Compare ontologies</h1>
       <div style={{ color: 'var(--text-dim)', fontSize: 12 }}>
-        Pick any two ontologies. The comparison aligns entities by exact IRI match.
+        Pick any two ontologies (or the same ontology twice to compare versions).
+        Entities are aligned by exact IRI match.
       </div>
 
       <div style={{ display: 'flex', gap: 16 }}>
@@ -269,14 +290,12 @@ export default function Compare() {
           value={fromOnt}
           onChange={setFromOnt}
           side="from"
-          disabledId={toOnt}
         />
         <OntologyPicker
           ontologies={ontologies}
           value={toOnt}
           onChange={setToOnt}
           side="to"
-          disabledId={fromOnt}
         />
       </div>
 
@@ -291,7 +310,7 @@ export default function Compare() {
         </div>
       )}
 
-      <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <button
           onClick={handleCompare}
           disabled={!canCompare || trigger.isPending}
@@ -306,6 +325,11 @@ export default function Compare() {
         >
           {trigger.isPending ? 'Queuing…' : 'Compare'}
         </button>
+        {fromVid && toVid && fromVid === toVid && (
+          <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>
+            Pick a different version on each side to compare.
+          </span>
+        )}
       </div>
 
       {fromVid && toVid && fromVid !== toVid && comparison && (
