@@ -34,14 +34,15 @@ interface Props {
 }
 
 /**
- * URL-persisted state for the diff view. All filter/expand bits round-trip
+ * URL-persisted state for the diff view. Filter/expand bits round-trip
  * through `df_*` search params so back-button and link-sharing restore the
- * view. The search input keeps a local mirror that debounces the URL write
- * to ~200 ms so the URL doesn't update on every keystroke.
+ * view. Discrete user actions (toggling op visibility, changing a filter,
+ * expanding a row) PUSH a new history entry so the back button traverses
+ * them. The search input debounces to ~200 ms and uses replace so each
+ * keystroke isn't a separate history entry.
  *
- * Always uses functional setSearchParams + { replace: true } to preserve
- * parent-route params (e.g. tab=history, from=..., to=...) and avoid
- * polluting browser history with every filter click.
+ * All updates use functional setSearchParams to preserve parent-route
+ * params (e.g. tab=history, from=..., to=...).
  */
 function useDiffViewURLState() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -109,7 +110,7 @@ function useDiffViewURLState() {
         prev.set('df_ops', ordered.join(','))
       }
       return prev
-    }, { replace: true })
+    })
   }, [setSearchParams])
 
   const setTypeFilter = useCallback((next: DiffEntityType | 'all') => {
@@ -117,7 +118,7 @@ function useDiffViewURLState() {
       if (next === 'all') prev.delete('df_type')
       else prev.set('df_type', next)
       return prev
-    }, { replace: true })
+    })
   }, [setSearchParams])
 
   const setChangeFilter = useCallback((next: ChangeFilter) => {
@@ -125,7 +126,7 @@ function useDiffViewURLState() {
       if (next === 'all') prev.delete('df_cf')
       else prev.set('df_cf', next)
       return prev
-    }, { replace: true })
+    })
   }, [setSearchParams])
 
   const toggleExpanded = useCallback((iri: string) => {
@@ -142,7 +143,7 @@ function useDiffViewURLState() {
         prev.set('df_e', Array.from(current).map(encodeURIComponent).join(','))
       }
       return prev
-    }, { replace: true })
+    })
   }, [setSearchParams])
 
   return {
