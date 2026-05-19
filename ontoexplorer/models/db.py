@@ -73,8 +73,32 @@ class Ontology(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     iri: Mapped[str] = mapped_column(String, unique=True)
-    shortname: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    shortname: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    def __init__(self, **kwargs):
+        """Auto-derive shortname from IRI when not provided.
+
+        The DB column is NOT NULL; callers that have no shortname in hand
+        (typically tests) get a best-effort inference rather than a crash.
+        For production ingest, callers should pass an explicit shortname
+        produced by `unique_shortname` to avoid collisions.
+        """
+        if "shortname" not in kwargs or kwargs["shortname"] is None:
+            from ontoexplorer.modules.ingestion.shortname import (
+                infer_shortname_from_iri,
+            )
+            iri = kwargs.get("iri", "")
+            inferred = infer_shortname_from_iri(iri)
+            if inferred is None:
+                # Synthesize a unique fallback so the NOT NULL + UNIQUE
+                # constraints both hold even when called without an id.
+                seed = kwargs.get("id") or _uuid()
+                kwargs.setdefault("id", seed)
+                inferred = f"ont-{seed[:8]}"
+            kwargs["shortname"] = inferred
+        super().__init__(**kwargs)
+
     groups: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     auto_sync: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
