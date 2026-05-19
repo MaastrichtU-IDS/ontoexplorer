@@ -98,6 +98,19 @@ export type DiffEntityType =
   | 'annotation_property'
   | 'individual'
 
+export type ManchesterTextToken = { t: 'text'; v: string }
+export type ManchesterIriToken  = { t: 'iri'; label: string; iri: string; in_ontology: boolean }
+export type ManchesterToken     = ManchesterTextToken | ManchesterIriToken
+
+export type ManchesterLine = {
+  op: 'added' | 'removed' | null
+  tokens: ManchesterToken[]
+}
+
+export type ManchesterFrame = {
+  lines: ManchesterLine[]
+}
+
 export interface DiffEntity {
   iri: string
   label: string | null
@@ -106,7 +119,7 @@ export interface DiffEntity {
   // on modified entities. Renderers must guard.
   literal_changes?: DiffLiteralChange[]
   axiom_changes?: DiffAxiomChange[]
-  manchester_frame?: string | null
+  manchester_frame?: ManchesterFrame | null
 }
 
 export interface DiffSummary {
