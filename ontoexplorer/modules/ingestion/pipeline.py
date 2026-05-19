@@ -275,12 +275,31 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
 
 
 async def _ensure_ontology(db: AsyncSession, ontology_iri: str, request: IngestionRequest) -> str:
-    """Get or create the Ontology record for the given IRI."""
+    """Get or create the Ontology record for the given IRI.
+
+    For freshly-created rows, derive a unique shortname from the IRI so the
+    ontology has a canonical user-facing identifier from the moment it lands
+    in the system (no later PATCH required).
+    """
+    from ontoexplorer.modules.ingestion.shortname import (
+        infer_shortname_from_iri,
+        unique_shortname,
+    )
+
     result = await db.execute(select(Ontology).where(Ontology.iri == ontology_iri))
     existing = result.scalar_one_or_none()
     if existing:
         return existing.id
-    ontology = Ontology(id=str(uuid.uuid4()), iri=ontology_iri, owner_id=request.owner_id, groups=request.groups)
+
+    candidate = infer_shortname_from_iri(ontology_iri)
+    shortname = await unique_shortname(db, candidate) if candidate else None
+    ontology = Ontology(
+        id=str(uuid.uuid4()),
+        iri=ontology_iri,
+        shortname=shortname,
+        owner_id=request.owner_id,
+        groups=request.groups,
+    )
     db.add(ontology)
     await db.flush()
     return ontology.id
@@ -308,10 +327,36 @@ async def _reconcile_ontology_iri(
     )).scalar_one_or_none()
 
     if existing is None:
-        await db.execute(
-            update(Ontology).where(Ontology.id == bogus_ontology_id).values(iri=canonical_iri)
+        # IRI changes → re-derive shortname from canonical IRI, BUT only when
+        # the current shortname still matches what we'd have inferred from the
+        # provisional IRI. That preserves any manual user override.
+        from ontoexplorer.modules.ingestion.shortname import (
+            infer_shortname_from_iri,
+            unique_shortname,
         )
-        log.info("ontology_iri_updated", ontology_id=bogus_ontology_id, canonical_iri=canonical_iri)
+
+        provisional = (await db.execute(
+            select(Ontology).where(Ontology.id == bogus_ontology_id)
+        )).scalar_one_or_none()
+        new_shortname = provisional.shortname if provisional else None
+        if provisional and provisional.shortname == infer_shortname_from_iri(provisional.iri):
+            candidate = infer_shortname_from_iri(canonical_iri)
+            if candidate:
+                new_shortname = await unique_shortname(
+                    db, candidate, exclude_id=bogus_ontology_id,
+                )
+
+        await db.execute(
+            update(Ontology)
+            .where(Ontology.id == bogus_ontology_id)
+            .values(iri=canonical_iri, shortname=new_shortname)
+        )
+        log.info(
+            "ontology_iri_updated",
+            ontology_id=bogus_ontology_id,
+            canonical_iri=canonical_iri,
+            shortname=new_shortname,
+        )
         return bogus_ontology_id
 
     if existing.id == bogus_ontology_id:
