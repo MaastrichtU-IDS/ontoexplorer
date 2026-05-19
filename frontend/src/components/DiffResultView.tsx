@@ -23,6 +23,8 @@ interface Props {
   variant: 'version-diff' | 'cross-compare'
   fromLabel?: string  // for cross-compare bucket headers
   toLabel?: string
+  fromShortname?: string | null
+  toShortname?: string | null
 }
 
 function HighlightedText({ text, query, color }: { text: string; query: string; color?: string }) {
@@ -44,6 +46,7 @@ function HighlightedText({ text, query, color }: { text: string; query: string; 
 
 function EntityRow({
   entity, op, search, expanded, onToggle, variant, fromLabel, toLabel,
+  fromShortname, toShortname,
 }: {
   entity: DiffEntity & { op: Op }
   op: Op
@@ -53,6 +56,8 @@ function EntityRow({
   variant: 'version-diff' | 'cross-compare'
   fromLabel?: string
   toLabel?: string
+  fromShortname: string | null
+  toShortname: string | null
 }) {
   const opColor = op === 'added' ? 'var(--green, #3fb950)'
     : op === 'removed' ? 'var(--red, #f85149)' : 'var(--orange, #f0883e)'
@@ -123,7 +128,14 @@ function EntityRow({
               <div style={{ color: '#58a6ff', fontSize: 9, textTransform: 'uppercase', fontWeight: 'bold', marginBottom: 4 }}>
                 {op === 'modified' ? 'Axiom changes' : op === 'added' ? 'Added entity' : 'Removed entity'}
               </div>
-              <ManchesterFrame frame={entity.manchester_frame} />
+              <ManchesterFrame
+                frame={entity.manchester_frame}
+                shortname={
+                  op === 'removed'  ? fromShortname :
+                  op === 'added'    ? toShortname   :
+                                      toShortname   // modified → to-side
+                }
+              />
             </div>
           )}
         </div>
@@ -132,7 +144,9 @@ function EntityRow({
   )
 }
 
-export default function DiffResultView({ data, summary, variant, fromLabel, toLabel }: Props) {
+export default function DiffResultView({
+  data, summary, variant, fromLabel, toLabel, fromShortname, toShortname,
+}: Props) {
   const [ops, setOps]               = useState<Set<Op>>(new Set(['added', 'removed', 'modified']))
   const [typeFilter, setTypeFilter] = useState<DiffEntityType | 'all'>('all')
   const [changeFilter, setChangeFilter] = useState<ChangeFilter>('all')
@@ -244,6 +258,8 @@ export default function DiffResultView({ data, summary, variant, fromLabel, toLa
             variant={variant}
             fromLabel={fromLabel}
             toLabel={toLabel}
+            fromShortname={fromShortname ?? null}
+            toShortname={toShortname ?? null}
           />
         ))}
         {filtered.length === 0 && (

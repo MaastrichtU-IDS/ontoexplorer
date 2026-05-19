@@ -416,6 +416,8 @@ export default function Compare() {
               variant="cross-compare"
               fromLabel={fromLabel}
               toLabel={toLabel}
+              fromShortname={fromOntObj?.shortname ?? null}
+              toShortname={toOntObj?.shortname ?? null}
             />
           )}
         </>

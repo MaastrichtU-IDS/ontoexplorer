@@ -5,11 +5,12 @@ import DiffResultView from './DiffResultView'
 
 interface Props {
   ontologyId: string
+  shortname: string
   currentVersionId: string
   versions: OntologyVersion[]
 }
 
-export default function HistoryTab({ ontologyId, currentVersionId, versions }: Props) {
+export default function HistoryTab({ ontologyId, shortname, currentVersionId, versions }: Props) {
   const sorted = [...versions].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   )
@@ -108,6 +109,8 @@ export default function HistoryTab({ ontologyId, currentVersionId, versions }: P
           data={diff.diff_data}
           summary={diff.summary}
           variant="version-diff"
+          fromShortname={shortname}
+          toShortname={shortname}
         />
       )}
     </div>

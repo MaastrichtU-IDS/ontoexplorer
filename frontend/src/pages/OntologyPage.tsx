@@ -1237,6 +1237,7 @@ export default function OntologyPage() {
               oid && activeVid && versions.length > 1
                 ? <HistoryTab
                     ontologyId={oid}
+                    shortname={ontology?.shortname ?? slug ?? ''}
                     currentVersionId={activeVid}
                     versions={versions}
                   />
