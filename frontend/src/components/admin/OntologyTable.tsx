@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { AdminOntologyEntry, AdminVersionEntry, api } from '../../lib/api'
+import { AdminOntologyEntry, AdminVersionEntry, api, slugFromIri } from '../../lib/api'
 import { usePagedTable } from '../../hooks/usePagedTable'
 import { TablePager } from '../TablePager'
 import {
@@ -171,7 +172,14 @@ export function OntologyTable({
                     <td />
                   )}
                   <td style={{ padding: '6px 10px', color: 'var(--text)' }}>
-                    <div>{ontologyDisplayName(row)}</div>
+                    <div>
+                      <Link
+                        to={`/ontologies/${row.shortname ?? slugFromIri(row.iri)}`}
+                        style={{ color: 'var(--text)', textDecoration: 'none' }}
+                      >
+                        {ontologyDisplayName(row)}
+                      </Link>
+                    </div>
                     {row.label && row.label !== ontologyDisplayName(row) && (
                       <div style={{ color: 'var(--text-dim)', fontSize: 10 }}>{row.label}</div>
                     )}
@@ -251,6 +259,7 @@ export function OntologyTable({
                 {expanded.has(row.id) && (
                   <VersionsSubRows
                     ontologyId={row.id}
+                    slug={row.shortname ?? slugFromIri(row.iri)}
                     colSpan={9}
                     latestVersionId={row.version_id}
                     pairDiffStates={pairDiffStates}
@@ -288,6 +297,7 @@ export function OntologyTable({
 
 interface VersionsSubRowsProps {
   ontologyId: string
+  slug: string
   colSpan: number
   latestVersionId: string
   pairDiffStates: Record<string, UpdateState>
@@ -303,7 +313,7 @@ interface VersionsSubRowsProps {
 }
 
 function VersionsSubRows({
-  ontologyId, colSpan, latestVersionId,
+  ontologyId, slug, colSpan, latestVersionId,
   pairDiffStates, onPairDiff,
   versionIndexStates, onVersionIndex,
   versionEmbedStates, onVersionEmbed,
@@ -352,9 +362,13 @@ function VersionsSubRows({
         <tr key={v.version_id} style={{ background: 'rgba(255,255,255,0.02)' }}>
           <td />
           <td style={{ padding: '6px 10px', color: 'var(--text-muted)', fontSize: 11 }}>
-            ↳ <span style={{ fontFamily: 'monospace' }} title={v.version_id}>
+            ↳ <Link
+              to={`/ontologies/${slug}/${v.version_id}`}
+              style={{ color: 'var(--text-muted)', textDecoration: 'none', fontFamily: 'monospace' }}
+              title={v.version_id}
+            >
               {v.version_iri ?? v.version_id}
-            </span>
+            </Link>
             {v.ingestion_status === 'deprecated' && (
               <span style={{ marginLeft: 6, color: '#f85149' }}>● deprecated</span>
             )}
