@@ -9,8 +9,16 @@ from ontoexplorer.api.ols import search as _search
 from ontoexplorer.api.ols import llm as _llm
 from ontoexplorer.api.ols import classes_v2 as _classes_v2
 from ontoexplorer.api.ols import widgets as _widgets
+from ontoexplorer.api.ols import stubs as _stubs
 
 router = APIRouter(prefix="/ols", tags=["ols-compat"])
+# Stubs MUST be included before ontologies, terms, and classes_v2 because those
+# routers register broad catch-all paths that would consume stub paths.
+# Examples:
+#   - /api/ontologies/{onto_id} would match /api/ontologies/by-tag and by-domain
+#   - /api/ontologies/{onto}/terms/{iri_path:path} would match /preferredRoots stub
+#   - /api/v2/classes/{iri_path:path} would match /llm_embedding and /llm_similarity stubs
+router.include_router(_stubs.router)
 router.include_router(_ontologies.router)
 # widgets MUST be included before terms because terms.py registers a broad
 # /api/ontologies/{onto}/terms/{iri_path:path} catch-all.  If widgets were
