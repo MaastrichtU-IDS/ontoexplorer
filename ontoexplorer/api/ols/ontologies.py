@@ -55,9 +55,98 @@ async def _ontology_shape(
         return meta, langs
 
     meta, langs = await asyncio.to_thread(_read_redis)
-    if v2:
-        return ontology_to_v2(o, version, meta, request=request, languages=langs)
-    return ontology_to_v1(o, version, meta, request=request, languages=langs)
+
+    if not v2:
+        return ontology_to_v1(o, version, meta, request=request, languages=langs)
+
+    # v2 wants the full denormalized shape: pull document metadata + profile
+    # + imports/exports edges so each top-level field can be populated.
+    from ontoexplorer.models.db import (
+        Ontology as _Ont,
+        OntologyImport,
+        OntologyProfile,
+        OntologyVersion,
+    )
+
+    doc_metadata = await _fetch_ontology_doc_metadata(o, version)
+
+    profile = (await db.execute(
+        select(OntologyProfile).where(OntologyProfile.version_id == version.id)
+    )).scalar_one_or_none()
+
+    imports_from = (await db.execute(
+        select(OntologyImport.import_iri).where(OntologyImport.version_id == version.id)
+    )).scalars().all()
+
+    # exportsTo: other ontologies whose any version imports this ontology's IRI.
+    exports_to = (await db.execute(
+        select(_Ont.shortname)
+        .join(OntologyVersion, OntologyVersion.ontology_id == _Ont.id)
+        .join(OntologyImport, OntologyImport.version_id == OntologyVersion.id)
+        .where(OntologyImport.import_iri == o.iri)
+        .where(_Ont.id != o.id)
+        .distinct()
+    )).scalars().all()
+
+    return ontology_to_v2(
+        o, version, meta,
+        request=request,
+        languages=langs,
+        document_metadata=doc_metadata,
+        profile=profile,
+        exports_to=[s for s in exports_to if s],
+        imports_from=list(imports_from),
+    )
+
+
+async def _fetch_ontology_doc_metadata(
+    ontology: Ontology, version,
+) -> dict[str, list[dict]]:
+    """Read all owl:Ontology predicates from Oxigraph for the version's named graph.
+
+    Returns an empty dict if the store isn't reachable (e.g. unit tests run
+    without an Oxigraph data dir). The v2 mapper degrades to the named-field-
+    only shape in that case instead of crashing the endpoint.
+    """
+    from ontoexplorer.clients.oxigraph import get_store, graph_iri
+
+    try:
+        store = get_store()
+    except Exception:
+        return {}
+    g = graph_iri(str(ontology.id), str(version.id))
+    onto_iri = ontology.iri
+    query = f"""
+        SELECT ?pred ?obj WHERE {{
+            GRAPH <{g}> {{
+                <{onto_iri}> ?pred ?obj .
+            }}
+        }}
+    """
+
+    def _run() -> dict[str, list[dict]]:
+        predicates: dict[str, list[dict]] = {}
+        for row in store.query(query):
+            pred, obj = row["pred"], row["obj"]
+            if pred is None or obj is None:
+                continue
+            pred_iri = pred.value
+            if hasattr(obj, "datatype"):
+                entry: dict = {
+                    "value":    obj.value,
+                    "type":     "literal",
+                    "language": getattr(obj, "language", None),
+                    "datatype": obj.datatype.value if obj.datatype else None,
+                }
+            else:
+                val = obj.value
+                if not (val.startswith("http://") or val.startswith("https://") or val.startswith("urn:")):
+                    continue
+                entry = {"value": val, "type": "iri"}
+            predicates.setdefault(pred_iri, []).append(entry)
+        return predicates
+
+    return await asyncio.to_thread(_run)
 
 
 # ---------------------------------------------------------------------------

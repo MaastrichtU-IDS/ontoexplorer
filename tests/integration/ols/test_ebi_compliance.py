@@ -94,8 +94,15 @@ KNOWN_GAPS: dict[str, int] = {
     "terms_list_v1":        2,  # annotation.database_cross_reference + _links.next (test-data driven)
     "term_roots_v1":        4,  # missing annotation keys (created_by etc) — test-data driven
     "search_solr":          0,  # fully compliant
-    "ontologies_list_v2":  32,  # v2 flat surface deeply denormalized — large redesign required
-    "ontology_detail_v2":  39,
+    # v2 remaining gaps fall into 3 buckets, all empty in the local test env
+    # because there's no Oxigraph store reachable:
+    #   - bare-IRI annotation passthrough (~9 keys per fixture) — populated
+    #     in production from the owl:Ontology block document metadata
+    #   - linkedEntities.<IRI> sub-keys — would require enumerating every
+    #     predicate used in the ontology's terms (real new computation)
+    #   - elements[0].* gaps mirror the ontology-level ones in the list shape
+    "ontologies_list_v2":   8,
+    "ontology_detail_v2":  22,
 }
 
 

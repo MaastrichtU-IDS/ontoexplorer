@@ -255,7 +255,123 @@ def ontology_to_v2(
     *,
     request: Request,
     languages: list[str] | None = None,
+    document_metadata: dict[str, list[dict]] | None = None,
+    profile: Any = None,
+    exports_to: list[str] | None = None,
+    imports_from: list[str] | None = None,
 ) -> dict[str, Any]:
-    v1 = ontology_to_v1(ontology, version, meta_counts, request=request, languages=languages)
-    v1.pop("_links", None)
-    return v1
+    """OLS4 v2 flat surface for an ontology.
+
+    EBI's v2 ontology detail is a fully denormalized view: every owl:Ontology
+    annotation triple is surfaced as a top-level key (with the predicate IRI
+    as the literal field name), alongside ~30 named fields that summarise
+    the indexed metadata. We mirror that here.
+
+    `document_metadata` is the `{predicate_iri -> [{value, type, language, datatype}, ...]}`
+    dict produced by `get_ontology_document_metadata` — when supplied, every
+    predicate becomes a top-level passthrough field. `profile` is an
+    OntologyProfile row; `exports_to` and `imports_from` are precomputed
+    short-name lists.
+    """
+    short = getattr(ontology, "shortname", None) or ontology.id
+    doc = document_metadata or {}
+    langs = languages or []
+
+    def _pick_first(pred: str) -> str | None:
+        """Return the first literal/IRI value for a predicate, or None."""
+        entries = doc.get(pred) or []
+        return entries[0]["value"] if entries else None
+
+    def _pick_all(pred: str) -> list[str]:
+        return [e["value"] for e in (doc.get(pred) or [])]
+
+    def _flat_passthrough() -> dict[str, Any]:
+        """Surface each owl:Ontology predicate as a top-level field.
+
+        Single-valued predicates become bare strings (matching EBI); multi-valued
+        ones become lists. RDF entries are unwrapped to plain string values.
+        """
+        out: dict[str, Any] = {}
+        for pred, entries in doc.items():
+            vals = [e["value"] for e in entries]
+            out[pred] = vals[0] if len(vals) == 1 else vals
+        return out
+
+    # Profile-derived properties (with sane fallbacks).
+    label_props = (
+        list(getattr(profile, "label_props", None) or [])
+        or ["http://www.w3.org/2000/01/rdf-schema#label"]
+    )
+    definition_props = list(getattr(profile, "definition_props", None) or [
+        "http://www.w3.org/2004/02/skos/core#definition",
+        "http://purl.obolibrary.org/obo/IAO_0000115",
+    ])
+    synonym_props = list(getattr(profile, "synonym_props", None) or [])
+
+    version_iri = getattr(version, "version_iri", None) or ""
+    loaded_at = (
+        version.created_at.isoformat()
+        if hasattr(version.created_at, "isoformat")
+        else str(version.created_at)
+    )
+
+    out: dict[str, Any] = {
+        "ontologyId": short,
+        "uri": ontology.iri,
+        "iri": ontology.iri,
+        "ontologyPurl": ontology.iri,
+        "preferredPrefix": short.upper(),
+        "title": (
+            getattr(ontology, "title", None)
+            or _pick_first("http://purl.org/dc/terms/title")
+            or _pick_first("http://www.w3.org/2000/01/rdf-schema#label")
+            or short
+        ),
+        "description": (
+            _pick_first("http://purl.org/dc/elements/1.1/description")
+            or _pick_first("http://purl.org/dc/terms/description")
+            or _pick_first("http://www.w3.org/2000/01/rdf-schema#comment")
+            or ""
+        ),
+        "homepage": _pick_first("http://xmlns.com/foaf/0.1/homepage") or "",
+        "mailingList": "",
+        "baseUri": [ontology.iri],
+        "loaded": loaded_at,
+        "sourceFileTimestamp": loaded_at,
+        "language": langs,
+        "isObsolete": False,
+        "imported": False,
+        "importsFrom": list(imports_from or []),
+        "exportsTo":  list(exports_to  or []),
+        "linksTo": [],
+        "linkedEntities": {},
+        "type": ["ontology"],
+        "reasoner": "ELK",
+        "oboSlims": False,
+        # OLS4 v2 indicator for OBO Foundry membership — we host non-OBO too,
+        # so this is always false unless the ontology is registered there.
+        "is_foundary": False,
+        "numberOfClasses":      str(meta_counts.get("class_count", 0)),
+        "numberOfProperties":   str(meta_counts.get("property_count", 0)),
+        "numberOfIndividuals":  str(meta_counts.get("individual_count", 0)),
+        "numberOfEntities":     str(
+            int(meta_counts.get("class_count", 0))
+            + int(meta_counts.get("property_count", 0))
+            + int(meta_counts.get("individual_count", 0))
+        ),
+        "numDescendants":             0.0,
+        "numHierarchicalDescendants": 0.0,
+        "searchableAnnotationValues": [False],
+        "label_property":        label_props,
+        "definition_property":   definition_props,
+        "synonym_property":      synonym_props,
+        "hierarchical_property": [],
+        "hidden_property":       [],
+        "definition":            [
+            _pick_first("http://www.w3.org/2000/01/rdf-schema#comment") or "",
+            _pick_first("http://purl.org/dc/elements/1.1/description") or "",
+        ] if (doc.get("http://www.w3.org/2000/01/rdf-schema#comment") or doc.get("http://purl.org/dc/elements/1.1/description")) else [],
+    }
+    # Surface every owl:Ontology predicate as a top-level passthrough field.
+    out.update(_flat_passthrough())
+    return out
