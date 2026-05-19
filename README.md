@@ -17,6 +17,7 @@ A next-generation FAIR ontology repository — ingest, browse, query, and reason
 - **Browse in your language** — pick a language from the global navbar picker (sourced live from indexed ontologies); class, property, and individual trees show labels in the preferred language; term detail panels filter definitions, synonyms, and annotations to that language; each tree node carries a small language badge so you always know which label variant is shown
 - **Sync** ontologies automatically — hourly polling and GitHub push webhooks trigger re-ingestion when content changes
 - **Track** ingestion jobs, register webhooks, and manage API keys
+- **Integrate** via an OLS4-compatible read-only API (`/ols/api/...`) so existing OLS4 clients (Python `ols-client`, R `rols`, etc.) work against OntoExplorer with no code changes — see [OLS4-Compatible API](#ols4-compatible-api) below
 
 ## Architecture
 
@@ -529,6 +530,121 @@ GET    /health                                   Liveness
 GET    /ready                                    Readiness (checks all backends)
 GET    /metrics                                  Prometheus metrics
 ```
+
+## OLS4-Compatible API
+
+OntoExplorer ships a read-only OLS4-compatible API layer mounted at `/ols/api/...` that mirrors the [EMBL-EBI Ontology Lookup Service v4](https://www.ebi.ac.uk/ols4) protocol. Existing OLS4 clients (the [`ols-client`](https://pypi.org/project/ols-client/) Python library, EBI's [`rols`](https://github.com/EBISPOT/rols) R package, custom HTTP clients) work against OntoExplorer with no code changes — just point them at `http://localhost:8000/ols/api`.
+
+### Ontology identifier convention
+
+All endpoints accept either the ontology's **shortname** (the canonical, OLS4-style identifier, e.g. `pets`, `go`, `mondo`) or its internal UUID in the URL path:
+
+```bash
+curl http://localhost:8000/ols/api/ontologies/pets        # shortname (preferred)
+curl http://localhost:8000/ols/api/ontologies/ca02490d-…  # UUID (also works)
+```
+
+Responses always use the shortname for `ontologyId`, `preferredPrefix` (upper-cased shortname), and `_links/self`. Shortnames are auto-derived from the ontology IRI on ingest and guaranteed unique; admin can rename via `PATCH /ontologies/{id}`.
+
+### Endpoint families (78 routes total — see Swagger UI for full reference)
+
+```
+# v1 HAL (mimics EBI OLS4 protocol, paginated HAL+JSON envelopes)
+GET    /ols/api/ontologies                                           Paged ontology list
+GET    /ols/api/ontologies/{ont}                                     Ontology detail
+GET    /ols/api/ontologies/{ont}/terms                               Paged term list (classes)
+GET    /ols/api/ontologies/{ont}/terms/{double-encoded-iri}          Term detail (IRI is %25-double-encoded)
+GET    /ols/api/ontologies/{ont}/terms/roots                         Root classes (no asserted parents)
+GET    /ols/api/ontologies/{ont}/terms/{iri}/parents                 Asserted parents
+GET    /ols/api/ontologies/{ont}/terms/{iri}/children                Asserted children
+GET    /ols/api/ontologies/{ont}/terms/{iri}/ancestors               Transitive ancestors
+GET    /ols/api/ontologies/{ont}/terms/{iri}/descendants             Transitive descendants
+GET    /ols/api/ontologies/{ont}/terms/{iri}/hierarchicalParents     Inferred parents (ELK)
+GET    /ols/api/ontologies/{ont}/terms/{iri}/hierarchicalAncestors   Inferred transitive ancestors
+GET    /ols/api/ontologies/{ont}/terms/{iri}/hierarchicalDescendants Inferred transitive descendants
+GET    /ols/api/ontologies/{ont}/properties[/...]                    Object/data/annotation properties (same hierarchy shape)
+GET    /ols/api/ontologies/{ont}/individuals[/...]                   Named individuals
+GET    /ols/api/ontologies/{ont}/download                            301 redirect to native download URL
+GET    /ols/api/terms?iri=...                                        Global term lookup across ontologies
+GET    /ols/api/terms/findByIdAndIsDefiningOntology?iri=...          Only hits where ontology is the defining source
+GET    /ols/api/properties[?iri=...|/findByIdAndIsDefiningOntology…] (same shape as terms)
+
+# Solr-style search
+GET    /ols/api/search?q=…&ontology=…&rows=…       Faceted Solr response (numFound + docs[])
+GET    /ols/api/select?q=…                         Lightweight type-ahead variant
+GET    /ols/api/suggest?q=…                        Single-field suggester
+
+# v2 flat surface (denormalized — no HAL envelopes)
+GET    /ols/api/v2/ontologies                      Flat paged list
+GET    /ols/api/v2/ontologies/{ont}                Flat detail
+GET    /ols/api/v2/classes | /properties | /individuals | /entities  Cross-ontology entity views
+GET    /ols/api/v2/ontologies/{ont}/classes | /properties | /individuals | /entities
+GET    /ols/api/v2/ontologies/{ont}/{type}/{iri}    Per-entity detail (no HAL _links)
+
+# LLM endpoints (semantic search powered by pgvector embeddings)
+GET    /ols/api/v2/llm_models                      List embedding models in use
+GET    /ols/api/v2/llm_search?q=…                  Vector similarity over all classes
+GET    /ols/api/v2/ontologies/{ont}/classes/llm_search?q=…   Restricted to one ontology
+GET    /ols/api/v2/ontologies/{ont}/classes/llm_similar?iri=…  Find similar terms
+
+# Tier-2 widgets (used by EBI's OLS UI)
+GET    /ols/api/ontologies/{ont}/terms/{iri}/jstree                  Tree-node JSON for jsTree UI
+GET    /ols/api/ontologies/{ont}/terms/{iri}/graph                   Graph fragment for D3 widgets
+
+# Tier-3 (intentionally not implemented — EBI features that require infrastructure we don't have)
+GET    /ols/api/ontologies/{ont}/terms/preferredRoots                501 Not Implemented
+GET    /ols/api/v2/ontologies/{ont}/classes/llm_embedding            501 Not Implemented
+(several others — all return a structured 501 with `feature_not_implemented` detail)
+```
+
+### Quick examples
+
+```bash
+# Paginated list of ontologies (HAL v1)
+curl 'http://localhost:8000/ols/api/ontologies?page=0&size=10'
+
+# Detail for one ontology by shortname
+curl http://localhost:8000/ols/api/ontologies/pets
+
+# Term detail — IRI must be %25-DOUBLE-encoded in the path
+# http://example.org/pets/Dog → http%3A%2F%2Fexample.org%2Fpets%2FDog (single)
+#                              → http%253A%252F%252Fexample.org%252Fpets%252FDog (double)
+curl 'http://localhost:8000/ols/api/ontologies/pets/terms/http%253A%252F%252Fexample.org%252Fpets%252FDog'
+
+# Solr-style search across all ontologies, restricted to pets
+curl 'http://localhost:8000/ols/api/search?q=dog&ontology=pets&rows=5'
+
+# Vector semantic search
+curl 'http://localhost:8000/ols/api/v2/llm_search?q=feathered+animal&size=5'
+```
+
+### Programmatic access
+
+```python
+# pip install ols-client
+from ols_client import OLSClient
+ols = OLSClient(base_url='http://localhost:8000/ols/api')
+print([o['ontologyId'] for o in ols.list_ontologies()])
+print(ols.get_term('pets', 'http://example.org/pets/Dog'))
+```
+
+### Full API reference
+
+The complete OpenAPI 3.1 spec — every endpoint, parameter, response schema — is auto-generated and available at:
+
+- **Swagger UI:** [http://localhost:8000/api/docs](http://localhost:8000/api/docs) (filter the sidebar by tags starting with `ols-`)
+- **ReDoc:** [http://localhost:8000/api/redoc](http://localhost:8000/api/redoc)
+- **Raw spec:** [http://localhost:8000/api/openapi.json](http://localhost:8000/api/openapi.json)
+
+For the upstream OLS4 protocol reference (the spec our endpoints mimic), see EBI's live docs at [https://www.ebi.ac.uk/ols4/api/v2/swagger-ui/index.html](https://www.ebi.ac.uk/ols4/api/v2/swagger-ui/index.html).
+
+### Coverage tiers
+
+The implementation is organized in three tiers per the design spec at [docs/superpowers/specs/2026-05-18-ols4-compat-design.md](docs/superpowers/specs/2026-05-18-ols4-compat-design.md):
+
+- **Tier 1 — Core OLS4 protocol:** ontologies, terms (including hierarchy), properties, individuals, search/select/suggest, v2 flat surface. **Implemented.**
+- **Tier 2 — Widgets needed by EBI's OLS UI:** `jstree`, `graph`. **Implemented.**
+- **Tier 3 — EBI-specific features that depend on infrastructure we don't have** (e.g. preferred-roots curation, persistent LLM embedding endpoint shape). Return a structured `501 Not Implemented` with `feature_not_implemented` detail so clients can distinguish "missing in this server" from a generic error.
 
 ## Project Layout
 
