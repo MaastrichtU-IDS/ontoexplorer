@@ -4,9 +4,13 @@ Route registration order matters:
   - Fixed-path routes (/terms, /roots, /findByIdAndIsDefiningOntology) must be
     registered *before* the catch-all /{iri_path:path} route, otherwise FastAPI
     will match the fixed names as part of the IRI path.
+  - Hierarchy routes (/{iri}/parents, /{iri}/children, …) MUST be registered
+    before the bare /{iri_path:path} detail route for the same reason.
 """
 import asyncio
 import json
+from collections import deque
+from typing import Callable, Awaitable
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +34,10 @@ router = APIRouter()
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+_OWL_THING   = "http://www.w3.org/2002/07/owl#Thing"
+_OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing"
+_OWL_EXCLUDED = {_OWL_THING, _OWL_NOTHING}
+
 
 def _redis_hgetall(key: str) -> dict:
     """Sync helper: returns hash as dict, or empty dict."""
@@ -50,6 +58,211 @@ async def _load_entity(version_id: str, iri: str) -> dict | None:
     """Load entity hash from Redis; return None if missing."""
     h = await asyncio.to_thread(_redis_hgetall, _iri_key(version_id, iri))
     return h if h else None
+
+
+# ---------------------------------------------------------------------------
+# Asserted-hierarchy fetchers
+# (read the `parents` JSON field seeded by the indexer or the test fixture)
+# ---------------------------------------------------------------------------
+
+def _asserted_parents_sync(vid: str, iri: str) -> list[str]:
+    """Return direct asserted parents of `iri` from the Redis hash `parents` field."""
+    r = _get_redis()
+    raw = r.hget(_iri_key(vid, iri), "parents")
+    if raw:
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+    return []
+
+
+def _asserted_children_sync(vid: str, iri: str) -> list[str]:
+    """Return direct asserted children of `iri` by scanning the class type set.
+
+    Reads the `parents` field from each entity hash. This is O(N) in the number
+    of classes indexed for the version — acceptable for v1; a `children` index
+    field should be added to the indexer in a follow-up task.
+    """
+    r = _get_redis()
+    all_iris = sorted(r.smembers(_type_key(vid, "class")))
+    children: list[str] = []
+    for candidate in all_iris:
+        raw = r.hget(_iri_key(vid, candidate), "parents")
+        if raw:
+            try:
+                parents = json.loads(raw)
+                if iri in parents:
+                    children.append(candidate)
+            except json.JSONDecodeError:
+                pass
+    return children
+
+
+def _asserted_ancestors_sync(vid: str, iri: str) -> list[str]:
+    """BFS over asserted parents until convergence."""
+    visited: set[str] = set()
+    result: list[str] = []
+    queue: deque[str] = deque(_asserted_parents_sync(vid, iri))
+    while queue:
+        node = queue.popleft()
+        if node in visited or node in _OWL_EXCLUDED:
+            continue
+        visited.add(node)
+        result.append(node)
+        queue.extend(_asserted_parents_sync(vid, node))
+    return result
+
+
+def _asserted_descendants_sync(vid: str, iri: str) -> list[str]:
+    """BFS over asserted children until convergence."""
+    visited: set[str] = set()
+    result: list[str] = []
+    queue: deque[str] = deque(_asserted_children_sync(vid, iri))
+    while queue:
+        node = queue.popleft()
+        if node in visited:
+            continue
+        visited.add(node)
+        result.append(node)
+        queue.extend(_asserted_children_sync(vid, node))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Inferred-hierarchy fetchers  (fall back to asserted on any error)
+# ---------------------------------------------------------------------------
+
+async def _inferred_parents_fetcher(vid: str, iri: str) -> list[str]:
+    """Direct inferred parents via ELK `direct_superclasses`; fallback: asserted."""
+    try:
+        from ontoexplorer.clients.reasoning import get_classification, ReasoningNotReadyError
+        classification = await get_classification(vid)
+        direct = classification.get("direct_superclasses", {})
+        parents = [p for p in direct.get(iri, []) if p not in _OWL_EXCLUDED]
+        if parents:
+            return parents
+        # Fall through to asserted if empty (term may not be in the classification)
+    except Exception:
+        pass
+    return await asyncio.to_thread(_asserted_parents_sync, vid, iri)
+
+
+async def _inferred_children_fetcher(vid: str, iri: str) -> list[str]:
+    """Direct inferred children via ELK `direct_subclasses`; fallback: asserted."""
+    try:
+        from ontoexplorer.clients.reasoning import get_classification, ReasoningNotReadyError
+        classification = await get_classification(vid)
+        direct = classification.get("direct_subclasses", {})
+        children = [c for c in direct.get(iri, []) if c not in _OWL_EXCLUDED]
+        if children:
+            return children
+    except Exception:
+        pass
+    return await asyncio.to_thread(_asserted_children_sync, vid, iri)
+
+
+async def _inferred_ancestors_fetcher(vid: str, iri: str) -> list[str]:
+    """All inferred ancestors via ELK `superclasses`; fallback: asserted-BFS."""
+    try:
+        from ontoexplorer.clients.reasoning import get_classification, ReasoningNotReadyError
+        classification = await get_classification(vid)
+        all_sup = classification.get("superclasses", {})
+        ancestors = [a for a in all_sup.get(iri, []) if a not in _OWL_EXCLUDED]
+        if ancestors:
+            return ancestors
+    except Exception:
+        pass
+    return await asyncio.to_thread(_asserted_ancestors_sync, vid, iri)
+
+
+async def _inferred_descendants_fetcher(vid: str, iri: str) -> list[str]:
+    """All inferred descendants via ELK `subclasses`; fallback: asserted-BFS."""
+    try:
+        from ontoexplorer.clients.reasoning import get_classification, ReasoningNotReadyError
+        classification = await get_classification(vid)
+        all_sub = classification.get("subclasses", {})
+        descendants = [d for d in all_sub.get(iri, []) if d not in _OWL_EXCLUDED]
+        if descendants:
+            return descendants
+    except Exception:
+        pass
+    return await asyncio.to_thread(_asserted_descendants_sync, vid, iri)
+
+
+# ---------------------------------------------------------------------------
+# Asserted-only fetchers (hierarchical* variants)
+# ---------------------------------------------------------------------------
+
+async def _hierarchical_parents_fetcher(vid: str, iri: str) -> list[str]:
+    return await asyncio.to_thread(_asserted_parents_sync, vid, iri)
+
+
+async def _hierarchical_ancestors_fetcher(vid: str, iri: str) -> list[str]:
+    return await asyncio.to_thread(_asserted_ancestors_sync, vid, iri)
+
+
+async def _hierarchical_descendants_fetcher(vid: str, iri: str) -> list[str]:
+    return await asyncio.to_thread(_asserted_descendants_sync, vid, iri)
+
+
+# ---------------------------------------------------------------------------
+# Shared hierarchy-page helper
+# ---------------------------------------------------------------------------
+
+async def _hal_hierarchy_page(
+    ontology_id: str,
+    iri: str,
+    request: Request,
+    page: int,
+    size: int,
+    lang: str | None,
+    db: AsyncSession,
+    fetcher: Callable[[str, str], Awaitable[list[str]]],
+) -> dict:
+    """Fetch related IRIs via `fetcher`, page them, and return an HAL envelope."""
+    ontology = await get_ontology_or_404(db, ontology_id)
+    version  = await get_latest_version_or_404(db, ontology_id)
+    vid = str(version.id)
+
+    all_iris = await fetcher(vid, iri)
+    offset   = page_to_offset(page, size)
+    sliced   = all_iris[offset:offset + size]
+
+    def _load_many() -> list[tuple[str, dict]]:
+        r = _get_redis()
+        return [(i, r.hgetall(_iri_key(vid, i)) or {}) for i in sliced]
+
+    entities = await asyncio.to_thread(_load_many)
+
+    def _fallback_entity(i: str) -> dict:
+        fragment = i.rstrip("/")
+        label = fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
+        return {
+            "iri": i,
+            "primary_label": label,
+            "label": label,
+            "short": label,
+            "type": "class",
+            "source": "",
+            "labels": json.dumps([{"value": label, "lang": "en"}]),
+            "synonyms": "[]",
+            "definitions": "[]",
+        }
+
+    items = [
+        entity_to_v1_term(
+            (e if e else _fallback_entity(i)),
+            ontology,
+            request=request,
+            is_obsolete=False,
+            is_root=False,
+            has_children=False,
+            lang=lang,
+        )
+        for i, e in entities
+    ]
+    return hal_page(items, request, total=len(all_iris), page=page, size=size, embedded_key="terms")
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +420,132 @@ async def list_terms_roots_hal(
 
 
 # ---------------------------------------------------------------------------
-# Per-ontology: GET /ontologies/{onto}/terms/{iri_path:path}   (catch-all last)
+# Per-ontology: hierarchy endpoints
+# MUST be registered before /{iri_path:path} catch-all
+# ---------------------------------------------------------------------------
+
+@router.get("/api/ontologies/{ontology_id}/terms/{iri_path:path}/parents")
+async def term_parents(
+    ontology_id: str,
+    iri_path: str,
+    request: Request,
+    page_size: tuple[int, int] = Depends(hal_page_params),
+    lang: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Inferred parents (direct superclasses); falls back to asserted on reasoning unavailability."""
+    page, size = page_size
+    iri = double_decode_iri(iri_path)
+    return await _hal_hierarchy_page(
+        ontology_id, iri, request, page, size, lang, db, _inferred_parents_fetcher
+    )
+
+
+@router.get("/api/ontologies/{ontology_id}/terms/{iri_path:path}/children")
+async def term_children(
+    ontology_id: str,
+    iri_path: str,
+    request: Request,
+    page_size: tuple[int, int] = Depends(hal_page_params),
+    lang: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Inferred direct children; falls back to asserted on reasoning unavailability."""
+    page, size = page_size
+    iri = double_decode_iri(iri_path)
+    return await _hal_hierarchy_page(
+        ontology_id, iri, request, page, size, lang, db, _inferred_children_fetcher
+    )
+
+
+@router.get("/api/ontologies/{ontology_id}/terms/{iri_path:path}/ancestors")
+async def term_ancestors(
+    ontology_id: str,
+    iri_path: str,
+    request: Request,
+    page_size: tuple[int, int] = Depends(hal_page_params),
+    lang: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """All inferred ancestors (transitive superclasses); falls back to asserted-BFS."""
+    page, size = page_size
+    iri = double_decode_iri(iri_path)
+    return await _hal_hierarchy_page(
+        ontology_id, iri, request, page, size, lang, db, _inferred_ancestors_fetcher
+    )
+
+
+@router.get("/api/ontologies/{ontology_id}/terms/{iri_path:path}/descendants")
+async def term_descendants(
+    ontology_id: str,
+    iri_path: str,
+    request: Request,
+    page_size: tuple[int, int] = Depends(hal_page_params),
+    lang: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """All inferred descendants (transitive subclasses); falls back to asserted-BFS."""
+    page, size = page_size
+    iri = double_decode_iri(iri_path)
+    return await _hal_hierarchy_page(
+        ontology_id, iri, request, page, size, lang, db, _inferred_descendants_fetcher
+    )
+
+
+@router.get("/api/ontologies/{ontology_id}/terms/{iri_path:path}/hierarchicalParents")
+async def term_hierarchical_parents(
+    ontology_id: str,
+    iri_path: str,
+    request: Request,
+    page_size: tuple[int, int] = Depends(hal_page_params),
+    lang: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Asserted-only direct parents (strict rdfs:subClassOf, no reasoner)."""
+    page, size = page_size
+    iri = double_decode_iri(iri_path)
+    return await _hal_hierarchy_page(
+        ontology_id, iri, request, page, size, lang, db, _hierarchical_parents_fetcher
+    )
+
+
+@router.get("/api/ontologies/{ontology_id}/terms/{iri_path:path}/hierarchicalAncestors")
+async def term_hierarchical_ancestors(
+    ontology_id: str,
+    iri_path: str,
+    request: Request,
+    page_size: tuple[int, int] = Depends(hal_page_params),
+    lang: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Asserted-only transitive ancestors (strict rdfs:subClassOf+, no reasoner)."""
+    page, size = page_size
+    iri = double_decode_iri(iri_path)
+    return await _hal_hierarchy_page(
+        ontology_id, iri, request, page, size, lang, db, _hierarchical_ancestors_fetcher
+    )
+
+
+@router.get("/api/ontologies/{ontology_id}/terms/{iri_path:path}/hierarchicalDescendants")
+async def term_hierarchical_descendants(
+    ontology_id: str,
+    iri_path: str,
+    request: Request,
+    page_size: tuple[int, int] = Depends(hal_page_params),
+    lang: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Asserted-only transitive descendants (strict rdfs:subClassOf+, no reasoner)."""
+    page, size = page_size
+    iri = double_decode_iri(iri_path)
+    return await _hal_hierarchy_page(
+        ontology_id, iri, request, page, size, lang, db, _hierarchical_descendants_fetcher
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-ontology: GET /ontologies/{onto}/terms/{iri_path:path}   (catch-all LAST)
+# MUST come after all hierarchy routes above
 # ---------------------------------------------------------------------------
 
 @router.get("/api/ontologies/{ontology_id}/terms/{iri_path:path}")
