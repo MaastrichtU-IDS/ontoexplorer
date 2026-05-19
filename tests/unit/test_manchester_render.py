@@ -1095,3 +1095,33 @@ def test_render_frame_op_modified_preserves_phase1_behavior():
     lines = frame.split("\n")
     assert lines[0].startswith("Class: "), "header has no prefix in modified mode"
     assert "+       Food" in frame, "axiom line uses per-change marker"
+
+
+def test_render_frame_with_annotations_block_at_top():
+    """Frame for an entity with rdfs:label and rdfs:comment renders the
+    Annotations: block first, then logical keyword blocks."""
+    iri = "http://example.org/Pizza"
+    pizza = ox.NamedNode(iri)
+    food  = ox.NamedNode("http://example.org/Food")
+    store = _store()
+    frame = render_frame(
+        store, iri, "class",
+        axiom_changes=[
+            {"op": "added", "predicate": _RDFS_LABEL_N.value,
+             "object": ox.Literal("Pizza", language="en"), "graph": _GRAPH},
+            {"op": "added", "predicate": _RDFS_COMMENT_N.value,
+             "object": ox.Literal("A baked Italian dish"), "graph": _GRAPH},
+            {"op": "added", "predicate": _RDFS_SUB_N.value,
+             "object": food, "graph": _GRAPH},
+        ],
+        labels={},
+        op="added",
+    )
+    assert frame is not None
+    # Order: header → Annotations → SubClassOf
+    annot_idx = frame.find("Annotations:")
+    sub_idx   = frame.find("SubClassOf:")
+    assert annot_idx >= 0 and sub_idx >= 0
+    assert annot_idx < sub_idx, "Annotations: must appear before SubClassOf:"
+    assert 'rdfs:label "Pizza"@en' in frame
+    assert 'rdfs:comment "A baked Italian dish"' in frame
