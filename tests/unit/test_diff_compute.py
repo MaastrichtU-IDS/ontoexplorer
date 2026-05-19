@@ -342,3 +342,73 @@ def test_axioms_for_entity_keeps_non_declaring_rdf_type_triples():
     assert _OWL_CLASS.value not in objects
     assert metaclass.value in objects
     assert len(axioms) == 1
+
+
+def test_run_diff_added_class_with_subclassof_and_label_yields_manchester_frame():
+    """An added class with one rdfs:subClassOf and one rdfs:label should
+    produce a manchester_frame on the added entry with both blocks and
+    '+ ' prefixes on every line."""
+    new_class = ox.NamedNode("http://example.org/NewClass")
+    parent    = ox.NamedNode("http://example.org/Parent")
+    label_pred = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#label")
+
+    s = _store(
+        from_quads=[],
+        to_quads=[
+            (new_class, _RDF_TYPE, _OWL_CLASS),
+            (new_class, _RDFS_SC, parent),
+            (new_class, label_pred, ox.Literal("New", language="en")),
+        ],
+    )
+    summary, diff_data = run_diff(s, OID, FROM_VID, TO_VID)
+    assert summary["added"] == 1
+    added = diff_data["added"][0]
+    assert added["iri"] == new_class.value
+    frame = added.get("manchester_frame")
+    assert frame is not None, "manchester_frame must be populated for added entities"
+    # Header + Annotations + SubClassOf, every line '+ ' prefixed.
+    lines = frame.split("\n")
+    assert all(line.startswith("+ ") for line in lines), \
+        f"every line should start with '+ ', got:\n{frame}"
+    assert "Annotations:" in frame
+    assert 'rdfs:label "New"@en' in frame
+    assert "SubClassOf:" in frame
+
+
+def test_run_diff_removed_class_yields_manchester_frame_with_minus_prefix():
+    old_class = ox.NamedNode("http://example.org/OldClass")
+    parent    = ox.NamedNode("http://example.org/Parent")
+
+    s = _store(
+        from_quads=[
+            (old_class, _RDF_TYPE, _OWL_CLASS),
+            (old_class, _RDFS_SC, parent),
+        ],
+        to_quads=[],
+    )
+    summary, diff_data = run_diff(s, OID, FROM_VID, TO_VID)
+    assert summary["removed"] == 1
+    removed = diff_data["removed"][0]
+    frame = removed.get("manchester_frame")
+    assert frame is not None
+    lines = frame.split("\n")
+    assert all(line.startswith("- ") for line in lines)
+    assert "SubClassOf:" in frame
+
+
+def test_run_diff_bare_added_class_yields_header_only_frame():
+    """A class declared with only `rdf:type owl:Class` and no other axioms
+    produces a single-line frame: '+ Class: <name>  (<iri>)'."""
+    bare = ox.NamedNode("http://example.org/Bare")
+    s = _store(
+        from_quads=[],
+        to_quads=[(bare, _RDF_TYPE, _OWL_CLASS)],
+    )
+    summary, diff_data = run_diff(s, OID, FROM_VID, TO_VID)
+    added = diff_data["added"][0]
+    frame = added.get("manchester_frame")
+    assert frame is not None
+    # Exactly one line, header form.
+    assert frame.count("\n") == 0
+    assert frame.startswith("+ Class: ")
+    assert "(http://example.org/Bare)" in frame

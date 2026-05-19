@@ -159,22 +159,50 @@ def _run_diff_core(
     modified_list: list[dict] = []
     labels: dict[str, str] = {}
 
+    # Discover owl:AnnotationProperty in both graphs once; union forms the
+    # annotation_props set used by render_axiom/render_frame for every entity.
+    annotation_props = (
+        _mos._BUILTIN_ANNOTATION_PROPS
+        | _mos._discover_annotation_props(store, from_graph)
+        | _mos._discover_annotation_props(store, to_graph)
+    )
+
     for entity_type, type_iri in _ENTITY_TYPES.items():
         from_iris = _collect_iris(store, from_graph, type_iri)
         to_iris   = _collect_iris(store, to_graph, type_iri)
 
         for iri in to_iris - from_iris:
+            axioms = _axioms_for_entity(store, to_graph, iri)
+            axiom_changes = [
+                {"op": "added", "predicate": p, "object": o, "graph": to_graph}
+                for p, o in axioms
+            ]
+            frame = _mos.render_frame(
+                store, iri, entity_type, axiom_changes,
+                labels=labels, annotation_props=annotation_props, op="added",
+            )
             added_list.append({
                 "iri": iri,
                 "label": _first_label(store, to_graph, iri),
                 "entity_type": entity_type,
+                "manchester_frame": frame,
             })
 
         for iri in from_iris - to_iris:
+            axioms = _axioms_for_entity(store, from_graph, iri)
+            axiom_changes = [
+                {"op": "removed", "predicate": p, "object": o, "graph": from_graph}
+                for p, o in axioms
+            ]
+            frame = _mos.render_frame(
+                store, iri, entity_type, axiom_changes,
+                labels=labels, annotation_props=annotation_props, op="removed",
+            )
             removed_list.append({
                 "iri": iri,
                 "label": _first_label(store, from_graph, iri),
                 "entity_type": entity_type,
+                "manchester_frame": frame,
             })
 
         for iri in from_iris & to_iris:
@@ -230,7 +258,8 @@ def _run_diff_core(
                 axiom_changes.append({"op": rec["op"], "axiom": axiom_str})
 
             manchester_frame = _mos.render_frame(
-                store, iri, entity_type, change_records, labels=labels,
+                store, iri, entity_type, change_records,
+                labels=labels, annotation_props=annotation_props,
             )
 
             label = _first_label(store, to_graph, iri) or _first_label(store, from_graph, iri)
