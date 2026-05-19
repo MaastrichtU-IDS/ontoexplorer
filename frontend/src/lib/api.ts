@@ -703,6 +703,8 @@ export interface AdminOntologyEntry {
   label: string | null
   source_url: string | null
   version_id: string
+  version_iri: string | null
+  version_count: number
   triple_count: number | null
   ingestion_status: string
   indexed: boolean
@@ -731,6 +733,7 @@ export interface AdminOverview {
 
 export interface AdminVersionEntry {
   version_id: string
+  version_iri: string | null
   triple_count: number | null
   ingestion_status: string
   indexed: boolean

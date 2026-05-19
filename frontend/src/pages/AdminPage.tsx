@@ -296,10 +296,10 @@ function OntologyTable({
               <SortTh col="indexed"    label="Indexed" />
               <SortTh col="embeddings" label="Embeddings" />
               <SortTh col="reasoning"  label="Reasoning" />
-              <SortTh col="updated"    label="Updated" />
               <th style={{ padding: '7px 10px', textAlign: 'center', color: 'var(--text-dim)', fontWeight: 500, fontSize: 10, textTransform: 'uppercase', letterSpacing: .5 }}>
-                Diff vs prev
+                Diff
               </th>
+              <SortTh col="updated"    label="Updated" />
             </tr>
           </thead>
           <tbody>
@@ -309,21 +309,22 @@ function OntologyTable({
               return (
                 <React.Fragment key={row.version_id}>
                 <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                  <td style={{ padding: '6px 4px 6px 10px', textAlign: 'center', cursor: 'pointer', color: 'var(--text-dim)' }}
-                      onClick={() => toggleExpanded(row.id)}>
-                    {expanded.has(row.id) ? '▾' : '▸'}
-                  </td>
+                  {row.version_count > 1 ? (
+                    <td style={{ padding: '6px 4px 6px 10px', textAlign: 'center', cursor: 'pointer', color: 'var(--text-dim)' }}
+                        onClick={() => toggleExpanded(row.id)}>
+                      {expanded.has(row.id) ? '▾' : '▸'}
+                    </td>
+                  ) : (
+                    <td />
+                  )}
                   <td style={{ padding: '6px 10px', color: 'var(--text)' }}>
                     <div>{ontologyDisplayName(row)}</div>
                     {row.label && row.label !== ontologyDisplayName(row) && (
                       <div style={{ color: 'var(--text-dim)', fontSize: 10 }}>{row.label}</div>
                     )}
-                    <ActionButton
-                      label="⚖ recompute all diffs"
-                      title="Queue compute_diff for every consecutive version pair of this ontology"
-                      state={recomputeStates[row.id] ?? 'idle'}
-                      onClick={() => onRecomputeAll(row.id)}
-                    />
+                    <div style={{ color: 'var(--text-dim)', fontSize: 10, fontFamily: 'monospace' }}>
+                      {row.version_iri ?? row.version_id}
+                    </div>
                   </td>
                   <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-muted)' }}>
                     {fmtTriples(row.triple_count)}
@@ -382,11 +383,16 @@ function OntologyTable({
                       )}
                     </div>
                   </td>
-                  <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
-                    {fmtAge(row.version_created_at)}
+                  <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                    <ActionButton
+                      label="↺ diffs"
+                      title="Queue compute_diff for every consecutive version pair of this ontology"
+                      state={recomputeStates[row.id] ?? 'idle'}
+                      onClick={() => onRecomputeAll(row.id)}
+                    />
                   </td>
                   <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
-                    —
+                    {fmtAge(row.version_created_at)}
                   </td>
                 </tr>
                 {expanded.has(row.id) && (
@@ -694,7 +700,9 @@ function VersionsSubRows({
         <tr key={v.version_id} style={{ background: 'rgba(255,255,255,0.02)' }}>
           <td />
           <td style={{ padding: '6px 10px', color: 'var(--text-muted)', fontSize: 11 }}>
-            ↳ <span style={{ fontFamily: 'monospace' }}>{v.version_id.slice(0, 8)}…</span>
+            ↳ <span style={{ fontFamily: 'monospace' }} title={v.version_id}>
+              {v.version_iri ?? v.version_id}
+            </span>
             {v.ingestion_status === 'deprecated' && (
               <span style={{ marginLeft: 6, color: '#f85149' }}>● deprecated</span>
             )}
@@ -750,9 +758,6 @@ function VersionsSubRows({
               />
             </div>
           </td>
-          <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
-            {fmtAge(v.version_created_at)}
-          </td>
           <td style={{ padding: '6px 10px', textAlign: 'center' }}>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
               <DiffStatusBadge status={v.diff_vs_prev.status} />
@@ -765,6 +770,9 @@ function VersionsSubRows({
                 />
               )}
             </div>
+          </td>
+          <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
+            {fmtAge(v.version_created_at)}
           </td>
         </tr>
       ))}
