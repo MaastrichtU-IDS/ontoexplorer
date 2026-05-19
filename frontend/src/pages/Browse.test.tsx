@@ -1,5 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import Browse from './Browse'
 
 const mockVersions = [{ id: 'v1', ontology_id: 'go', version_iri: null, status: 'indexed', created_at: '2024-01-01' }]
@@ -22,6 +23,13 @@ vi.mock('../hooks/useClassTree', () => ({
   }),
 }))
 
+vi.mock('../hooks/useInferredTree', () => ({
+  useInferredTreeNodes: () => ({
+    data: { terms: [], reasoning_available: true },
+    isLoading: false,
+  }),
+}))
+
 vi.mock('../hooks/useTerm', () => ({
   useTerm: () => ({
     data: {
@@ -29,8 +37,30 @@ vi.mock('../hooks/useTerm', () => ({
       label: 'Term A',
       definition: 'A test term.',
       entityType: 'class',
+      isInverseTarget: false,
+      typeOf: [],
+      rawProperties: {},
+      rawLabels: [],
+      rawDefinitions: [],
+      rawSynonyms: [],
       synonyms: { exact: [], related: [], broad: [], narrow: [] },
-      superclasses: [],
+      superclasses: { asserted: [], inferred: [] },
+      subclasses: { asserted: [], inferred: [] },
+      superclassExpressions: [],
+      inferredSuperclassExpressions: [],
+      equivalentTo: [],
+      disjointWith: [],
+      inferredDisjointWith: [],
+      disjointUnionOf: [],
+      generalClassAxioms: [],
+      domain: [],
+      range: [],
+      characteristics: [],
+      inverseOf: [],
+      usage: [],
+      classUsage: [],
+      schemaProperties: [],
+      inheritedSchemaProperties: [],
     },
     isLoading: false,
     error: null,
@@ -38,13 +68,16 @@ vi.mock('../hooks/useTerm', () => ({
 }))
 
 function wrap(path = '/browse') {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <MemoryRouter initialEntries={[path]}>
-      <Routes>
-        <Route path="/browse" element={<Browse />} />
-        <Route path="/browse/:oid/:vid" element={<Browse />} />
-      </Routes>
-    </MemoryRouter>
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="/browse" element={<Browse />} />
+          <Route path="/browse/:oid/:vid" element={<Browse />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
   )
 }
 
