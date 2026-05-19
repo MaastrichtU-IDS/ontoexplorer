@@ -246,26 +246,29 @@ def render_class_expression(
     node: ox.Term,
     *,
     labels: dict[str, str],
+    known_iris: frozenset[str],
     depth: int = 0,
-) -> str:
+) -> list[ManchesterToken]:
     """Render an RDF term as a Manchester class expression.
 
     Dispatches by term kind:
-      - NamedNode → label / local-name
-      - Literal   → "value"[@lang][^^xsd:datatype]
+      - NamedNode → label / local-name as a single iri token
+      - Literal   → "value"[@lang][^^xsd:datatype] as a single text token
       - BlankNode → introspect outgoing triples, match an OWL pattern, recurse
 
-    Depth-bounded; deeper than _MAX_DEPTH renders as `…`.
+    Depth-bounded; deeper than _MAX_DEPTH renders as a single `…` text token.
     """
     if depth >= _MAX_DEPTH:
-        return "…"
+        return [_text("…")]
     if isinstance(node, ox.NamedNode):
-        return iri_to_label(store, graph, node.value, labels=labels)
+        return [_iri_token(store, graph, node.value, labels=labels, known_iris=known_iris)]
     if isinstance(node, ox.Literal):
         return _render_literal(node)
     if isinstance(node, ox.BlankNode):
-        return _render_bnode_expression(store, graph, node, labels=labels, depth=depth)
-    return f"[unknown:{node!r}]"
+        return _render_bnode_expression(
+            store, graph, node, labels=labels, known_iris=known_iris, depth=depth,
+        )
+    return [_text(f"[unknown:{node!r}]")]
 
 
 def _render_literal(lit: ox.Literal) -> list[ManchesterToken]:
@@ -287,8 +290,9 @@ def _render_bnode_expression(
     node: ox.BlankNode,
     *,
     labels: dict[str, str],
+    known_iris: frozenset[str],
     depth: int,
-) -> str:
+) -> list[ManchesterToken]:
     """Dispatch a blank-node class expression to its specific renderer.
 
     Order of detection matches OWL2's structural specification. Falls back to
@@ -298,40 +302,47 @@ def _render_bnode_expression(
 
     if _OWL_INTERSECTION in preds:
         return _render_junction(
-            store, graph, preds[_OWL_INTERSECTION], "and", labels=labels, depth=depth
+            store, graph, preds[_OWL_INTERSECTION], "and",
+            labels=labels, known_iris=known_iris, depth=depth,
         )
     if _OWL_UNION in preds:
         return _render_junction(
-            store, graph, preds[_OWL_UNION], "or", labels=labels, depth=depth
+            store, graph, preds[_OWL_UNION], "or",
+            labels=labels, known_iris=known_iris, depth=depth,
         )
     if _OWL_COMPLEMENT in preds:
-        inner_term = preds[_OWL_COMPLEMENT]
         inner = render_class_expression(
-            store, graph, inner_term, labels=labels, depth=depth + 1
+            store, graph, preds[_OWL_COMPLEMENT],
+            labels=labels, known_iris=known_iris, depth=depth + 1,
         )
-        # Parenthesize complex inner expressions to avoid Manchester precedence
-        # ambiguity. Junctions already self-parenthesize via _render_junction;
-        # restrictions, datatype expressions, and other bnode forms do not.
-        if isinstance(inner_term, ox.BlankNode) and not (inner.startswith("(") or inner.startswith("{")):
-            inner = f"({inner})"
-        return f"not {inner}"
-
+        return [_text("not "), *inner]
     if _OWL_ONE_OF in preds:
         items = _rdf_list_items(store, graph, preds[_OWL_ONE_OF])
-        parts = [
-            render_class_expression(store, graph, it, labels=labels, depth=depth + 1)
+        rendered: list[list[ManchesterToken]] = [
+            render_class_expression(
+                store, graph, it,
+                labels=labels, known_iris=known_iris, depth=depth + 1,
+            )
             for it in items
         ]
-        return "{" + ", ".join(parts) + "}"
+        toks: list[ManchesterToken] = [_text("{")]
+        for i, r in enumerate(rendered):
+            if i > 0:
+                toks.append(_text(", "))
+            toks.extend(r)
+        toks.append(_text("}"))
+        return toks
 
     if _OWL_ON_DATATYPE in preds and _OWL_WITH_RESTRICTIONS in preds:
         return _render_datatype_restriction(
-            store, graph, preds, labels=labels, depth=depth
+            store, graph, preds, labels=labels, known_iris=known_iris, depth=depth,
         )
 
     # Property restrictions: detected by presence of owl:onProperty.
     if _OWL_ON_PROPERTY in preds:
-        return _render_restriction(store, graph, preds, labels=labels, depth=depth)
+        return _render_restriction(
+            store, graph, preds, labels=labels, known_iris=known_iris, depth=depth,
+        )
 
     return _bnode_fallback(store, graph, node)
 
@@ -357,33 +368,32 @@ def _render_restriction(
     preds: dict[str, ox.Term],
     *,
     labels: dict[str, str],
+    known_iris: frozenset[str],
     depth: int,
-) -> str:
-    """Render an owl:Restriction.
+) -> list[ManchesterToken]:
+    """Render an owl:Restriction as a list of tokens.
 
     Required: owl:onProperty. Then exactly one of someValuesFrom / allValuesFrom /
     hasValue / hasSelf / cardinality-variants.
     """
-    prop_term = preds[_OWL_ON_PROPERTY]
-    prop_label = render_class_expression(
-        store, graph, prop_term, labels=labels, depth=depth + 1
+    prop_tokens = render_class_expression(
+        store, graph, preds[_OWL_ON_PROPERTY],
+        labels=labels, known_iris=known_iris, depth=depth + 1,
     )
 
+    def _with_keyword(kw: str, filler_term: ox.Term) -> list[ManchesterToken]:
+        filler = render_class_expression(
+            store, graph, filler_term,
+            labels=labels, known_iris=known_iris, depth=depth + 1,
+        )
+        return prop_tokens + [_text(f" {kw} ")] + filler
+
     if _OWL_SOME_VALUES in preds:
-        filler = render_class_expression(
-            store, graph, preds[_OWL_SOME_VALUES], labels=labels, depth=depth + 1
-        )
-        return f"{prop_label} some {filler}"
+        return _with_keyword("some", preds[_OWL_SOME_VALUES])
     if _OWL_ALL_VALUES in preds:
-        filler = render_class_expression(
-            store, graph, preds[_OWL_ALL_VALUES], labels=labels, depth=depth + 1
-        )
-        return f"{prop_label} only {filler}"
+        return _with_keyword("only", preds[_OWL_ALL_VALUES])
     if _OWL_HAS_VALUE in preds:
-        v = render_class_expression(
-            store, graph, preds[_OWL_HAS_VALUE], labels=labels, depth=depth + 1
-        )
-        return f"{prop_label} value {v}"
+        return _with_keyword("value", preds[_OWL_HAS_VALUE])
     if _OWL_HAS_SELF in preds:
         v = preds[_OWL_HAS_SELF]
         if (
@@ -392,7 +402,7 @@ def _render_restriction(
             and v.datatype is not None
             and v.datatype.value == _XSD_BOOLEAN
         ):
-            return f"{prop_label} Self"
+            return prop_tokens + [_text(" Self")]
         # `hasSelf false` or non-boolean literals fall through.
 
     # Cardinality variants. Unqualified predicates NEVER carry a filler, per
@@ -406,7 +416,7 @@ def _render_restriction(
         if card_pred in preds:
             n = preds[card_pred]
             if isinstance(n, ox.Literal):
-                return f"{prop_label} {kw} {n.value}"
+                return prop_tokens + [_text(f" {kw} {n.value}")]
 
     for card_pred, kw in (
         (_OWL_QCARDINALITY, "exactly"),
@@ -419,17 +429,18 @@ def _render_restriction(
                 on_class = preds.get(_OWL_ON_CLASS) or preds.get(_OWL_ON_DATARANGE)
                 if on_class is not None:
                     filler = render_class_expression(
-                        store, graph, on_class, labels=labels, depth=depth + 1
+                        store, graph, on_class,
+                        labels=labels, known_iris=known_iris, depth=depth + 1,
                     )
-                    return f"{prop_label} {kw} {n.value} {filler}"
-                return f"{prop_label} {kw} {n.value}"
+                    return prop_tokens + [_text(f" {kw} {n.value} ")] + filler
+                return prop_tokens + [_text(f" {kw} {n.value}")]
 
-    return f"[restriction:{prop_label}]"
+    return [_text("[restriction:")] + prop_tokens + [_text("]")]
 
 
 def _bnode_fallback(
-    store: ox.Store, graph: ox.NamedNode, node: ox.BlankNode
-) -> str:
+    store: ox.Store, graph: ox.NamedNode, node: ox.BlankNode,
+) -> list[ManchesterToken]:
     """Short stable fingerprint for an unrecognized bnode (debugging aid)."""
     parts: list[str] = []
     for q in store.quads_for_pattern(node, None, None, graph):
@@ -441,8 +452,8 @@ def _bnode_fallback(
             o = "_:b"
         parts.append(f"{q.predicate.value}\t{o}")
     parts.sort()
-    fp = hashlib.sha1("\n".join(parts).encode()).hexdigest()[:8]
-    return f"[bnode:{fp}]"
+    fp = hashlib.sha1("\n".join(parts).encode()).hexdigest()[:8] if parts else "empty"
+    return [_text(f"[bnode:{fp}]")]
 
 
 def _render_junction(
@@ -452,17 +463,26 @@ def _render_junction(
     op: str,
     *,
     labels: dict[str, str],
+    known_iris: frozenset[str],
     depth: int,
-) -> str:
-    """Render intersectionOf / unionOf as `(A op B op C)`."""
+) -> list[ManchesterToken]:
+    """Render intersectionOf / unionOf as `A op B op C` (no surrounding parens)."""
     items = _rdf_list_items(store, graph, list_head)
     if not items:
-        return f"({op})"
-    parts = [
-        render_class_expression(store, graph, it, labels=labels, depth=depth + 1)
+        return [_text(f"[empty-{op}]")]
+    pieces = [
+        render_class_expression(
+            store, graph, it,
+            labels=labels, known_iris=known_iris, depth=depth + 1,
+        )
         for it in items
     ]
-    return "(" + f" {op} ".join(parts) + ")"
+    toks: list[ManchesterToken] = []
+    for i, p in enumerate(pieces):
+        if i > 0:
+            toks.append(_text(f" {op} "))
+        toks.extend(p)
+    return toks
 
 
 # Predicate-keyed dispatch for axioms whose Manchester rendering is
@@ -568,16 +588,23 @@ def _render_datatype_restriction(
     preds: dict[str, ox.Term],
     *,
     labels: dict[str, str],
+    known_iris: frozenset[str],
     depth: int,
-) -> str:
+) -> list[ManchesterToken]:
     """Render rdfs:Datatype + owl:onDatatype + owl:withRestrictions as
-    `<datatype>[facet1 v1, facet2 v2]`. Falls back to bare datatype label when
-    the facet list is empty or unrecognized.
+    `<datatype>[facet1 v1, facet2 v2]`. Falls back to the bare datatype tokens
+    when the facet list is empty or unrecognized.
     """
     base = preds[_OWL_ON_DATATYPE]
-    base_label = render_class_expression(store, graph, base, labels=labels, depth=depth + 1)
     if isinstance(base, ox.NamedNode) and base.value.startswith(_XSD):
-        base_label = f"xsd:{base.value[len(_XSD):]}"
+        # Always present xsd:* datatypes as a CURIE text token (not a clickable
+        # iri token) — xsd built-ins are never ontology entities to link to.
+        base_tokens: list[ManchesterToken] = [_text(f"xsd:{base.value[len(_XSD):]}")]
+    else:
+        base_tokens = render_class_expression(
+            store, graph, base,
+            labels=labels, known_iris=known_iris, depth=depth + 1,
+        )
 
     items = _rdf_list_items(store, graph, preds[_OWL_WITH_RESTRICTIONS])
     facet_strs: list[str] = []
@@ -590,7 +617,14 @@ def _render_datatype_restriction(
                 continue
             op = _FACETS[facet_iri]
             if op == "pattern":
-                value_str = _render_literal(q.object) if isinstance(q.object, ox.Literal) else str(q.object.value)
+                if isinstance(q.object, ox.Literal):
+                    # _render_literal returns a single text token; extract its v.
+                    lit_tokens = _render_literal(q.object)
+                    value_str = "".join(
+                        t["v"] for t in lit_tokens if t["t"] == "text"
+                    )
+                else:
+                    value_str = str(q.object.value)
                 facet_strs.append(f"pattern {value_str}")
             else:
                 # Numeric comparators (>=, <=, >, <) and length facets — emit the
@@ -598,8 +632,8 @@ def _render_datatype_restriction(
                 inner = q.object.value if isinstance(q.object, ox.Literal) else str(q.object.value)
                 facet_strs.append(f"{op} {inner}")
     if not facet_strs:
-        return base_label
-    return f"{base_label}[" + ", ".join(facet_strs) + "]"
+        return base_tokens
+    return base_tokens + [_text("[" + ", ".join(facet_strs) + "]")]
 
 
 # Order in which keywords appear in the frame. Predicates not in the table are

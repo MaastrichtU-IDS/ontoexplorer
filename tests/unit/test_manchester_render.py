@@ -1212,3 +1212,63 @@ def test_render_literal_renders_xsd_integer():
         ox.Literal("42", datatype=ox.NamedNode("http://www.w3.org/2001/XMLSchema#integer")),
     )
     assert out == [{"t": "text", "v": '"42"^^xsd:integer'}]
+
+
+def test_render_class_expression_named_class_returns_iri_token():
+    pizza = "http://example.org/Pizza"
+    store = _store()
+    out = render_class_expression(
+        store, _GRAPH, ox.NamedNode(pizza),
+        labels={pizza: "Pizza"},
+        known_iris=frozenset({pizza}),
+    )
+    assert out == [{"t": "iri", "label": "Pizza", "iri": pizza, "in_ontology": True}]
+
+
+def test_render_class_expression_some_restriction_emits_iri_text_iri():
+    """Restriction (hasTopping some Tomato) → 3 tokens: prop IRI, ' some ', filler IRI."""
+    has_topping = ox.NamedNode("http://example.org/hasTopping")
+    tomato      = ox.NamedNode("http://example.org/Tomato")
+    bnode = ox.BlankNode()
+    store = _store(
+        (bnode, _RDF_TYPE_N, ox.NamedNode("http://www.w3.org/2002/07/owl#Restriction")),
+        (bnode, ox.NamedNode("http://www.w3.org/2002/07/owl#onProperty"), has_topping),
+        (bnode, ox.NamedNode("http://www.w3.org/2002/07/owl#someValuesFrom"), tomato),
+    )
+    out = render_class_expression(
+        store, _GRAPH, bnode,
+        labels={},
+        known_iris=frozenset({has_topping.value, tomato.value}),
+    )
+    assert out == [
+        {"t": "iri", "label": "hasTopping", "iri": has_topping.value, "in_ontology": True},
+        {"t": "text", "v": " some "},
+        {"t": "iri", "label": "Tomato", "iri": tomato.value, "in_ontology": True},
+    ]
+
+
+def test_render_class_expression_intersection_emits_with_and_separators():
+    a = ox.NamedNode("http://example.org/A")
+    b = ox.NamedNode("http://example.org/B")
+    bnode = ox.BlankNode()
+    # Build an rdf:List of [a, b].
+    n1, n2 = ox.BlankNode(), ox.BlankNode()
+    store = _store(
+        (bnode, _RDF_TYPE_N, ox.NamedNode("http://www.w3.org/2002/07/owl#Class")),
+        (bnode, ox.NamedNode("http://www.w3.org/2002/07/owl#intersectionOf"), n1),
+        (n1, ox.NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#first"), a),
+        (n1, ox.NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#rest"), n2),
+        (n2, ox.NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#first"), b),
+        (n2, ox.NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#rest"),
+            ox.NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#nil")),
+    )
+    out = render_class_expression(
+        store, _GRAPH, bnode,
+        labels={},
+        known_iris=frozenset({a.value, b.value}),
+    )
+    # Tokens: (A) " and " (B)
+    iri_tokens = [t for t in out if t["t"] == "iri"]
+    text_tokens = [t for t in out if t["t"] == "text"]
+    assert [t["iri"] for t in iri_tokens] == [a.value, b.value]
+    assert " and " in [t["v"] for t in text_tokens]
