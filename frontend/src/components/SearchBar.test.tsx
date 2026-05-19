@@ -3,6 +3,7 @@ import SearchBar from './SearchBar'
 
 vi.mock('../hooks/useSearch', () => ({
   useAutocomplete: () => ({ data: undefined }),
+  useGlobalAutocomplete: () => ({ data: undefined }),
 }))
 
 test('renders with placeholder text', () => {
