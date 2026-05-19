@@ -155,6 +155,53 @@ function useDiffViewURLState() {
   }
 }
 
+function InferredUnavailableNotice({
+  status,
+}: {
+  status: DiffSummary['inferred_status'] | undefined
+}) {
+  const [dismissed, setDismissed] = useState(false)
+  if (!status) return null
+  if (status.from_version === 'ready' && status.to_version === 'ready') return null
+  if (dismissed) return null
+  const bad =
+    status.from_version !== 'ready'
+      ? `from_version (${status.from_version})`
+      : `to_version (${status.to_version})`
+  return (
+    <div
+      style={{
+        background: 'var(--bg-tertiary, #1a1d24)',
+        border: '1px solid var(--border)',
+        borderRadius: 4,
+        padding: '8px 12px',
+        fontSize: 11,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+      }}
+    >
+      <span style={{ color: '#58a6ff' }}>ⓘ</span>
+      <span style={{ flex: 1 }}>
+        Inferred diff unavailable: reasoning is not ready for {bad}. The diff
+        will refresh automatically when reasoning completes.
+      </span>
+      <button
+        onClick={() => setDismissed(true)}
+        style={{
+          background: 'none',
+          border: 'none',
+          color: 'var(--text-dim)',
+          cursor: 'pointer',
+        }}
+        aria-label="Dismiss"
+      >
+        ×
+      </button>
+    </div>
+  )
+}
+
 function HighlightedText({ text, query, color }: { text: string; query: string; color?: string }) {
   if (!query) return <span style={{ color }}>{text}</span>
   const lower = text.toLowerCase()
@@ -326,6 +373,7 @@ export default function DiffResultView({
 
   return (
     <div style={{ padding: 14, fontFamily: 'monospace', fontSize: 11, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {summary && <InferredUnavailableNotice status={summary.inferred_status} />}
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         {(['added', 'removed', 'modified'] as Op[]).map(op => (
           <label key={op} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
@@ -364,7 +412,11 @@ export default function DiffResultView({
       {summary && (
         <div style={{ color: 'var(--text-dim)', fontSize: 11 }}>
           {summary.added} added, {summary.removed} removed, {summary.modified} modified
-          {' '}({summary.literal_changes} literal, {summary.axiom_changes} axiom)
+          {' '}({summary.literal_changes} literal, {summary.axiom_changes} axiom
+          {summary.asserted_axiom_changes != null && summary.inferred_axiom_changes != null && (
+            <> — {summary.asserted_axiom_changes} asserted, {summary.inferred_axiom_changes} inferred</>
+          )}
+          )
         </div>
       )}
 

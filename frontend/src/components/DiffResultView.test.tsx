@@ -27,6 +27,8 @@ const SUMMARY: DiffSummary = {
   modified: 0,
   literal_changes: 0,
   axiom_changes: 0,
+  asserted_axiom_changes: 0,
+  inferred_axiom_changes: 0,
   by_entity_type: {
     class: { added: 2, removed: 1, modified: 0 },
     object_property: { added: 0, removed: 0, modified: 0 },
@@ -34,6 +36,7 @@ const SUMMARY: DiffSummary = {
     annotation_property: { added: 0, removed: 0, modified: 0 },
     individual: { added: 0, removed: 0, modified: 0 },
   },
+  inferred_status: { from_version: 'ready', to_version: 'ready' },
 }
 
 const DATA = {
@@ -90,4 +93,57 @@ test('df_e in URL renders the matching entity expanded', () => {
   const barHeader = barLabel.closest('div[style*="cursor"]') as HTMLElement
   const barRowContainer = barHeader.parentElement as HTMLElement
   expect(barRowContainer.children.length).toBe(1)
+})
+
+test('renders inferred-unavailable notice when from_version is missing', () => {
+  const summary: DiffSummary = {
+    ...SUMMARY,
+    inferred_status: { from_version: 'missing', to_version: 'ready' },
+  }
+  render(
+    <MemoryRouter>
+      <DiffResultView
+        data={{ added: [], removed: [], modified: [] }}
+        summary={summary}
+        variant="version-diff"
+      />
+    </MemoryRouter>,
+  )
+  expect(screen.getByText(/inferred diff unavailable/i)).toBeInTheDocument()
+})
+
+test('does not render notice when both sides are ready', () => {
+  const summary: DiffSummary = {
+    ...SUMMARY,
+    inferred_status: { from_version: 'ready', to_version: 'ready' },
+  }
+  render(
+    <MemoryRouter>
+      <DiffResultView
+        data={{ added: [], removed: [], modified: [] }}
+        summary={summary}
+        variant="version-diff"
+      />
+    </MemoryRouter>,
+  )
+  expect(screen.queryByText(/inferred diff unavailable/i)).toBeNull()
+})
+
+test('summary header shows asserted/inferred breakdown', () => {
+  const summary: DiffSummary = {
+    ...SUMMARY,
+    axiom_changes: 7,
+    asserted_axiom_changes: 5,
+    inferred_axiom_changes: 2,
+  }
+  render(
+    <MemoryRouter>
+      <DiffResultView
+        data={{ added: [], removed: [], modified: [] }}
+        summary={summary}
+        variant="version-diff"
+      />
+    </MemoryRouter>,
+  )
+  expect(screen.getByText(/5 asserted, 2 inferred/)).toBeInTheDocument()
 })
