@@ -1,9 +1,15 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { DiffEntity, DiffEntityType, DiffSummary } from '../lib/api'
 import ManchesterFrame from './ManchesterFrame'
 
 type Op = 'added' | 'removed' | 'modified'
 type ChangeFilter = 'all' | 'literal' | 'axiom'
+
+const ALL_OPS: readonly Op[] = ['added', 'removed', 'modified'] as const
+const ENTITY_TYPE_KEYS: readonly DiffEntityType[] = [
+  'class', 'object_property', 'data_property', 'annotation_property', 'individual',
+]
 
 const ENTITY_TYPE_LABELS: Record<DiffEntityType, string> = {
   class: 'Class',
@@ -25,6 +31,127 @@ interface Props {
   toLabel?: string
   fromShortname?: string | null
   toShortname?: string | null
+}
+
+/**
+ * URL-persisted state for the diff view. All filter/expand bits round-trip
+ * through `df_*` search params so back-button and link-sharing restore the
+ * view. The search input keeps a local mirror that debounces the URL write
+ * to ~200 ms so the URL doesn't update on every keystroke.
+ *
+ * Always uses functional setSearchParams + { replace: true } to preserve
+ * parent-route params (e.g. tab=history, from=..., to=...) and avoid
+ * polluting browser history with every filter click.
+ */
+function useDiffViewURLState() {
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // Derive filters from URL via useMemo so we don't keep a stale local mirror.
+  const ops = useMemo<Set<Op>>(() => {
+    const raw = searchParams.get('df_ops')
+    if (!raw) return new Set(ALL_OPS)
+    const parts = raw.split(',').filter((p): p is Op =>
+      p === 'added' || p === 'removed' || p === 'modified',
+    )
+    return new Set(parts)
+  }, [searchParams])
+
+  const typeFilter = useMemo<DiffEntityType | 'all'>(() => {
+    const raw = searchParams.get('df_type')
+    if (!raw) return 'all'
+    return (ENTITY_TYPE_KEYS as readonly string[]).includes(raw)
+      ? (raw as DiffEntityType)
+      : 'all'
+  }, [searchParams])
+
+  const changeFilter = useMemo<ChangeFilter>(() => {
+    const raw = searchParams.get('df_cf')
+    return raw === 'literal' || raw === 'axiom' ? raw : 'all'
+  }, [searchParams])
+
+  const expanded = useMemo<Set<string>>(() => {
+    const raw = searchParams.get('df_e')
+    if (!raw) return new Set()
+    return new Set(raw.split(',').filter(Boolean).map(decodeURIComponent))
+  }, [searchParams])
+
+  // Search: local state mirrors URL on mount, then debounces writes back.
+  const [search, setSearchLocal] = useState<string>(() => searchParams.get('df_q') ?? '')
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const setSearch = useCallback((next: string) => {
+    setSearchLocal(next)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      setSearchParams(prev => {
+        if (next) prev.set('df_q', next)
+        else prev.delete('df_q')
+        return prev
+      }, { replace: true })
+    }, 200)
+  }, [setSearchParams])
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [])
+
+  const setOps = useCallback((next: Set<Op>) => {
+    setSearchParams(prev => {
+      const allSelected = ALL_OPS.every(op => next.has(op))
+      if (allSelected) {
+        // Default — don't serialize.
+        prev.delete('df_ops')
+      } else {
+        // Preserve canonical order so URL is stable across toggles.
+        const ordered = ALL_OPS.filter(op => next.has(op))
+        prev.set('df_ops', ordered.join(','))
+      }
+      return prev
+    }, { replace: true })
+  }, [setSearchParams])
+
+  const setTypeFilter = useCallback((next: DiffEntityType | 'all') => {
+    setSearchParams(prev => {
+      if (next === 'all') prev.delete('df_type')
+      else prev.set('df_type', next)
+      return prev
+    }, { replace: true })
+  }, [setSearchParams])
+
+  const setChangeFilter = useCallback((next: ChangeFilter) => {
+    setSearchParams(prev => {
+      if (next === 'all') prev.delete('df_cf')
+      else prev.set('df_cf', next)
+      return prev
+    }, { replace: true })
+  }, [setSearchParams])
+
+  const toggleExpanded = useCallback((iri: string) => {
+    setSearchParams(prev => {
+      const raw = prev.get('df_e')
+      const current = new Set(
+        raw ? raw.split(',').filter(Boolean).map(decodeURIComponent) : [],
+      )
+      if (current.has(iri)) current.delete(iri)
+      else current.add(iri)
+      if (current.size === 0) {
+        prev.delete('df_e')
+      } else {
+        prev.set('df_e', Array.from(current).map(encodeURIComponent).join(','))
+      }
+      return prev
+    }, { replace: true })
+  }, [setSearchParams])
+
+  return {
+    ops, setOps,
+    typeFilter, setTypeFilter,
+    changeFilter, setChangeFilter,
+    expanded, toggleExpanded,
+    search, setSearch,
+  }
 }
 
 function HighlightedText({ text, query, color }: { text: string; query: string; color?: string }) {
@@ -147,18 +274,19 @@ function EntityRow({
 export default function DiffResultView({
   data, summary, variant, fromLabel, toLabel, fromShortname, toShortname,
 }: Props) {
-  const [ops, setOps]               = useState<Set<Op>>(new Set(['added', 'removed', 'modified']))
-  const [typeFilter, setTypeFilter] = useState<DiffEntityType | 'all'>('all')
-  const [changeFilter, setChangeFilter] = useState<ChangeFilter>('all')
-  const [search, setSearch]         = useState('')
-  const [expanded, setExpanded]     = useState<Set<string>>(new Set())
+  const {
+    ops, setOps,
+    typeFilter, setTypeFilter,
+    changeFilter, setChangeFilter,
+    expanded, toggleExpanded,
+    search, setSearch,
+  } = useDiffViewURLState()
 
   const toggleOp = (op: Op) => {
-    setOps(prev => {
-      const next = new Set(prev)
-      next.has(op) ? next.delete(op) : next.add(op)
-      return next
-    })
+    const next = new Set(ops)
+    if (next.has(op)) next.delete(op)
+    else next.add(op)
+    setOps(next)
   }
 
   const allEntities: (DiffEntity & { op: Op })[] = useMemo(() => {
@@ -242,19 +370,12 @@ export default function DiffResultView({
       <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
         {filtered.map(entity => (
           <EntityRow
-            key={`${entity.op}-${entity.iri}`}
+            key={entity.iri}
             entity={entity}
             op={entity.op}
             search={search}
-            expanded={expanded.has(`${entity.op}-${entity.iri}`)}
-            onToggle={() => {
-              setExpanded(prev => {
-                const key = `${entity.op}-${entity.iri}`
-                const next = new Set(prev)
-                next.has(key) ? next.delete(key) : next.add(key)
-                return next
-              })
-            }}
+            expanded={expanded.has(entity.iri)}
+            onToggle={() => toggleExpanded(entity.iri)}
             variant={variant}
             fromLabel={fromLabel}
             toLabel={toLabel}
