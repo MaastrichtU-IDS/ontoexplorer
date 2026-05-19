@@ -89,3 +89,112 @@ async def test_auth_me_includes_is_admin(client, user_and_key):
     assert resp.status_code == 200
     assert "is_admin" in resp.json()
     assert isinstance(resp.json()["is_admin"], bool)
+
+
+@pytest.mark.anyio
+async def test_diff_status_for_pair_missing(db_session):
+    """No OntologyDiff row → status='missing'."""
+    from ontoexplorer.api.admin import _diff_status_for_pair
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+
+    ont = Ontology(iri="http://example.org/ds-missing.owl")
+    db_session.add(ont); await db_session.flush()
+    v1 = OntologyVersion(ontology_id=ont.id, minio_key="k1", sha256="dsm1", format="turtle", status="ready")
+    v2 = OntologyVersion(ontology_id=ont.id, minio_key="k2", sha256="dsm2", format="turtle", status="ready")
+    db_session.add(v1); db_session.add(v2)
+    await db_session.commit()
+
+    result = await _diff_status_for_pair(db_session, v1.id, v2.id)
+    assert result["status"] == "missing"
+    assert result["diff_id"] is None
+    assert result["computed_at"] is None
+
+
+@pytest.mark.anyio
+async def test_diff_status_for_pair_ready(db_session):
+    """Ready diff with inferred_status ready on both sides → 'ready'."""
+    from ontoexplorer.api.admin import _diff_status_for_pair
+    from ontoexplorer.models.db import Ontology, OntologyVersion, OntologyDiff
+
+    ont = Ontology(iri="http://example.org/ds-ready.owl")
+    db_session.add(ont); await db_session.flush()
+    v1 = OntologyVersion(ontology_id=ont.id, minio_key="k1", sha256="dsr1", format="turtle", status="ready")
+    v2 = OntologyVersion(ontology_id=ont.id, minio_key="k2", sha256="dsr2", format="turtle", status="ready")
+    db_session.add(v1); db_session.add(v2); await db_session.flush()
+    diff = OntologyDiff(
+        ontology_id=ont.id, version_from_id=v1.id, version_to_id=v2.id,
+        status="ready",
+        summary={"inferred_status": {"from_version": "ready", "to_version": "ready"}},
+    )
+    db_session.add(diff)
+    await db_session.commit()
+
+    result = await _diff_status_for_pair(db_session, v1.id, v2.id)
+    assert result["status"] == "ready"
+    assert result["diff_id"] == diff.id
+
+
+@pytest.mark.anyio
+async def test_diff_status_for_pair_pending(db_session):
+    """OntologyDiff.status='pending' → 'pending'."""
+    from ontoexplorer.api.admin import _diff_status_for_pair
+    from ontoexplorer.models.db import Ontology, OntologyVersion, OntologyDiff
+
+    ont = Ontology(iri="http://example.org/ds-pending.owl")
+    db_session.add(ont); await db_session.flush()
+    v1 = OntologyVersion(ontology_id=ont.id, minio_key="k1", sha256="dsp1", format="turtle", status="ready")
+    v2 = OntologyVersion(ontology_id=ont.id, minio_key="k2", sha256="dsp2", format="turtle", status="ready")
+    db_session.add(v1); db_session.add(v2); await db_session.flush()
+    db_session.add(OntologyDiff(
+        ontology_id=ont.id, version_from_id=v1.id, version_to_id=v2.id,
+        status="pending", summary=None,
+    ))
+    await db_session.commit()
+
+    result = await _diff_status_for_pair(db_session, v1.id, v2.id)
+    assert result["status"] == "pending"
+
+
+@pytest.mark.anyio
+async def test_diff_status_for_pair_failed(db_session):
+    """OntologyDiff.status='failed' → 'failed'."""
+    from ontoexplorer.api.admin import _diff_status_for_pair
+    from ontoexplorer.models.db import Ontology, OntologyVersion, OntologyDiff
+
+    ont = Ontology(iri="http://example.org/ds-failed.owl")
+    db_session.add(ont); await db_session.flush()
+    v1 = OntologyVersion(ontology_id=ont.id, minio_key="k1", sha256="dsf1", format="turtle", status="ready")
+    v2 = OntologyVersion(ontology_id=ont.id, minio_key="k2", sha256="dsf2", format="turtle", status="ready")
+    db_session.add(v1); db_session.add(v2); await db_session.flush()
+    db_session.add(OntologyDiff(
+        ontology_id=ont.id, version_from_id=v1.id, version_to_id=v2.id,
+        status="failed", summary=None,
+    ))
+    await db_session.commit()
+
+    result = await _diff_status_for_pair(db_session, v1.id, v2.id)
+    assert result["status"] == "failed"
+
+
+@pytest.mark.anyio
+async def test_diff_status_for_pair_stale_when_inferred_missing(db_session):
+    """Ready diff with inferred_status='missing' for a side whose reason job is 'done' → 'stale'."""
+    from ontoexplorer.api.admin import _diff_status_for_pair
+    from ontoexplorer.models.db import Ontology, OntologyVersion, OntologyDiff, Job
+
+    ont = Ontology(iri="http://example.org/ds-stale.owl")
+    db_session.add(ont); await db_session.flush()
+    v1 = OntologyVersion(ontology_id=ont.id, minio_key="k1", sha256="dsst1", format="turtle", status="ready")
+    v2 = OntologyVersion(ontology_id=ont.id, minio_key="k2", sha256="dsst2", format="turtle", status="ready")
+    db_session.add(v1); db_session.add(v2); await db_session.flush()
+    db_session.add(OntologyDiff(
+        ontology_id=ont.id, version_from_id=v1.id, version_to_id=v2.id,
+        status="ready",
+        summary={"inferred_status": {"from_version": "missing", "to_version": "ready"}},
+    ))
+    # Now reasoning for v1 has actually completed but the diff hasn't been refreshed yet.
+    db_session.add(Job(version_id=v1.id, type="reason", status="done"))
+    await db_session.commit()
+
+    result = await _diff_status_for_pair(db_session, v1.id, v2.id)
+    assert result["status"] == "stale"

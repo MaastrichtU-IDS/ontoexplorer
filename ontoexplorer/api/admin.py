@@ -115,6 +115,59 @@ async def _reasoning_status(version_id: str) -> str:
     return "not_started"
 
 
+async def _diff_status_for_pair(db: AsyncSession, from_vid: str, to_vid: str) -> dict:
+    """Return the diff-pipeline status for an ordered (from, to) version pair.
+
+    Status semantics:
+      - 'missing'  — no OntologyDiff row exists for this pair
+      - 'pending'  — OntologyDiff.status == 'pending'
+      - 'running'  — there is a running Job(type='diff') for either version (rare;
+                     compute_diff doesn't always insert a Job, so primarily we
+                     trust OntologyDiff.status)
+      - 'failed'   — OntologyDiff.status == 'failed'
+      - 'stale'    — OntologyDiff.status == 'ready' BUT summary.inferred_status
+                     shows a side != 'ready' while that side's reasoning Job is
+                     now 'done' (Phase 4 stale-detection condition)
+      - 'ready'    — OntologyDiff.status == 'ready' and not stale
+    """
+    from sqlalchemy import select
+    from ontoexplorer.models.db import Job, OntologyDiff
+
+    diff = (await db.execute(
+        select(OntologyDiff).where(
+            OntologyDiff.version_from_id == from_vid,
+            OntologyDiff.version_to_id == to_vid,
+        )
+    )).scalar_one_or_none()
+
+    if diff is None:
+        return {"status": "missing", "diff_id": None, "computed_at": None}
+
+    base = {
+        "diff_id": diff.id,
+        "computed_at": diff.created_at.isoformat() if diff.created_at else None,
+    }
+
+    if diff.status in ("pending", "running", "failed"):
+        return {"status": diff.status, **base}
+
+    # status == 'ready' — check for staleness
+    inferred = (diff.summary or {}).get("inferred_status", {})
+    for side, vid in (("from_version", from_vid), ("to_version", to_vid)):
+        if inferred.get(side) != "ready":
+            reason_done = (await db.execute(
+                select(Job).where(
+                    Job.version_id == vid,
+                    Job.type == "reason",
+                    Job.status == "done",
+                ).limit(1)
+            )).scalar_one_or_none()
+            if reason_done is not None:
+                return {"status": "stale", **base}
+
+    return {"status": "ready", **base}
+
+
 # ── Overview ──────────────────────────────────────────────────────────────────
 
 @router.get("/overview", summary="Admin system overview")
