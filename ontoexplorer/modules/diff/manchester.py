@@ -311,10 +311,23 @@ def _render_bnode_expression(
             labels=labels, known_iris=known_iris, depth=depth,
         )
     if _OWL_COMPLEMENT in preds:
+        inner_term = preds[_OWL_COMPLEMENT]
         inner = render_class_expression(
-            store, graph, preds[_OWL_COMPLEMENT],
+            store, graph, inner_term,
             labels=labels, known_iris=known_iris, depth=depth + 1,
         )
+        # Disambiguate complement of complex inner expressions: wrap in parens
+        # when the inner is a blank-node expression unless it already starts
+        # with `(` or `{` (junction self-wraps, one-of uses braces).
+        if isinstance(inner_term, ox.BlankNode):
+            first = inner[0] if inner else None
+            already_wrapped = (
+                first is not None
+                and first["t"] == "text"
+                and (first["v"].startswith("(") or first["v"].startswith("{"))
+            )
+            if not already_wrapped:
+                return [_text("not ("), *inner, _text(")")]
         return [_text("not "), *inner]
     if _OWL_ONE_OF in preds:
         items = _rdf_list_items(store, graph, preds[_OWL_ONE_OF])
@@ -466,7 +479,11 @@ def _render_junction(
     known_iris: frozenset[str],
     depth: int,
 ) -> list[ManchesterToken]:
-    """Render intersectionOf / unionOf as `A op B op C` (no surrounding parens)."""
+    """Render intersectionOf / unionOf as `A op B op C`.
+
+    Wraps in outer parens when nested (depth > 0) AND there is more than one
+    operand, so complex expressions remain unambiguous in Manchester syntax.
+    """
     items = _rdf_list_items(store, graph, list_head)
     if not items:
         return [_text(f"[empty-{op}]")]
@@ -482,6 +499,8 @@ def _render_junction(
         if i > 0:
             toks.append(_text(f" {op} "))
         toks.extend(p)
+    if depth > 0 and len(pieces) > 1:
+        return [_text("("), *toks, _text(")")]
     return toks
 
 

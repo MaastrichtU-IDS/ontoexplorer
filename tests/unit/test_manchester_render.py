@@ -146,28 +146,46 @@ def test_rdf_list_items_stops_at_cycle():
 from ontoexplorer.modules.diff.manchester import render_class_expression
 
 
+def _flatten(tokens) -> str:
+    """Join token list into a single Manchester string (label/v).
+
+    Used by edge-case tests that care about the final rendered expression's
+    string form (parens, separators, ordering). Token-shape tests assert the
+    token list directly; this helper is only for the string-equivalent checks.
+    """
+    return "".join(
+        t["v"] if t["t"] == "text" else t["label"] for t in tokens
+    )
+
+
 def test_render_named_class_returns_label():
     iri = "http://example.org/Pizza"
     label_pred = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#label")
     store = _store(
         (ox.NamedNode(iri), label_pred, ox.Literal("Pizza", language="en")),
     )
-    out = render_class_expression(store, _GRAPH, ox.NamedNode(iri), labels={})
-    assert out == "Pizza"
+    out = render_class_expression(
+        store, _GRAPH, ox.NamedNode(iri), labels={}, known_iris=frozenset({iri}),
+    )
+    assert out == [{"t": "iri", "label": "Pizza", "iri": iri, "in_ontology": True}]
 
 
 def test_render_named_class_uses_local_name_when_no_label():
     iri = "http://example.org/Pizza"
     store = _store()
-    out = render_class_expression(store, _GRAPH, ox.NamedNode(iri), labels={})
-    assert out == "Pizza"
+    out = render_class_expression(
+        store, _GRAPH, ox.NamedNode(iri), labels={}, known_iris=frozenset(),
+    )
+    assert out == [{"t": "iri", "label": "Pizza", "iri": iri, "in_ontology": False}]
 
 
 def test_render_literal_object_renders_with_quotes_and_lang():
     lit = ox.Literal("hello", language="en")
     store = _store()
-    out = render_class_expression(store, _GRAPH, lit, labels={})
-    assert out == '"hello"@en'
+    out = render_class_expression(
+        store, _GRAPH, lit, labels={}, known_iris=frozenset(),
+    )
+    assert out == [{"t": "text", "v": '"hello"@en'}]
 
 
 def test_render_literal_object_typed_renders_with_datatype():
@@ -176,8 +194,10 @@ def test_render_literal_object_typed_renders_with_datatype():
         datatype=ox.NamedNode("http://www.w3.org/2001/XMLSchema#integer"),
     )
     store = _store()
-    out = render_class_expression(store, _GRAPH, lit, labels={})
-    assert out == '"42"^^xsd:integer'
+    out = render_class_expression(
+        store, _GRAPH, lit, labels={}, known_iris=frozenset(),
+    )
+    assert out == [{"t": "text", "v": '"42"^^xsd:integer'}]
 
 
 def test_render_xsd_string_literal_omits_datatype():
@@ -186,8 +206,10 @@ def test_render_xsd_string_literal_omits_datatype():
         datatype=ox.NamedNode("http://www.w3.org/2001/XMLSchema#string"),
     )
     store = _store()
-    out = render_class_expression(store, _GRAPH, lit, labels={})
-    assert out == '"hello"'
+    out = render_class_expression(
+        store, _GRAPH, lit, labels={}, known_iris=frozenset(),
+    )
+    assert out == [{"t": "text", "v": '"hello"'}]
 
 
 def test_render_unknown_bnode_returns_bnode_placeholder():
@@ -198,8 +220,11 @@ def test_render_unknown_bnode_returns_bnode_placeholder():
          ox.NamedNode("http://example.org/randomPred"),
          ox.NamedNode("http://example.org/Whatever")),
     )
-    out = render_class_expression(store, _GRAPH, bnode, labels={})
-    assert out.startswith("[bnode:")
+    out = render_class_expression(
+        store, _GRAPH, bnode, labels={}, known_iris=frozenset(),
+    )
+    assert len(out) == 1 and out[0]["t"] == "text"
+    assert out[0]["v"].startswith("[bnode:")
 
 
 _OWL_RESTRICTION = ox.NamedNode("http://www.w3.org/2002/07/owl#Restriction")
@@ -221,8 +246,10 @@ def test_restriction_some_values_from():
         (r, _OWL_ON_PROPERTY, p),
         (r, _OWL_SOME, c),
     )
-    out = render_class_expression(store, _GRAPH, r, labels={})
-    assert out == "hasTopping some Tomato"
+    out = render_class_expression(
+        store, _GRAPH, r, labels={}, known_iris=frozenset({p.value, c.value}),
+    )
+    assert _flatten(out) == "hasTopping some Tomato"
 
 
 def test_restriction_all_values_from():
@@ -234,8 +261,10 @@ def test_restriction_all_values_from():
         (r, _OWL_ON_PROPERTY, p),
         (r, _OWL_ALL, c),
     )
-    out = render_class_expression(store, _GRAPH, r, labels={})
-    assert out == "hasTopping only Tomato"
+    out = render_class_expression(
+        store, _GRAPH, r, labels={}, known_iris=frozenset({p.value, c.value}),
+    )
+    assert _flatten(out) == "hasTopping only Tomato"
 
 
 def test_restriction_has_value_iri():
@@ -247,8 +276,10 @@ def test_restriction_has_value_iri():
         (r, _OWL_ON_PROPERTY, p),
         (r, _OWL_HAS_VALUE, v),
     )
-    out = render_class_expression(store, _GRAPH, r, labels={})
-    assert out == "hasTopping value SpecificTomato"
+    out = render_class_expression(
+        store, _GRAPH, r, labels={}, known_iris=frozenset({p.value, v.value}),
+    )
+    assert _flatten(out) == "hasTopping value SpecificTomato"
 
 
 def test_restriction_has_value_literal():
@@ -260,8 +291,10 @@ def test_restriction_has_value_literal():
         (r, _OWL_ON_PROPERTY, p),
         (r, _OWL_HAS_VALUE, v),
     )
-    out = render_class_expression(store, _GRAPH, r, labels={})
-    assert out == 'hasName value "Salty"@en'
+    out = render_class_expression(
+        store, _GRAPH, r, labels={}, known_iris=frozenset({p.value}),
+    )
+    assert _flatten(out) == 'hasName value "Salty"@en'
 
 
 def test_restriction_has_self_true():
@@ -272,8 +305,10 @@ def test_restriction_has_self_true():
         (r, _OWL_ON_PROPERTY, p),
         (r, _OWL_HAS_SELF, _XSD_TRUE),
     )
-    out = render_class_expression(store, _GRAPH, r, labels={})
-    assert out == "hasPartOf Self"
+    out = render_class_expression(
+        store, _GRAPH, r, labels={}, known_iris=frozenset({p.value}),
+    )
+    assert _flatten(out) == "hasPartOf Self"
 
 
 def test_restriction_has_self_false_falls_through():
@@ -286,9 +321,12 @@ def test_restriction_has_self_false_falls_through():
         (r, _OWL_ON_PROPERTY, p),
         (r, _OWL_HAS_SELF, xsd_false),
     )
-    out = render_class_expression(store, _GRAPH, r, labels={})
-    assert "Self" not in out
-    assert out.startswith("[restriction:") or out.startswith("hasPartOf")
+    out = render_class_expression(
+        store, _GRAPH, r, labels={}, known_iris=frozenset({p.value}),
+    )
+    flat = _flatten(out)
+    assert "Self" not in flat
+    assert flat.startswith("[restriction:") or flat.startswith("hasPartOf")
 
 
 def test_restriction_has_self_plain_string_does_not_render_as_self():
@@ -301,8 +339,10 @@ def test_restriction_has_self_plain_string_does_not_render_as_self():
         (r, _OWL_ON_PROPERTY, p),
         (r, _OWL_HAS_SELF, plain_true),
     )
-    out = render_class_expression(store, _GRAPH, r, labels={})
-    assert "Self" not in out
+    out = render_class_expression(
+        store, _GRAPH, r, labels={}, known_iris=frozenset({p.value}),
+    )
+    assert "Self" not in _flatten(out)
 
 
 _OWL_CARD = ox.NamedNode("http://www.w3.org/2002/07/owl#cardinality")
@@ -327,7 +367,10 @@ def test_restriction_cardinality_unqualified():
         (r, _OWL_ON_PROPERTY, p),
         (r, _OWL_CARD, _int_lit(3)),
     )
-    assert render_class_expression(store, _GRAPH, r, labels={}) == "hasTopping exactly 3"
+    out = render_class_expression(
+        store, _GRAPH, r, labels={}, known_iris=frozenset({p.value}),
+    )
+    assert _flatten(out) == "hasTopping exactly 3"
 
 
 def test_restriction_min_cardinality():
@@ -338,7 +381,10 @@ def test_restriction_min_cardinality():
         (r, _OWL_ON_PROPERTY, p),
         (r, _OWL_MIN_CARD, _int_lit(1)),
     )
-    assert render_class_expression(store, _GRAPH, r, labels={}) == "hasTopping min 1"
+    out = render_class_expression(
+        store, _GRAPH, r, labels={}, known_iris=frozenset({p.value}),
+    )
+    assert _flatten(out) == "hasTopping min 1"
 
 
 def test_restriction_max_cardinality():
@@ -349,7 +395,10 @@ def test_restriction_max_cardinality():
         (r, _OWL_ON_PROPERTY, p),
         (r, _OWL_MAX_CARD, _int_lit(5)),
     )
-    assert render_class_expression(store, _GRAPH, r, labels={}) == "hasTopping max 5"
+    out = render_class_expression(
+        store, _GRAPH, r, labels={}, known_iris=frozenset({p.value}),
+    )
+    assert _flatten(out) == "hasTopping max 5"
 
 
 def test_restriction_min_qualified_cardinality():
@@ -362,7 +411,10 @@ def test_restriction_min_qualified_cardinality():
         (r, _OWL_MIN_QCARD, _int_lit(2)),
         (r, _OWL_ON_CLASS, c),
     )
-    assert render_class_expression(store, _GRAPH, r, labels={}) == "hasTopping min 2 Vegetable"
+    out = render_class_expression(
+        store, _GRAPH, r, labels={}, known_iris=frozenset({p.value, c.value}),
+    )
+    assert _flatten(out) == "hasTopping min 2 Vegetable"
 
 
 def test_restriction_max_qualified_cardinality():
@@ -375,7 +427,10 @@ def test_restriction_max_qualified_cardinality():
         (r, _OWL_MAX_QCARD, _int_lit(4)),
         (r, _OWL_ON_CLASS, c),
     )
-    assert render_class_expression(store, _GRAPH, r, labels={}) == "hasTopping max 4 Vegetable"
+    out = render_class_expression(
+        store, _GRAPH, r, labels={}, known_iris=frozenset({p.value, c.value}),
+    )
+    assert _flatten(out) == "hasTopping max 4 Vegetable"
 
 
 def test_restriction_qualified_cardinality_exactly():
@@ -388,7 +443,10 @@ def test_restriction_qualified_cardinality_exactly():
         (r, _OWL_QCARD, _int_lit(2)),
         (r, _OWL_ON_CLASS, c),
     )
-    assert render_class_expression(store, _GRAPH, r, labels={}) == "hasTopping exactly 2 Vegetable"
+    out = render_class_expression(
+        store, _GRAPH, r, labels={}, known_iris=frozenset({p.value, c.value}),
+    )
+    assert _flatten(out) == "hasTopping exactly 2 Vegetable"
 
 
 def test_restriction_unqualified_cardinality_ignores_onClass():
@@ -402,9 +460,12 @@ def test_restriction_unqualified_cardinality_ignores_onClass():
         (r, _OWL_CARD, _int_lit(3)),
         (r, _OWL_ON_CLASS, c),  # spec violation
     )
-    out = render_class_expression(store, _GRAPH, r, labels={})
-    assert out == "hasTopping exactly 3", \
-        f"unqualified cardinality must not absorb onClass, got: {out}"
+    out = render_class_expression(
+        store, _GRAPH, r, labels={}, known_iris=frozenset({p.value, c.value}),
+    )
+    flat = _flatten(out)
+    assert flat == "hasTopping exactly 3", \
+        f"unqualified cardinality must not absorb onClass, got: {flat}"
 
 
 _OWL_INTERSECTION_N = ox.NamedNode("http://www.w3.org/2002/07/owl#intersectionOf")
@@ -413,6 +474,7 @@ _OWL_COMPLEMENT_N = ox.NamedNode("http://www.w3.org/2002/07/owl#complementOf")
 
 
 def test_intersection_of_named_classes():
+    """Top-level junctions render without outer parens (depth == 0)."""
     a = ox.NamedNode("http://example.org/A")
     b = ox.NamedNode("http://example.org/B")
     head, list_quads = _list_quads([a, b])
@@ -421,10 +483,18 @@ def test_intersection_of_named_classes():
         (expr, _OWL_INTERSECTION_N, head),
         *list_quads,
     )
-    assert render_class_expression(store, _GRAPH, expr, labels={}) == "(A and B)"
+    out = render_class_expression(
+        store, _GRAPH, expr, labels={}, known_iris=frozenset({a.value, b.value}),
+    )
+    assert out == [
+        {"t": "iri", "label": "A", "iri": a.value, "in_ontology": True},
+        {"t": "text", "v": " and "},
+        {"t": "iri", "label": "B", "iri": b.value, "in_ontology": True},
+    ]
 
 
 def test_union_of_named_classes():
+    """Top-level junctions render without outer parens (depth == 0)."""
     a = ox.NamedNode("http://example.org/A")
     b = ox.NamedNode("http://example.org/B")
     c = ox.NamedNode("http://example.org/C")
@@ -434,18 +504,31 @@ def test_union_of_named_classes():
         (expr, _OWL_UNION_N, head),
         *list_quads,
     )
-    assert render_class_expression(store, _GRAPH, expr, labels={}) == "(A or B or C)"
+    out = render_class_expression(
+        store, _GRAPH, expr, labels={},
+        known_iris=frozenset({a.value, b.value, c.value}),
+    )
+    assert _flatten(out) == "A or B or C"
+    # Verify token shape: 3 iri tokens interleaved with 2 ' or ' separators.
+    assert [t["t"] for t in out] == ["iri", "text", "iri", "text", "iri"]
 
 
 def test_complement_of_named_class():
+    """`not A` — complement of a named class needs no parens."""
     a = ox.NamedNode("http://example.org/A")
     expr = ox.BlankNode("expr3")
     store = _store((expr, _OWL_COMPLEMENT_N, a))
-    assert render_class_expression(store, _GRAPH, expr, labels={}) == "not A"
+    out = render_class_expression(
+        store, _GRAPH, expr, labels={}, known_iris=frozenset({a.value}),
+    )
+    assert out == [
+        {"t": "text", "v": "not "},
+        {"t": "iri", "label": "A", "iri": a.value, "in_ontology": True},
+    ]
 
 
 def test_intersection_inside_restriction():
-    """Nested: hasTopping some (A and B)."""
+    """Nested: `hasTopping some (A and B)` — junction at depth>0 self-wraps."""
     p = ox.NamedNode("http://example.org/hasTopping")
     a = ox.NamedNode("http://example.org/A")
     b = ox.NamedNode("http://example.org/B")
@@ -459,12 +542,15 @@ def test_intersection_inside_restriction():
         (r, _OWL_ON_PROPERTY, p),
         (r, _OWL_SOME, inter),
     )
-    out = render_class_expression(store, _GRAPH, r, labels={})
-    assert out == "hasTopping some (A and B)"
+    out = render_class_expression(
+        store, _GRAPH, r, labels={},
+        known_iris=frozenset({p.value, a.value, b.value}),
+    )
+    assert _flatten(out) == "hasTopping some (A and B)"
 
 
 def test_complement_of_restriction_is_parenthesized():
-    """not (hasTopping some Meat) — restriction inside complement must be wrapped."""
+    """`not (hasTopping some Meat)` — restriction inside complement must be wrapped."""
     p = ox.NamedNode("http://example.org/hasTopping")
     meat = ox.NamedNode("http://example.org/Meat")
     r = ox.BlankNode("inner_rest")
@@ -475,12 +561,18 @@ def test_complement_of_restriction_is_parenthesized():
         (r, _OWL_SOME, meat),
         (expr, _OWL_COMPLEMENT_N, r),
     )
-    out = render_class_expression(store, _GRAPH, expr, labels={})
-    assert out == "not (hasTopping some Meat)"
+    out = render_class_expression(
+        store, _GRAPH, expr, labels={},
+        known_iris=frozenset({p.value, meat.value}),
+    )
+    assert _flatten(out) == "not (hasTopping some Meat)"
+    # First token must open `not (` so a downstream consumer can detect the wrap.
+    assert out[0] == {"t": "text", "v": "not ("}
+    assert out[-1] == {"t": "text", "v": ")"}
 
 
 def test_complement_of_junction_does_not_double_parenthesize():
-    """not (A and B) — junction already self-parenthesizes; complement must not double-wrap."""
+    """`not (A and B)` — junction self-parenthesizes at depth>0; complement must not double-wrap."""
     a = ox.NamedNode("http://example.org/A")
     b = ox.NamedNode("http://example.org/B")
     head, list_quads = _list_quads([a, b])
@@ -491,8 +583,14 @@ def test_complement_of_junction_does_not_double_parenthesize():
         *list_quads,
         (expr, _OWL_COMPLEMENT_N, inter),
     )
-    out = render_class_expression(store, _GRAPH, expr, labels={})
-    assert out == "not (A and B)"
+    out = render_class_expression(
+        store, _GRAPH, expr, labels={},
+        known_iris=frozenset({a.value, b.value}),
+    )
+    assert _flatten(out) == "not (A and B)"
+    # The leading token must be exactly "not " (no extra `(`) — the junction
+    # supplies its own parens at depth>0.
+    assert out[0] == {"t": "text", "v": "not "}
 
 
 _OWL_ONE_OF_N = ox.NamedNode("http://www.w3.org/2002/07/owl#oneOf")
@@ -513,7 +611,14 @@ def test_one_of_named_individuals():
         (expr, _OWL_ONE_OF_N, head),
         *list_quads,
     )
-    assert render_class_expression(store, _GRAPH, expr, labels={}) == "{Alice, Bob, Carol}"
+    out = render_class_expression(
+        store, _GRAPH, expr, labels={},
+        known_iris=frozenset({a.value, b.value, c.value}),
+    )
+    assert _flatten(out) == "{Alice, Bob, Carol}"
+    # Verify the enumeration brackets are present as text tokens.
+    assert out[0] == {"t": "text", "v": "{"}
+    assert out[-1] == {"t": "text", "v": "}"}
 
 
 def test_datatype_restriction_range():
@@ -530,8 +635,10 @@ def test_datatype_restriction_range():
         (facet2, _XSD_MAX_INC, _int_lit(120)),
         *list_quads,
     )
-    out = render_class_expression(store, _GRAPH, dt_expr, labels={})
-    assert out == "xsd:integer[>= 0, <= 120]"
+    out = render_class_expression(
+        store, _GRAPH, dt_expr, labels={}, known_iris=frozenset(),
+    )
+    assert _flatten(out) == "xsd:integer[>= 0, <= 120]"
 
 
 def test_datatype_restriction_pattern():
@@ -548,8 +655,10 @@ def test_datatype_restriction_pattern():
         (facet, xsd_pattern, ox.Literal("[A-Z]+")),
         *list_quads,
     )
-    out = render_class_expression(store, _GRAPH, dt_expr, labels={})
-    assert out == 'xsd:string[pattern "[A-Z]+"]'
+    out = render_class_expression(
+        store, _GRAPH, dt_expr, labels={}, known_iris=frozenset(),
+    )
+    assert _flatten(out) == 'xsd:string[pattern "[A-Z]+"]'
 
 
 def test_depth_limit_returns_ellipsis():
@@ -567,8 +676,10 @@ def test_depth_limit_returns_ellipsis():
         quads.append((r, _OWL_SOME, last))
         last = r
     store = _store(*quads)
-    out = render_class_expression(store, _GRAPH, last, labels={})
-    assert "…" in out, f"expected depth-limit ellipsis, got: {out}"
+    out = render_class_expression(
+        store, _GRAPH, last, labels={}, known_iris=frozenset({p.value, a.value}),
+    )
+    assert "…" in _flatten(out), f"expected depth-limit ellipsis, got: {out}"
 
 
 from ontoexplorer.modules.diff.manchester import render_axiom, _BUILTIN_ANNOTATION_PROPS
