@@ -15,7 +15,7 @@
 
 ## Quality & Interoperability
 - **SHACL validation reports** — per-ontology constraint validation
-- **OWL profile detection** — OWL 2 DL / EL / RL / QL classification
+- ~~**OWL profile detection** — OWL 2 DL / EL / RL / QL classification~~ (shipped 2026-05-19: SPARQL ASK detection in-process at indexing time, cached in Redis; `/api/v1/owl-profile/*` API; per-onto tab + fleet page + `?profile=el|rl|ql|dl` search filter)
 - **Ontology alignment / mapping** — suggest equivalent classes across ontologies
 
 ## Collaboration & Curation

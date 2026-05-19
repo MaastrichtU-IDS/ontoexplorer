@@ -250,6 +250,10 @@ The Coverage page reports how well-populated each ontology is in terms of **labe
 
 Coverage is computed at index time using the auto-detected `label_props` / `definition_props` from each ontology's annotation profile — no extra SPARQL at request time. Zero-total cells render as `—`. Ontologies whose coverage cache hasn't been populated yet (e.g., recently submitted, not yet reindexed) are silently skipped in the rollup.
 
+### OWL 2 profiles (`/owl-profile`)
+
+Every indexed ontology is automatically classified against the four W3C OWL 2 profiles (EL, RL, QL, DL). Detection runs in-process via SPARQL against the existing Oxigraph store at indexing time; results are cached in Redis with a 30-day TTL. The fleet view at `/owl-profile` shows conformance across all loaded ontologies with summary cards and a sortable table. Each ontology page has an **OWL Profile** tab listing violations grouped by axiom type, with sample violations shown for each violation category. Use the `?profile=el|rl|ql|dl` query parameter on the ontologies list endpoint to filter to ontologies conforming to a specific profile — useful for selecting ontologies suitable for a particular reasoner or query rewriter.
+
 ### Navigating hierarchies
 
 Open an ontology page (`/ontologies/<name>`) to see the class and property trees in the left panel. Click any node to load its details in the right panel.
@@ -481,6 +485,10 @@ GET    /stats                                    Usage statistics for the authen
 GET    /coverage/public                          Fleet rollup: per-ontology label/definition/multilingual coverage — no auth
 GET    /ontologies/{id}/{vid}/coverage           Per-version coverage scorecard (by entity type, with by_lang breakdown)
 
+# OWL 2 profiles
+GET    /owl-profile/public                       Fleet rollup: per-ontology OWL 2 profile (EL/RL/QL/DL) conformance — no auth
+GET    /ontologies/{id}/{vid}/owl-profile        Per-version OWL 2 profile classification with violation details
+
 # Admin
 GET    /admin/overview                           System overview (requires admin role)
 POST   /admin/ontologies/{id}/ingest             Queue re-ingestion for one ontology (requires admin role)
@@ -538,6 +546,7 @@ ontoexplorer/                    Python package
     api_keys.py                  API key management
     stats.py                     Aggregate and per-user usage statistics
     coverage.py                  Per-version + fleet coverage of labels / definitions / multilingual labels
+    owl_profile.py               Per-version + fleet OWL 2 profile (EL/RL/QL/DL) classification endpoints
     admin.py                     Admin overview, per-ontology pipeline actions (ingest/index/embed/reason), and bulk re-index endpoints
     sparql.py                    SPARQL proxy endpoints
     inbound.py                   Inbound webhook receivers (GitHub push events)
@@ -551,6 +560,7 @@ ontoexplorer/                    Python package
     jobs/                        Celery tasks (ingest, detect_profile, index, reason, justify, poll)
     profile/                     Annotation property registry + SPARQL-based detector
     meta_profile/                Ontology document metadata registry + auto-detector
+    owl_profile/                 OWL 2 profile detection (SPARQL-based EL/RL/QL patterns + DL structural checks), registry, cache
     search/                      Redis entity index (build_index, entity_lookup), fastembed embedder, pgvector semantic search; coverage.py — pure compute_coverage helper used at index time
     webhooks/                    HMAC-signed outbound delivery
   clients/
