@@ -167,6 +167,15 @@ def _run_diff_core(
         | _mos._discover_annotation_props(store, to_graph)
     )
 
+    # Pre-compute the in-ontology IRI set for each side so render_frame can
+    # decide which iri tokens become clickable links.
+    known_iris_from = _mos._known_iris(store, from_graph)
+    known_iris_to   = _mos._known_iris(store, to_graph)
+    # For modified entities — entity is on both sides — we union the two sets:
+    # an axiom-filler IRI that lives only on one side is still legitimately
+    # part of the comparison context and should remain clickable.
+    known_iris_union = known_iris_from | known_iris_to
+
     for entity_type, type_iri in _ENTITY_TYPES.items():
         from_iris = _collect_iris(store, from_graph, type_iri)
         to_iris   = _collect_iris(store, to_graph, type_iri)
@@ -179,7 +188,8 @@ def _run_diff_core(
             ]
             frame = _mos.render_frame(
                 store, iri, entity_type, axiom_changes,
-                labels=labels, annotation_props=annotation_props, op="added",
+                labels=labels, annotation_props=annotation_props,
+                known_iris=known_iris_to, op="added",
             )
             added_list.append({
                 "iri": iri,
@@ -196,7 +206,8 @@ def _run_diff_core(
             ]
             frame = _mos.render_frame(
                 store, iri, entity_type, axiom_changes,
-                labels=labels, annotation_props=annotation_props, op="removed",
+                labels=labels, annotation_props=annotation_props,
+                known_iris=known_iris_from, op="removed",
             )
             removed_list.append({
                 "iri": iri,
@@ -250,7 +261,8 @@ def _run_diff_core(
                 axiom_str = _mos.render_axiom(
                     store, rec["graph"], iri,
                     rec["predicate"], rec["object"],
-                    labels=labels, entity_type=entity_type,
+                    labels=labels, known_iris=known_iris_union,
+                    entity_type=entity_type,
                 )
                 if axiom_str is None:
                     obj_val = rec["object"].value if hasattr(rec["object"], "value") else str(rec["object"])
@@ -260,6 +272,7 @@ def _run_diff_core(
             manchester_frame = _mos.render_frame(
                 store, iri, entity_type, change_records,
                 labels=labels, annotation_props=annotation_props,
+                known_iris=known_iris_union,
             )
 
             label = _first_label(store, to_graph, iri) or _first_label(store, from_graph, iri)

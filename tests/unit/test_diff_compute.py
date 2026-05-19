@@ -240,17 +240,22 @@ def test_run_diff_produces_manchester_frame_for_modified_entity():
     assert mod["iri"] == pizza.value
     frame = mod.get("manchester_frame")
     assert frame is not None, "manchester_frame must be populated for modified entities"
-    expected = (
-        f"Class: Pizza  ({pizza.value})\n"
-        "    SubClassOf:\n"
-        "-       hasTopping some Cheese\n"
-        "+       hasTopping some Tofu"
-    )
-    assert frame == expected
+    ops = [line["op"] for line in frame["lines"]]
+    # Header is unchanged (op=None) for modified entities.
+    assert frame["lines"][0]["op"] is None
+    assert "added" in ops and "removed" in ops
+    # Concatenate text/iri tokens per line so we can substring-check filler names.
+    line_text = [
+        "".join(t.get("v", "") if t["t"] == "text" else t.get("label", "") for t in l["tokens"])
+        for l in frame["lines"]
+    ]
+    assert any("Cheese" in txt for txt, l in zip(line_text, frame["lines"]) if l["op"] == "removed")
+    assert any("Tofu"   in txt for txt, l in zip(line_text, frame["lines"]) if l["op"] == "added")
 
 
 def test_run_diff_axiom_changes_use_manchester_strings():
-    """Each axiom_changes entry's axiom string is in Manchester format, not raw triple."""
+    """Each axiom_changes entry's axiom payload is in Manchester form (token list
+    starting with the keyword text + filler iri token), not a raw triple."""
     pizza = ox.NamedNode("http://example.org/Pizza")
     food = ox.NamedNode("http://example.org/Food")
     s = _store(
@@ -262,8 +267,15 @@ def test_run_diff_axiom_changes_use_manchester_strings():
     )
     summary, diff_data = run_diff(s, OID, FROM_VID, TO_VID)
     mod = diff_data["modified"][0]
-    axiom_strs = [a["axiom"] for a in mod["axiom_changes"]]
-    assert axiom_strs == ["SubClassOf: Food"]
+    axioms = [a["axiom"] for a in mod["axiom_changes"]]
+    assert len(axioms) == 1
+    tokens = axioms[0]
+    assert isinstance(tokens, list)
+    assert tokens[0] == {"t": "text", "v": "SubClassOf: "}
+    assert any(
+        t["t"] == "iri" and t["iri"] == food.value and t["label"] == "Food"
+        for t in tokens
+    )
 
 
 def test_structural_triples_returns_terms_with_fingerprints():
@@ -344,14 +356,10 @@ def test_axioms_for_entity_keeps_non_declaring_rdf_type_triples():
     assert len(axioms) == 1
 
 
-def test_run_diff_added_class_with_subclassof_and_label_yields_manchester_frame():
-    """An added class with one rdfs:subClassOf and one rdfs:label should
-    produce a manchester_frame on the added entry with both blocks and
-    '+ ' prefixes on every line."""
+def test_run_diff_added_class_yields_structured_frame_with_iri_tokens():
     new_class = ox.NamedNode("http://example.org/NewClass")
     parent    = ox.NamedNode("http://example.org/Parent")
     label_pred = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#label")
-
     s = _store(
         from_quads=[],
         to_quads=[
@@ -361,24 +369,29 @@ def test_run_diff_added_class_with_subclassof_and_label_yields_manchester_frame(
         ],
     )
     summary, diff_data = run_diff(s, OID, FROM_VID, TO_VID)
-    assert summary["added"] == 1
     added = diff_data["added"][0]
-    assert added["iri"] == new_class.value
-    frame = added.get("manchester_frame")
-    assert frame is not None, "manchester_frame must be populated for added entities"
-    # Header + Annotations + SubClassOf, every line '+ ' prefixed.
-    lines = frame.split("\n")
-    assert all(line.startswith("+ ") for line in lines), \
-        f"every line should start with '+ ', got:\n{frame}"
-    assert "Annotations:" in frame
-    assert 'rdfs:label "New"@en' in frame
-    assert "SubClassOf:" in frame
+    frame = added["manchester_frame"]
+    assert frame is not None and "lines" in frame
+    assert all(line["op"] == "added" for line in frame["lines"])
+    # Header line has the new-class IRI as an in_ontology iri token.
+    header = frame["lines"][0]
+    assert any(
+        t["t"] == "iri" and t["iri"] == new_class.value and t["in_ontology"] is True
+        for t in header["tokens"]
+    )
+    # SubClassOf line contains the parent IRI as an in_ontology iri token.
+    assert any(
+        any(
+            t["t"] == "iri" and t["iri"] == parent.value and t["in_ontology"] is True
+            for t in line["tokens"]
+        )
+        for line in frame["lines"]
+    )
 
 
-def test_run_diff_removed_class_yields_manchester_frame_with_minus_prefix():
+def test_run_diff_removed_class_yields_frame_with_op_removed_lines():
     old_class = ox.NamedNode("http://example.org/OldClass")
     parent    = ox.NamedNode("http://example.org/Parent")
-
     s = _store(
         from_quads=[
             (old_class, _RDF_TYPE, _OWL_CLASS),
@@ -387,28 +400,44 @@ def test_run_diff_removed_class_yields_manchester_frame_with_minus_prefix():
         to_quads=[],
     )
     summary, diff_data = run_diff(s, OID, FROM_VID, TO_VID)
-    assert summary["removed"] == 1
-    removed = diff_data["removed"][0]
-    frame = removed.get("manchester_frame")
+    frame = diff_data["removed"][0]["manchester_frame"]
     assert frame is not None
-    lines = frame.split("\n")
-    assert all(line.startswith("- ") for line in lines)
-    assert "SubClassOf:" in frame
+    assert all(line["op"] == "removed" for line in frame["lines"])
 
 
-def test_run_diff_bare_added_class_yields_header_only_frame():
-    """A class declared with only `rdf:type owl:Class` and no other axioms
-    produces a single-line frame: '+ Class: <name>  (<iri>)'."""
+def test_run_diff_bare_added_class_yields_single_line_frame():
     bare = ox.NamedNode("http://example.org/Bare")
     s = _store(
         from_quads=[],
         to_quads=[(bare, _RDF_TYPE, _OWL_CLASS)],
     )
     summary, diff_data = run_diff(s, OID, FROM_VID, TO_VID)
-    added = diff_data["added"][0]
-    frame = added.get("manchester_frame")
+    frame = diff_data["added"][0]["manchester_frame"]
     assert frame is not None
-    # Exactly one line, header form.
-    assert frame.count("\n") == 0
-    assert frame.startswith("+ Class: ")
-    assert "(http://example.org/Bare)" in frame
+    assert len(frame["lines"]) == 1
+    assert frame["lines"][0]["op"] == "added"
+
+
+def test_run_diff_iri_referenced_in_filler_but_not_subject_marks_in_ontology_true():
+    """An IRI that appears only as the object of a triple (never as subject)
+    is still in_ontology=True, so it remains clickable."""
+    a = ox.NamedNode("http://example.org/A")
+    b = ox.NamedNode("http://example.org/B")  # appears only as object of A's subClassOf
+    s = _store(
+        from_quads=[],
+        to_quads=[
+            (a, _RDF_TYPE, _OWL_CLASS),
+            (a, _RDFS_SC, b),
+        ],
+    )
+    _, diff_data = run_diff(s, OID, FROM_VID, TO_VID)
+    frame = diff_data["added"][0]["manchester_frame"]
+    assert frame is not None
+    # Find the B token in any line.
+    found = False
+    for line in frame["lines"]:
+        for tok in line["tokens"]:
+            if tok["t"] == "iri" and tok["iri"] == b.value:
+                assert tok["in_ontology"] is True, "B should be in_ontology because it appears as object"
+                found = True
+    assert found, "B's iri token must appear in some line"
