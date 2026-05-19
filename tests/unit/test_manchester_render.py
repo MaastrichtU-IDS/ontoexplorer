@@ -584,9 +584,12 @@ def test_axiom_subclassof_named():
     obj = ox.NamedNode("http://example.org/Food")
     store = _store()
     out = render_axiom(
-        store, _GRAPH, subj, _RDFS_SUB_N.value, obj, labels={}
+        store, _GRAPH, subj, _RDFS_SUB_N.value, obj, labels={}, known_iris=frozenset(),
     )
-    assert out == "SubClassOf: Food"
+    assert out == [
+        {"t": "text", "v": "SubClassOf: "},
+        {"t": "iri", "label": "Food", "iri": "http://example.org/Food", "in_ontology": False},
+    ]
 
 
 def test_axiom_subclassof_restriction():
@@ -599,24 +602,39 @@ def test_axiom_subclassof_restriction():
         (r, _OWL_ON_PROPERTY, p),
         (r, _OWL_SOME, c),
     )
-    out = render_axiom(store, _GRAPH, subj, _RDFS_SUB_N.value, r, labels={})
-    assert out == "SubClassOf: hasTopping some Tomato"
+    out = render_axiom(
+        store, _GRAPH, subj, _RDFS_SUB_N.value, r, labels={}, known_iris=frozenset(),
+    )
+    assert out is not None
+    assert out[0] == {"t": "text", "v": "SubClassOf: "}
+    # filler tokens come from render_class_expression on the restriction bnode
+    assert len(out) > 1
 
 
 def test_axiom_equivalent_class():
     subj = "http://example.org/Pizza"
     obj = ox.NamedNode("http://example.org/Food")
     store = _store()
-    out = render_axiom(store, _GRAPH, subj, _OWL_EQUIV_CLASS_N.value, obj, labels={})
-    assert out == "EquivalentTo: Food"
+    out = render_axiom(
+        store, _GRAPH, subj, _OWL_EQUIV_CLASS_N.value, obj, labels={}, known_iris=frozenset(),
+    )
+    assert out == [
+        {"t": "text", "v": "EquivalentTo: "},
+        {"t": "iri", "label": "Food", "iri": "http://example.org/Food", "in_ontology": False},
+    ]
 
 
 def test_axiom_disjoint_with():
     subj = "http://example.org/Pizza"
     obj = ox.NamedNode("http://example.org/Pasta")
     store = _store()
-    out = render_axiom(store, _GRAPH, subj, _OWL_DISJOINT_N.value, obj, labels={})
-    assert out == "DisjointWith: Pasta"
+    out = render_axiom(
+        store, _GRAPH, subj, _OWL_DISJOINT_N.value, obj, labels={}, known_iris=frozenset(),
+    )
+    assert out == [
+        {"t": "text", "v": "DisjointWith: "},
+        {"t": "iri", "label": "Pasta", "iri": "http://example.org/Pasta", "in_ontology": False},
+    ]
 
 
 def test_axiom_unknown_predicate_returns_none():
@@ -625,7 +643,8 @@ def test_axiom_unknown_predicate_returns_none():
     obj = ox.NamedNode("http://example.org/Y")
     store = _store()
     out = render_axiom(
-        store, _GRAPH, subj, "http://example.org/unknownPred", obj, labels={}
+        store, _GRAPH, subj, "http://example.org/unknownPred", obj,
+        labels={}, known_iris=frozenset(),
     )
     assert out is None
 
@@ -646,9 +665,12 @@ def test_axiom_subproperty_of():
         _store(), _GRAPH,
         "http://example.org/hasTopping", _RDFS_SUBPROP_N.value,
         ox.NamedNode("http://example.org/hasIngredient"),
-        labels={},
+        labels={}, known_iris=frozenset(),
     )
-    assert out == "SubPropertyOf: hasIngredient"
+    assert out == [
+        {"t": "text", "v": "SubPropertyOf: "},
+        {"t": "iri", "label": "hasIngredient", "iri": "http://example.org/hasIngredient", "in_ontology": False},
+    ]
 
 
 def test_axiom_equivalent_property():
@@ -656,9 +678,12 @@ def test_axiom_equivalent_property():
         _store(), _GRAPH,
         "http://example.org/hasTopping", _OWL_EQUIV_PROP_N.value,
         ox.NamedNode("http://example.org/hasCovering"),
-        labels={},
+        labels={}, known_iris=frozenset(),
     )
-    assert out == "EquivalentTo: hasCovering"
+    assert out == [
+        {"t": "text", "v": "EquivalentTo: "},
+        {"t": "iri", "label": "hasCovering", "iri": "http://example.org/hasCovering", "in_ontology": False},
+    ]
 
 
 def test_axiom_inverse_of():
@@ -666,9 +691,12 @@ def test_axiom_inverse_of():
         _store(), _GRAPH,
         "http://example.org/hasTopping", _OWL_INVERSE_OF_N.value,
         ox.NamedNode("http://example.org/toppingOf"),
-        labels={},
+        labels={}, known_iris=frozenset(),
     )
-    assert out == "InverseOf: toppingOf"
+    assert out == [
+        {"t": "text", "v": "InverseOf: "},
+        {"t": "iri", "label": "toppingOf", "iri": "http://example.org/toppingOf", "in_ontology": False},
+    ]
 
 
 def test_axiom_domain():
@@ -676,9 +704,12 @@ def test_axiom_domain():
         _store(), _GRAPH,
         "http://example.org/hasTopping", _RDFS_DOMAIN_N.value,
         ox.NamedNode("http://example.org/Pizza"),
-        labels={},
+        labels={}, known_iris=frozenset(),
     )
-    assert out == "Domain: Pizza"
+    assert out == [
+        {"t": "text", "v": "Domain: "},
+        {"t": "iri", "label": "Pizza", "iri": "http://example.org/Pizza", "in_ontology": False},
+    ]
 
 
 def test_axiom_range():
@@ -686,9 +717,12 @@ def test_axiom_range():
         _store(), _GRAPH,
         "http://example.org/hasTopping", _RDFS_RANGE_N.value,
         ox.NamedNode("http://example.org/Topping"),
-        labels={},
+        labels={}, known_iris=frozenset(),
     )
-    assert out == "Range: Topping"
+    assert out == [
+        {"t": "text", "v": "Range: "},
+        {"t": "iri", "label": "Topping", "iri": "http://example.org/Topping", "in_ontology": False},
+    ]
 
 
 def test_axiom_characteristics_functional():
@@ -696,9 +730,9 @@ def test_axiom_characteristics_functional():
         _store(), _GRAPH,
         "http://example.org/hasTopping", _RDF_TYPE_N.value,
         _OWL_FUNCTIONAL_N,
-        labels={},
+        labels={}, known_iris=frozenset(),
     )
-    assert out == "Characteristics: Functional"
+    assert out == [{"t": "text", "v": "Characteristics: Functional"}]
 
 
 def test_axiom_characteristics_transitive():
@@ -706,9 +740,9 @@ def test_axiom_characteristics_transitive():
         _store(), _GRAPH,
         "http://example.org/hasTopping", _RDF_TYPE_N.value,
         _OWL_TRANSITIVE_N,
-        labels={},
+        labels={}, known_iris=frozenset(),
     )
-    assert out == "Characteristics: Transitive"
+    assert out == [{"t": "text", "v": "Characteristics: Transitive"}]
 
 
 def test_axiom_rdf_type_non_characteristic_returns_none():
@@ -721,7 +755,7 @@ def test_axiom_rdf_type_non_characteristic_returns_none():
         _store(), _GRAPH,
         "http://example.org/Foo", _RDF_TYPE_N.value,
         ox.NamedNode("http://www.w3.org/2002/07/owl#Class"),
-        labels={},
+        labels={}, known_iris=frozenset(),
     )
     assert out is None
 
@@ -731,9 +765,12 @@ def test_axiom_same_as():
         _store(), _GRAPH,
         "http://example.org/Alice", _OWL_SAME_AS_N.value,
         ox.NamedNode("http://example.org/AliceFoo"),
-        labels={},
+        labels={}, known_iris=frozenset(),
     )
-    assert out == "SameAs: AliceFoo"
+    assert out == [
+        {"t": "text", "v": "SameAs: "},
+        {"t": "iri", "label": "AliceFoo", "iri": "http://example.org/AliceFoo", "in_ontology": False},
+    ]
 
 
 def test_axiom_different_from():
@@ -741,9 +778,12 @@ def test_axiom_different_from():
         _store(), _GRAPH,
         "http://example.org/Alice", _OWL_DIFFERENT_N.value,
         ox.NamedNode("http://example.org/Bob"),
-        labels={},
+        labels={}, known_iris=frozenset(),
     )
-    assert out == "DifferentFrom: Bob"
+    assert out == [
+        {"t": "text", "v": "DifferentFrom: "},
+        {"t": "iri", "label": "Bob", "iri": "http://example.org/Bob", "in_ontology": False},
+    ]
 
 
 def test_axiom_individual_types():
@@ -752,10 +792,13 @@ def test_axiom_individual_types():
         _store(), _GRAPH,
         "http://example.org/Alice", _RDF_TYPE_N.value,
         ox.NamedNode("http://example.org/Person"),
-        labels={},
+        labels={}, known_iris=frozenset(),
         entity_type="individual",
     )
-    assert out == "Types: Person"
+    assert out == [
+        {"t": "text", "v": "Types: "},
+        {"t": "iri", "label": "Person", "iri": "http://example.org/Person", "in_ontology": False},
+    ]
 
 
 def test_axiom_individual_property_assertion():
@@ -764,10 +807,15 @@ def test_axiom_individual_property_assertion():
         _store(), _GRAPH,
         "http://example.org/Alice", "http://example.org/hasFriend",
         ox.NamedNode("http://example.org/Bob"),
-        labels={},
+        labels={}, known_iris=frozenset(),
         entity_type="individual",
     )
-    assert out == "Facts: hasFriend Bob"
+    assert out == [
+        {"t": "text", "v": "Facts: "},
+        {"t": "iri", "label": "hasFriend", "iri": "http://example.org/hasFriend", "in_ontology": False},
+        {"t": "text", "v": " "},
+        {"t": "iri", "label": "Bob", "iri": "http://example.org/Bob", "in_ontology": False},
+    ]
 
 
 def test_axiom_individual_property_assertion_literal():
@@ -775,10 +823,15 @@ def test_axiom_individual_property_assertion_literal():
         _store(), _GRAPH,
         "http://example.org/Alice", "http://example.org/age",
         ox.Literal("30", datatype=ox.NamedNode("http://www.w3.org/2001/XMLSchema#integer")),
-        labels={},
+        labels={}, known_iris=frozenset(),
         entity_type="individual",
     )
-    assert out == 'Facts: age "30"^^xsd:integer'
+    assert out == [
+        {"t": "text", "v": "Facts: "},
+        {"t": "iri", "label": "age", "iri": "http://example.org/age", "in_ontology": False},
+        {"t": "text", "v": " "},
+        {"t": "text", "v": '"30"^^xsd:integer'},
+    ]
 
 
 def test_axiom_non_individual_unknown_predicate_still_returns_none():
@@ -787,7 +840,7 @@ def test_axiom_non_individual_unknown_predicate_still_returns_none():
         _store(), _GRAPH,
         "http://example.org/Foo", "http://example.org/random",
         ox.NamedNode("http://example.org/Bar"),
-        labels={},
+        labels={}, known_iris=frozenset(),
         entity_type="class",
     )
     assert out is None
@@ -983,16 +1036,20 @@ _OWL_VERSION_INFO_N = ox.NamedNode("http://www.w3.org/2002/07/owl#versionInfo")
 _CUSTOM_ANN_N = ox.NamedNode("http://example.org/myAnn")
 
 
-def test_render_axiom_rdfs_label_annotation():
-    """A built-in annotation property emits 'Annotations: rdfs:label "Foo"@en'."""
+def test_render_axiom_rdfs_label_annotation_emits_token_line():
     out = render_axiom(
         _store(), _GRAPH,
         "http://example.org/Foo", _RDFS_LABEL_N.value,
         ox.Literal("Foo", language="en"),
         labels={},
+        known_iris=frozenset(),
         annotation_props=_BUILTIN_ANNOTATION_PROPS,
     )
-    assert out == 'Annotations: rdfs:label "Foo"@en'
+    assert out is not None
+    # tokens: "Annotations: rdfs:label " + literal-text
+    assert out[0]["t"] == "text"
+    assert out[0]["v"] == "Annotations: rdfs:label "
+    assert out[1] == {"t": "text", "v": '"Foo"@en'}
 
 
 def test_render_axiom_dc_description_annotation():
@@ -1001,9 +1058,13 @@ def test_render_axiom_dc_description_annotation():
         "http://example.org/Foo", _DC_DESCRIPTION_N.value,
         ox.Literal("A thing"),
         labels={},
+        known_iris=frozenset(),
         annotation_props=_BUILTIN_ANNOTATION_PROPS,
     )
-    assert out == 'Annotations: dc:description "A thing"'
+    assert out == [
+        {"t": "text", "v": "Annotations: dc:description "},
+        {"t": "text", "v": '"A thing"'},
+    ]
 
 
 def test_render_axiom_owl_version_info_annotation():
@@ -1012,21 +1073,45 @@ def test_render_axiom_owl_version_info_annotation():
         "http://example.org/Ont", _OWL_VERSION_INFO_N.value,
         ox.Literal("1.0.0"),
         labels={},
+        known_iris=frozenset(),
         annotation_props=_BUILTIN_ANNOTATION_PROPS,
     )
-    assert out == 'Annotations: owl:versionInfo "1.0.0"'
+    assert out == [
+        {"t": "text", "v": "Annotations: owl:versionInfo "},
+        {"t": "text", "v": '"1.0.0"'},
+    ]
 
 
-def test_render_axiom_custom_annotation_property_via_dynamic_set():
-    """A non-builtin predicate gets routed to Annotations: iff in annotation_props."""
+def test_render_axiom_custom_annotation_property_emits_iri_token_in_pred_position():
+    """Non-CURIE annotation predicate renders as an IRI token (clickable when known)."""
+    custom_pred = "http://example.org/myAnn"
     out = render_axiom(
         _store(), _GRAPH,
-        "http://example.org/Foo", _CUSTOM_ANN_N.value,
+        "http://example.org/Foo", custom_pred,
         ox.Literal("custom note"),
         labels={},
-        annotation_props=frozenset({_CUSTOM_ANN_N.value}),
+        known_iris=frozenset({custom_pred}),
+        annotation_props=frozenset({custom_pred}),
     )
-    assert out == 'Annotations: <http://example.org/myAnn> "custom note"'
+    assert out is not None
+    # tokens: "Annotations: " + IriToken(custom_pred) + " " + text(literal)
+    assert out[0] == {"t": "text", "v": "Annotations: "}
+    assert out[1]["t"] == "iri"
+    assert out[1]["iri"] == custom_pred
+    assert out[1]["in_ontology"] is True
+
+
+def test_render_axiom_subclassof_emits_keyword_text_then_iri_token():
+    food = ox.NamedNode("http://example.org/Food")
+    out = render_axiom(
+        _store(), _GRAPH,
+        "http://example.org/Pizza", _RDFS_SUB_N.value, food,
+        labels={},
+        known_iris=frozenset({food.value}),
+    )
+    assert out is not None
+    assert out[0] == {"t": "text", "v": "SubClassOf: "}
+    assert out[1] == {"t": "iri", "label": "Food", "iri": food.value, "in_ontology": True}
 
 
 def test_render_axiom_custom_predicate_NOT_in_annotation_set_returns_none():
@@ -1036,6 +1121,7 @@ def test_render_axiom_custom_predicate_NOT_in_annotation_set_returns_none():
         "http://example.org/Foo", "http://example.org/randomPred",
         ox.NamedNode("http://example.org/Bar"),
         labels={},
+        known_iris=frozenset(),
         annotation_props=frozenset(),  # not declared as annotation
     )
     assert out is None

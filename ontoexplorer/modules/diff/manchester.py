@@ -517,45 +517,57 @@ def render_axiom(
     object_term: ox.Term,
     *,
     labels: dict[str, str],
+    known_iris: frozenset[str],
     entity_type: str | None = None,
     annotation_props: frozenset[str] = _BUILTIN_ANNOTATION_PROPS,
-) -> str | None:
-    """Render a single (predicate, object) pair as a Manchester axiom line.
+) -> list[ManchesterToken] | None:
+    """Return a token list `[keyword-text, ...filler-tokens]`, or None for non-renderable triples.
 
-    `annotation_props` is the per-run set of predicates that should render
-    under the `Annotations:` keyword (built-ins plus any owl:AnnotationProperty
-    discovered in the graph). When the predicate is in this set, output is
-    `Annotations: <curie-or-iri> <value>`. Otherwise the existing dispatch
-    runs (logical/property/characteristic/individual axioms).
+    The keyword text token always ends with `": "` so the caller can split on
+    `": "` to recover the keyword for keyword-block grouping in render_frame.
     """
-    # Annotation properties take precedence over everything else, so an
-    # ontology that types e.g. rdfs:seeAlso as both annotation + logical
-    # property still renders cleanly.
     if predicate_iri in annotation_props:
-        pred_str = _to_curie(predicate_iri)
-        value_str = _render_annotation_value(store, graph, object_term, labels=labels)
-        return f"Annotations: {pred_str} {value_str}"
+        curie = _to_curie(predicate_iri)
+        if curie.startswith("<"):
+            # Non-builtin namespace → emit predicate as a clickable IRI token.
+            value = _render_annotation_value(
+                store, graph, object_term, labels=labels, known_iris=known_iris,
+            )
+            return [
+                _text("Annotations: "),
+                _iri_token(store, graph, predicate_iri, labels=labels, known_iris=known_iris),
+                _text(" "),
+                *value,
+            ]
+        value = _render_annotation_value(
+            store, graph, object_term, labels=labels, known_iris=known_iris,
+        )
+        return [_text(f"Annotations: {curie} "), *value]
 
-    # Individuals: rdf:type → Types, anything else → Facts.
     if entity_type == "individual":
         if predicate_iri == _RDF_TYPE:
-            filler = render_class_expression(store, graph, object_term, labels=labels)
-            return f"Types: {filler}"
+            filler = render_class_expression(
+                store, graph, object_term, labels=labels, known_iris=known_iris,
+            )
+            return [_text("Types: "), *filler]
         if predicate_iri in _INDIVIDUAL_AXIOMS:
             keyword = _INDIVIDUAL_AXIOMS[predicate_iri]
-            filler = render_class_expression(store, graph, object_term, labels=labels)
-            return f"{keyword}: {filler}"
-        # Property assertion: predicate is some property, object is the value.
-        prop_label = iri_to_label(store, graph, predicate_iri, labels=labels)
-        value_label = render_class_expression(store, graph, object_term, labels=labels)
-        return f"Facts: {prop_label} {value_label}"
+            filler = render_class_expression(
+                store, graph, object_term, labels=labels, known_iris=known_iris,
+            )
+            return [_text(f"{keyword}: "), *filler]
+        # Property assertion (Facts:).
+        prop_tok = _iri_token(store, graph, predicate_iri, labels=labels, known_iris=known_iris)
+        value = render_class_expression(
+            store, graph, object_term, labels=labels, known_iris=known_iris,
+        )
+        return [_text("Facts: "), prop_tok, _text(" "), *value]
 
-    # Property characteristics: rdf:type with an OWL characteristic class.
     if predicate_iri == _RDF_TYPE and isinstance(object_term, ox.NamedNode):
         char = _CHARACTERISTICS.get(object_term.value)
         if char is not None:
-            return f"Characteristics: {char}"
-        return None  # other rdf:type triples belong in the frame header
+            return [_text(f"Characteristics: {char}")]
+        return None
 
     keyword = (
         _CLASS_AXIOMS.get(predicate_iri)
@@ -564,22 +576,25 @@ def render_axiom(
     )
     if keyword is None:
         return None
-    filler = render_class_expression(store, graph, object_term, labels=labels)
-    return f"{keyword}: {filler}"
+    filler = render_class_expression(
+        store, graph, object_term, labels=labels, known_iris=known_iris,
+    )
+    return [_text(f"{keyword}: "), *filler]
 
 
 def _render_annotation_value(
-    store: ox.Store, graph: ox.NamedNode, obj: ox.Term, *, labels: dict[str, str],
-) -> str:
-    """Render the object of an annotation axiom.
-
-    - Literal → `"value"[@lang][^^xsd:dtype]` (xsd:string suppressed).
-    - NamedNode → label / CURIE / local name via the existing class-expression renderer.
-    - BlankNode → fallback class-expression rendering (uncommon for annotations).
-    """
+    store: ox.Store,
+    graph: ox.NamedNode,
+    obj: ox.Term,
+    *,
+    labels: dict[str, str],
+    known_iris: frozenset[str],
+) -> list[ManchesterToken]:
     if isinstance(obj, ox.Literal):
         return _render_literal(obj)
-    return render_class_expression(store, graph, obj, labels=labels)
+    return render_class_expression(
+        store, graph, obj, labels=labels, known_iris=known_iris,
+    )
 
 
 def _render_datatype_restriction(
