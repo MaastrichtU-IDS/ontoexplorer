@@ -421,3 +421,110 @@ async def test_admin_version_action_ingest_422_when_no_source(client, user_and_k
         headers={"Authorization": f"Bearer {raw_key}"},
     )
     assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_admin_queue_diff_dispatches_compute_diff(client, user_and_key, monkeypatch, db_session):
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    _, raw_key = user_and_key
+
+    ont = Ontology(iri="http://example.org/dq.owl")
+    db_session.add(ont); await db_session.flush()
+    v1 = OntologyVersion(ontology_id=ont.id, minio_key="k1", sha256="dq01", format="turtle", status="ready")
+    v2 = OntologyVersion(ontology_id=ont.id, minio_key="k2", sha256="dq02", format="turtle", status="ready")
+    db_session.add(v1); db_session.add(v2); await db_session.commit()
+
+    mock_task = MagicMock(id="task-diff-1")
+    with patch("ontoexplorer.modules.jobs.tasks.compute_diff.delay", return_value=mock_task) as m:
+        resp = await client.post(
+            "/api/v1/admin/diffs/queue",
+            headers={"Authorization": f"Bearer {raw_key}"},
+            json={"from_version_id": v1.id, "to_version_id": v2.id},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "queued"
+    assert resp.json()["task_id"] == "task-diff-1"
+    m.assert_called_once_with(v1.id, v2.id, ont.id)
+
+
+@pytest.mark.anyio
+async def test_admin_queue_diff_422_when_versions_belong_to_different_ontologies(
+    client, user_and_key, monkeypatch, db_session
+):
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    _, raw_key = user_and_key
+
+    o1 = Ontology(iri="http://example.org/dq-a.owl")
+    o2 = Ontology(iri="http://example.org/dq-b.owl")
+    db_session.add(o1); db_session.add(o2); await db_session.flush()
+    v1 = OntologyVersion(ontology_id=o1.id, minio_key="k", sha256="dqx1", format="turtle", status="ready")
+    v2 = OntologyVersion(ontology_id=o2.id, minio_key="k", sha256="dqx2", format="turtle", status="ready")
+    db_session.add(v1); db_session.add(v2); await db_session.commit()
+
+    resp = await client.post(
+        "/api/v1/admin/diffs/queue",
+        headers={"Authorization": f"Bearer {raw_key}"},
+        json={"from_version_id": v1.id, "to_version_id": v2.id},
+    )
+    assert resp.status_code == 422
+    assert "different ontologies" in resp.json()["detail"].lower()
+
+
+@pytest.mark.anyio
+async def test_admin_recompute_all_diffs_queues_consecutive_pairs(
+    client, user_and_key, monkeypatch, db_session
+):
+    """Three versions → two consecutive pairs queued."""
+    from datetime import datetime, timedelta, timezone
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    _, raw_key = user_and_key
+
+    ont = Ontology(iri="http://example.org/rcad.owl")
+    db_session.add(ont); await db_session.flush()
+    now = datetime.now(timezone.utc)
+    v1 = OntologyVersion(ontology_id=ont.id, minio_key="k1", sha256="rcad01", format="turtle", status="ready", created_at=now - timedelta(seconds=20))
+    v2 = OntologyVersion(ontology_id=ont.id, minio_key="k2", sha256="rcad02", format="turtle", status="ready", created_at=now - timedelta(seconds=10))
+    v3 = OntologyVersion(ontology_id=ont.id, minio_key="k3", sha256="rcad03", format="turtle", status="ready", created_at=now)
+    db_session.add(v1); db_session.add(v2); db_session.add(v3); await db_session.commit()
+
+    calls = []
+    with patch(
+        "ontoexplorer.modules.jobs.tasks.compute_diff.delay",
+        side_effect=lambda *a, **kw: calls.append((a, kw)) or MagicMock(id="t"),
+    ):
+        resp = await client.post(
+            f"/api/v1/admin/ontologies/{ont.id}/diffs/recompute-all",
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["queued"] == 2
+    # Pairs are (oldest→middle) and (middle→newest)
+    assert calls[0][0] == (v1.id, v2.id, ont.id)
+    assert calls[1][0] == (v2.id, v3.id, ont.id)
+
+
+@pytest.mark.anyio
+async def test_admin_recompute_all_diffs_single_version_returns_zero(
+    client, user_and_key, monkeypatch, db_session
+):
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    _, raw_key = user_and_key
+
+    ont = Ontology(iri="http://example.org/rcad-one.owl")
+    db_session.add(ont); await db_session.flush()
+    db_session.add(OntologyVersion(ontology_id=ont.id, minio_key="k", sha256="rcad11", format="turtle", status="ready"))
+    await db_session.commit()
+
+    with patch("ontoexplorer.modules.jobs.tasks.compute_diff.delay") as m:
+        resp = await client.post(
+            f"/api/v1/admin/ontologies/{ont.id}/diffs/recompute-all",
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["queued"] == 0
+    m.assert_not_called()
