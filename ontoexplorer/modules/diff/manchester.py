@@ -763,3 +763,20 @@ def strip_marker(line: str) -> str:
     if line.startswith("-       ") or line.startswith("+       "):
         return "      " + line[8:]  # preserve 6-space indent under keyword
     return line
+
+
+def _known_iris(store: ox.Store, graph: ox.NamedNode) -> frozenset[str]:
+    """Return every IRI that appears as a subject OR an IRI-valued object in `graph`.
+
+    Used to set `in_ontology=True` on IRI tokens when rendering Manchester
+    frames: the frontend will turn matching tokens into clickable links to
+    the entity's term page. IRIs reachable only as predicates are excluded
+    (predicates are never click targets in this UI).
+    """
+    out: set[str] = set()
+    for q in store.quads_for_pattern(None, None, None, graph):
+        if isinstance(q.subject, ox.NamedNode):
+            out.add(q.subject.value)
+        if isinstance(q.object, ox.NamedNode):
+            out.add(q.object.value)
+    return frozenset(out)

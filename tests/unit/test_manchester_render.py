@@ -1125,3 +1125,36 @@ def test_render_frame_with_annotations_block_at_top():
     assert annot_idx < sub_idx, "Annotations: must appear before SubClassOf:"
     assert 'rdfs:label "Pizza"@en' in frame
     assert 'rdfs:comment "A baked Italian dish"' in frame
+
+
+from ontoexplorer.modules.diff.manchester import _known_iris
+
+
+def test_known_iris_returns_subjects_and_iri_objects():
+    """_known_iris collects every IRI that appears as subject OR as iri-typed object."""
+    a = ox.NamedNode("http://example.org/A")
+    b = ox.NamedNode("http://example.org/B")
+    c = ox.NamedNode("http://example.org/C")
+    label_pred = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#label")
+    store = _store(
+        (a, _RDF_TYPE_N, ox.NamedNode("http://www.w3.org/2002/07/owl#Class")),
+        (a, _RDFS_SUB_N, b),
+        (a, label_pred, ox.Literal("A")),
+        (b, _RDF_TYPE_N, ox.NamedNode("http://www.w3.org/2002/07/owl#Class")),
+        # c appears only as object, never as subject
+    )
+    store.add(ox.Quad(a, _RDFS_SUB_N, c, _GRAPH))
+    known = _known_iris(store, _GRAPH)
+    assert a.value in known
+    assert b.value in known
+    assert c.value in known
+    # rdfs:label predicate IRI should NOT appear because the helper restricts
+    # to subjects + iri-typed objects, and we never asked about predicates.
+    # (Predicates also aren't in_ontology candidates.)
+    # The literal "A" should NOT appear.
+    assert '"A"' not in known
+
+
+def test_known_iris_returns_empty_for_empty_graph():
+    store = _store()
+    assert _known_iris(store, _GRAPH) == frozenset()
