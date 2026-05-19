@@ -621,3 +621,98 @@ def test_non_trivial_inferred_keeps_genuine_new_inference():
     )
     assert len(out) == 1
     assert out[0][1].value == new_parent.value
+
+
+# ---------------------------------------------------------------------------
+# Inferred-graph diff pass merged with asserted via source tag (Phase 4 Task 4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_inferred_diff_merges_into_axiom_changes_with_source_tag(
+    db_session, make_version,
+):
+    """When reasoning is ready for both sides, inferred axioms appear in
+    diff_data with source='inferred' alongside asserted ones."""
+    from ontoexplorer.modules.diff.compute import collect_inferred_status, run_diff
+    from ontoexplorer.clients.oxigraph import graph_iri
+    from ontoexplorer.models.db import Job
+
+    v1 = await make_version("http://example.org/o1.owl", "inf001")
+    v2 = await make_version("http://example.org/o2.owl", "inf002")
+    db_session.add(Job(version_id=v1.id, type="reason", status="done"))
+    db_session.add(Job(version_id=v2.id, type="reason", status="done"))
+    await db_session.commit()
+
+    pizza = ox.NamedNode("http://example.org/Pizza")
+    food  = ox.NamedNode("http://example.org/Food")
+    seasoned = ox.NamedNode("http://example.org/SeasonedFood")
+
+    ont_id = v1.ontology_id
+    store = ox.Store()
+    g_from_a = ox.NamedNode(graph_iri(ont_id, v1.id, inferred=False))
+    g_from_i = ox.NamedNode(graph_iri(ont_id, v1.id, inferred=True))
+    g_to_a   = ox.NamedNode(graph_iri(ont_id, v2.id, inferred=False))
+    g_to_i   = ox.NamedNode(graph_iri(ont_id, v2.id, inferred=True))
+    for g in (g_from_a, g_from_i, g_to_a, g_to_i):
+        store.add_graph(g)
+
+    # Asserted: from has Pizza ⊑ Food; to adds Pizza ⊑ SeasonedFood.
+    store.add(ox.Quad(pizza, _RDF_TYPE, _OWL_CLASS, g_from_a))
+    store.add(ox.Quad(pizza, _RDFS_SC, food, g_from_a))
+    store.add(ox.Quad(pizza, _RDF_TYPE, _OWL_CLASS, g_to_a))
+    store.add(ox.Quad(pizza, _RDFS_SC, food, g_to_a))
+    store.add(ox.Quad(pizza, _RDFS_SC, seasoned, g_to_a))
+
+    # Inferred: to has an additional inferred Pizza ⊑ MoreThings (genuinely new)
+    more = ox.NamedNode("http://example.org/MoreThings")
+    store.add(ox.Quad(pizza, _RDFS_SC, more, g_to_i))
+
+    inferred_status = await collect_inferred_status(db_session, v1.id, v2.id)
+    summary, diff_data = run_diff(
+        store, ont_id, v1.id, v2.id, inferred_status=inferred_status,
+    )
+    assert summary["inferred_status"]["from_version"] == "ready"
+    assert summary["inferred_status"]["to_version"]   == "ready"
+    assert summary["asserted_axiom_changes"] >= 1
+    assert summary["inferred_axiom_changes"] == 1
+
+    pizza_entry = next(e for e in diff_data["modified"] if e["iri"] == pizza.value)
+    sources = {ac["source"] for ac in pizza_entry["axiom_changes"]}
+    assert "inferred" in sources
+    assert "asserted" in sources
+
+
+@pytest.mark.anyio
+async def test_inferred_diff_skipped_when_reasoning_pending(
+    db_session, make_version,
+):
+    from ontoexplorer.modules.diff.compute import collect_inferred_status, run_diff
+    from ontoexplorer.clients.oxigraph import graph_iri
+    from ontoexplorer.models.db import Job
+
+    v1 = await make_version("http://example.org/o3.owl", "inf003")
+    v2 = await make_version("http://example.org/o4.owl", "inf004")
+    db_session.add(Job(version_id=v1.id, type="reason", status="running"))
+    await db_session.commit()
+
+    pizza = ox.NamedNode("http://example.org/Pizza")
+    food  = ox.NamedNode("http://example.org/Food")
+    ont_id = v1.ontology_id
+    store = ox.Store()
+    g1 = ox.NamedNode(graph_iri(ont_id, v1.id, inferred=False))
+    g2 = ox.NamedNode(graph_iri(ont_id, v2.id, inferred=False))
+    store.add_graph(g1)
+    store.add_graph(g2)
+    # Make Pizza appear modified across versions so a modified entry exists,
+    # which is the bucket the inferred pass joins on.
+    store.add(ox.Quad(pizza, _RDF_TYPE, _OWL_CLASS, g1))
+    store.add(ox.Quad(pizza, _RDF_TYPE, _OWL_CLASS, g2))
+    store.add(ox.Quad(pizza, _RDFS_SC, food, g2))
+
+    inferred_status = await collect_inferred_status(db_session, v1.id, v2.id)
+    summary, _ = run_diff(
+        store, ont_id, v1.id, v2.id, inferred_status=inferred_status,
+    )
+    assert summary["inferred_status"]["from_version"] == "pending"
+    assert summary["inferred_axiom_changes"] == 0

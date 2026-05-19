@@ -237,10 +237,27 @@ def _bnode_fingerprint(
     return hashlib.sha1("\n".join(parts).encode()).hexdigest()[:16]
 
 
+async def collect_inferred_status(
+    db, from_vid: str, to_vid: str,
+) -> dict[str, ReasoningStatus]:
+    """Pre-compute reasoning status for both diff sides.
+
+    Called from async contexts (e.g. the `compute_diff` Celery task body)
+    BEFORE delegating the synchronous `_run_diff_core` to a thread, so the
+    core stays 100% synchronous.
+    """
+    return {
+        "from_version": await _reasoning_status_for_version(db, from_vid),
+        "to_version":   await _reasoning_status_for_version(db, to_vid),
+    }
+
+
 def _run_diff_core(
     store: ox.Store,
     from_graph: ox.NamedNode,
     to_graph: ox.NamedNode,
+    *,
+    inferred_status: dict[str, ReasoningStatus] | None = None,
 ) -> tuple[dict, dict]:
     """Diff two named graphs in `store`. Pure function over graph IRIs —
     callers build the IRIs from their own identifiers (ontology_id+version
@@ -249,7 +266,22 @@ def _run_diff_core(
     Returns (summary, diff_data). diff_data has the shape
         {"added": [...], "removed": [...], "modified": [...]}
     matching the existing OntologyDiff JSON contract.
+
+    When `inferred_status` indicates both sides are 'ready', a second pass
+    collects inferred-graph axioms per modified entity, filters trivial
+    patterns, and merges them into the entity's `axiom_changes` list with
+    `source: "inferred"`. Asserted-pass records are tagged `source: "asserted"`.
     """
+    status_from: ReasoningStatus = (
+        inferred_status.get("from_version", "missing") if inferred_status else "missing"
+    )
+    status_to: ReasoningStatus = (
+        inferred_status.get("to_version", "missing") if inferred_status else "missing"
+    )
+    inferred_graph_from = ox.NamedNode(f"{from_graph.value}:inferred")
+    inferred_graph_to   = ox.NamedNode(f"{to_graph.value}:inferred")
+    do_inferred = status_from == "ready" and status_to == "ready"
+
     added_list: list[dict] = []
     removed_list: list[dict] = []
     modified_list: list[dict] = []
@@ -352,6 +384,45 @@ def _run_diff_core(
                     "graph": to_graph,
                 })
 
+            # Inferred-graph second pass — collect per-entity inferred axioms
+            # from both sides, filter trivial patterns, and merge the
+            # set-difference into change_records tagged source='inferred'.
+            if do_inferred:
+                from_inf = _axioms_for_entity(store, inferred_graph_from, iri)
+                to_inf   = _axioms_for_entity(store, inferred_graph_to,   iri)
+                from_asserted_pairs = _axioms_for_entity(store, from_graph, iri)
+                to_asserted_pairs   = _axioms_for_entity(store, to_graph,   iri)
+                from_inf_filtered = _non_trivial_inferred_axioms(
+                    from_inf, entity_iri=iri, asserted_axioms=from_asserted_pairs,
+                )
+                to_inf_filtered = _non_trivial_inferred_axioms(
+                    to_inf, entity_iri=iri, asserted_axioms=to_asserted_pairs,
+                )
+                from_inf_set = {(p, _term_key(o)) for p, o in from_inf_filtered}
+                to_inf_set   = {(p, _term_key(o)) for p, o in to_inf_filtered}
+                for pred, obj in to_inf_filtered:
+                    if (pred, _term_key(obj)) not in from_inf_set:
+                        change_records.append({
+                            "op": "added",
+                            "predicate": pred,
+                            "object": obj,
+                            "graph": inferred_graph_to,
+                            "source": "inferred",
+                        })
+                for pred, obj in from_inf_filtered:
+                    if (pred, _term_key(obj)) not in to_inf_set:
+                        change_records.append({
+                            "op": "removed",
+                            "predicate": pred,
+                            "object": obj,
+                            "graph": inferred_graph_from,
+                            "source": "inferred",
+                        })
+
+            # Stamp asserted-pass records with source='asserted'.
+            for rec in change_records:
+                rec.setdefault("source", "asserted")
+
             axiom_changes: list[dict] = []
             for rec in change_records:
                 axiom_tokens = _mos.render_axiom(
@@ -365,7 +436,11 @@ def _run_diff_core(
                     axiom_str = f"<{rec['predicate']}> <{obj_val}>"
                 else:
                     axiom_str = _tokens_to_str(axiom_tokens)
-                axiom_changes.append({"op": rec["op"], "axiom": axiom_str})
+                axiom_changes.append({
+                    "op": rec["op"],
+                    "axiom": axiom_str,
+                    "source": rec.get("source", "asserted"),
+                })
 
             manchester_frame = _mos.render_frame(
                 store, iri, entity_type, change_records,
@@ -391,13 +466,27 @@ def _run_diff_core(
         }
         for et in _ENTITY_TYPES
     }
+    asserted_count = 0
+    inferred_count = 0
+    for entry in modified_list:
+        for ac in entry.get("axiom_changes", []):
+            if ac.get("source") == "inferred":
+                inferred_count += 1
+            else:
+                asserted_count += 1
     summary = {
-        "added":           len(added_list),
-        "removed":         len(removed_list),
-        "modified":        len(modified_list),
-        "literal_changes": sum(1 for m in modified_list if m["literal_changes"]),
-        "axiom_changes":   sum(1 for m in modified_list if m["axiom_changes"]),
-        "by_entity_type":  by_type,
+        "added":                  len(added_list),
+        "removed":                len(removed_list),
+        "modified":               len(modified_list),
+        "literal_changes":        sum(1 for m in modified_list if m["literal_changes"]),
+        "axiom_changes":          sum(1 for m in modified_list if m["axiom_changes"]),
+        "asserted_axiom_changes": asserted_count,
+        "inferred_axiom_changes": inferred_count,
+        "by_entity_type":         by_type,
+        "inferred_status":        {
+            "from_version": status_from,
+            "to_version":   status_to,
+        },
     }
     diff_data = {
         "added":    added_list,
@@ -412,8 +501,15 @@ def run_diff(
     ontology_id: str,
     from_vid: str,
     to_vid: str,
+    *,
+    inferred_status: dict[str, ReasoningStatus] | None = None,
 ) -> tuple[dict, dict]:
-    """Compute term-level diff between two named graphs of the same ontology."""
+    """Compute term-level diff between two named graphs of the same ontology.
+
+    `inferred_status` (preferred path) carries the pre-computed reasoning
+    status for both sides — see `collect_inferred_status`. When omitted, the
+    inferred-pass is skipped (statuses default to 'missing').
+    """
     from_graph = ox.NamedNode(graph_iri(ontology_id, from_vid))
     to_graph   = ox.NamedNode(graph_iri(ontology_id, to_vid))
-    return _run_diff_core(store, from_graph, to_graph)
+    return _run_diff_core(store, from_graph, to_graph, inferred_status=inferred_status)

@@ -116,7 +116,10 @@ def compute_diff(version_from_id: str, version_to_id: str, ontology_id: str) -> 
         from sqlalchemy import select
         from sqlalchemy.dialects.postgresql import insert as pg_insert
         from ontoexplorer.models.db import OntologyDiff
-        from ontoexplorer.modules.diff.compute import run_diff as _run_diff
+        from ontoexplorer.modules.diff.compute import (
+            collect_inferred_status,
+            run_diff as _run_diff,
+        )
         from ontoexplorer.clients.oxigraph import get_store
 
         async with make_celery_db_session()() as db:
@@ -154,8 +157,14 @@ def compute_diff(version_from_id: str, version_to_id: str, ontology_id: str) -> 
 
             try:
                 store = get_store()
+                # Pre-compute reasoning status in the async context so the
+                # synchronous diff core never has to touch the DB itself.
+                inferred_status = await collect_inferred_status(
+                    db, version_from_id, version_to_id,
+                )
                 summary, diff_data = await asyncio.to_thread(
-                    _run_diff, store, ontology_id, version_from_id, version_to_id
+                    _run_diff, store, ontology_id, version_from_id, version_to_id,
+                    inferred_status=inferred_status,
                 )
                 diff_row.summary = summary
                 diff_row.diff_data = diff_data
