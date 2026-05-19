@@ -29,6 +29,10 @@ export interface OntologyTableProps {
   onEmbed: (id: string) => void
   reasonStates: Record<string, UpdateState>
   onReason: (id: string) => void
+  profileStates: Record<string, UpdateState>
+  onDetectProfile: (id: string) => void
+  versionProfileStates: Record<string, UpdateState>
+  onVersionDetectProfile: (versionId: string) => void
   recomputeStates: Record<string, UpdateState>
   onRecomputeAll: (ontologyId: string) => void
   pairDiffStates: Record<string, UpdateState>
@@ -49,6 +53,8 @@ export function OntologyTable({
   reindexStates, onReindex,
   embedStates, onEmbed,
   reasonStates, onReason,
+  profileStates, onDetectProfile,
+  versionProfileStates, onVersionDetectProfile,
   recomputeStates, onRecomputeAll,
   pairDiffStates, onPairDiff,
   versionIndexStates, onVersionIndex,
@@ -151,6 +157,9 @@ export function OntologyTable({
               <SortTh col="embeddings" label="Embeddings" />
               <SortTh col="reasoning"  label="Reasoning" />
               <th style={{ padding: '7px 10px', textAlign: 'center', color: 'var(--text-dim)', fontWeight: 500, fontSize: 10, textTransform: 'uppercase', letterSpacing: .5 }}>
+                Profile
+              </th>
+              <th style={{ padding: '7px 10px', textAlign: 'center', color: 'var(--text-dim)', fontWeight: 500, fontSize: 10, textTransform: 'uppercase', letterSpacing: .5 }}>
                 Diff
               </th>
               <SortTh col="updated"    label="Updated" />
@@ -245,6 +254,21 @@ export function OntologyTable({
                     </div>
                   </td>
                   <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                      {row.profile_computed
+                        ? <span style={{ color: 'var(--accent-green, #3fb950)', fontSize: 11 }}>●</span>
+                        : <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>—</span>}
+                      {canAct && (
+                        <ActionButton
+                          label="↺ profile"
+                          title="Run OWL 2 profile detection (EL/QL/RL/DL)"
+                          state={profileStates[row.id] ?? 'idle'}
+                          onClick={() => onDetectProfile(row.id)}
+                        />
+                      )}
+                    </div>
+                  </td>
+                  <td style={{ padding: '6px 10px', textAlign: 'center' }}>
                     <ActionButton
                       label="↺ diffs"
                       title="Queue compute_diff for every consecutive version pair of this ontology"
@@ -260,7 +284,7 @@ export function OntologyTable({
                   <VersionsSubRows
                     ontologyId={row.id}
                     slug={row.shortname ?? slugFromIri(row.iri)}
-                    colSpan={9}
+                    colSpan={10}
                     latestVersionId={row.version_id}
                     pairDiffStates={pairDiffStates}
                     onPairDiff={onPairDiff}
@@ -270,6 +294,8 @@ export function OntologyTable({
                     onVersionEmbed={onVersionEmbed}
                     versionReasonStates={versionReasonStates}
                     onVersionReason={onVersionReason}
+                    versionProfileStates={versionProfileStates}
+                    onVersionDetectProfile={onVersionDetectProfile}
                     versionIngestStates={versionIngestStates}
                     onVersionIngest={onVersionIngest}
                   />
@@ -279,7 +305,7 @@ export function OntologyTable({
             })}
             {paged.length === 0 && (
               <tr>
-                <td colSpan={9} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                <td colSpan={10} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
                   {search ? 'No matching ontologies' : 'No ontologies'}
                 </td>
               </tr>
@@ -308,6 +334,8 @@ interface VersionsSubRowsProps {
   onVersionEmbed: (versionId: string) => void
   versionReasonStates: Record<string, UpdateState>
   onVersionReason: (versionId: string) => void
+  versionProfileStates: Record<string, UpdateState>
+  onVersionDetectProfile: (versionId: string) => void
   versionIngestStates: Record<string, UpdateState>
   onVersionIngest: (versionId: string) => void
 }
@@ -318,6 +346,7 @@ function VersionsSubRows({
   versionIndexStates, onVersionIndex,
   versionEmbedStates, onVersionEmbed,
   versionReasonStates, onVersionReason,
+  versionProfileStates, onVersionDetectProfile,
   versionIngestStates, onVersionIngest,
 }: VersionsSubRowsProps) {
   const { data, isLoading, isError } = useQuery({
@@ -421,6 +450,19 @@ function VersionsSubRows({
                 title="Run OWL-EL classification for this specific version"
                 state={versionReasonStates[v.version_id] ?? 'idle'}
                 onClick={() => onVersionReason(v.version_id)}
+              />
+            </div>
+          </td>
+          <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+              {v.profile_computed
+                ? <span style={{ color: 'var(--accent-green, #3fb950)', fontSize: 11 }}>●</span>
+                : <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>—</span>}
+              <ActionButton
+                label="↺ profile"
+                title="Run OWL 2 profile detection for this specific version"
+                state={versionProfileStates[v.version_id] ?? 'idle'}
+                onClick={() => onVersionDetectProfile(v.version_id)}
               />
             </div>
           </td>

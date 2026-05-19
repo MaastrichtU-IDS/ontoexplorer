@@ -213,6 +213,32 @@ async def admin_queue_reason(
     return {"status": "queued", "task_id": task.id}
 
 
+@router.post("/ontologies/{ontology_id}/detect-profile", summary="Queue OWL profile detection for one ontology")
+async def admin_queue_detect_profile(
+    ontology_id: str,
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue detect_profile for the latest non-deprecated version of an ontology."""
+    from sqlalchemy import select
+    from ontoexplorer.models.db import OntologyVersion
+    from ontoexplorer.modules.jobs.tasks import detect_profile
+
+    version = (await db.execute(
+        select(OntologyVersion)
+        .where(OntologyVersion.ontology_id == ontology_id)
+        .where(OntologyVersion.status != "deprecated")
+        .order_by(OntologyVersion.created_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+
+    if not version:
+        raise HTTPException(status_code=404, detail="No non-deprecated version found for this ontology")
+
+    task = detect_profile.delay(str(version.id), ontology_id=ontology_id)
+    return {"status": "queued", "task_id": task.id}
+
+
 # ── Per-version: queue actions against an explicit version_id ─────────────────
 
 @router.post(
@@ -257,6 +283,21 @@ async def admin_queue_reason_for_version(
     from ontoexplorer.modules.jobs.tasks import reason_ontology
     v = await _load_version(db, version_id)
     task = reason_ontology.delay(version_id=v.id)
+    return {"status": "queued", "task_id": task.id}
+
+
+@router.post(
+    "/versions/{version_id}/detect-profile",
+    summary="Queue OWL profile detection for a specific version",
+)
+async def admin_queue_detect_profile_for_version(
+    version_id: str,
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from ontoexplorer.modules.jobs.tasks import detect_profile
+    v = await _load_version(db, version_id)
+    task = detect_profile.delay(v.id, ontology_id=v.ontology_id)
     return {"status": "queued", "task_id": task.id}
 
 

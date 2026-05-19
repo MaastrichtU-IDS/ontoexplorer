@@ -708,6 +708,7 @@ export interface AdminOntologyEntry {
   triple_count: number | null
   ingestion_status: string
   indexed: boolean
+  profile_computed: boolean
   embed_count: number
   reasoning_status: 'ready' | 'running' | 'not_started'
   version_created_at: string | null
@@ -737,6 +738,7 @@ export interface AdminVersionEntry {
   triple_count: number | null
   ingestion_status: string
   indexed: boolean
+  profile_computed: boolean
   embed_count: number
   reasoning_status: 'ready' | 'running' | 'not_started'
   version_created_at: string | null
@@ -874,10 +876,11 @@ export const api = {
   },
 
   ontologies: {
-    list: (offset = 0, limit = 50, q?: string, group?: string) => {
+    list: (offset = 0, limit = 50, q?: string, group?: string, profile?: ProfileName) => {
       const params = new URLSearchParams({ offset: String(offset), limit: String(limit) })
       if (q) params.set('q', q)
       if (group) params.set('group', group)   // single group filter sent to API
+      if (profile) params.set('profile', profile)
       return request<{ ontologies: Ontology[]; offset: number; limit: number }>(
         `/ontologies?${params}`
       )
@@ -1189,6 +1192,11 @@ export const api = {
         `/admin/ontologies/${ontologyId}/reason`,
         { method: 'POST' }
       ),
+    queueDetectProfile: (ontologyId: string) =>
+      request<{ status: string; task_id: string }>(
+        `/admin/ontologies/${ontologyId}/detect-profile`,
+        { method: 'POST' }
+      ),
     reindexAll: () =>
       request<{ index_queued: number; meta_detection_queued: number; message: string }>(
         `/admin/reindex`,
@@ -1213,6 +1221,12 @@ export const api = {
     queueReasonForVersion: (versionId: string) =>
       request<{ status: string; task_id: string }>(
         `/admin/versions/${versionId}/reason`,
+        { method: 'POST' }
+      ),
+
+    queueDetectProfileForVersion: (versionId: string) =>
+      request<{ status: string; task_id: string }>(
+        `/admin/versions/${versionId}/detect-profile`,
         { method: 'POST' }
       ),
 

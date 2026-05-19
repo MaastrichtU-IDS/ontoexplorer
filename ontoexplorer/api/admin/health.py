@@ -115,6 +115,9 @@ async def admin_overview(
         indexed = await asyncio.to_thread(
             lambda: bool(search_r.exists(f"search:meta:{vid}"))
         )
+        profile_computed = await asyncio.to_thread(
+            lambda: bool(search_r.exists(f"owl_profile:{vid}"))
+        )
         reasoning = await _reasoning_status(vid)
         created = row["version_created_at"]
         meta_resolved = row["meta_resolved"] or {}
@@ -131,6 +134,7 @@ async def admin_overview(
             "triple_count": row["triple_count"],
             "ingestion_status": row["ingestion_status"],
             "indexed": indexed,
+            "profile_computed": profile_computed,
             "embed_count": embed_counts.get(vid, 0),
             "reasoning_status": reasoning,
             "version_created_at": created.isoformat() if created else None,

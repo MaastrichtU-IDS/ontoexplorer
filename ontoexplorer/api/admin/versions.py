@@ -65,6 +65,9 @@ async def admin_ontology_versions(
         indexed = await asyncio.to_thread(
             lambda: bool(search_r.exists(f"search:meta:{vid}"))
         )
+        profile_computed = await asyncio.to_thread(
+            lambda: bool(search_r.exists(f"owl_profile:{vid}"))
+        )
         reasoning = await _reasoning_status(vid)
 
         prev_version_id = versions[idx + 1].id if idx + 1 < len(versions) else None
@@ -85,6 +88,7 @@ async def admin_ontology_versions(
             "triple_count": v.triple_count,
             "ingestion_status": v.status,
             "indexed": indexed,
+            "profile_computed": profile_computed,
             "embed_count": embed_counts.get(vid, 0),
             "reasoning_status": reasoning,
             "version_created_at": v.created_at.isoformat() if v.created_at else None,

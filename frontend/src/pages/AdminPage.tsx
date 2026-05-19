@@ -18,6 +18,8 @@ export default function AdminPage() {
   const [reindexAllState, setReindexAllState] = useState<'idle' | 'queued' | 'error'>('idle')
   const [embedStates, setEmbedStates] = useState<Record<string, UpdateState>>({})
   const [reasonStates, setReasonStates] = useState<Record<string, UpdateState>>({})
+  const [profileStates, setProfileStates] = useState<Record<string, UpdateState>>({})
+  const [versionProfileStates, setVersionProfileStates] = useState<Record<string, UpdateState>>({})
   const [recomputeStates, setRecomputeStates] = useState<Record<string, UpdateState>>({})
   const [pairDiffStates, setPairDiffStates] = useState<Record<string, UpdateState>>({})
   const [versionIndexStates, setVersionIndexStates] = useState<Record<string, UpdateState>>({})
@@ -47,6 +49,18 @@ export default function AdminPage() {
     setReasonStates(s => ({ ...s, [ontologyId]: 'queued' }))
     try { await api.admin.queueReason(ontologyId) }
     catch { setReasonStates(s => ({ ...s, [ontologyId]: 'error' })) }
+  }
+
+  async function handleDetectProfile(ontologyId: string) {
+    setProfileStates(s => ({ ...s, [ontologyId]: 'queued' }))
+    try { await api.admin.queueDetectProfile(ontologyId) }
+    catch { setProfileStates(s => ({ ...s, [ontologyId]: 'error' })) }
+  }
+
+  async function handleVersionDetectProfile(versionId: string) {
+    setVersionProfileStates(s => ({ ...s, [versionId]: 'queued' }))
+    try { await api.admin.queueDetectProfileForVersion(versionId) }
+    catch { setVersionProfileStates(s => ({ ...s, [versionId]: 'error' })) }
   }
 
   async function handleReindexAll() {
@@ -174,6 +188,10 @@ export default function AdminPage() {
           onEmbed={handleEmbed}
           reasonStates={reasonStates}
           onReason={handleReason}
+          profileStates={profileStates}
+          onDetectProfile={handleDetectProfile}
+          versionProfileStates={versionProfileStates}
+          onVersionDetectProfile={handleVersionDetectProfile}
           recomputeStates={recomputeStates}
           onRecomputeAll={handleRecomputeAll}
           pairDiffStates={pairDiffStates}
