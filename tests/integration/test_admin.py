@@ -28,18 +28,18 @@ async def test_admin_overview_returns_shape(client, user_and_key, monkeypatch):
     user, raw_key = user_and_key
 
     # Make the user an admin by patching is_admin
-    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
 
     # Patch all external I/O
     with (
-        patch("ontoexplorer.api.admin._check_postgres", new=AsyncMock(return_value="ok")),
-        patch("ontoexplorer.api.admin._check_redis", return_value="ok"),
-        patch("ontoexplorer.api.admin._check_minio", new=AsyncMock(return_value="ok")),
-        patch("ontoexplorer.api.admin._check_elk", new=AsyncMock(return_value="ok")),
-        patch("ontoexplorer.api.admin._celery_queue_depth", return_value=0),
-        patch("ontoexplorer.api.admin._search_redis", return_value=MagicMock(exists=lambda k: False)),
-        patch("ontoexplorer.api.admin._elk_redis", return_value=MagicMock(exists=lambda k: False)),
-        patch("ontoexplorer.api.admin._reasoning_status", new=AsyncMock(return_value="not_started")),
+        patch("ontoexplorer.api.admin.health._check_postgres", new=AsyncMock(return_value="ok")),
+        patch("ontoexplorer.api.admin.health._check_redis", return_value="ok"),
+        patch("ontoexplorer.api.admin.health._check_minio", new=AsyncMock(return_value="ok")),
+        patch("ontoexplorer.api.admin.health._check_elk", new=AsyncMock(return_value="ok")),
+        patch("ontoexplorer.api.admin.health._celery_queue_depth", return_value=0),
+        patch("ontoexplorer.api.admin.health._search_redis", return_value=MagicMock(exists=lambda k: False)),
+        patch("ontoexplorer.api.admin._common._elk_redis", return_value=MagicMock(exists=lambda k: False)),
+        patch("ontoexplorer.api.admin.health._reasoning_status", new=AsyncMock(return_value="not_started")),
     ):
         resp = await client.get(
             "/api/v1/admin/overview",
@@ -94,7 +94,7 @@ async def test_auth_me_includes_is_admin(client, user_and_key):
 @pytest.mark.anyio
 async def test_diff_status_for_pair_missing(db_session):
     """No OntologyDiff row → status='missing'."""
-    from ontoexplorer.api.admin import _diff_status_for_pair
+    from ontoexplorer.api.admin._common import _diff_status_for_pair
     from ontoexplorer.models.db import Ontology, OntologyVersion
 
     ont = Ontology(iri="http://example.org/ds-missing.owl")
@@ -113,7 +113,7 @@ async def test_diff_status_for_pair_missing(db_session):
 @pytest.mark.anyio
 async def test_diff_status_for_pair_ready(db_session):
     """Ready diff with inferred_status ready on both sides → 'ready'."""
-    from ontoexplorer.api.admin import _diff_status_for_pair
+    from ontoexplorer.api.admin._common import _diff_status_for_pair
     from ontoexplorer.models.db import Ontology, OntologyVersion, OntologyDiff
 
     ont = Ontology(iri="http://example.org/ds-ready.owl")
@@ -137,7 +137,7 @@ async def test_diff_status_for_pair_ready(db_session):
 @pytest.mark.anyio
 async def test_diff_status_for_pair_pending(db_session):
     """OntologyDiff.status='pending' → 'pending'."""
-    from ontoexplorer.api.admin import _diff_status_for_pair
+    from ontoexplorer.api.admin._common import _diff_status_for_pair
     from ontoexplorer.models.db import Ontology, OntologyVersion, OntologyDiff
 
     ont = Ontology(iri="http://example.org/ds-pending.owl")
@@ -158,7 +158,7 @@ async def test_diff_status_for_pair_pending(db_session):
 @pytest.mark.anyio
 async def test_diff_status_for_pair_failed(db_session):
     """OntologyDiff.status='failed' → 'failed'."""
-    from ontoexplorer.api.admin import _diff_status_for_pair
+    from ontoexplorer.api.admin._common import _diff_status_for_pair
     from ontoexplorer.models.db import Ontology, OntologyVersion, OntologyDiff
 
     ont = Ontology(iri="http://example.org/ds-failed.owl")
@@ -179,7 +179,7 @@ async def test_diff_status_for_pair_failed(db_session):
 @pytest.mark.anyio
 async def test_diff_status_for_pair_stale_when_inferred_missing(db_session):
     """Ready diff with inferred_status='missing' for a side whose reason job is 'done' → 'stale'."""
-    from ontoexplorer.api.admin import _diff_status_for_pair
+    from ontoexplorer.api.admin._common import _diff_status_for_pair
     from ontoexplorer.models.db import Ontology, OntologyVersion, OntologyDiff, Job
 
     ont = Ontology(iri="http://example.org/ds-stale.owl")
@@ -205,7 +205,7 @@ async def test_admin_versions_returns_all_versions_newest_first(client, user_and
     """GET /admin/ontologies/{id}/versions returns all versions, newest first."""
     from datetime import datetime, timezone, timedelta
     from ontoexplorer.models.db import Ontology, OntologyVersion
-    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
     _, raw_key = user_and_key
 
     ont = Ontology(iri="http://example.org/av1.owl", shortname="av1")
@@ -217,8 +217,8 @@ async def test_admin_versions_returns_all_versions_newest_first(client, user_and
     await db_session.commit()
 
     with (
-        patch("ontoexplorer.api.admin._search_redis", return_value=MagicMock(exists=lambda k: False)),
-        patch("ontoexplorer.api.admin._reasoning_status", new=AsyncMock(return_value="not_started")),
+        patch("ontoexplorer.api.admin.versions._search_redis", return_value=MagicMock(exists=lambda k: False)),
+        patch("ontoexplorer.api.admin.versions._reasoning_status", new=AsyncMock(return_value="not_started")),
     ):
         resp = await client.get(
             f"/api/v1/admin/ontologies/{ont.id}/versions",
@@ -246,7 +246,7 @@ async def test_admin_versions_returns_all_versions_newest_first(client, user_and
 @pytest.mark.anyio
 async def test_admin_versions_404_for_unknown_ontology(client, user_and_key, monkeypatch):
     """Unknown ontology_id → 404."""
-    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
     _, raw_key = user_and_key
     resp = await client.get(
         "/api/v1/admin/ontologies/nonexistent-id/versions",
@@ -273,7 +273,7 @@ async def test_admin_versions_requires_admin(client, user_and_key, db_session):
 @pytest.mark.anyio
 async def test_admin_version_action_index_queues_task(client, user_and_key, monkeypatch, db_session):
     from ontoexplorer.models.db import Ontology, OntologyVersion
-    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
     _, raw_key = user_and_key
 
     ont = Ontology(iri="http://example.org/va-idx.owl")
@@ -296,7 +296,7 @@ async def test_admin_version_action_index_queues_task(client, user_and_key, monk
 @pytest.mark.anyio
 async def test_admin_version_action_embed_queues_task(client, user_and_key, monkeypatch, db_session):
     from ontoexplorer.models.db import Ontology, OntologyVersion
-    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
     _, raw_key = user_and_key
 
     ont = Ontology(iri="http://example.org/va-emb.owl")
@@ -319,7 +319,7 @@ async def test_admin_version_action_embed_queues_task(client, user_and_key, monk
 @pytest.mark.anyio
 async def test_admin_version_action_reason_queues_task(client, user_and_key, monkeypatch, db_session):
     from ontoexplorer.models.db import Ontology, OntologyVersion
-    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
     _, raw_key = user_and_key
 
     ont = Ontology(iri="http://example.org/va-rsn.owl")
@@ -341,7 +341,7 @@ async def test_admin_version_action_reason_queues_task(client, user_and_key, mon
 
 @pytest.mark.anyio
 async def test_admin_version_action_404_for_unknown_version(client, user_and_key, monkeypatch):
-    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
     _, raw_key = user_and_key
     resp = await client.post(
         "/api/v1/admin/versions/no-such-vid/index",
@@ -353,7 +353,7 @@ async def test_admin_version_action_404_for_unknown_version(client, user_and_key
 @pytest.mark.anyio
 async def test_admin_version_action_ingest_uses_source_url(client, user_and_key, monkeypatch, db_session):
     from ontoexplorer.models.db import Ontology, OntologyVersion
-    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
     _, raw_key = user_and_key
 
     ont = Ontology(iri="http://example.org/va-ing.owl", owner_id=None)
@@ -383,7 +383,7 @@ async def test_admin_version_action_ingest_uses_source_url(client, user_and_key,
 async def test_admin_version_action_ingest_falls_back_to_iri(client, user_and_key, monkeypatch, db_session):
     """No source_url → falls back to ontology IRI with content negotiation."""
     from ontoexplorer.models.db import Ontology, OntologyVersion
-    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
     _, raw_key = user_and_key
 
     ont = Ontology(iri="http://example.org/has-iri.owl", owner_id=None)
@@ -408,7 +408,7 @@ async def test_admin_version_action_ingest_falls_back_to_iri(client, user_and_ke
 async def test_admin_version_action_ingest_422_when_no_source(client, user_and_key, monkeypatch, db_session):
     """No source_url and no IRI on the parent → 422."""
     from ontoexplorer.models.db import Ontology, OntologyVersion
-    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
     _, raw_key = user_and_key
 
     ont = Ontology(iri="", owner_id=None)  # blank IRI
@@ -426,7 +426,7 @@ async def test_admin_version_action_ingest_422_when_no_source(client, user_and_k
 @pytest.mark.anyio
 async def test_admin_queue_diff_dispatches_compute_diff(client, user_and_key, monkeypatch, db_session):
     from ontoexplorer.models.db import Ontology, OntologyVersion
-    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
     _, raw_key = user_and_key
 
     ont = Ontology(iri="http://example.org/dq.owl")
@@ -453,7 +453,7 @@ async def test_admin_queue_diff_422_when_versions_belong_to_different_ontologies
     client, user_and_key, monkeypatch, db_session
 ):
     from ontoexplorer.models.db import Ontology, OntologyVersion
-    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
     _, raw_key = user_and_key
 
     o1 = Ontology(iri="http://example.org/dq-a.owl")
@@ -479,7 +479,7 @@ async def test_admin_recompute_all_diffs_queues_consecutive_pairs(
     """Three versions → two consecutive pairs queued."""
     from datetime import datetime, timedelta, timezone
     from ontoexplorer.models.db import Ontology, OntologyVersion
-    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
     _, raw_key = user_and_key
 
     ont = Ontology(iri="http://example.org/rcad.owl")
@@ -512,7 +512,7 @@ async def test_admin_recompute_all_diffs_single_version_returns_zero(
     client, user_and_key, monkeypatch, db_session
 ):
     from ontoexplorer.models.db import Ontology, OntologyVersion
-    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
     _, raw_key = user_and_key
 
     ont = Ontology(iri="http://example.org/rcad-one.owl")
