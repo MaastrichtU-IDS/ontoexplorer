@@ -137,6 +137,37 @@ def entity_to_v2_class(entity: dict, ontology: Any, *, request: Request, lang: s
     return v1
 
 
+def _v2_type_tag(entity_type: str) -> list[str]:
+    """Map internal entity type string to the OLS v2 type array."""
+    if entity_type in ("object_property", "data_property", "annotation_property"):
+        return ["property", "entity"]
+    if entity_type == "individual":
+        return ["individual", "entity"]
+    # default: class
+    return ["class", "entity"]
+
+
+def entity_to_v2(
+    entity: dict,
+    ontology: Any,
+    *,
+    request: Request,
+    lang: str | None = None,
+    resource_kind: Literal["terms", "properties", "individuals"] = "terms",
+) -> dict[str, Any]:
+    """V2 flat shape with type derived from the entity's own ``type`` field.
+
+    Use this for /v2/properties, /v2/individuals, and /v2/entities endpoints
+    where the OLS type tag must reflect the actual entity type.
+    """
+    v1 = entity_to_v1_term(entity, ontology,
+                           request=request, is_obsolete=False, is_root=False,
+                           has_children=False, lang=lang, resource_kind=resource_kind)
+    v1.pop("_links", None)
+    v1["type"] = _v2_type_tag(entity.get("type", "class"))
+    return v1
+
+
 def ontology_to_v1(ontology: Any, version: Any, meta_counts: dict, *, request: Request) -> dict[str, Any]:
     base = str(request.base_url).rstrip("/")
     return {

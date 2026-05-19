@@ -38,6 +38,7 @@ def fake_redis():
         patch("ontoexplorer.api.ols.terms._get_redis", return_value=r),
         patch("ontoexplorer.api.ols.properties._get_redis", return_value=r),
         patch("ontoexplorer.api.ols.individuals._get_redis", return_value=r),
+        patch("ontoexplorer.api.ols.classes_v2._get_redis", return_value=r),
     ):
         yield r
 
