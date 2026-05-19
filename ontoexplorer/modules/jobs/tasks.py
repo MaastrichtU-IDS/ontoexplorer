@@ -253,11 +253,16 @@ def compute_ontology_comparison(version_from_id: str, version_to_id: str) -> dic
 
             try:
                 store = get_store()
+                from ontoexplorer.modules.diff.compute import collect_inferred_status
+                inferred_status = await collect_inferred_status(
+                    db, version_from_id, version_to_id,
+                )
                 summary, diff_data = await asyncio.to_thread(
                     _run_comparison,
                     store,
                     str(from_ver.ontology_id), version_from_id,
                     str(to_ver.ontology_id),   version_to_id,
+                    inferred_status=inferred_status,
                 )
                 row.summary = summary
                 row.diff_data = diff_data
@@ -470,12 +475,16 @@ async def _run_reasoning(db, version_id: str) -> dict:
 
 
 async def _requeue_stale_diffs_for_version(db, version_id: str) -> None:
-    """Re-queue compute_diff for any OntologyDiff row where this version's
-    summary inferred_status isn't 'ready'."""
-    from sqlalchemy import or_, select
-    from ontoexplorer.models.db import OntologyDiff
+    """Re-queue compute_diff / compute_ontology_comparison for any row whose
+    stored inferred_status for this version isn't 'ready'.
 
-    result = await db.execute(
+    Covers both OntologyDiff (intra-ontology version diff) and OntologyComparison
+    (cross-ontology comparison; includes same-ontology version comparisons from /compare).
+    """
+    from sqlalchemy import or_, select
+    from ontoexplorer.models.db import OntologyComparison, OntologyDiff
+
+    diffs = (await db.execute(
         select(OntologyDiff).where(
             or_(
                 OntologyDiff.version_from_id == version_id,
@@ -483,13 +492,12 @@ async def _requeue_stale_diffs_for_version(db, version_id: str) -> None:
             ),
             OntologyDiff.status == "ready",
         )
-    )
-    rows = result.scalars().all()
-    for row in rows:
+    )).scalars().all()
+    for row in diffs:
         inferred_status = (row.summary or {}).get("inferred_status", {})
         side = "from_version" if row.version_from_id == version_id else "to_version"
         if inferred_status.get(side) == "ready":
-            continue  # already fresh
+            continue
         log.info(
             "requeuing_stale_diff",
             diff_id=row.id,
@@ -498,6 +506,29 @@ async def _requeue_stale_diffs_for_version(db, version_id: str) -> None:
             current_status=inferred_status.get(side),
         )
         compute_diff.delay(row.version_from_id, row.version_to_id, row.ontology_id)
+
+    comparisons = (await db.execute(
+        select(OntologyComparison).where(
+            or_(
+                OntologyComparison.version_from_id == version_id,
+                OntologyComparison.version_to_id == version_id,
+            ),
+            OntologyComparison.status == "ready",
+        )
+    )).scalars().all()
+    for row in comparisons:
+        inferred_status = (row.summary or {}).get("inferred_status", {})
+        side = "from_version" if row.version_from_id == version_id else "to_version"
+        if inferred_status.get(side) == "ready":
+            continue
+        log.info(
+            "requeuing_stale_comparison",
+            comparison_id=row.id,
+            version_id=version_id,
+            side=side,
+            current_status=inferred_status.get(side),
+        )
+        compute_ontology_comparison.delay(row.version_from_id, row.version_to_id)
 
 
 @celery_app.task(name="ontoexplorer.load_imports", bind=True, max_retries=1)
@@ -845,17 +876,17 @@ def refresh_stale_inferred_diffs() -> dict:
 
 
 async def _refresh_stale_inferred_diffs_body(db) -> int:
-    """Returns the count of diffs re-queued."""
+    """Returns the count of diffs/comparisons re-queued."""
     from sqlalchemy import select
-    from ontoexplorer.models.db import OntologyDiff
+    from ontoexplorer.models.db import OntologyComparison, OntologyDiff
     from ontoexplorer.modules.diff.compute import _reasoning_status_for_version
 
-    result = await db.execute(
-        select(OntologyDiff).where(OntologyDiff.status == "ready")
-    )
-    rows = result.scalars().all()
     requeued = 0
-    for row in rows:
+
+    diffs = (await db.execute(
+        select(OntologyDiff).where(OntologyDiff.status == "ready")
+    )).scalars().all()
+    for row in diffs:
         inferred_status = (row.summary or {}).get("inferred_status", {})
         for side, vid in (
             ("from_version", row.version_from_id),
@@ -874,5 +905,30 @@ async def _refresh_stale_inferred_diffs_body(db) -> int:
                         row.version_from_id, row.version_to_id, row.ontology_id
                     )
                     requeued += 1
+                    break
+
+    comparisons = (await db.execute(
+        select(OntologyComparison).where(OntologyComparison.status == "ready")
+    )).scalars().all()
+    for row in comparisons:
+        inferred_status = (row.summary or {}).get("inferred_status", {})
+        for side, vid in (
+            ("from_version", row.version_from_id),
+            ("to_version", row.version_to_id),
+        ):
+            if inferred_status.get(side) != "ready":
+                current = await _reasoning_status_for_version(db, vid)
+                if current == "ready":
+                    log.info(
+                        "beat_requeue_stale_comparison",
+                        comparison_id=row.id,
+                        version_id=vid,
+                        side=side,
+                    )
+                    compute_ontology_comparison.delay(
+                        row.version_from_id, row.version_to_id
+                    )
+                    requeued += 1
+                    break
                     break  # one re-queue per row is enough
     return requeued
