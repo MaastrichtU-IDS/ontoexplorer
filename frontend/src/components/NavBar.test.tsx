@@ -19,9 +19,9 @@ function wrap(ui: React.ReactElement) {
 test('renders logo and nav links', () => {
   wrap(<NavBar />)
   expect(screen.getByText('OntoExplorer')).toBeInTheDocument()
-  expect(screen.getByText('Browse')).toBeInTheDocument()
-  expect(screen.getByText('Search')).toBeInTheDocument()
-  expect(screen.getByText('Dashboard')).toBeInTheDocument()
+  expect(screen.getByText('Ontologies')).toBeInTheDocument()
+  expect(screen.getByText('Coverage')).toBeInTheDocument()
+  expect(screen.getByText('Compare')).toBeInTheDocument()
 })
 
 test('shows Sign in when unauthenticated', () => {
