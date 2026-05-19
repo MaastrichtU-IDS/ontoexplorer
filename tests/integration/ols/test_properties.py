@@ -69,7 +69,7 @@ async def test_get_property_detail_double_encoded_iri(
     body = resp.json()
     assert body["iri"] == iri
     assert body["label"] == "hasRelation"
-    assert body["ontology_name"] == ontology.id
+    assert body["ontology_name"] == ontology.shortname
     assert "_links" in body
     assert "self" in body["_links"]
 

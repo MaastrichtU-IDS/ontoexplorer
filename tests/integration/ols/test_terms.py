@@ -70,7 +70,7 @@ async def test_get_term_detail(client: AsyncClient, sample_term):
     body = resp.json()
     assert body["iri"] == iri
     assert body["label"] == "Foo"
-    assert body["ontology_name"] == ontology.id
+    assert body["ontology_name"] == ontology.shortname
     assert "_links" in body
     assert "self" in body["_links"]
 

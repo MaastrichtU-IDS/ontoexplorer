@@ -654,11 +654,13 @@ async def find_terms_by_id_defining_ontology(
         entity = await _load_entity(str(v.id), iri)
         if not entity:
             continue
-        # Include only if source matches the ontology (i.e. this is the defining ontology)
-        source = entity.get("source", "")
-        if source and source != str(v.ontology_id):
-            continue
         ontology = await get_ontology_or_404(db, str(v.ontology_id))
+        # Include only if source matches the ontology (i.e. this is the defining ontology).
+        # `source` is the shortname (or empty for the ontology's own terms);
+        # accept either form for backwards compat with cached entries.
+        source = entity.get("source", "")
+        if source and source != ontology.shortname and source != str(v.ontology_id):
+            continue
         items.append(
             entity_to_v1_term(
                 entity, ontology,

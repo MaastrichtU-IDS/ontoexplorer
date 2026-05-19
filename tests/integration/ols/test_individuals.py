@@ -54,7 +54,7 @@ async def test_get_individual_detail(client: AsyncClient, sample_individual):
     body = resp.json()
     assert body["iri"] == iri
     assert body["label"] == "Alice"
-    assert body["ontology_name"] == ontology.id
+    assert body["ontology_name"] == ontology.shortname
     assert "_links" in body
     assert "self" in body["_links"]
 

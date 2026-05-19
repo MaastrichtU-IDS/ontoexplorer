@@ -22,9 +22,9 @@ async def test_get_ontology_detail(client: AsyncClient, sample_ontology):
     resp = await client.get(f"/ols/api/ontologies/{sample_ontology.id}")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["ontologyId"] == sample_ontology.id
+    assert body["ontologyId"] == sample_ontology.shortname
     assert body["status"] == "LOADED"
-    assert body["config"]["preferredPrefix"] == sample_ontology.id.upper()
+    assert body["config"]["preferredPrefix"] == sample_ontology.shortname.upper()
     assert "numberOfTerms" in body
     assert "_links" in body
 
@@ -51,7 +51,7 @@ async def test_v2_get_ontology_detail(client: AsyncClient, sample_ontology):
     resp = await client.get(f"/ols/api/v2/ontologies/{sample_ontology.id}")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["ontologyId"] == sample_ontology.id
+    assert body["ontologyId"] == sample_ontology.shortname
     assert "_links" not in body
 
 

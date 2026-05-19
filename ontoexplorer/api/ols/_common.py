@@ -3,12 +3,34 @@ from fastapi import HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from ontoexplorer.models.db import Ontology, OntologyVersion
-from ontoexplorer.modules.search.versions import latest_ready_version as get_latest_version_or_404  # noqa: F401
+from ontoexplorer.modules.search.versions import latest_ready_version
+
+
+async def get_latest_version_or_404(db: AsyncSession, ontology_id: str) -> OntologyVersion:
+    """Resolve the latest ready version by ontology shortname OR UUID.
+
+    Wraps the canonical `latest_ready_version` helper (which expects a UUID
+    FK) so OLS routes can be called with either form transparently.
+    """
+    ontology = await get_ontology_or_404(db, ontology_id)
+    return await latest_ready_version(db, ontology.id)
 
 
 async def get_ontology_or_404(db: AsyncSession, ontology_id: str) -> Ontology:
-    o = (await db.execute(select(Ontology).where(Ontology.id == ontology_id))).scalar_one_or_none()
-    if not o:
+    """Resolve an ontology by shortname OR UUID.
+
+    OLS4 convention uses short codes (e.g. 'efo', 'go') in URL paths. We
+    accept both forms: try shortname first (the canonical user-facing
+    identifier), fall back to UUID for any client still using internal IDs.
+    """
+    o = (await db.execute(
+        select(Ontology).where(Ontology.shortname == ontology_id)
+    )).scalar_one_or_none()
+    if o is None:
+        o = (await db.execute(
+            select(Ontology).where(Ontology.id == ontology_id)
+        )).scalar_one_or_none()
+    if o is None:
         raise HTTPException(status_code=404, detail=f"Ontology '{ontology_id}' not found")
     return o
 

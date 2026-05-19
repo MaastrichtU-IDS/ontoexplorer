@@ -100,7 +100,7 @@ def entity_to_v1_term(
     synonyms = _parse_json_or_empty(entity.get("synonyms"))
     definitions = _parse_json_or_empty(entity.get("definitions"))
     short = entity.get("short") or ""
-    ontology_id = ontology.id
+    ontology_id = getattr(ontology, "shortname", None) or ontology.id
     return {
         "iri": entity["iri"],
         "label": _pick_label(labels, lang, entity.get("primary_label") or entity.get("label") or ""),
@@ -109,7 +109,11 @@ def entity_to_v1_term(
         "ontology_name": ontology_id,
         "ontology_prefix": ontology_id.upper(),
         "ontology_iri": ontology.iri,
-        "is_defining_ontology": entity.get("source") == ontology_id or not entity.get("source"),
+        "is_defining_ontology": (
+            entity.get("source") == ontology_id
+            or entity.get("source") == ontology.id  # backwards compat: pre-shortname cached entries
+            or not entity.get("source")
+        ),
         "description": _filter_by_lang(definitions, lang),
         "synonyms": _filter_by_lang(synonyms, lang),
         "annotation": {},
@@ -170,8 +174,9 @@ def entity_to_v2(
 
 def ontology_to_v1(ontology: Any, version: Any, meta_counts: dict, *, request: Request) -> dict[str, Any]:
     base = str(request.base_url).rstrip("/")
+    short = getattr(ontology, "shortname", None) or ontology.id
     return {
-        "ontologyId": ontology.id,
+        "ontologyId": short,
         "loaded": version.created_at.isoformat() if hasattr(version.created_at, "isoformat") else str(version.created_at),
         "updated": version.created_at.isoformat() if hasattr(version.created_at, "isoformat") else str(version.created_at),
         "status": "LOADED",
@@ -181,10 +186,10 @@ def ontology_to_v1(ontology: Any, version: Any, meta_counts: dict, *, request: R
         "numberOfProperties": int(meta_counts.get("property_count", 0)),
         "numberOfIndividuals": int(meta_counts.get("individual_count", 0)),
         "config": {
-            "id": ontology.id,
-            "ontologyId": ontology.id,
-            "preferredPrefix": ontology.id.upper(),
-            "title": getattr(ontology, "title", None) or ontology.id,
+            "id": short,
+            "ontologyId": short,
+            "preferredPrefix": short.upper(),
+            "title": getattr(ontology, "title", None) or short,
             "description": getattr(ontology, "description", None) or "",
             "homepage": "",
             "mailingList": "",
@@ -208,10 +213,10 @@ def ontology_to_v1(ontology: Any, version: Any, meta_counts: dict, *, request: R
             "annotations": {},
         },
         "_links": {
-            "self":       {"href": f"{base}/ols/api/ontologies/{ontology.id}"},
-            "terms":      {"href": f"{base}/ols/api/ontologies/{ontology.id}/terms"},
-            "properties": {"href": f"{base}/ols/api/ontologies/{ontology.id}/properties"},
-            "individuals":{"href": f"{base}/ols/api/ontologies/{ontology.id}/individuals"},
+            "self":       {"href": f"{base}/ols/api/ontologies/{short}"},
+            "terms":      {"href": f"{base}/ols/api/ontologies/{short}/terms"},
+            "properties": {"href": f"{base}/ols/api/ontologies/{short}/properties"},
+            "individuals":{"href": f"{base}/ols/api/ontologies/{short}/individuals"},
         },
     }
 

@@ -140,7 +140,7 @@ async def test_search_group_field_iri_dedups(
         _iri_key(vid2, iri),
         mapping={
             "iri": iri, "primary_label": "Foo", "label": "Foo",
-            "short": "Foo", "type": "class", "source": str(ontology.id),
+            "short": "Foo", "type": "class", "source": ontology.shortname,
             "labels": json.dumps([{"value": "Foo", "lang": "en"}]),
             "synonyms": json.dumps([]), "definitions": json.dumps([]),
         },
