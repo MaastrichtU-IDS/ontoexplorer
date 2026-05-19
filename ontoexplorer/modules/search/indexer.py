@@ -482,6 +482,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
     _populate_coverage_cache(
         version_id, entities, deprecated_iris, labels_by_iri, defs_by_iri, r
     )
+    _populate_owl_profile_cache(version_id, ontology_id, r)
 
     return IndexStats(
         version_id=version_id,
@@ -769,6 +770,18 @@ def _populate_coverage_cache(
     r.setex(coverage_cache_key(version_id), _SEARCH_TTL, json.dumps(payload))
 
 
+def _populate_owl_profile_cache(version_id: str, ontology_id: str, r: "redis.Redis") -> None:
+    """Run OWL 2 profile detection and write result to Redis with the same TTL as stats."""
+    from ontoexplorer.modules.owl_profile.detector import detect_profiles
+    from ontoexplorer.modules.owl_profile.cache import owl_profile_cache_key
+    from ontoexplorer.clients.oxigraph import get_store
+    from ontoexplorer.clients.oxigraph import graph_iri as _graph_iri
+    store = get_store()
+    g = _graph_iri(ontology_id, version_id)
+    payload = detect_profiles(store, graph_iri=g, ontology_id=ontology_id, version_id=version_id)
+    r.setex(owl_profile_cache_key(version_id), _SEARCH_TTL, json.dumps(payload))
+
+
 def invalidate_index(version_id: str) -> None:
     """Delete all search index keys for a version."""
     r = _get_redis()
@@ -783,6 +796,8 @@ def invalidate_index(version_id: str) -> None:
     to_delete.append(_stats_cache_key(version_id))
     from ontoexplorer.modules.search.coverage import coverage_cache_key
     to_delete.append(coverage_cache_key(version_id))
+    from ontoexplorer.modules.owl_profile.cache import owl_profile_cache_key
+    to_delete.append(owl_profile_cache_key(version_id))
     keys_present = [k for k in to_delete if r.exists(k)]
     if keys_present:
         r.delete(*keys_present)
