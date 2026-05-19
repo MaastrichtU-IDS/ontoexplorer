@@ -1039,3 +1039,59 @@ def test_render_axiom_custom_predicate_NOT_in_annotation_set_returns_none():
         annotation_props=frozenset(),  # not declared as annotation
     )
     assert out is None
+
+
+def test_render_frame_op_added_prefixes_every_line_with_plus():
+    """When op='added', header, keyword, and axiom lines all start with '+ '."""
+    iri = "http://example.org/Pizza"
+    food = ox.NamedNode("http://example.org/Food")
+    store = _store()
+    frame = render_frame(
+        store, iri, "class",
+        axiom_changes=[
+            {"op": "added", "predicate": _RDFS_SUB_N.value, "object": food, "graph": _GRAPH},
+        ],
+        labels={},
+        op="added",
+    )
+    assert frame is not None
+    lines = frame.split("\n")
+    assert all(line.startswith("+ ") for line in lines), \
+        f"every line should start with '+ ', got:\n{frame}"
+
+
+def test_render_frame_op_removed_prefixes_every_line_with_minus():
+    iri = "http://example.org/Pizza"
+    food = ox.NamedNode("http://example.org/Food")
+    store = _store()
+    frame = render_frame(
+        store, iri, "class",
+        axiom_changes=[
+            {"op": "removed", "predicate": _RDFS_SUB_N.value, "object": food, "graph": _GRAPH},
+        ],
+        labels={},
+        op="removed",
+    )
+    assert frame is not None
+    lines = frame.split("\n")
+    assert all(line.startswith("- ") for line in lines), \
+        f"every line should start with '- ', got:\n{frame}"
+
+
+def test_render_frame_op_modified_preserves_phase1_behavior():
+    """op='modified' (the default) keeps the Phase 1 behavior:
+    header and keyword lines have no prefix; axiom lines use per-change marker."""
+    iri = "http://example.org/Pizza"
+    food = ox.NamedNode("http://example.org/Food")
+    store = _store()
+    frame = render_frame(
+        store, iri, "class",
+        axiom_changes=[
+            {"op": "added", "predicate": _RDFS_SUB_N.value, "object": food, "graph": _GRAPH},
+        ],
+        labels={},
+    )
+    assert frame is not None
+    lines = frame.split("\n")
+    assert lines[0].startswith("Class: "), "header has no prefix in modified mode"
+    assert "+       Food" in frame, "axiom line uses per-change marker"

@@ -6,6 +6,7 @@ See docs/superpowers/specs/2026-05-17-manchester-diff-rendering-design.md.
 from __future__ import annotations
 
 import hashlib
+from typing import Literal
 
 import pyoxigraph as ox
 
@@ -638,26 +639,33 @@ def render_frame(
     axiom_changes: list[dict],
     *,
     labels: dict[str, str],
+    annotation_props: frozenset[str] = _BUILTIN_ANNOTATION_PROPS,
+    op: Literal["added", "removed", "modified"] = "modified",
 ) -> str | None:
-    """Render a Protégé-style Manchester frame for one modified entity.
+    """Render a Protégé-style Manchester frame for one diff entity.
 
     `axiom_changes` is a list of dicts with keys:
-      op:        'added' | 'removed'
-      predicate: str (predicate IRI)
+      op:        'added' | 'removed' (modified-mode uses per-axiom op)
+      predicate: str
       object:    ox.Term
-      graph:     ox.NamedNode (which named graph this change came from — needed
-                 because bnode IDs differ between from-graph and to-graph)
+      graph:     ox.NamedNode (which named graph this change came from)
+
+    `op` parameter:
+      - "modified" (default): Phase 1 behavior — header/keyword lines have
+        no prefix; axiom lines use the per-change op marker.
+      - "added" / "removed": uniform marker mode — EVERY line in the output
+        is prefixed with '+ ' or '- ' respectively. Used for fully-added
+        and fully-removed entities in the diff.
 
     Returns None when no axiom_changes produce a renderable line.
     """
-    # Render every change to a (keyword, op, line_text). Drop lines whose predicate
-    # isn't covered (render_axiom returns None) — they don't appear in the frame.
     rendered: list[tuple[str, str, str]] = []  # (keyword, op, text)
     for change in axiom_changes:
         line = render_axiom(
             store, change["graph"], entity_iri,
             change["predicate"], change["object"],
             labels=labels, entity_type=entity_type,
+            annotation_props=annotation_props,
         )
         if line is None:
             continue
@@ -665,46 +673,64 @@ def render_frame(
         rendered.append((keyword, change["op"], body))
 
     if not rendered:
-        return None
+        # In added/removed mode we still want a header-only frame for entities
+        # that have only the declaring rdf:type triple — the caller may pass
+        # an empty axiom_changes for a bare class. Detect via `op` parameter.
+        if op == "modified":
+            return None
+        # Fall through: render header only, uniformly prefixed.
 
-    # Group by keyword, preserving _FRAME_KEYWORD_ORDER. Unknown keywords go
-    # to the end in insertion order.
+    # Build the keyword order (annotations first, then logical, then per-type).
     keyword_order: list[str] = []
     seen: set[str] = set()
-    for pred, kw, types in _FRAME_KEYWORD_ORDER:
+    for _, kw, types in _FRAME_KEYWORD_ORDER:
         if (types is None or entity_type in types) and kw not in seen:
             keyword_order.append(kw)
             seen.add(kw)
-    # Always include 'Facts' last for individuals (assertion lines).
     if entity_type == "individual" and "Facts" not in seen:
         keyword_order.append("Facts")
         seen.add("Facts")
-    # Any leftover keywords we didn't anticipate.
     for kw, _, _ in rendered:
         if kw not in seen:
             keyword_order.append(kw)
             seen.add(kw)
 
-    # Build the frame. At this point `axiom_changes` is non-empty (else we
-    # returned None above), so we can safely take a graph from the first change
-    # to resolve the entity's label if not yet cached.
+    # Entity-label lookup needs ONE graph; prefer the first change's graph,
+    # else fall back to the to-graph mode (caller can pass a sentinel through
+    # axiom_changes when rendering a bare entity).
+    graph_for_label = axiom_changes[0]["graph"] if axiom_changes else None
     entity_keyword = _ENTITY_KEYWORD.get(entity_type, "Entity")
-    entity_label = iri_to_label(
-        store, axiom_changes[0]["graph"], entity_iri, labels=labels,
-    )
+    if graph_for_label is not None:
+        entity_label = iri_to_label(store, graph_for_label, entity_iri, labels=labels)
+    else:
+        entity_label = labels.get(entity_iri) or iri_to_label(
+            store, ox.NamedNode("urn:never-used"), entity_iri, labels=labels,
+        )
     lines: list[str] = [f"{entity_keyword}: {entity_label}  ({entity_iri})"]
 
     for kw in keyword_order:
-        kw_lines = [(op, body) for k, op, body in rendered if k == kw]
+        kw_lines = [(o, body) for k, o, body in rendered if k == kw]
         if not kw_lines:
             continue
         lines.append(f"    {kw}:")
-        # Removed first, then added, alphabetical within each.
-        removed = sorted([b for op, b in kw_lines if op == "removed"])
-        added   = sorted([b for op, b in kw_lines if op == "added"])
+        removed = sorted([b for o, b in kw_lines if o == "removed"])
+        added   = sorted([b for o, b in kw_lines if o == "added"])
         for body in removed:
             lines.append(f"-       {body}")
         for body in added:
             lines.append(f"+       {body}")
 
+    # Uniform-marker mode: replace per-line markers with the frame-level marker.
+    if op == "added":
+        return "\n".join(f"+ {strip_marker(line)}" for line in lines)
+    if op == "removed":
+        return "\n".join(f"- {strip_marker(line)}" for line in lines)
     return "\n".join(lines)
+
+
+def strip_marker(line: str) -> str:
+    """Strip a leading '-       ' or '+       ' marker (Phase 1 axiom line
+    prefix) so the frame-level marker in uniform mode replaces it cleanly."""
+    if line.startswith("-       ") or line.startswith("+       "):
+        return "      " + line[8:]  # preserve 6-space indent under keyword
+    return line
