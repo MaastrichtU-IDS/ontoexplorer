@@ -1,8 +1,23 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, OntologyComparison, ComparisonPending } from '../lib/api'
 
-function isPending(data: OntologyComparison | ComparisonPending | undefined): boolean {
-  return data?.status === 'pending'
+/**
+ * Returns the refetch interval (ms) for the cross-compare query, or false.
+ *  - 2 s while the comparison row is still being built (status='pending')
+ *  - 30 s while the comparison is ready but reasoning isn't ready for one or
+ *    both sides; the backend re-queues compute_diff when reasoning lands.
+ *  - false otherwise.
+ */
+function compareRefetchInterval(
+  data: OntologyComparison | ComparisonPending | undefined,
+): number | false {
+  if (!data) return false
+  if (data.status === 'pending') return 2000
+  const inferred = (data as OntologyComparison).summary?.inferred_status
+  if (inferred && (inferred.from_version !== 'ready' || inferred.to_version !== 'ready')) {
+    return 30_000
+  }
+  return false
 }
 
 /**
@@ -32,7 +47,7 @@ export function useArbitraryComparison(
         throw err
       }
     },
-    refetchInterval: (query) => isPending(query.state.data) ? 2000 : false,
+    refetchInterval: (query) => compareRefetchInterval(query.state.data),
     staleTime: 60_000,
   })
 }
