@@ -137,6 +137,44 @@ def test_known_datatypes_pass():
 
 
 # ---------------------------------------------------------------------------
+# Datatype restrictions on an allowed base are valid OWL 2 DL (not violations)
+# ---------------------------------------------------------------------------
+
+def test_datatype_restriction_on_allowed_base_passes():
+    """An anonymous rdfs:Datatype that restricts an OWL 2 datatype is legal OWL 2 DL."""
+    ttl = """
+    @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+    @prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix :     <http://example.org/> .
+    :age a owl:DatatypeProperty ;
+         rdfs:range [ a rdfs:Datatype ;
+                      owl:onDatatype xsd:decimal ;
+                      owl:withRestrictions ( [ xsd:minInclusive "0"^^xsd:decimal ] ) ] .
+    """
+    store = _store_from_turtle(ttl)
+    violations = _detect_bad_datatypes(store, None)
+    assert violations == [], (
+        f"xsd:decimal[>= 0] restriction is valid OWL 2 DL, got {violations}"
+    )
+
+
+def test_data_range_unionof_passes():
+    """A datatype unionOf (data range) is valid OWL 2 DL — not flagged."""
+    ttl = """
+    @prefix owl:  <http://www.w3.org/2002/07/owl#> .
+    @prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix :     <http://example.org/> .
+    :code a owl:DatatypeProperty ;
+          rdfs:range [ a rdfs:Datatype ; owl:unionOf ( xsd:string xsd:integer ) ] .
+    """
+    store = _store_from_turtle(ttl)
+    violations = _detect_bad_datatypes(store, None)
+    assert violations == [], f"Data range unionOf is valid OWL 2 DL, got {violations}"
+
+
+# ---------------------------------------------------------------------------
 # Test 6: el-only.ttl produces zero DL violations (full aggregator)
 # ---------------------------------------------------------------------------
 

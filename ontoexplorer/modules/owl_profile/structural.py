@@ -217,9 +217,19 @@ def _detect_bad_datatypes(
             ))
 
     # --- sub-check (b): explicit rdfs:Datatype declarations ---
+    # Exclude proper OWL 2 data ranges:
+    #   - datatype restrictions: owl:onDatatype to an allowed base
+    #   - data range unionOf / intersectionOf / oneOf / complementOf (DataRange)
+    # These are anonymous bnodes typed as rdfs:Datatype but are valid in OWL 2 DL.
     inner_decl = (
         "?dt a rdfs:Datatype . "
-        f"FILTER(?dt NOT IN ({allowed_in}))"
+        f"FILTER(?dt NOT IN ({allowed_in})) "
+        "FILTER NOT EXISTS { ?dt owl:onDatatype ?_base . "
+        f"  FILTER(?_base IN ({allowed_in})) }} "
+        "FILTER NOT EXISTS { ?dt owl:unionOf ?_u } "
+        "FILTER NOT EXISTS { ?dt owl:intersectionOf ?_i } "
+        "FILTER NOT EXISTS { ?dt owl:oneOf ?_o } "
+        "FILTER NOT EXISTS { ?dt owl:complementOf ?_c }"
     )
     sparql_decl = (
         f"{_PREFIXES}"
@@ -284,9 +294,19 @@ def _detect_bad_datatypes_with_terms(
             results.append((v, p_term if isinstance(p_term, pyoxigraph.NamedNode) else None, o_term))
 
     # sub-check (b): explicit rdfs:Datatype declarations
+    # Exclude proper OWL 2 data ranges:
+    #   - datatype restrictions: owl:onDatatype to an allowed base
+    #   - data range unionOf / intersectionOf / oneOf / complementOf (DataRange)
+    # These are anonymous bnodes typed as rdfs:Datatype but are valid in OWL 2 DL.
     inner_decl = (
         "?dt a rdfs:Datatype . "
-        f"FILTER(?dt NOT IN ({allowed_in}))"
+        f"FILTER(?dt NOT IN ({allowed_in})) "
+        "FILTER NOT EXISTS { ?dt owl:onDatatype ?_base . "
+        f"  FILTER(?_base IN ({allowed_in})) }} "
+        "FILTER NOT EXISTS { ?dt owl:unionOf ?_u } "
+        "FILTER NOT EXISTS { ?dt owl:intersectionOf ?_i } "
+        "FILTER NOT EXISTS { ?dt owl:oneOf ?_o } "
+        "FILTER NOT EXISTS { ?dt owl:complementOf ?_c }"
     )
     sparql_decl = (
         f"{_PREFIXES}"
