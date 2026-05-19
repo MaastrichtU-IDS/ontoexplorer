@@ -716,3 +716,59 @@ async def test_inferred_diff_skipped_when_reasoning_pending(
     )
     assert summary["inferred_status"]["from_version"] == "pending"
     assert summary["inferred_axiom_changes"] == 0
+
+
+# ---------------------------------------------------------------------------
+# _requeue_stale_diffs_for_version (Phase 4 Task 5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_reasoning_completion_requeues_stale_diffs(db_session, monkeypatch):
+    """When reasoning completes for a version, any diff row whose summary
+    shows inferred_status != 'ready' for that version should be re-queued."""
+    from ontoexplorer.models.db import OntologyVersion, OntologyDiff, Ontology
+    from ontoexplorer.modules.jobs.tasks import _requeue_stale_diffs_for_version
+
+    # Setup: two versions, one diff with inferred_status.from_version='missing'.
+    ont = Ontology(iri="http://example.org/o.owl")
+    db_session.add(ont)
+    await db_session.flush()
+    v1 = OntologyVersion(
+        ontology_id=ont.id, minio_key="k1", sha256="rs1",
+        format="turtle", status="ready",
+    )
+    v2 = OntologyVersion(
+        ontology_id=ont.id, minio_key="k2", sha256="rs2",
+        format="turtle", status="ready",
+    )
+    db_session.add(v1)
+    db_session.add(v2)
+    await db_session.flush()
+    diff = OntologyDiff(
+        ontology_id=ont.id,
+        version_from_id=v1.id,
+        version_to_id=v2.id,
+        status="ready",
+        summary={
+            "asserted_axiom_changes": 5,
+            "inferred_axiom_changes": 0,
+            "inferred_status": {"from_version": "missing", "to_version": "ready"},
+        },
+    )
+    db_session.add(diff)
+    await db_session.commit()
+
+    queued: list[tuple[str, str, str]] = []
+
+    def fake_delay(from_vid, to_vid, ontology_id):
+        queued.append((from_vid, to_vid, ontology_id))
+
+    monkeypatch.setattr(
+        "ontoexplorer.modules.jobs.tasks.compute_diff.delay",
+        fake_delay,
+    )
+
+    await _requeue_stale_diffs_for_version(db_session, v1.id)
+    assert len(queued) == 1
+    assert queued[0] == (v1.id, v2.id, ont.id)

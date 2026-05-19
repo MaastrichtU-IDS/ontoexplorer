@@ -454,7 +454,46 @@ async def _run_reasoning(db, version_id: str) -> dict:
         "inferred_axiom_count": inferred_count,
     })
 
+    # Re-queue any diffs whose inferred half is stale for this version.
+    try:
+        await _requeue_stale_diffs_for_version(db, version_id)
+    except Exception:
+        log.exception("requeue_stale_diffs_failed", version_id=version_id)
+        # Don't fail the reasoning task — the beat safety net will catch missed
+        # re-queues.
+
     return {"version_id": version_id, "inferred_count": inferred_count}
+
+
+async def _requeue_stale_diffs_for_version(db, version_id: str) -> None:
+    """Re-queue compute_diff for any OntologyDiff row where this version's
+    summary inferred_status isn't 'ready'."""
+    from sqlalchemy import or_, select
+    from ontoexplorer.models.db import OntologyDiff
+
+    result = await db.execute(
+        select(OntologyDiff).where(
+            or_(
+                OntologyDiff.version_from_id == version_id,
+                OntologyDiff.version_to_id == version_id,
+            ),
+            OntologyDiff.status == "ready",
+        )
+    )
+    rows = result.scalars().all()
+    for row in rows:
+        inferred_status = (row.summary or {}).get("inferred_status", {})
+        side = "from_version" if row.version_from_id == version_id else "to_version"
+        if inferred_status.get(side) == "ready":
+            continue  # already fresh
+        log.info(
+            "requeuing_stale_diff",
+            diff_id=row.id,
+            version_id=version_id,
+            side=side,
+            current_status=inferred_status.get(side),
+        )
+        compute_diff.delay(row.version_from_id, row.version_to_id, row.ontology_id)
 
 
 @celery_app.task(name="ontoexplorer.load_imports", bind=True, max_retries=1)
