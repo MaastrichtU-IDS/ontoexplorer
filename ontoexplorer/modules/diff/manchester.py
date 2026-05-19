@@ -117,6 +117,7 @@ ManchesterToken = TextToken | IriToken
 
 class ManchesterLine(TypedDict):
     op: Literal["added", "removed"] | None
+    source: Literal["asserted", "inferred"] | None
     tokens: list[ManchesterToken]
 
 
@@ -752,7 +753,8 @@ def render_frame(
         keyword lines) gets op=<that value>. Used for fully-added / fully-removed
         entities so the frontend can apply a uniform line marker.
     """
-    rendered: list[tuple[str, str, list[ManchesterToken]]] = []  # (keyword, op, body-tokens)
+    rendered: list[tuple[str, str, list[ManchesterToken], Literal["asserted", "inferred"]]] = []
+    # (keyword, op, body-tokens, source)
     for change in axiom_changes:
         line = render_axiom(
             store, change["graph"], entity_iri,
@@ -767,7 +769,8 @@ def render_frame(
         kw_part, _, body_text = line[0]["v"].partition(": ")
         body_tokens: list[ManchesterToken] = [_text(body_text)] if body_text else []
         body_tokens.extend(line[1:])
-        rendered.append((kw_part, change["op"], body_tokens))
+        change_source: Literal["asserted", "inferred"] = change.get("source", "asserted")
+        rendered.append((kw_part, change["op"], body_tokens, change_source))
 
     if not rendered and op == "modified":
         return None
@@ -782,7 +785,7 @@ def render_frame(
     if entity_type == "individual" and "Facts" not in seen:
         keyword_order.append("Facts")
         seen.add("Facts")
-    for kw, _, _ in rendered:
+    for kw, _, _, _ in rendered:
         if kw not in seen:
             keyword_order.append(kw)
             seen.add(kw)
@@ -800,6 +803,7 @@ def render_frame(
     header_op: Literal["added", "removed"] | None = op if op != "modified" else None
     lines: list[ManchesterLine] = [{
         "op": header_op,
+        "source": None,
         "tokens": [
             _text(f"{entity_keyword}: "),
             {"t": "iri", "label": entity_label, "iri": entity_iri, "in_ontology": in_onto},
@@ -808,24 +812,24 @@ def render_frame(
     }]
 
     for kw in keyword_order:
-        kw_lines = [(o, body) for k, o, body in rendered if k == kw]
+        kw_lines = [(o, body, src) for k, o, body, src in rendered if k == kw]
         if not kw_lines:
             continue
-        lines.append({"op": header_op, "tokens": [_text(f"    {kw}:")]})
-        removed = sorted(
-            (body for o, body in kw_lines if o == "removed"),
-            key=lambda toks: _body_sort_key(toks),
+        lines.append({"op": header_op, "source": None, "tokens": [_text(f"    {kw}:")]})
+        removed_lines = sorted(
+            ((b, s) for o, b, s in kw_lines if o == "removed"),
+            key=lambda pair: _body_sort_key(pair[0]),
         )
-        added = sorted(
-            (body for o, body in kw_lines if o == "added"),
-            key=lambda toks: _body_sort_key(toks),
+        added_lines = sorted(
+            ((b, s) for o, b, s in kw_lines if o == "added"),
+            key=lambda pair: _body_sort_key(pair[0]),
         )
-        for body in removed:
+        for body_tokens, src in removed_lines:
             line_op: Literal["added", "removed"] = op if op != "modified" else "removed"
-            lines.append({"op": line_op, "tokens": [_text("        "), *body]})
-        for body in added:
+            lines.append({"op": line_op, "source": src, "tokens": [_text("        "), *body_tokens]})
+        for body_tokens, src in added_lines:
             line_op = op if op != "modified" else "added"
-            lines.append({"op": line_op, "tokens": [_text("        "), *body]})
+            lines.append({"op": line_op, "source": src, "tokens": [_text("        "), *body_tokens]})
 
     return {"lines": lines}
 

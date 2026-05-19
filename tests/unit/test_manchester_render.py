@@ -1313,6 +1313,43 @@ def test_render_class_expression_some_restriction_emits_iri_text_iri():
     ]
 
 
+def test_render_frame_default_source_is_asserted_per_axiom():
+    iri = "http://example.org/Pizza"
+    food = ox.NamedNode("http://example.org/Food")
+    frame = render_frame(
+        _store(), iri, "class",
+        axiom_changes=[
+            {"op": "added", "predicate": _RDFS_SUB_N.value, "object": food, "graph": _GRAPH},
+        ],
+        labels={},
+        known_iris=frozenset({iri, food.value}),
+    )
+    assert frame is not None
+    # Axiom body line has source='asserted' (default).
+    body_line = next(l for l in frame["lines"] if l["op"] == "added")
+    assert body_line["source"] == "asserted"
+    # Header/keyword lines have source=None.
+    header = frame["lines"][0]
+    assert header["source"] is None
+
+
+def test_render_frame_inferred_source_propagates_to_line():
+    iri = "http://example.org/Pizza"
+    food = ox.NamedNode("http://example.org/Food")
+    frame = render_frame(
+        _store(), iri, "class",
+        axiom_changes=[
+            {"op": "added", "predicate": _RDFS_SUB_N.value, "object": food,
+             "graph": _GRAPH, "source": "inferred"},
+        ],
+        labels={},
+        known_iris=frozenset({iri, food.value}),
+    )
+    assert frame is not None
+    body_line = next(l for l in frame["lines"] if l["op"] == "added")
+    assert body_line["source"] == "inferred"
+
+
 def test_render_class_expression_intersection_emits_with_and_separators():
     a = ox.NamedNode("http://example.org/A")
     b = ox.NamedNode("http://example.org/B")
