@@ -348,3 +348,76 @@ async def test_admin_version_action_404_for_unknown_version(client, user_and_key
         headers={"Authorization": f"Bearer {raw_key}"},
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_admin_version_action_ingest_uses_source_url(client, user_and_key, monkeypatch, db_session):
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    _, raw_key = user_and_key
+
+    ont = Ontology(iri="http://example.org/va-ing.owl", owner_id=None)
+    db_session.add(ont); await db_session.flush()
+    v = OntologyVersion(
+        ontology_id=ont.id, minio_key="k", sha256="vain01", format="turtle",
+        status="ready", source_url="https://example.org/ont.ttl",
+    )
+    db_session.add(v); await db_session.commit()
+
+    mock_task = MagicMock(id="task-ing-1")
+    with patch("ontoexplorer.modules.jobs.tasks.ingest_ontology.delay", return_value=mock_task) as m:
+        resp = await client.post(
+            f"/api/v1/admin/versions/{v.id}/ingest",
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "queued"
+    assert resp.json()["method"] == "url"
+    m.assert_called_once()
+    kwargs = m.call_args.kwargs
+    assert kwargs["url"] == "https://example.org/ont.ttl"
+    assert kwargs["iri"] is None
+
+
+@pytest.mark.anyio
+async def test_admin_version_action_ingest_falls_back_to_iri(client, user_and_key, monkeypatch, db_session):
+    """No source_url → falls back to ontology IRI with content negotiation."""
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    _, raw_key = user_and_key
+
+    ont = Ontology(iri="http://example.org/has-iri.owl", owner_id=None)
+    db_session.add(ont); await db_session.flush()
+    v = OntologyVersion(ontology_id=ont.id, minio_key="k", sha256="vain02", format="turtle", status="ready", source_url=None)
+    db_session.add(v); await db_session.commit()
+
+    mock_task = MagicMock(id="task-ing-2")
+    with patch("ontoexplorer.modules.jobs.tasks.ingest_ontology.delay", return_value=mock_task) as m:
+        resp = await client.post(
+            f"/api/v1/admin/versions/{v.id}/ingest",
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["method"] == "iri"
+    kwargs = m.call_args.kwargs
+    assert kwargs["iri"] == "http://example.org/has-iri.owl"
+    assert kwargs["url"] is None
+
+
+@pytest.mark.anyio
+async def test_admin_version_action_ingest_422_when_no_source(client, user_and_key, monkeypatch, db_session):
+    """No source_url and no IRI on the parent → 422."""
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    _, raw_key = user_and_key
+
+    ont = Ontology(iri="", owner_id=None)  # blank IRI
+    db_session.add(ont); await db_session.flush()
+    v = OntologyVersion(ontology_id=ont.id, minio_key="k", sha256="vain03", format="turtle", status="ready", source_url=None)
+    db_session.add(v); await db_session.commit()
+
+    resp = await client.post(
+        f"/api/v1/admin/versions/{v.id}/ingest",
+        headers={"Authorization": f"Bearer {raw_key}"},
+    )
+    assert resp.status_code == 422

@@ -748,6 +748,55 @@ async def admin_queue_reason_for_version(
     return {"status": "queued", "task_id": task.id}
 
 
+@router.post(
+    "/versions/{version_id}/ingest",
+    summary="Re-fetch a specific version's source URL (creates a new version if bytes have changed)",
+)
+async def admin_queue_ingest_for_version(
+    version_id: str,
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Dispatches ingest_ontology against this version's source_url (or the
+    ontology's IRI via content negotiation when no source_url is set).
+
+    Important: the ingestion pipeline is content-addressed by SHA-256, so if
+    the bytes haven't changed, the existing version is returned and nothing
+    happens. If they have changed, a NEW version is created — versions are
+    immutable.
+    """
+    from sqlalchemy import select
+    from ontoexplorer.models.db import Ontology
+    from ontoexplorer.modules.jobs.tasks import ingest_ontology
+
+    v = await _load_version(db, version_id)
+    ont = (await db.execute(
+        select(Ontology).where(Ontology.id == v.ontology_id)
+    )).scalar_one()
+
+    fetch_url = v.source_url
+    use_iri = False
+    if not fetch_url:
+        if not ont.iri:
+            raise HTTPException(
+                status_code=422,
+                detail="Version has no source_url and parent ontology has no IRI",
+            )
+        fetch_url = ont.iri
+        use_iri = True
+
+    task = ingest_ontology.delay(
+        iri=fetch_url if use_iri else None,
+        url=fetch_url if not use_iri else None,
+        raw_bytes_hex=None,
+        filename=None,
+        content_type=None,
+        owner_id=ont.owner_id,
+        groups=list(ont.groups or []),
+    )
+    return {"status": "queued", "task_id": task.id, "method": "iri" if use_iri else "url"}
+
+
 # ── Reindex all ───────────────────────────────────────────────────────────────
 
 @router.post("/reindex", summary="Queue search re-index for all ingested versions")
