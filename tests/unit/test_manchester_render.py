@@ -1158,3 +1158,37 @@ def test_known_iris_returns_subjects_and_iri_objects():
 def test_known_iris_returns_empty_for_empty_graph():
     store = _store()
     assert _known_iris(store, _GRAPH) == frozenset()
+
+
+from ontoexplorer.modules.diff.manchester import _iri_token
+
+
+def test_iri_token_uses_label_when_known_and_marks_in_ontology():
+    pizza = "http://example.org/Pizza"
+    store = _store(
+        (ox.NamedNode(pizza), _RDFS_LABEL_N, ox.Literal("Pizza", language="en")),
+    )
+    tok = _iri_token(
+        store, _GRAPH, pizza,
+        labels={pizza: "Pizza"},  # already cached
+        known_iris=frozenset({pizza}),
+    )
+    assert tok == {"t": "iri", "label": "Pizza", "iri": pizza, "in_ontology": True}
+
+
+def test_iri_token_falls_back_to_local_name_when_no_label():
+    iri = "http://example.org/UnlabeledThing"
+    tok = _iri_token(
+        store=_store(), graph=_GRAPH, iri=iri,
+        labels={}, known_iris=frozenset(),
+    )
+    assert tok == {"t": "iri", "label": "UnlabeledThing", "iri": iri, "in_ontology": False}
+
+
+def test_iri_token_marks_external_iri_in_ontology_false():
+    iri = "http://other.org/X"
+    tok = _iri_token(
+        store=_store(), graph=_GRAPH, iri=iri,
+        labels={}, known_iris=frozenset({"http://example.org/Y"}),
+    )
+    assert tok["in_ontology"] is False

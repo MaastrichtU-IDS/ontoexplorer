@@ -780,3 +780,25 @@ def _known_iris(store: ox.Store, graph: ox.NamedNode) -> frozenset[str]:
         if isinstance(q.object, ox.NamedNode):
             out.add(q.object.value)
     return frozenset(out)
+
+
+def _iri_token(
+    store: ox.Store,
+    graph: ox.NamedNode,
+    iri: str,
+    *,
+    labels: dict[str, str],
+    known_iris: frozenset[str],
+) -> IriToken:
+    """Build an IRI token with display label and in_ontology flag.
+
+    `labels` is the per-run cache populated incrementally as entities are
+    rendered. `known_iris` is the pre-computed set from `_known_iris`.
+    """
+    label = iri_to_label(store, graph, iri, labels=labels)
+    return {
+        "t": "iri",
+        "label": label,
+        "iri": iri,
+        "in_ontology": iri in known_iris,
+    }
