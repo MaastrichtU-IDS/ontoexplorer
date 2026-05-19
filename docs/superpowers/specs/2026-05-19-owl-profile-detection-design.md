@@ -327,7 +327,7 @@ Mirrors `tests/integration/test_coverage_api.py`:
 
 2. **Performance on NCBITaxon.** Estimated <60s but unverified until tested. If a single SPARQL query takes >30s, we degrade gracefully: cap each query at a hard timeout, mark that pattern as "could not evaluate" rather than failing the whole detection.
 
-3. **DL profile detection is the hardest.** DL has *structural* restrictions (no punning, role hierarchy cycles for transitive roles) that need graph-traversal logic, not just per-axiom pattern matching. For v1 we may default DL to "in_profile = true if all other profile checks completed cleanly" — i.e. treat DL as the residual, NOT a strict check. This is documented under "Open question" — flag for user.
+3. **DL profile detection requires structural checks** beyond per-axiom pattern matching. Decided to implement in full: punning restrictions (consistent named-class vs named-individual use for a given IRI; annotation-property-vs-other-property exclusion), role hierarchy validation (sub-property cycles + transitivity rules per W3C §3.2.1), datatype restrictions (supported-only datatype map), and reserved-vocabulary checks. Adds ~2 days; treated as its own implementation phase.
 
 4. **`?profile=el` filter is O(N) per request.** It iterates all ready versions and Redis-looks-up each. With ~20 ontologies it's fine; at >1000 ontologies we'd want to maintain a reverse index (one Redis set per profile listing in-profile versions). Defer until needed.
 
@@ -335,13 +335,14 @@ Mirrors `tests/integration/test_coverage_api.py`:
 
 ## Phased rollout
 
-1. **Foundation:** `owl_profile/` module skeleton + cache key + ROBOT regression test fixtures
-2. **EL pattern set:** implement detection for all EL forbidden patterns; pass regression tests against EL test cases
-3. **RL + QL pattern sets:** add their forbidden patterns; pass their regression tests
-4. **DL detection:** structural checks (or document the "residual" approximation if we defer)
-5. **API endpoints:** `/owl-profile/version`, `/owl-profile/public`, `?profile=` filter
-6. **Indexer hook:** wire into the existing indexing pipeline; reindex existing ontologies to populate caches
-7. **Frontend:** per-onto tab, fleet page, search filter pill
-8. **Docs + ideas.md strike-through**
+1. **Foundation:** `owl_profile/` module skeleton + cache key + ProfileViolation dataclass + ROBOT regression test fixtures
+2. **EL pattern set:** all EL forbidden patterns + per-pattern unit tests
+3. **RL pattern set:** all RL forbidden patterns + tests
+4. **QL pattern set:** all QL forbidden patterns + tests
+5. **DL structural checks:** punning, role hierarchy, datatype restrictions, reserved-vocabulary + tests
+6. **Detector aggregator + indexer hook:** `detect_profiles()` runs all checks, cache write, indexer pipeline integration
+7. **API endpoints:** `/owl-profile/version`, `/owl-profile/public`, `?profile=` filter on ontology list endpoints
+8. **Frontend:** per-onto tab, fleet page, search filter pill
+9. **Docs + ideas.md strike-through + memory file**
 
 Each phase is independently shippable.
