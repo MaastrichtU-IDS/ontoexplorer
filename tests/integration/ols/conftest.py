@@ -24,6 +24,7 @@ def fake_redis():
         patch("ontoexplorer.api.ols.ontologies._get_redis", return_value=r),
         patch("ontoexplorer.api.ols.terms._get_redis", return_value=r),
         patch("ontoexplorer.api.ols.properties._get_redis", return_value=r),
+        patch("ontoexplorer.api.ols.individuals._get_redis", return_value=r),
     ):
         yield r
 
@@ -246,4 +247,67 @@ async def property_hierarchy(db_session, fake_redis):
         "gp_iri":     gp_iri,
         "parent_iri": parent_iri,
         "child_iri":  child_iri,
+    }
+
+
+@pytest.fixture()
+async def sample_individual(db_session, sample_ontology, fake_redis):
+    """Seed one individual entity and one class it is rdf:type of into Redis.
+
+    The individual hash carries a ``types`` JSON field (list of class IRIs) so
+    the /types endpoint can resolve classes without needing Oxigraph in tests.
+    The class entity is also seeded so the response shape carries a real label.
+    """
+    from sqlalchemy import select
+
+    ontology = sample_ontology
+    result = await db_session.execute(
+        select(OntologyVersion).where(OntologyVersion.ontology_id == ontology.id)
+    )
+    ver = result.scalar_one()
+    vid = str(ver.id)
+
+    ind_iri   = "http://example.org/testonto#Alice"
+    class_iri = "http://example.org/testonto#Person"
+
+    # Seed the individual with a `types` field listing its rdf:type classes
+    fake_redis.hset(
+        _iri_key(vid, ind_iri),
+        mapping={
+            "iri":           ind_iri,
+            "primary_label": "Alice",
+            "label":         "Alice",
+            "short":         "Alice",
+            "type":          "individual",
+            "source":        str(ontology.id),
+            "labels":        json.dumps([{"value": "Alice", "lang": "en"}]),
+            "synonyms":      json.dumps([]),
+            "definitions":   json.dumps([]),
+            "types":         json.dumps([class_iri]),
+        },
+    )
+    fake_redis.sadd(_type_key(vid, "individual"), ind_iri)
+
+    # Seed the class entity so /types can return a fully shaped class
+    fake_redis.hset(
+        _iri_key(vid, class_iri),
+        mapping={
+            "iri":           class_iri,
+            "primary_label": "Person",
+            "label":         "Person",
+            "short":         "Person",
+            "type":          "class",
+            "source":        str(ontology.id),
+            "labels":        json.dumps([{"value": "Person", "lang": "en"}]),
+            "synonyms":      json.dumps([]),
+            "definitions":   json.dumps([]),
+        },
+    )
+    fake_redis.sadd(_type_key(vid, "class"), class_iri)
+
+    yield {
+        "ind_iri":    ind_iri,
+        "class_iri":  class_iri,
+        "ontology":   ontology,
+        "version_id": vid,
     }
