@@ -642,6 +642,8 @@ For the upstream OLS4 protocol reference (the spec our endpoints mimic), see EBI
 
 A small contract test in `tests/integration/ols/test_ebi_compliance.py` validates our response shapes against snapshots of real EBI OLS4 responses (cached in `tests/fixtures/ols4_ebi_samples/`). For each fixture it walks every key EBI returns and asserts our response has the same key — extra fields are fine, missing fields count as a gap. A `KNOWN_GAPS` dict at the top of the test documents the current gap count per fixture; the test fails if the count changes in either direction (regression or — better — a closed gap that just needs the count updated).
 
+**Current baseline:** 37 gaps across 7 fixtures (down from an initial 110). Two endpoints (`ontology_detail_v1`, `search`) are fully shape-compliant; one (`ontologies_list_v1`) has a single `_links.next` gap that only appears under multi-page tests. The remaining 30 gaps are concentrated in the v2 flat surface — partly populated in production via the Oxigraph document-metadata pass-through (blank in the local test env), partly the `linkedEntities` sub-dict which requires enumerating every predicate referenced in the ontology's terms (deferred — not blocking client integration since v1 is the primary client surface).
+
 Run on demand:
 
 ```bash
