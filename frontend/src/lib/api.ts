@@ -729,6 +729,29 @@ export interface AdminOverview {
   jobs: AdminJobEntry[]
 }
 
+export interface AdminVersionEntry {
+  version_id: string
+  triple_count: number | null
+  ingestion_status: string
+  indexed: boolean
+  embed_count: number
+  reasoning_status: 'ready' | 'running' | 'not_started'
+  version_created_at: string | null
+  source_url: string | null
+  is_latest: boolean
+  diff_vs_prev: {
+    previous_version_id: string | null
+    status: 'ready' | 'running' | 'pending' | 'failed' | 'missing' | 'stale'
+    diff_id: string | null
+    computed_at: string | null
+  }
+}
+
+export interface AdminVersionsResponse {
+  ontology_id: string
+  versions: AdminVersionEntry[]
+}
+
 export interface WorkerTask {
   id: string
   name: string
@@ -1166,6 +1189,49 @@ export const api = {
     reindexAll: () =>
       request<{ index_queued: number; meta_detection_queued: number; message: string }>(
         `/admin/reindex`,
+        { method: 'POST' }
+      ),
+
+    versions: (ontologyId: string) =>
+      request<AdminVersionsResponse>(`/admin/ontologies/${ontologyId}/versions`),
+
+    queueIndexForVersion: (versionId: string) =>
+      request<{ status: string; task_id: string }>(
+        `/admin/versions/${versionId}/index`,
+        { method: 'POST' }
+      ),
+
+    queueEmbedForVersion: (versionId: string) =>
+      request<{ status: string; task_id: string }>(
+        `/admin/versions/${versionId}/embed`,
+        { method: 'POST' }
+      ),
+
+    queueReasonForVersion: (versionId: string) =>
+      request<{ status: string; task_id: string }>(
+        `/admin/versions/${versionId}/reason`,
+        { method: 'POST' }
+      ),
+
+    queueIngestForVersion: (versionId: string) =>
+      request<{ status: string; task_id: string; method: 'iri' | 'url' }>(
+        `/admin/versions/${versionId}/ingest`,
+        { method: 'POST' }
+      ),
+
+    queueDiff: (fromVersionId: string, toVersionId: string) =>
+      request<{ status: string; task_id: string }>(
+        `/admin/diffs/queue`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ from_version_id: fromVersionId, to_version_id: toVersionId }),
+        }
+      ),
+
+    recomputeAllDiffs: (ontologyId: string) =>
+      request<{ queued: number }>(
+        `/admin/ontologies/${ontologyId}/diffs/recompute-all`,
         { method: 'POST' }
       ),
   },

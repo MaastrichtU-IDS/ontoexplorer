@@ -115,6 +115,59 @@ async def _reasoning_status(version_id: str) -> str:
     return "not_started"
 
 
+async def _diff_status_for_pair(db: AsyncSession, from_vid: str, to_vid: str) -> dict:
+    """Return the diff-pipeline status for an ordered (from, to) version pair.
+
+    Status semantics:
+      - 'missing'  — no OntologyDiff row exists for this pair
+      - 'pending'  — OntologyDiff.status == 'pending'
+      - 'running'  — there is a running Job(type='diff') for either version (rare;
+                     compute_diff doesn't always insert a Job, so primarily we
+                     trust OntologyDiff.status)
+      - 'failed'   — OntologyDiff.status == 'failed'
+      - 'stale'    — OntologyDiff.status == 'ready' BUT summary.inferred_status
+                     shows a side != 'ready' while that side's reasoning Job is
+                     now 'done' (Phase 4 stale-detection condition)
+      - 'ready'    — OntologyDiff.status == 'ready' and not stale
+    """
+    from sqlalchemy import select
+    from ontoexplorer.models.db import Job, OntologyDiff
+
+    diff = (await db.execute(
+        select(OntologyDiff).where(
+            OntologyDiff.version_from_id == from_vid,
+            OntologyDiff.version_to_id == to_vid,
+        )
+    )).scalar_one_or_none()
+
+    if diff is None:
+        return {"status": "missing", "diff_id": None, "computed_at": None}
+
+    base = {
+        "diff_id": diff.id,
+        "computed_at": diff.created_at.isoformat() if diff.created_at else None,
+    }
+
+    if diff.status in ("pending", "running", "failed"):
+        return {"status": diff.status, **base}
+
+    # status == 'ready' — check for staleness
+    inferred = (diff.summary or {}).get("inferred_status", {})
+    for side, vid in (("from_version", from_vid), ("to_version", to_vid)):
+        if inferred.get(side) != "ready":
+            reason_done = (await db.execute(
+                select(Job).where(
+                    Job.version_id == vid,
+                    Job.type == "reason",
+                    Job.status == "done",
+                ).limit(1)
+            )).scalar_one_or_none()
+            if reason_done is not None:
+                return {"status": "stale", **base}
+
+    return {"status": "ready", **base}
+
+
 # ── Overview ──────────────────────────────────────────────────────────────────
 
 @router.get("/overview", summary="Admin system overview")
@@ -234,6 +287,90 @@ async def admin_overview(
         "ontologies": list(ontologies),
         "jobs": jobs,
     }
+
+
+@router.get(
+    "/ontologies/{ontology_id}/versions",
+    summary="List all versions of an ontology with per-version pipeline state",
+)
+async def admin_ontology_versions(
+    ontology_id: str,
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns every version of an ontology (newest first), each with the same
+    pipeline fields as AdminOntologyEntry plus a diff_vs_prev block for the
+    diff against the immediately-older version (None for the oldest)."""
+    from sqlalchemy import select
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+
+    ont = (await db.execute(
+        select(Ontology).where(Ontology.id == ontology_id)
+    )).scalar_one_or_none()
+    if ont is None:
+        raise HTTPException(status_code=404, detail="Ontology not found")
+
+    # Versions newest first.
+    versions = (await db.execute(
+        select(OntologyVersion)
+        .where(OntologyVersion.ontology_id == ontology_id)
+        .order_by(OntologyVersion.created_at.desc())
+    )).scalars().all()
+
+    if not versions:
+        return {"ontology_id": ontology_id, "versions": []}
+
+    # Embedding counts in one grouped query (use ORM in_() for SQLite compat).
+    from ontoexplorer.models.db import TermEmbedding
+    from sqlalchemy import func
+    version_ids = [v.id for v in versions]
+    count_rows = (await db.execute(
+        select(TermEmbedding.version_id, func.count().label("cnt"))
+        .where(TermEmbedding.version_id.in_(version_ids))
+        .group_by(TermEmbedding.version_id)
+    )).all()
+    embed_counts = {str(r.version_id): int(r.cnt) for r in count_rows}
+
+    search_r = await asyncio.to_thread(_search_redis)
+    latest_id = versions[0].id  # newest-first
+
+    # diff_vs_prev needs the "previous" version, which is the one immediately
+    # older. Because we ordered DESC, previous_version_id for versions[i] is
+    # versions[i+1].id (the next-older one).
+    async def _entry(idx: int, v: OntologyVersion) -> dict:
+        vid = v.id
+        indexed = await asyncio.to_thread(
+            lambda: bool(search_r.exists(f"search:meta:{vid}"))
+        )
+        reasoning = await _reasoning_status(vid)
+
+        prev_version_id = versions[idx + 1].id if idx + 1 < len(versions) else None
+        if prev_version_id is not None:
+            diff_vs_prev = await _diff_status_for_pair(db, prev_version_id, vid)
+            diff_vs_prev["previous_version_id"] = prev_version_id
+        else:
+            diff_vs_prev = {
+                "previous_version_id": None,
+                "status": "missing",
+                "diff_id": None,
+                "computed_at": None,
+            }
+
+        return {
+            "version_id": vid,
+            "triple_count": v.triple_count,
+            "ingestion_status": v.status,
+            "indexed": indexed,
+            "embed_count": embed_counts.get(vid, 0),
+            "reasoning_status": reasoning,
+            "version_created_at": v.created_at.isoformat() if v.created_at else None,
+            "source_url": v.source_url,
+            "is_latest": vid == latest_id,
+            "diff_vs_prev": diff_vs_prev,
+        }
+
+    entries = await asyncio.gather(*[_entry(i, v) for i, v in enumerate(versions)])
+    return {"ontology_id": ontology_id, "versions": list(entries)}
 
 
 # ── Workers ───────────────────────────────────────────────────────────────────
@@ -552,6 +689,114 @@ async def admin_queue_reason(
     return {"status": "queued", "task_id": task.id}
 
 
+# ── Per-version actions (operate on a specific version_id) ────────────────────
+
+async def _load_version(db: AsyncSession, version_id: str):
+    """Load an OntologyVersion by id or raise 404."""
+    from sqlalchemy import select
+    from ontoexplorer.models.db import OntologyVersion
+    v = (await db.execute(
+        select(OntologyVersion).where(OntologyVersion.id == version_id)
+    )).scalar_one_or_none()
+    if v is None:
+        raise HTTPException(status_code=404, detail="Version not found")
+    return v
+
+
+@router.post(
+    "/versions/{version_id}/index",
+    summary="Queue search re-index for a specific version",
+)
+async def admin_queue_index_for_version(
+    version_id: str,
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from ontoexplorer.modules.jobs.tasks import index_ontology
+    v = await _load_version(db, version_id)
+    task = index_ontology.delay(version_id=v.id, ontology_id=v.ontology_id)
+    return {"status": "queued", "task_id": task.id}
+
+
+@router.post(
+    "/versions/{version_id}/embed",
+    summary="Queue embedding generation for a specific version",
+)
+async def admin_queue_embed_for_version(
+    version_id: str,
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from ontoexplorer.modules.jobs.tasks import embed_ontology
+    v = await _load_version(db, version_id)
+    task = embed_ontology.delay(version_id=v.id, ontology_id=v.ontology_id)
+    return {"status": "queued", "task_id": task.id}
+
+
+@router.post(
+    "/versions/{version_id}/reason",
+    summary="Queue OWL reasoning for a specific version",
+)
+async def admin_queue_reason_for_version(
+    version_id: str,
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from ontoexplorer.modules.jobs.tasks import reason_ontology
+    v = await _load_version(db, version_id)
+    task = reason_ontology.delay(version_id=v.id)
+    return {"status": "queued", "task_id": task.id}
+
+
+@router.post(
+    "/versions/{version_id}/ingest",
+    summary="Re-fetch a specific version's source URL (creates a new version if bytes have changed)",
+)
+async def admin_queue_ingest_for_version(
+    version_id: str,
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Dispatches ingest_ontology against this version's source_url (or the
+    ontology's IRI via content negotiation when no source_url is set).
+
+    Important: the ingestion pipeline is content-addressed by SHA-256, so if
+    the bytes haven't changed, the existing version is returned and nothing
+    happens. If they have changed, a NEW version is created — versions are
+    immutable.
+    """
+    from sqlalchemy import select
+    from ontoexplorer.models.db import Ontology
+    from ontoexplorer.modules.jobs.tasks import ingest_ontology
+
+    v = await _load_version(db, version_id)
+    ont = (await db.execute(
+        select(Ontology).where(Ontology.id == v.ontology_id)
+    )).scalar_one()
+
+    fetch_url = v.source_url
+    use_iri = False
+    if not fetch_url:
+        if not ont.iri:
+            raise HTTPException(
+                status_code=422,
+                detail="Version has no source_url and parent ontology has no IRI",
+            )
+        fetch_url = ont.iri
+        use_iri = True
+
+    task = ingest_ontology.delay(
+        iri=fetch_url if use_iri else None,
+        url=fetch_url if not use_iri else None,
+        raw_bytes_hex=None,
+        filename=None,
+        content_type=None,
+        owner_id=ont.owner_id,
+        groups=list(ont.groups or []),
+    )
+    return {"status": "queued", "task_id": task.id, "method": "iri" if use_iri else "url"}
+
+
 # ── Reindex all ───────────────────────────────────────────────────────────────
 
 @router.post("/reindex", summary="Queue search re-index for all ingested versions")
@@ -592,3 +837,78 @@ async def admin_reindex(
             f"and {index_queued} index_ontology tasks"
         ),
     }
+
+
+# ── Diff queue endpoints ──────────────────────────────────────────────────────
+
+from pydantic import BaseModel
+
+
+class _DiffQueueBody(BaseModel):
+    from_version_id: str
+    to_version_id: str
+
+
+@router.post(
+    "/diffs/queue",
+    summary="Queue compute_diff for a specific (from, to) version pair",
+)
+async def admin_queue_diff(
+    body: _DiffQueueBody,
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Both versions must belong to the same ontology."""
+    from sqlalchemy import select
+    from ontoexplorer.models.db import OntologyVersion
+    from ontoexplorer.modules.jobs.tasks import compute_diff
+
+    v_from = (await db.execute(
+        select(OntologyVersion).where(OntologyVersion.id == body.from_version_id)
+    )).scalar_one_or_none()
+    v_to = (await db.execute(
+        select(OntologyVersion).where(OntologyVersion.id == body.to_version_id)
+    )).scalar_one_or_none()
+    if v_from is None or v_to is None:
+        raise HTTPException(status_code=404, detail="One or both versions not found")
+    if v_from.ontology_id != v_to.ontology_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Versions belong to different ontologies — use the /compare endpoint",
+        )
+
+    task = compute_diff.delay(v_from.id, v_to.id, v_from.ontology_id)
+    return {"status": "queued", "task_id": task.id}
+
+
+@router.post(
+    "/ontologies/{ontology_id}/diffs/recompute-all",
+    summary="Queue compute_diff for every consecutive version pair of an ontology",
+)
+async def admin_recompute_all_diffs(
+    ontology_id: str,
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import select
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    from ontoexplorer.modules.jobs.tasks import compute_diff
+
+    ont = (await db.execute(
+        select(Ontology).where(Ontology.id == ontology_id)
+    )).scalar_one_or_none()
+    if ont is None:
+        raise HTTPException(status_code=404, detail="Ontology not found")
+
+    versions = (await db.execute(
+        select(OntologyVersion)
+        .where(OntologyVersion.ontology_id == ontology_id)
+        .order_by(OntologyVersion.created_at.asc())
+    )).scalars().all()
+
+    queued = 0
+    for prev, curr in zip(versions, versions[1:]):
+        compute_diff.delay(prev.id, curr.id, ontology_id)
+        queued += 1
+
+    return {"queued": queued}
