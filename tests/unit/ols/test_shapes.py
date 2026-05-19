@@ -73,6 +73,64 @@ def test_entity_to_v1_term_lang_filter():
     assert out_fr["synonyms"] == ["félin"]
 
 
+def test_entity_to_v1_term_property_resource_kind():
+    """resource_kind='properties' must use /properties/ in self href, not /terms/."""
+    entity = {
+        "iri": "http://example.org/onto#hasPart",
+        "primary_label": "hasPart",
+        "short": "hasPart",
+        "type": "object_property",
+        "source": "test",
+        "labels": '[{"value":"hasPart","lang":"en"}]',
+        "synonyms": '[]',
+        "definitions": '[]',
+    }
+    ontology = MagicMock(id="test", iri="http://example.org/test", shortname="test")
+    out = entity_to_v1_term(
+        entity, ontology,
+        request=_mock_request(),
+        is_obsolete=False, is_root=False, has_children=False,
+        resource_kind="properties",
+    )
+    assert "/properties/" in out["_links"]["self"]["href"], (
+        f"Expected /properties/ in self href, got: {out['_links']['self']['href']}"
+    )
+    assert "/terms/" not in out["_links"]["self"]["href"], (
+        f"Expected no /terms/ in self href for property, got: {out['_links']['self']['href']}"
+    )
+    # Property links should NOT include hierarchicalParents or jstree
+    assert "hierarchicalParents" not in out["_links"]
+    assert "jstree" not in out["_links"]
+    # But must include parent/children hierarchy links
+    assert "parents" in out["_links"]
+    assert "children" in out["_links"]
+    assert "ancestors" in out["_links"]
+    assert "descendants" in out["_links"]
+
+
+def test_entity_to_v1_term_default_resource_kind_uses_terms():
+    """Default resource_kind must still produce /terms/ links (no regression)."""
+    entity = {
+        "iri": "http://purl.obolibrary.org/obo/GO_0008150",
+        "primary_label": "biological_process",
+        "short": "GO_0008150",
+        "type": "class",
+        "source": "go",
+        "labels": '[{"value":"biological_process","lang":""}]',
+        "synonyms": '[]',
+        "definitions": '[]',
+    }
+    ontology = MagicMock(id="go", iri="http://purl.obolibrary.org/obo/go.owl", shortname="go")
+    out = entity_to_v1_term(
+        entity, ontology,
+        request=_mock_request(),
+        is_obsolete=False, is_root=False, has_children=False,
+    )
+    assert "/terms/" in out["_links"]["self"]["href"]
+    assert "hierarchicalParents" in out["_links"]
+    assert "jstree" in out["_links"]
+
+
 def test_ontology_to_v1_shape():
     ontology = MagicMock(
         id="go", iri="http://purl.obolibrary.org/obo/go.owl",

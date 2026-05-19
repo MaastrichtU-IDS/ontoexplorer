@@ -23,6 +23,7 @@ def fake_redis():
         patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r),
         patch("ontoexplorer.api.ols.ontologies._get_redis", return_value=r),
         patch("ontoexplorer.api.ols.terms._get_redis", return_value=r),
+        patch("ontoexplorer.api.ols.properties._get_redis", return_value=r),
     ):
         yield r
 
@@ -120,3 +121,129 @@ async def sample_term(db_session, sample_ontology, fake_redis):
     )
 
     yield {"iri": iri, "ontology": ontology, "version_id": vid}
+
+
+@pytest.fixture()
+async def sample_property(db_session, sample_ontology, fake_redis):
+    """Seed one each of object_property, data_property, and annotation_property.
+
+    Uses the same ontology + version created by sample_ontology.
+    Seeded entities have a `parents` field of [] so the hierarchy fallback
+    (Redis-first, then SPARQL) can return empty without needing Oxigraph.
+    """
+    from sqlalchemy import select
+
+    ontology = sample_ontology
+    result = await db_session.execute(
+        select(OntologyVersion).where(OntologyVersion.ontology_id == ontology.id)
+    )
+    ver = result.scalar_one()
+    vid = str(ver.id)
+
+    obj_iri  = "http://example.org/testonto#hasRelation"
+    data_iri = "http://example.org/testonto#hasValue"
+    ann_iri  = "http://example.org/testonto#hasComment"
+
+    def _seed(iri: str, label: str, prop_type: str):
+        fake_redis.hset(
+            _iri_key(vid, iri),
+            mapping={
+                "iri":           iri,
+                "primary_label": label,
+                "label":         label,
+                "short":         label,
+                "type":          prop_type,
+                "source":        str(ontology.id),
+                "labels":        json.dumps([{"value": label, "lang": "en"}]),
+                "synonyms":      json.dumps([]),
+                "definitions":   json.dumps([]),
+                "parents":       json.dumps([]),
+            },
+        )
+        fake_redis.sadd(_type_key(vid, prop_type), iri)
+
+    _seed(obj_iri,  "hasRelation", "object_property")
+    _seed(data_iri, "hasValue",    "data_property")
+    _seed(ann_iri,  "hasComment",  "annotation_property")
+
+    yield {
+        "obj_iri":    obj_iri,
+        "data_iri":   data_iri,
+        "ann_iri":    ann_iri,
+        "ontology":   ontology,
+        "version_id": vid,
+    }
+
+
+@pytest.fixture()
+async def property_hierarchy(db_session, fake_redis):
+    """Seed a three-level object_property hierarchy: GrandProp ← ParentProp ← ChildProp.
+
+    Entity hashes include a `parents` JSON field so that the asserted-fallback
+    path can resolve relationships without Oxigraph.
+    """
+    uid = uuid.uuid4().hex[:8]
+    ont = Ontology(
+        iri=f"http://example.org/prophier-{uid}.owl",
+        shortname=f"prophier{uid}",
+        title="Property Hierarchy Test Ontology",
+    )
+    db_session.add(ont)
+    await db_session.flush()
+
+    ver = OntologyVersion(
+        ontology_id=ont.id,
+        minio_key=f"prophier/test-{uid}.owl",
+        sha256=f"prophier_sha256_{uid}",
+        format="owl",
+        status="ready",
+        version_iri="2025-01-01",
+    )
+    db_session.add(ver)
+    await db_session.commit()
+
+    vid = str(ver.id)
+    fake_redis.hset(
+        _meta_key(ver.id),
+        mapping={
+            "class_count": "0",
+            "property_count": "3",
+            "individual_count": "0",
+            "schema_version": "v2",
+            "indexed_at": "2025-01-01T00:00:00+00:00",
+        },
+    )
+
+    gp_iri     = "http://example.org/prophier#GrandProp"
+    parent_iri = "http://example.org/prophier#ParentProp"
+    child_iri  = "http://example.org/prophier#ChildProp"
+
+    def _seed(iri: str, label: str, parents: list):
+        fake_redis.hset(
+            _iri_key(vid, iri),
+            mapping={
+                "iri":           iri,
+                "primary_label": label,
+                "label":         label,
+                "short":         label,
+                "type":          "object_property",
+                "source":        str(ont.id),
+                "labels":        json.dumps([{"value": label, "lang": "en"}]),
+                "synonyms":      json.dumps([]),
+                "definitions":   json.dumps([]),
+                "parents":       json.dumps(parents),
+            },
+        )
+        fake_redis.sadd(_type_key(vid, "object_property"), iri)
+
+    _seed(gp_iri,     "GrandProp",  [])
+    _seed(parent_iri, "ParentProp", [gp_iri])
+    _seed(child_iri,  "ChildProp",  [parent_iri])
+
+    yield {
+        "ontology":   ont,
+        "version_id": vid,
+        "gp_iri":     gp_iri,
+        "parent_iri": parent_iri,
+        "child_iri":  child_iri,
+    }

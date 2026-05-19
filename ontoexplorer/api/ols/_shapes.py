@@ -1,7 +1,7 @@
 """Internal entity dict → OLS-shape dict transforms."""
 import json
 import re
-from typing import Any
+from typing import Any, Literal
 from fastapi import Request
 
 # Strict-uppercase prefix per OBO Foundry URI conventions (https://obofoundry.org/principles/fp-003-uris.html)
@@ -41,26 +41,48 @@ def _parse_json_or_empty(s: str | None) -> list[dict]:
         return []
 
 
-def _term_self_url(request: Request, ontology_id: str, iri: str) -> str:
+def _entity_self_url(
+    request: Request,
+    ontology_id: str,
+    iri: str,
+    resource_kind: str = "terms",
+) -> str:
     from ontoexplorer.api.ols._iri import encode_iri_for_ols_path
     base = str(request.base_url).rstrip("/")
-    return f"{base}/ols/api/ontologies/{ontology_id}/terms/{encode_iri_for_ols_path(iri)}"
+    return f"{base}/ols/api/ontologies/{ontology_id}/{resource_kind}/{encode_iri_for_ols_path(iri)}"
+
+
+# Keep old name as an alias for backward compatibility
+def _term_self_url(request: Request, ontology_id: str, iri: str) -> str:
+    return _entity_self_url(request, ontology_id, iri, resource_kind="terms")
+
+
+def _entity_links(
+    request: Request,
+    ontology_id: str,
+    iri: str,
+    resource_kind: str = "terms",
+) -> dict[str, dict[str, str]]:
+    self_url = _entity_self_url(request, ontology_id, iri, resource_kind)
+    links: dict[str, dict[str, str]] = {
+        "self":        {"href": self_url},
+        "parents":     {"href": f"{self_url}/parents"},
+        "children":    {"href": f"{self_url}/children"},
+        "ancestors":   {"href": f"{self_url}/ancestors"},
+        "descendants": {"href": f"{self_url}/descendants"},
+    }
+    if resource_kind == "terms":
+        # Terms have additional hierarchical and widget links
+        links["hierarchicalParents"]     = {"href": f"{self_url}/hierarchicalParents"}
+        links["hierarchicalAncestors"]   = {"href": f"{self_url}/hierarchicalAncestors"}
+        links["hierarchicalDescendants"] = {"href": f"{self_url}/hierarchicalDescendants"}
+        links["jstree"]                  = {"href": f"{self_url}/jstree"}
+        links["graph"]                   = {"href": f"{self_url}/graph"}
+    return links
 
 
 def _term_links(request: Request, ontology_id: str, iri: str) -> dict[str, dict[str, str]]:
-    self_url = _term_self_url(request, ontology_id, iri)
-    return {
-        "self":                       {"href": self_url},
-        "parents":                    {"href": f"{self_url}/parents"},
-        "children":                   {"href": f"{self_url}/children"},
-        "ancestors":                  {"href": f"{self_url}/ancestors"},
-        "descendants":                {"href": f"{self_url}/descendants"},
-        "hierarchicalParents":        {"href": f"{self_url}/hierarchicalParents"},
-        "hierarchicalAncestors":      {"href": f"{self_url}/hierarchicalAncestors"},
-        "hierarchicalDescendants":    {"href": f"{self_url}/hierarchicalDescendants"},
-        "jstree":                     {"href": f"{self_url}/jstree"},
-        "graph":                      {"href": f"{self_url}/graph"},
-    }
+    return _entity_links(request, ontology_id, iri, resource_kind="terms")
 
 
 def entity_to_v1_term(
@@ -72,6 +94,7 @@ def entity_to_v1_term(
     is_root: bool,
     has_children: bool,
     lang: str | None = None,
+    resource_kind: Literal["terms", "properties", "individuals"] = "terms",
 ) -> dict[str, Any]:
     labels = _parse_json_or_empty(entity.get("labels"))
     synonyms = _parse_json_or_empty(entity.get("synonyms"))
@@ -100,7 +123,7 @@ def entity_to_v1_term(
         "obo_xref": [],
         "obo_definition_citation": [],
         "obo_synonym": [],
-        "_links": _term_links(request, ontology_id, entity["iri"]),
+        "_links": _entity_links(request, ontology_id, entity["iri"], resource_kind),
     }
 
 
