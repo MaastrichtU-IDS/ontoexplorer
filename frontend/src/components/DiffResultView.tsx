@@ -92,9 +92,9 @@ function EntityRow({
         </span>
         <span style={{ color: opColor, fontSize: 10, fontStyle: 'italic' }}>{opLabel}</span>
       </div>
-      {expanded && op === 'modified' && (
+      {expanded && (
         <div style={{ padding: '4px 10px 10px 30px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {hasLiteral && (
+          {op === 'modified' && hasLiteral && (
             <div>
               <div style={{ color: '#58a6ff', fontSize: 9, textTransform: 'uppercase', fontWeight: 'bold', marginBottom: 4 }}>Literal changes</div>
               {literalChanges.map((lc, i) => (
@@ -120,7 +120,9 @@ function EntityRow({
           )}
           {entity.manchester_frame && (
             <div style={{ marginTop: 6 }}>
-              <div style={{ color: '#58a6ff', fontSize: 9, textTransform: 'uppercase', fontWeight: 'bold', marginBottom: 4 }}>Axiom changes</div>
+              <div style={{ color: '#58a6ff', fontSize: 9, textTransform: 'uppercase', fontWeight: 'bold', marginBottom: 4 }}>
+                {op === 'modified' ? 'Axiom changes' : op === 'added' ? 'Added entity' : 'Removed entity'}
+              </div>
               <ManchesterFrame frame={entity.manchester_frame} />
             </div>
           )}
