@@ -36,8 +36,10 @@ class Pattern:
 
     profile: ProfileName
     axiom_type: str
-    count_sparql: str   # COUNT query returning ?n
-    sample_sparql: str  # SELECT ?s LIMIT 10
+    count_sparql: str       # COUNT query returning ?n
+    sample_sparql: str      # SELECT ?s [?p ?o] LIMIT 10
+    predicate_iri: str | None = None  # Fixed predicate IRI for predicate-based patterns; None for type-based
+    is_cardinality: bool = False       # True for cardinality patterns (predicate bound in ?card var)
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +61,8 @@ def _make_basic_predicate_pattern(
         profile=profile,
         axiom_type=axiom_type,
         count_sparql=f"{_PREFIXES}SELECT (COUNT(*) AS ?n) WHERE {{ {inner} }}",
-        sample_sparql=f"{_PREFIXES}SELECT ?s WHERE {{ {inner} }} LIMIT 10",
+        sample_sparql=f"{_PREFIXES}SELECT ?s ?o WHERE {{ {inner} }} LIMIT 10",
+        predicate_iri=predicate,
     )
 
 
@@ -106,7 +109,8 @@ def _make_cardinality_pattern(
         profile=profile,
         axiom_type="owl:cardinality-restriction",
         count_sparql=f"{_PREFIXES}SELECT (COUNT(*) AS ?n) WHERE {{ {inner} }}",
-        sample_sparql=f"{_PREFIXES}SELECT ?s WHERE {{ {inner} }} LIMIT 10",
+        sample_sparql=f"{_PREFIXES}SELECT ?s ?card ?o WHERE {{ {inner} }} LIMIT 10",
+        is_cardinality=True,
     )
 
 
@@ -201,7 +205,8 @@ def _make_cardinality_gt1_pattern(
         profile=profile,
         axiom_type="owl:cardinality-restriction-gt1",
         count_sparql=f"{_PREFIXES}SELECT (COUNT(*) AS ?n) WHERE {{ {inner} }}",
-        sample_sparql=f"{_PREFIXES}SELECT ?s WHERE {{ {inner} }} LIMIT 10",
+        sample_sparql=f"{_PREFIXES}SELECT ?s ?card ?val WHERE {{ {inner} }} LIMIT 10",
+        is_cardinality=True,
     )
 
 
@@ -226,7 +231,8 @@ def _make_min_cardinality_pattern(
         profile=profile,
         axiom_type="owl:min-cardinality-restriction",
         count_sparql=f"{_PREFIXES}SELECT (COUNT(*) AS ?n) WHERE {{ {inner} }}",
-        sample_sparql=f"{_PREFIXES}SELECT ?s WHERE {{ {inner} }} LIMIT 10",
+        sample_sparql=f"{_PREFIXES}SELECT ?s ?card ?o WHERE {{ {inner} }} LIMIT 10",
+        is_cardinality=True,
     )
 
 
@@ -362,6 +368,11 @@ def run_pattern_count(
     The graph_iri parameter is kept for API symmetry with the indexer but is
     unused here in v1 — the GRAPH clause is already baked into pattern.count_sparql
     and pattern.sample_sparql at construction time via make_el_patterns(graph_iri).
+
+    Each sample dict contains:
+      - subject_iri: str (IRI or blank-node ID of the subject)
+      - predicate_iri: str | None  — present for predicate-based and cardinality patterns
+      - object_term: pyoxigraph.Term | None  — raw term for Manchester rendering
     """
     count_result = list(store.query(pattern.count_sparql))
     count = int(count_result[0]["n"].value) if count_result else 0
@@ -370,5 +381,37 @@ def run_pattern_count(
         for row in store.query(pattern.sample_sparql):
             subj = row["s"]
             iri = subj.value if hasattr(subj, "value") else str(subj)
-            samples.append({"subject_iri": iri})
+            sample: dict = {"subject_iri": iri}
+
+            if pattern.is_cardinality:
+                # cardinality patterns: SELECT ?s ?card ?o (or ?val for gt1)
+                # pyoxigraph QuerySolution returns None for unbound vars
+                try:
+                    card_term = row["card"]
+                except KeyError:
+                    card_term = None
+                try:
+                    obj_term = row["o"]
+                except KeyError:
+                    obj_term = None
+                if obj_term is None:
+                    try:
+                        obj_term = row["val"]
+                    except KeyError:
+                        pass
+                if card_term is not None:
+                    sample["predicate_iri"] = card_term.value if hasattr(card_term, "value") else str(card_term)
+                if obj_term is not None:
+                    sample["object_term"] = obj_term
+            elif pattern.predicate_iri is not None:
+                # predicate-based patterns: SELECT ?s ?o
+                try:
+                    obj_term = row["o"]
+                except KeyError:
+                    obj_term = None
+                sample["predicate_iri"] = pattern.predicate_iri
+                if obj_term is not None:
+                    sample["object_term"] = obj_term
+
+            samples.append(sample)
     return count, samples

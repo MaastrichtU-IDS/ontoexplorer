@@ -95,12 +95,24 @@ def test_transitive_cycle_detected():
 # ---------------------------------------------------------------------------
 
 def test_bad_datatype_detected():
-    """Fixture uses xsd:duration which is not in the OWL 2 datatype map."""
+    """Fixture uses xsd:duration which is not in the OWL 2 datatype map.
+
+    After the Manchester rendering fix, subject_iri is the AXIOM SUBJECT (the
+    individual using the bad datatype), NOT the datatype IRI. The datatype
+    is now reported in the details field.
+    """
     store = _store_from_fixture("bad-datatype.ttl")
     violations = _detect_bad_datatypes(store, None)
     assert len(violations) >= 1, f"Expected at least 1 datatype violation, got {violations}"
-    violating_types = {v.subject_iri for v in violations}
-    assert "http://www.w3.org/2001/XMLSchema#duration" in violating_types
+    # subject_iri is now the individual/subject of the axiom, not the datatype
+    subject_iris = {v.subject_iri for v in violations}
+    # :a1 uses xsd:duration — the subject should be :a1, not xsd:duration
+    assert any("a1" in (s or "") for s in subject_iris), (
+        f"Expected the axiom subject (:a1) in violation subjects, got {subject_iris}"
+    )
+    # The datatype should be mentioned in details
+    details = " ".join(v.details for v in violations)
+    assert "duration" in details, f"Expected 'duration' in violation details, got {details!r}"
 
 
 # ---------------------------------------------------------------------------

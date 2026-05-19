@@ -593,11 +593,19 @@ export interface BulkMetaItem extends OntologyMetaResolved {
 
 export type ProfileName = 'el' | 'rl' | 'ql' | 'dl'
 
+export interface ProfileSampleViolation {
+  axiom_type: string
+  subject_iri?: string
+  details?: string
+  /** Pre-rendered Manchester OWL tokens. Present after reindex with Manchester support. */
+  manchester?: ManchesterToken[] | null
+}
+
 export interface ProfileResult {
   in_profile: boolean
   total_violations: number
   violations_by_axiom_type: Record<string, number>
-  sample_violations: Array<{ axiom_type: string; subject_iri?: string; details?: string }>
+  sample_violations: ProfileSampleViolation[]
 }
 
 export interface OwlProfileRecord {

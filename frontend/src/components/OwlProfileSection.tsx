@@ -1,6 +1,33 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api, OwlProfileRecord, ProfileResult } from '../lib/api'
+import { api, ManchesterToken, OwlProfileRecord, ProfileResult } from '../lib/api'
+
+// ---------------------------------------------------------------------------
+// Inline Manchester renderer (lighter-weight than the full ManchesterFrame)
+// ---------------------------------------------------------------------------
+
+function ManchesterInline({ tokens }: { tokens: ManchesterToken[] }) {
+  return (
+    <code style={{ fontSize: 10, wordBreak: 'break-all', fontFamily: 'monospace' }}>
+      {tokens.map((t, i) => {
+        if (t.t === 'text') {
+          return <span key={i}>{t.v}</span>
+        }
+        if (t.t === 'iri') {
+          return (
+            <span
+              key={i}
+              style={{ color: 'var(--accent, #7eb3f5)', fontWeight: 500 }}
+            >
+              {t.label ?? t.iri}
+            </span>
+          )
+        }
+        return null
+      })}
+    </code>
+  )
+}
 
 const PROFILE_LABELS: Record<string, string> = {
   el: 'OWL 2 EL',
@@ -212,7 +239,17 @@ function ProfileCard({
                               fontSize: 10,
                             }}
                           >
-                            {v.subject_iri ?? v.details ?? '—'}
+                            {v.manchester && v.manchester.length > 0 ? (
+                              <ManchesterInline tokens={v.manchester} />
+                            ) : v.details ? (
+                              v.details
+                            ) : v.subject_iri ? (
+                              v.subject_iri.length > 80
+                                ? `…${v.subject_iri.slice(-70)}`
+                                : v.subject_iri
+                            ) : (
+                              '—'
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -315,8 +352,8 @@ export default function OwlProfileSection({
 
       <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
+          display: 'flex',
+          flexDirection: 'column',
           gap: '0.5rem',
           marginBottom: '1rem',
         }}

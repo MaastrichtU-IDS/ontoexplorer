@@ -172,7 +172,8 @@ def _detect_bad_datatypes(
     """Detect literals and declared datatypes outside the OWL 2 datatype map.
 
     Two sub-checks:
-    a) Literal values whose datatype IRI is not in OWL2_DATATYPES.
+    a) Literal values whose datatype IRI is not in OWL2_DATATYPES — reports the
+       USAGE triple (s, p, o) so the Manchester renderer can show the actual axiom.
     b) Explicit rdfs:Datatype declarations with an IRI not in OWL2_DATATYPES.
 
     pyoxigraph supports GROUP BY + BIND(datatype(?o) AS ?dt) (verified).
@@ -182,7 +183,10 @@ def _detect_bad_datatypes(
     # Build a SPARQL IN-list for the allowed datatypes
     allowed_in = ", ".join(f"<{dt}>" for dt in sorted(OWL2_DATATYPES))
 
-    # --- sub-check (a): literal datatypes ---
+    # --- sub-check (a): literal datatypes — return usage triples (s, p, o) ---
+    # Group by datatype first to get one representative triple per bad datatype.
+    # We use a sub-SELECT trick: get distinct bad datatypes, then for each get
+    # one example triple.  For simplicity, fetch up to 100 usage triples directly.
     inner_lit = (
         "?s ?p ?o . "
         "FILTER(isLiteral(?o)) "
@@ -191,18 +195,26 @@ def _detect_bad_datatypes(
     )
     sparql_lit = (
         f"{_PREFIXES}"
-        "SELECT DISTINCT ?dt WHERE { "
+        "SELECT DISTINCT ?s ?p ?o ?dt WHERE { "
         + _graph_wrap(inner_lit, graph_iri)
         + " } LIMIT 100"
     )
+    seen_dt: set[str] = set()
     for row in store.query(sparql_lit):
+        s_term = row["s"]
         dt_iri = row["dt"].value
-        violations.append(ProfileViolation(
-            profile="dl",
-            axiom_type="unsupported-datatype",
-            subject_iri=dt_iri,
-            details=f"Datatype <{dt_iri}> is not in the OWL 2 datatype map",
-        ))
+        s_iri = s_term.value if hasattr(s_term, "value") else str(s_term)
+        # Emit one violation per bad datatype (use the first usage triple found).
+        # subject_iri is the axiom subject (the entity using the bad datatype),
+        # NOT the datatype IRI — so callers can show where the bad datatype is used.
+        if dt_iri not in seen_dt:
+            seen_dt.add(dt_iri)
+            violations.append(ProfileViolation(
+                profile="dl",
+                axiom_type="unsupported-datatype",
+                subject_iri=s_iri,
+                details=f"Uses datatype <{dt_iri}>",
+            ))
 
     # --- sub-check (b): explicit rdfs:Datatype declarations ---
     inner_decl = (
@@ -215,18 +227,86 @@ def _detect_bad_datatypes(
         + _graph_wrap(inner_decl, graph_iri)
         + " } LIMIT 100"
     )
-    seen = {v.subject_iri for v in violations}
     for row in store.query(sparql_decl):
         dt_iri = row["dt"].value
-        if dt_iri not in seen:
+        if dt_iri not in seen_dt:
+            seen_dt.add(dt_iri)
             violations.append(ProfileViolation(
                 profile="dl",
                 axiom_type="unsupported-datatype",
                 subject_iri=dt_iri,
                 details=f"Declared datatype <{dt_iri}> is not in the OWL 2 datatype map",
             ))
-            seen.add(dt_iri)
     return violations
+
+
+def _detect_bad_datatypes_with_terms(
+    store: pyoxigraph.Store,
+    graph_iri: str | None,
+) -> list[tuple[ProfileViolation, pyoxigraph.NamedNode | None, pyoxigraph.Term | None]]:
+    """Like _detect_bad_datatypes, but also returns (p_term, o_term) for rendering.
+
+    Returns a list of (violation, predicate_node, object_term) tuples.
+    predicate_node and object_term are None for sub-check (b) (declared datatypes).
+    """
+    results: list[tuple[ProfileViolation, pyoxigraph.NamedNode | None, pyoxigraph.Term | None]] = []
+
+    allowed_in = ", ".join(f"<{dt}>" for dt in sorted(OWL2_DATATYPES))
+
+    # sub-check (a): literal datatypes — one representative triple per bad datatype
+    inner_lit = (
+        "?s ?p ?o . "
+        "FILTER(isLiteral(?o)) "
+        "BIND(datatype(?o) AS ?dt) "
+        f"FILTER(?dt NOT IN ({allowed_in}))"
+    )
+    sparql_lit = (
+        f"{_PREFIXES}"
+        "SELECT DISTINCT ?s ?p ?o ?dt WHERE { "
+        + _graph_wrap(inner_lit, graph_iri)
+        + " } LIMIT 100"
+    )
+    seen_dt: set[str] = set()
+    for row in store.query(sparql_lit):
+        s_term = row["s"]
+        p_term = row["p"]
+        o_term = row["o"]
+        dt_iri = row["dt"].value
+        s_iri = s_term.value if hasattr(s_term, "value") else str(s_term)
+        if dt_iri not in seen_dt:
+            seen_dt.add(dt_iri)
+            v = ProfileViolation(
+                profile="dl",
+                axiom_type="unsupported-datatype",
+                subject_iri=s_iri,
+                details=f"Uses datatype <{dt_iri}>",
+            )
+            results.append((v, p_term if isinstance(p_term, pyoxigraph.NamedNode) else None, o_term))
+
+    # sub-check (b): explicit rdfs:Datatype declarations
+    inner_decl = (
+        "?dt a rdfs:Datatype . "
+        f"FILTER(?dt NOT IN ({allowed_in}))"
+    )
+    sparql_decl = (
+        f"{_PREFIXES}"
+        "SELECT DISTINCT ?dt WHERE { "
+        + _graph_wrap(inner_decl, graph_iri)
+        + " } LIMIT 100"
+    )
+    for row in store.query(sparql_decl):
+        dt_iri = row["dt"].value
+        if dt_iri not in seen_dt:
+            seen_dt.add(dt_iri)
+            v = ProfileViolation(
+                profile="dl",
+                axiom_type="unsupported-datatype",
+                subject_iri=dt_iri,
+                details=f"Declared datatype <{dt_iri}> is not in the OWL 2 datatype map",
+            )
+            results.append((v, None, None))
+
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -300,3 +380,27 @@ def detect_dl_violations(
     violations.extend(_detect_bad_datatypes(store, graph_iri))
     violations.extend(_detect_reserved_vocab(store, graph_iri))
     return violations
+
+
+def detect_dl_violations_with_terms(
+    store: pyoxigraph.Store,
+    graph_iri: str | None,
+) -> list[tuple[ProfileViolation, str | None, pyoxigraph.Term | None]]:
+    """Like detect_dl_violations but returns (violation, predicate_iri, object_term) tuples.
+
+    predicate_iri and object_term are only populated for unsupported-datatype violations
+    (sub-check a) so the detector can pass them to the Manchester renderer.
+    For all other violation types, predicate_iri and object_term are None.
+    """
+    results: list[tuple[ProfileViolation, str | None, pyoxigraph.Term | None]] = []
+
+    for v in _detect_punning(store, graph_iri):
+        results.append((v, None, None))
+    for v in _detect_transitive_cycles(store, graph_iri):
+        results.append((v, None, None))
+    for v, p_term, o_term in _detect_bad_datatypes_with_terms(store, graph_iri):
+        p_iri = p_term.value if p_term is not None else None
+        results.append((v, p_iri, o_term))
+    for v in _detect_reserved_vocab(store, graph_iri):
+        results.append((v, None, None))
+    return results

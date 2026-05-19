@@ -16,9 +16,17 @@ const RECORD = {
     total_violations: 3,
     violations_by_axiom_type: { 'owl:hasSelf': 2, 'owl:oneOf': 1 },
     sample_violations: [
-      { axiom_type: 'owl:hasSelf', subject_iri: 'http://example.org/A' },
+      {
+        axiom_type: 'owl:hasSelf',
+        subject_iri: 'http://example.org/A',
+        manchester: [
+          { t: 'iri', label: 'A', iri: 'http://example.org/A', in_ontology: true },
+          { t: 'text', v: ' hasSelf ' },
+          { t: 'text', v: 'true' },
+        ],
+      },
       { axiom_type: 'owl:hasSelf', subject_iri: 'http://example.org/B' },
-      { axiom_type: 'owl:oneOf',   subject_iri: 'http://example.org/C' },
+      { axiom_type: 'owl:oneOf',   subject_iri: 'http://example.org/C', manchester: null },
     ],
   },
   ql: {
@@ -26,7 +34,12 @@ const RECORD = {
     total_violations: 5,
     violations_by_axiom_type: { 'owl:allValuesFrom': 5 },
     sample_violations: [
-      { axiom_type: 'owl:allValuesFrom', subject_iri: 'http://example.org/D' },
+      {
+        axiom_type: 'owl:allValuesFrom',
+        subject_iri: 'http://example.org/D',
+        details: 'Uses only restriction',
+        // no manchester field — should fall back to details
+      },
     ],
   },
   dl: {
@@ -100,4 +113,45 @@ test('last computed footer renders formatted indexed_at', async () => {
   expect(await screen.findByTestId('last-computed')).toBeInTheDocument()
   const footer = screen.getByTestId('last-computed').textContent || ''
   expect(footer).toMatch(/2026/)
+})
+
+test('renders Manchester tokens when manchester field is present', async () => {
+  const user = userEvent.setup()
+  wrap(<OwlProfileSection ontologyId="o1" versionId="v1" />)
+  await screen.findByTestId('profile-card-rl')
+
+  // Expand RL profile
+  await user.click(screen.getByTestId('expander-rl'))
+
+  // The sample for A has manchester tokens — "A hasSelf true"
+  const violationsSection = screen.getByTestId('violations-rl')
+  // The IRI token should render as the label "A"
+  expect(violationsSection.textContent).toMatch(/hasSelf/)
+  expect(violationsSection.textContent).toMatch(/true/)
+})
+
+test('falls back to details when manchester is absent', async () => {
+  const user = userEvent.setup()
+  wrap(<OwlProfileSection ontologyId="o1" versionId="v1" />)
+  await screen.findByTestId('profile-card-ql')
+
+  // Expand QL profile
+  await user.click(screen.getByTestId('expander-ql'))
+
+  // The QL sample has details but no manchester — should show details
+  const violationsSection = screen.getByTestId('violations-ql')
+  expect(violationsSection.textContent).toMatch(/Uses only restriction/)
+})
+
+test('falls back to subject_iri when manchester is null and no details', async () => {
+  const user = userEvent.setup()
+  wrap(<OwlProfileSection ontologyId="o1" versionId="v1" />)
+  await screen.findByTestId('profile-card-rl')
+
+  await user.click(screen.getByTestId('expander-rl'))
+
+  // The second RL sample (owl:hasSelf for B) has no manchester and no details
+  // — should fall back to the subject_iri
+  const violationsSection = screen.getByTestId('violations-rl')
+  expect(violationsSection.textContent).toMatch(/http:\/\/example\.org\/B/)
 })

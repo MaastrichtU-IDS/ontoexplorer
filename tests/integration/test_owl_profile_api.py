@@ -247,5 +247,6 @@ async def test_ols_v1_list_with_profile_filter(client, db_session):
     assert resp.status_code == 200
     body = resp.json()
     returned_ids = {o["ontologyId"] for o in body["_embedded"]["ontologies"]}
-    assert ont_el.id in returned_ids
-    assert ont_noel.id not in returned_ids
+    # OLS endpoints now canonicalize to shortname (commit 8169296)
+    assert ont_el.shortname in returned_ids
+    assert ont_noel.shortname not in returned_ids
