@@ -89,6 +89,7 @@ export interface DiffLiteralChange {
 export interface DiffAxiomChange {
   op: 'added' | 'removed'
   axiom: string
+  source: 'asserted' | 'inferred'
 }
 
 export type DiffEntityType =
@@ -104,6 +105,7 @@ export type ManchesterToken     = ManchesterTextToken | ManchesterIriToken
 
 export type ManchesterLine = {
   op: 'added' | 'removed' | null
+  source: 'asserted' | 'inferred' | null
   tokens: ManchesterToken[]
 }
 
@@ -128,7 +130,13 @@ export interface DiffSummary {
   modified: number
   literal_changes: number
   axiom_changes: number
+  asserted_axiom_changes: number
+  inferred_axiom_changes: number
   by_entity_type: Record<DiffEntityType, { added: number; removed: number; modified: number }>
+  inferred_status: {
+    from_version: 'ready' | 'pending' | 'failed' | 'missing'
+    to_version: 'ready' | 'pending' | 'failed' | 'missing'
+  }
 }
 
 export interface OntologyDiff {
