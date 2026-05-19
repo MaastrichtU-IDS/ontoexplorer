@@ -25,7 +25,7 @@
 
 ## Export & API
 - **Multi-format term export** — JSON-LD, Turtle snippet, OWL/XML
-- **OLS-compatible API layer** — so tools already speaking OLS can point here
+- ~~**OLS-compatible API layer** — so tools already speaking OLS can point here~~ (shipped 2026-05-18: /ols/api/* — OLS4 v1 HAL + v2 flat + LLM endpoints via existing semantic_search + term_embeddings; jstree/graph widgets; 9 endpoints stubbed as 501 for features without backing data)
 - **Citation / DOI integration** — link to published papers about an ontology
 
 ## Analytics

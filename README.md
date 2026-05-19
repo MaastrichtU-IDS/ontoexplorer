@@ -404,6 +404,34 @@ ingest → detect_meta_profile → (ready for display)
 
 ## API Reference
 
+### OLS4-compatible API (/ols/api)
+
+Mounts an OLS4-compatible read-only API at `/ols/api/...` so clients already speaking the EMBL-EBI Ontology Lookup Service v4 protocol (Zooma, `ols-client`, OxO, OLS web widgets, custom annotation pipelines) work as drop-in replacements. Base URL pattern: `https://<your-host>/ols/api/ontologies` mirrors `https://www.ebi.ac.uk/ols4/api/ontologies`.
+
+**Four classes of differences clients should know about:**
+
+1. **Versioning:** OntoExplorer has a multi-version model but the OLS layer exposes only the latest ready version of each ontology — a single "current" string in metadata. There is no version-switching API.
+2. **IRIs in URL paths:** Double-URL-encoded per OLS4 convention (e.g. `http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252FGO_0008150`). Query-param `?iri=` is single-encoded.
+3. **Tier-3 stubs:** 9 endpoints return `501 Not Implemented` with `{"error": "not_implemented", "message": "...", "ols_path": "..."}`: `tag_text`, `curation_sources`, `ontologies/by-tag`, `ontologies/by-domain`, `terms/preferredRoots`, raw `llm_embedding` read (GET) and write (POST), pairwise `llm_similarity`.
+4. **No auth:** all endpoints are public, matching OLS.
+
+**Endpoints:**
+
+- **V1 HAL (~25 routes):** `/ontologies` (list/detail), `/ontologies/{id}/download`, `/ontologies/{id}/terms` (list/detail/roots/parents/children/ancestors/descendants/hierarchicalParents/hierarchicalAncestors/hierarchicalDescendants), `/ontologies/{id}/terms/{iri}/jstree`, `/ontologies/{id}/terms/{iri}/graph`; same family for `/properties` and `/individuals`; global `/terms`, `/properties`, `/individuals` with `findByIdAndIsDefiningOntology` variants.
+- **V2 flat (~23 routes):** `/v2/classes`, `/v2/properties`, `/v2/individuals`, `/v2/entities`, `/v2/ontologies/{id}/...` with hierarchy variants, `/v2/stats`, `/v2/defined-fields`.
+- **Solr-style search (3 routes):** `/search`, `/select`, `/suggest` — same Solr-shaped `responseHeader/response` envelope as EBI OLS.
+- **LLM endpoints (4 routes):** `/v2/llm_models`, `/v2/classes/llm_search` (global + per-ontology), `/v2/classes/{iri}/llm_similar` — backed by the existing `semantic_search` + `term_embeddings` pgvector store.
+
+**Worked example:**
+
+```bash
+curl -s https://api.example.org/ols/api/ontologies | jq '._embedded.ontologies[0].ontologyId'
+curl -s "https://api.example.org/ols/api/search?q=diabetes&rows=3" | jq '.response.numFound'
+curl -s https://api.example.org/ols/api/v2/stats | jq
+```
+
+### Native REST API
+
 Base path: `/api/v1/`
 
 ```
@@ -513,6 +541,7 @@ ontoexplorer/                    Python package
     admin.py                     Admin overview, per-ontology pipeline actions (ingest/index/embed/reason), and bulk re-index endpoints
     sparql.py                    SPARQL proxy endpoints
     inbound.py                   Inbound webhook receivers (GitHub push events)
+    ols/                         OLS4-compatible read-only shim at /ols/api/... (v1 HAL + v2 flat + Solr search + LLM)
   modules/
     ingestion/                   OWL/RDF parsing pipeline (pyhornedowl + rdflib)
     metadata/                    DCAT/VoID/PROV-O generators, Fuseki writer
