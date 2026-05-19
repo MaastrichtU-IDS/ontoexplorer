@@ -20,16 +20,16 @@ def test_pure_subclass_in_all_profiles():
         assert result[p]["in_profile"] is True
 
 
-def test_disjoint_violates_el_but_not_dl():
+def test_inverse_of_violates_el_but_not_dl():
     ttl = """@prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix : <http://example.org/x#> .
-:A a owl:Class ; owl:disjointWith :B .
-:B a owl:Class ."""
+:p a owl:ObjectProperty ; owl:inverseOf :q .
+:q a owl:ObjectProperty ."""
     store = _store_from_ttl(ttl)
     result = detect_profiles(store, graph_iri=None, ontology_id="t", version_id="v")
     assert result["el"]["in_profile"] is False
-    assert "owl:disjointWith" in result["el"]["violations_by_axiom_type"]
-    assert result["dl"]["in_profile"] is True  # disjointWith is allowed in DL
+    assert "owl:inverseOf" in result["el"]["violations_by_axiom_type"]
+    assert result["dl"]["in_profile"] is True  # inverseOf is allowed in DL
 
 
 def test_punning_violates_dl():

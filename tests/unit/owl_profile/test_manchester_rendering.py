@@ -35,17 +35,17 @@ def test_run_pattern_count_returns_predicate_and_object():
     ttl = """
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
     @prefix : <http://example.org/> .
-    :A a owl:Class ; owl:disjointWith :B .
-    :B a owl:Class .
+    :p a owl:ObjectProperty ; owl:inverseOf :q .
+    :q a owl:ObjectProperty .
     """
     store = _store_from_ttl(ttl)
-    pat = next(p for p in EL_PATTERNS if p.axiom_type == "owl:disjointWith")
+    pat = next(p for p in EL_PATTERNS if p.axiom_type == "owl:inverseOf")
     count, samples = run_pattern_count(store, None, pat)
     assert count == 1
     assert len(samples) == 1
     s = samples[0]
-    assert s["subject_iri"] == "http://example.org/A"
-    assert s.get("predicate_iri") == "http://www.w3.org/2002/07/owl#disjointWith"
+    assert s["subject_iri"] == "http://example.org/p"
+    assert s.get("predicate_iri") == "http://www.w3.org/2002/07/owl#inverseOf"
     assert s.get("object_term") is not None
 
 
@@ -94,52 +94,47 @@ def test_run_pattern_count_cardinality_returns_card_predicate():
 # Test 2: detect_profiles includes `manchester` field in sample_violations
 # ---------------------------------------------------------------------------
 
-def test_detect_profiles_sample_has_manchester_for_named_class_disjoint():
-    """disjointWith between named classes: manchester should be non-empty."""
+def test_detect_profiles_sample_has_manchester_for_named_property_inverseof():
+    """inverseOf between named properties: manchester should be non-empty."""
     ttl = """
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
     @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
     @prefix : <http://example.org/> .
-    :A a owl:Class ; rdfs:label "ClassA" ; owl:disjointWith :B .
-    :B a owl:Class ; rdfs:label "ClassB" .
+    :p a owl:ObjectProperty ; rdfs:label "P" ; owl:inverseOf :q .
+    :q a owl:ObjectProperty ; rdfs:label "Q" .
     """
     store = _store_from_ttl(ttl)
     result = detect_profiles(store, graph_iri=None, ontology_id="t", version_id="v")
     el_samples = result["el"]["sample_violations"]
-    disjoint_samples = [s for s in el_samples if s["axiom_type"] == "owl:disjointWith"]
-    assert len(disjoint_samples) > 0, "Should have disjointWith samples"
-    sample = disjoint_samples[0]
-    # manchester field should be present and non-empty
+    samples = [s for s in el_samples if s["axiom_type"] == "owl:inverseOf"]
+    assert len(samples) > 0, "Should have inverseOf samples"
+    sample = samples[0]
     assert "manchester" in sample, f"manchester key missing from sample: {sample}"
     assert sample["manchester"] is not None, "manchester should not be None"
     assert len(sample["manchester"]) > 0, "manchester tokens should be non-empty"
-    # Extract text from the tokens
     text = "".join(
         t["v"] if t["t"] == "text" else t.get("label", t.get("iri", ""))
         for t in sample["manchester"]
     )
-    assert "DisjointWith" in text, f"Expected 'DisjointWith' in Manchester text: {text!r}"
+    assert "InverseOf" in text, f"Expected 'InverseOf' in Manchester text: {text!r}"
 
 
 def test_detect_profiles_bnode_violation_renders_manchester():
-    """AllDisjointClasses (bnode subject): manchester should render the class expression."""
+    """A bnode-subject violation (owl:unionOf class expression) renders Manchester."""
     ttl = """
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
     @prefix : <http://example.org/> .
-    :A a owl:Class .
+    :A a owl:Class ; owl:equivalentClass [ a owl:Class ; owl:unionOf ( :B :C ) ] .
     :B a owl:Class .
     :C a owl:Class .
-    [] a owl:AllDisjointClasses ; owl:members ( :A :B :C ) .
     """
     store = _store_from_ttl(ttl)
     result = detect_profiles(store, graph_iri=None, ontology_id="t", version_id="v")
     el_samples = result["el"]["sample_violations"]
-    adc_samples = [s for s in el_samples if s["axiom_type"] == "owl:AllDisjointClasses"]
-    assert len(adc_samples) > 0
-    sample = adc_samples[0]
+    union_samples = [s for s in el_samples if s["axiom_type"] == "owl:unionOf"]
+    assert len(union_samples) > 0
+    sample = union_samples[0]
     # The sample has a manchester field (may be bnode fallback or None for type-based)
-    # The key thing: subject_iri should NOT be a bare bnode ID (since we now render Manchester)
-    # OR manchester is provided so the frontend can use it instead
     assert "manchester" in sample
 
 
@@ -275,15 +270,15 @@ def test_manchester_tokens_are_json_serializable():
     ttl = """
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
     @prefix : <http://example.org/> .
-    :A a owl:Class ; owl:disjointWith :B .
-    :B a owl:Class .
+    :p a owl:ObjectProperty ; owl:inverseOf :q .
+    :q a owl:ObjectProperty .
     """
     store = _store_from_ttl(ttl)
     result = detect_profiles(store, graph_iri=None, ontology_id="t", version_id="v")
     el_samples = result["el"]["sample_violations"]
-    disjoint = [s for s in el_samples if s["axiom_type"] == "owl:disjointWith"]
-    assert disjoint
-    sample = disjoint[0]
+    samples = [s for s in el_samples if s["axiom_type"] == "owl:inverseOf"]
+    assert samples
+    sample = samples[0]
     # Should not raise
     serialized = json.dumps(sample)
     parsed = json.loads(serialized)

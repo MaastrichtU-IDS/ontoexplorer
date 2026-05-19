@@ -375,6 +375,39 @@ Benchmarked against ROBOT 1.9.10 on a 6-ontology sample spanning four orders of 
 
 **Conclusion:** the architectural win isn't raw speed on small ontologies (both are JVM-startup-bound). It's the **scaling headroom at the high end** — the difference between "this fits in the worker container" and "the worker OOM-kills." This was the original design driver for choosing SPARQL-over-Oxigraph over ROBOT-as-runtime-dependency, and the measured numbers confirm the prediction.
 
+## Fleet-wide verdict-agreement audit (2026-05-19)
+
+Repository-wide ROBOT vs ours comparison on 19 ontologies (≤1M triples). Total perf: ours 21.4s, ROBOT 553s — **25.8× overall speedup**. Sample CSV at `scripts/owl_profile_bench/sample-results.csv`.
+
+**Verdict agreement: 7 / 19 (37%) across all 4 profiles.** Far below the SULO single-point that initially suggested high agreement. The disagreements split into three buckets:
+
+### A. RL under-detection (5 ontologies: pets, skos, pav, sdo, ordo)
+
+We say IN, ROBOT says OUT. Root cause: **RL positional rules** (different constructs allowed on LHS vs RHS of subClassOf) — we don't check positions, only outright-forbidden constructs. Documented limitation. Fix: write positional-aware SPARQL templates. Estimated 2-3 days.
+
+### B. DL false positives (4 ontologies: pro, pizza, ro, obi)
+
+We say OUT, ROBOT says IN. Our DL structural checks (punning, reserved-vocab, datatype) are over-firing. Likely culprits:
+- **Reserved-vocab whitelist too small** — only covers a few common OWL/RDF identifiers; real ontologies legitimately use more
+- **Punning rules too strict** — OWL 2 §5.6 allows more co-typings than we accept
+
+Fix: investigate per-ontology, tighten checks. Per-case work; no estimated scope yet.
+
+### C. EL/QL under-detection (4 ontologies: dcterms, ordo on EL, sdo, pro)
+
+We say IN, ROBOT says OUT. Coverage gap: ROBOT detects class-expression-level patterns (e.g. unionOf appearing as the SuperClassExpression in a SubClassOf axiom, or property characteristics expressed as OWL2 axiom-shaped triples like `[ a owl:FunctionalProperty ; ... ]`) that our flat predicate-set doesn't catch. Same general fix as RL positional rules: traverse class expressions, check axiom-shape patterns. Multi-day work.
+
+### Trade-off note
+
+A prior version of EL_PATTERNS / QL_PATTERNS flagged `owl:disjointWith` and `owl:AllDisjointClasses` as violations. This was **spec-incorrect** (W3C §4.2/§6.2 explicitly allow pairwise disjointness between profile-conformant classes). It coincidentally produced the *right verdict* for several ontologies that have other EL/QL violations we don't detect — they showed as agreed-OUT for the wrong reason. Removing the over-flag (commit pending) is spec-correct but exposed those coverage gaps; agreement count stayed flat at 7/19. The honest interpretation: the spec-correct detector is what we want; the next work is closing the genuine coverage gaps documented in (A) and (C) above.
+
+### What this means for users today
+
+- **DL verdict for ontologies likely in DL** is reliable (most "in DL" cases agree with ROBOT)
+- **EL/RL/QL "OUT" verdicts** are reliable in the *direction* (we don't false-positive into "out") but the *reason* (specific violations listed) may miss cases ROBOT would catch
+- **EL/RL/QL "IN" verdicts** are an upper bound — ROBOT may say OUT where we say IN due to documented coverage gaps
+- For authoritative profile validation, point users at ROBOT
+
 4. **`?profile=el` filter is O(N) per request.** It iterates all ready versions and Redis-looks-up each. With ~20 ontologies it's fine; at >1000 ontologies we'd want to maintain a reverse index (one Redis set per profile listing in-profile versions). Defer until needed.
 
 5. **Sample IRI extraction.** For each violation pattern we record up to 10 sample axiom IRIs. The SPARQL must return *triples involving* the violation, but axioms in OWL/RDF often span multiple triples (a blank-node restriction). Sample format will be "the subject + the violating predicate" — enough to look the axiom up manually, not a full axiom serialization.

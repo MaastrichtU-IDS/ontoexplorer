@@ -132,8 +132,12 @@ def _el_patterns(*, graph_iri: str | None = None) -> list[Pattern]:
 
     return [
         # Disjointness constructs
-        p("owl:disjointWith",           f"{_OWL}disjointWith"),
-        t("owl:AllDisjointClasses",     f"{_OWL}AllDisjointClasses"),
+        # NOTE: owl:disjointWith and owl:AllDisjointClasses ARE allowed in OWL 2 EL
+        # when the disjoint class expressions are themselves EL-conformant
+        # (W3C OWL 2 Profiles §4.2). We previously flagged any use, which gave
+        # false-positive EL=OUT verdicts on ontologies like BFO that use binary
+        # pairwise disjointness between named classes. Non-EL class expressions
+        # are still caught by their own patterns (unionOf, allValuesFrom, etc.).
         p("owl:disjointUnionOf",        f"{_OWL}disjointUnionOf"),
         # Boolean class expressions not allowed in EL
         p("owl:complementOf",           f"{_OWL}complementOf"),
@@ -303,10 +307,6 @@ def _ql_patterns(*, graph_iri: str | None = None) -> list[Pattern]:
     are entirely forbidden.  Property characteristics beyond rdfs:subPropertyOf
     and owl:inverseOf (in limited forms) are forbidden.
 
-    v1 over-approximations:
-    - owl:disjointWith: QL allows pairwise disjoint between NAMED classes; we flag
-      any use (false positives on pure named-class cases).
-
     Reference: https://www.w3.org/TR/owl2-profiles/#OWL_2_QL §6.2
     """
     def p(axiom_type: str, predicate: str) -> Pattern:
@@ -316,9 +316,12 @@ def _ql_patterns(*, graph_iri: str | None = None) -> list[Pattern]:
         return _make_basic_type_pattern("ql", axiom_type, rdf_class, graph_iri=graph_iri)
 
     return [
-        # Disjointness — QL allows pairwise disjoint between NAMED classes; over-approximate
-        p("owl:disjointWith",                    f"{_OWL}disjointWith"),
-        t("owl:AllDisjointClasses",              f"{_OWL}AllDisjointClasses"),
+        # Disjointness — QL allows pairwise disjoint between subClassExpressions
+        # (named classes + owl:Thing). owl:disjointWith and owl:AllDisjointClasses
+        # are valid when the disjoint classes are themselves QL-conformant; we
+        # previously flagged any use, causing false positives on ontologies that
+        # only used pairwise disjointness between named classes. Non-QL class
+        # expressions are still caught by their own patterns (unionOf, etc.).
         p("owl:disjointUnionOf",                 f"{_OWL}disjointUnionOf"),
         # Boolean class expressions — all forbidden in QL
         p("owl:complementOf",                    f"{_OWL}complementOf"),

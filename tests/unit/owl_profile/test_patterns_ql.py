@@ -51,21 +51,25 @@ def test_ql_pure_subclass_no_violations():
 
 
 # ---------------------------------------------------------------------------
-# Test 3: disjointWith detected (over-approximation)
+# Test 3: pairwise disjointness between named classes is allowed in QL
+# (W3C OWL 2 Profiles §6.2). Regression for prior over-flagging behavior.
 # ---------------------------------------------------------------------------
 
-def test_ql_disjoint_with_detected():
+def test_ql_pairwise_disjoint_named_classes_is_allowed():
     ttl = """
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
     @prefix : <http://example.org/> .
     :A a owl:Class ; owl:disjointWith :B .
     :B a owl:Class .
+    [] a owl:AllDisjointClasses ; owl:members ( :A :B ) .
     """
     store = _store_from_turtle(ttl)
-    p = next(pat for pat in QL_PATTERNS if pat.axiom_type == "owl:disjointWith")
-    count, samples = run_pattern_count(store, None, p)
-    assert count == 1
-    assert samples and samples[0]["subject_iri"] == "http://example.org/A"
+    for p in QL_PATTERNS:
+        count, _ = run_pattern_count(store, None, p)
+        assert count == 0, (
+            f"Pairwise disjointness between named classes should not be flagged "
+            f"as QL violation; pattern {p.axiom_type} matched"
+        )
 
 
 # ---------------------------------------------------------------------------

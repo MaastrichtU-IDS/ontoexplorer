@@ -14,21 +14,21 @@ def _store_from_turtle(ttl: str) -> pyoxigraph.Store:
 
 
 # ---------------------------------------------------------------------------
-# Test 1: disjointWith predicate is detected
+# Test 1: owl:inverseOf is detected (a still-forbidden EL construct)
 # ---------------------------------------------------------------------------
 
-def test_el_disjoint_with_detected():
+def test_el_inverse_of_detected():
     ttl = """
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
     @prefix : <http://example.org/> .
-    :A a owl:Class ; owl:disjointWith :B .
-    :B a owl:Class .
+    :p a owl:ObjectProperty ; owl:inverseOf :q .
+    :q a owl:ObjectProperty .
     """
     store = _store_from_turtle(ttl)
-    p = next(pat for pat in EL_PATTERNS if pat.axiom_type == "owl:disjointWith")
+    p = next(pat for pat in EL_PATTERNS if pat.axiom_type == "owl:inverseOf")
     count, samples = run_pattern_count(store, None, p)
     assert count == 1
-    assert samples and samples[0]["subject_iri"] == "http://example.org/A"
+    assert samples and samples[0]["subject_iri"] == "http://example.org/p"
 
 
 # ---------------------------------------------------------------------------
@@ -80,8 +80,8 @@ def test_el_named_graph_wrapping():
     ttl = """
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
     @prefix : <http://example.org/> .
-    :A a owl:Class ; owl:disjointWith :B .
-    :B a owl:Class .
+    :p a owl:ObjectProperty ; owl:inverseOf :q .
+    :q a owl:ObjectProperty .
     """
     graph_iri = "urn:test-graph"
     store = pyoxigraph.Store()
@@ -91,31 +91,54 @@ def test_el_named_graph_wrapping():
 
     # Named-graph patterns should detect the violation
     named_patterns = make_el_patterns(graph_iri)
-    p_named = next(pat for pat in named_patterns if pat.axiom_type == "owl:disjointWith")
+    p_named = next(pat for pat in named_patterns if pat.axiom_type == "owl:inverseOf")
     count_named, _ = run_pattern_count(store, graph_iri, p_named)
-    assert count_named == 1, "named-graph pattern should detect disjointWith"
+    assert count_named == 1, "named-graph pattern should detect inverseOf"
 
     # Default-graph patterns should find nothing (triples only in named graph)
-    p_default = next(pat for pat in EL_PATTERNS if pat.axiom_type == "owl:disjointWith")
+    p_default = next(pat for pat in EL_PATTERNS if pat.axiom_type == "owl:inverseOf")
     count_default, _ = run_pattern_count(store, None, p_default)
     assert count_default == 0, "default-graph pattern should not see named-graph triples"
 
 
 # ---------------------------------------------------------------------------
-# Test 5: AllDisjointClasses is detected (reuses disjoint-classes fixture shape)
+# Test 5: unionOf class expression is detected
 # ---------------------------------------------------------------------------
 
-def test_el_all_disjoint_classes_detected():
+def test_el_union_of_detected():
     ttl = """
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
     @prefix : <http://example.org/> .
-    :A a owl:Class .
+    :A a owl:Class ; owl:equivalentClass [ a owl:Class ; owl:unionOf ( :B :C ) ] .
     :B a owl:Class .
     :C a owl:Class .
-    [] a owl:AllDisjointClasses ; owl:members ( :A :B :C ) .
     """
     store = _store_from_turtle(ttl)
-    p = next(pat for pat in EL_PATTERNS if pat.axiom_type == "owl:AllDisjointClasses")
+    p = next(pat for pat in EL_PATTERNS if pat.axiom_type == "owl:unionOf")
     count, samples = run_pattern_count(store, None, p)
     assert count == 1
     assert len(samples) == 1
+
+
+# ---------------------------------------------------------------------------
+# Regression: pairwise disjointness between named classes is allowed in EL
+# (W3C OWL 2 Profiles §4.2). Previously over-flagged; now correctly accepted.
+# ---------------------------------------------------------------------------
+
+def test_el_pairwise_disjoint_named_classes_is_allowed():
+    """OWL 2 EL allows pairwise DisjointClasses between EL-conformant classes.
+    Named classes are trivially EL-conformant, so this should NOT be flagged."""
+    ttl = """
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix : <http://example.org/> .
+    :A a owl:Class ; owl:disjointWith :B .
+    :B a owl:Class .
+    [] a owl:AllDisjointClasses ; owl:members ( :A :B ) .
+    """
+    store = _store_from_turtle(ttl)
+    for p in EL_PATTERNS:
+        count, _ = run_pattern_count(store, None, p)
+        assert count == 0, (
+            f"Pairwise disjointness between named classes should not be flagged "
+            f"as EL violation; pattern {p.axiom_type} matched"
+        )
