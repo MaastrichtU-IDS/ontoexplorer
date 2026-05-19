@@ -268,17 +268,17 @@ def render_class_expression(
     return f"[unknown:{node!r}]"
 
 
-def _render_literal(lit: ox.Literal) -> str:
-    """Manchester-style literal: "value"[@lang][^^xsd:dtype]."""
+def _render_literal(lit: ox.Literal) -> list[ManchesterToken]:
+    """Manchester-style literal as a single text token: "value"[@lang][^^xsd:dtype]."""
     text = f'"{lit.value}"'
     if lit.language:
-        return f"{text}@{lit.language}"
+        return [_text(f"{text}@{lit.language}")]
     if lit.datatype is not None and lit.datatype.value != _XSD_STRING:
         dt = lit.datatype.value
         if dt.startswith(_XSD):
-            return f"{text}^^xsd:{dt[len(_XSD):]}"
-        return f"{text}^^<{dt}>"
-    return text
+            return [_text(f"{text}^^xsd:{dt[len(_XSD):]}")]
+        return [_text(f"{text}^^<{dt}>")]
+    return [_text(text)]
 
 
 def _render_bnode_expression(

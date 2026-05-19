@@ -1192,3 +1192,23 @@ def test_iri_token_marks_external_iri_in_ontology_false():
         labels={}, known_iris=frozenset({"http://example.org/Y"}),
     )
     assert tok["in_ontology"] is False
+
+
+from ontoexplorer.modules.diff.manchester import _render_literal
+
+
+def test_render_literal_returns_single_text_token():
+    out = _render_literal(ox.Literal("Pizza", language="en"))
+    assert out == [{"t": "text", "v": '"Pizza"@en'}]
+
+
+def test_render_literal_suppresses_xsd_string_datatype():
+    out = _render_literal(ox.Literal("Pizza"))
+    assert out == [{"t": "text", "v": '"Pizza"'}]
+
+
+def test_render_literal_renders_xsd_integer():
+    out = _render_literal(
+        ox.Literal("42", datatype=ox.NamedNode("http://www.w3.org/2001/XMLSchema#integer")),
+    )
+    assert out == [{"t": "text", "v": '"42"^^xsd:integer'}]
