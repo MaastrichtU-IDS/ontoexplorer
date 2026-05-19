@@ -576,6 +576,10 @@ def _render_datatype_restriction(
 # emitted at the end under "Other:" (or omitted, for unrecognized ones).
 # Tuples: (predicate, manchester-keyword, applicable-entity-types).
 _FRAME_KEYWORD_ORDER: list[tuple[str, str, set[str] | None]] = [
+    # Annotations always appear first, for all entity types. The predicate
+    # field here is a sentinel — annotation lines are detected by their
+    # rendered keyword, not by a predicate match against _FRAME_KEYWORD_ORDER.
+    ("__annotations__",   "Annotations",      None),
     # Class axioms
     (_RDFS_SUBCLASS,      "SubClassOf",       {"class"}),
     (_OWL_EQUIV_CLASS,    "EquivalentTo",     {"class"}),
