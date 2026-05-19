@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, Ontology, OntologyVersion } from '../lib/api'
+import { api, Ontology, OntologyVersion, slugFromIri } from '../lib/api'
 import { useArbitraryComparison, useTriggerComparison } from '../hooks/useCompare'
 import DiffResultView from '../components/DiffResultView'
 
@@ -416,8 +416,8 @@ export default function Compare() {
               variant="cross-compare"
               fromLabel={fromLabel}
               toLabel={toLabel}
-              fromShortname={fromOntObj?.shortname ?? null}
-              toShortname={toOntObj?.shortname ?? null}
+              fromShortname={fromOntObj ? (fromOntObj.shortname ?? slugFromIri(fromOntObj.iri)) : null}
+              toShortname={toOntObj ? (toOntObj.shortname ?? slugFromIri(toOntObj.iri)) : null}
             />
           )}
         </>
