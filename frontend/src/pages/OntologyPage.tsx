@@ -13,6 +13,7 @@ import ProfileEditor from '../components/ProfileEditor'
 import MetaProfileEditor from '../components/MetaProfileEditor'
 import HistoryTab from '../components/HistoryTab'
 import CoverageSection from '../components/CoverageSection'
+import OwlProfileSection from '../components/OwlProfileSection'
 import SearchBar from '../components/SearchBar'
 import { useOntologyMeta } from '../hooks/useOntologyMeta'
 import { useLang } from '../hooks/useLang'
@@ -888,10 +889,12 @@ export default function OntologyPage() {
 
   const [classMode, setClassMode] = useState<HierarchyMode>('asserted')
   const [mobilePane, setMobilePane] = useState<'tree' | 'detail'>('tree')
-  const [detailTab, setDetailTab] = useState<'info' | 'profile' | 'history' | 'coverage'>('info')
+  const [detailTab, setDetailTab] = useState<'info' | 'profile' | 'history' | 'coverage' | 'owl-profile'>('info')
   const location = useLocation()
   useEffect(() => {
-    if (location.hash === '#coverage') {
+    if (location.hash === '#owl-profile') {
+      setDetailTab('owl-profile')
+    } else if (location.hash === '#coverage') {
       setDetailTab('coverage')
     }
   }, [location.hash])
@@ -1207,7 +1210,7 @@ export default function OntologyPage() {
             display: 'flex', borderBottom: '1px solid var(--border)',
             background: 'var(--bg-secondary)', flexShrink: 0,
           }}>
-            {(['info', 'profile', 'history', 'coverage'] as const).map(tab => (
+            {(['info', 'profile', 'history', 'coverage', 'owl-profile'] as const).map(tab => (
               <button
                 key={tab}
                 onClick={() => setDetailTab(tab)}
@@ -1217,9 +1220,10 @@ export default function OntologyPage() {
                   color: detailTab === tab ? 'var(--text)' : 'var(--text-dim)',
                   borderBottom: detailTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
                   textTransform: 'capitalize',
+                  whiteSpace: 'nowrap',
                 }}
               >
-                {tab}
+                {tab === 'owl-profile' ? 'OWL Profile' : tab}
               </button>
             ))}
           </div>
@@ -1247,6 +1251,12 @@ export default function OntologyPage() {
             ) : detailTab === 'coverage' ? (
               oid && activeVid
                 ? <CoverageSection ontologyId={oid} versionId={activeVid} />
+                : <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 12 }}>
+                    No version available.
+                  </div>
+            ) : detailTab === 'owl-profile' ? (
+              oid && activeVid
+                ? <OwlProfileSection ontologyId={oid} versionId={activeVid} />
                 : <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 12 }}>
                     No version available.
                   </div>

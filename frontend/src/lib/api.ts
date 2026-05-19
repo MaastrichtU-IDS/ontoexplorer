@@ -589,6 +589,51 @@ export interface BulkMetaItem extends OntologyMetaResolved {
   profile_status: string
 }
 
+// ── OWL 2 profile types ───────────────────────────────────────────────────────
+
+export type ProfileName = 'el' | 'rl' | 'ql' | 'dl'
+
+export interface ProfileResult {
+  in_profile: boolean
+  total_violations: number
+  violations_by_axiom_type: Record<string, number>
+  sample_violations: Array<{ axiom_type: string; subject_iri?: string; details?: string }>
+}
+
+export interface OwlProfileRecord {
+  el: ProfileResult
+  rl: ProfileResult
+  ql: ProfileResult
+  dl: ProfileResult
+  indexed_at: string
+}
+
+export interface OwlProfileFleetEntry {
+  id: string
+  shortname?: string | null
+  title?: string | null
+  version_id: string
+  in_el: boolean
+  in_rl: boolean
+  in_ql: boolean
+  in_dl: boolean
+  el_violations: number
+  rl_violations: number
+  ql_violations: number
+  dl_violations: number
+}
+
+export interface OwlProfileFleet {
+  ontologies: OwlProfileFleetEntry[]
+  totals: {
+    fleet_size: number
+    el_count: number
+    rl_count: number
+    ql_count: number
+    dl_count: number
+  }
+}
+
 // ── Coverage types ────────────────────────────────────────────────────────────
 
 export type CoverageEntityType =
@@ -1042,6 +1087,12 @@ export const api = {
     fleet: () => request<CoverageFleet>('/coverage/public'),
     version: (ontologyId: string, versionId: string) =>
       request<CoverageRecord>(`/ontologies/${ontologyId}/${versionId}/coverage`),
+  },
+
+  owl_profile: {
+    fleet: () => request<OwlProfileFleet>('/owl-profile/public'),
+    version: (ontologyId: string, versionId: string) =>
+      request<OwlProfileRecord>(`/ontologies/${ontologyId}/${versionId}/owl-profile`),
   },
 
   stats: {
