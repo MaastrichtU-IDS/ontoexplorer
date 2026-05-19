@@ -1,0 +1,11 @@
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix :     <http://example.org/punning#> .
+
+: a owl:Ontology .
+
+# Forbidden punning: same IRI declared as both owl:ObjectProperty and owl:AnnotationProperty
+:p a owl:ObjectProperty, owl:AnnotationProperty .
+
+# Allowed punning: class-individual (owl:Class + owl:NamedIndividual is permitted in OWL 2)
+:X a owl:Class, owl:NamedIndividual .
