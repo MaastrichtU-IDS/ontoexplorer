@@ -4,6 +4,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../hooks/useAuth'
 import { useAdminOverview } from '../hooks/useAdminOverview'
 import { AdminOntologyEntry, AdminJobEntry, WorkerTask, api } from '../lib/api'
+import { usePagedTable } from '../hooks/usePagedTable'
+import { TablePager } from '../components/TablePager'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -135,8 +137,6 @@ function ActionButton({
   )
 }
 
-const PAGE_SIZE = 25
-
 function OntologyTable({
   rows,
   updateStates,
@@ -160,7 +160,6 @@ function OntologyTable({
 }) {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<{ col: SortCol; dir: 'asc' | 'desc' }>({ col: 'ontology', dir: 'asc' })
-  const [page, setPage] = useState(0)
 
   function toggleSort(col: SortCol) {
     setSort(s => s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'asc' })
@@ -197,8 +196,12 @@ function OntologyTable({
     return sort.dir === 'asc' ? cmp : -cmp
   })
 
-  const totalPages = Math.ceil(sorted.length / PAGE_SIZE)
-  const paged = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+  const {
+    paged,
+    page, setPage,
+    pageSize, setPageSize,
+    total,
+  } = usePagedTable(sorted, 'ontologies')
 
   const thBase: React.CSSProperties = {
     padding: '7px 10px', fontWeight: 500, fontSize: 10,
@@ -214,13 +217,6 @@ function OntologyTable({
       </th>
     )
   }
-
-  const btnStyle = (disabled: boolean): React.CSSProperties => ({
-    background: 'none', border: '1px solid var(--border)', borderRadius: 4,
-    color: disabled ? 'var(--text-dim)' : 'var(--text)',
-    fontSize: 11, padding: '2px 10px', cursor: disabled ? 'default' : 'pointer',
-    opacity: disabled ? 0.4 : 1,
-  })
 
   return (
     <div>
@@ -339,19 +335,7 @@ function OntologyTable({
         </table>
       </div>
 
-      {totalPages > 1 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
-          <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>
-            {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, sorted.length)} of {sorted.length}
-          </span>
-          <button onClick={() => setPage(p => p - 1)} disabled={page === 0} style={btnStyle(page === 0)}>
-            ‹ Prev
-          </button>
-          <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1} style={btnStyle(page >= totalPages - 1)}>
-            Next ›
-          </button>
-        </div>
-      )}
+      <TablePager total={total} page={page} pageSize={pageSize} onPage={setPage} onPageSize={setPageSize} />
     </div>
   )
 }
@@ -369,51 +353,61 @@ const JOB_TYPE_COLOR: Record<string, string> = {
 }
 
 function JobsTable({ jobs }: { jobs: AdminJobEntry[] }) {
+  const {
+    paged,
+    page, setPage,
+    pageSize, setPageSize,
+    total,
+  } = usePagedTable(jobs, 'jobs')
+
   return (
-    <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-        <thead>
-          <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
-            {['Type', 'Ontology', 'Status', 'Duration', 'Started'].map(h => (
-              <th key={h} style={{ padding: '7px 10px', textAlign: h === 'Type' || h === 'Ontology' ? 'left' : 'center', color: 'var(--text-dim)', fontWeight: 500, fontSize: 10, textTransform: 'uppercase', letterSpacing: .5 }}>
-                {h}
-              </th>
+    <div>
+      <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+              {['Type', 'Ontology', 'Status', 'Duration', 'Started'].map(h => (
+                <th key={h} style={{ padding: '7px 10px', textAlign: h === 'Type' || h === 'Ontology' ? 'left' : 'center', color: 'var(--text-dim)', fontWeight: 500, fontSize: 10, textTransform: 'uppercase', letterSpacing: .5 }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {paged.map(job => (
+              <tr key={job.id} style={{
+                borderBottom: '1px solid rgba(255,255,255,0.04)',
+                background: job.status === 'failed' ? 'rgba(248,81,73,0.06)' : undefined,
+              }}>
+                <td style={{ padding: '6px 10px', color: JOB_TYPE_COLOR[job.type] ?? 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase', fontWeight: 600 }}>
+                  {job.type}
+                </td>
+                <td style={{ padding: '6px 10px', color: 'var(--text)' }}>
+                  {job.ontology_shortname ?? job.ontology_iri?.split(/[/#]/).pop() ?? '—'}
+                </td>
+                <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                  <StatusDot status={job.status} />
+                </td>
+                <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  {fmtDuration(job.started_at, job.finished_at)}
+                  {job.status === 'running' && <span style={{ color: 'var(--text-dim)' }}>…</span>}
+                </td>
+                <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
+                  {fmtAge(job.started_at)}
+                </td>
+              </tr>
             ))}
-          </tr>
-        </thead>
-        <tbody>
-          {jobs.map(job => (
-            <tr key={job.id} style={{
-              borderBottom: '1px solid rgba(255,255,255,0.04)',
-              background: job.status === 'failed' ? 'rgba(248,81,73,0.06)' : undefined,
-            }}>
-              <td style={{ padding: '6px 10px', color: JOB_TYPE_COLOR[job.type] ?? 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase', fontWeight: 600 }}>
-                {job.type}
-              </td>
-              <td style={{ padding: '6px 10px', color: 'var(--text)' }}>
-                {job.ontology_shortname ?? job.ontology_iri?.split(/[/#]/).pop() ?? '—'}
-              </td>
-              <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-                <StatusDot status={job.status} />
-              </td>
-              <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                {fmtDuration(job.started_at, job.finished_at)}
-                {job.status === 'running' && <span style={{ color: 'var(--text-dim)' }}>…</span>}
-              </td>
-              <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
-                {fmtAge(job.started_at)}
-              </td>
-            </tr>
-          ))}
-          {jobs.length === 0 && (
-            <tr>
-              <td colSpan={5} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
-                No jobs yet
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+            {paged.length === 0 && (
+              <tr>
+                <td colSpan={5} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                  No jobs yet
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <TablePager total={total} page={page} pageSize={pageSize} onPage={setPage} onPageSize={setPageSize} />
     </div>
   )
 }
@@ -469,71 +463,81 @@ function WorkersPanel({ versionMap }: { versionMap: Record<string, string> }) {
 
   const tasks = data?.tasks ?? []
 
+  const {
+    paged: pagedTasks,
+    page, setPage,
+    pageSize, setPageSize,
+    total,
+  } = usePagedTable(tasks, 'workers')
+
   return (
-    <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-        <thead>
-          <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
-            {['Task', 'Ontology', 'Worker', 'State', 'Running', ''].map(h => (
-              <th key={h} style={{ padding: '7px 10px', textAlign: h === 'Task' || h === 'Ontology' || h === 'Worker' ? 'left' : 'center', color: 'var(--text-dim)', fontWeight: 500, fontSize: 10, textTransform: 'uppercase', letterSpacing: .5 }}>
-                {h}
-              </th>
+    <div>
+      <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+              {['Task', 'Ontology', 'Worker', 'State', 'Running', ''].map(h => (
+                <th key={h} style={{ padding: '7px 10px', textAlign: h === 'Task' || h === 'Ontology' || h === 'Worker' ? 'left' : 'center', color: 'var(--text-dim)', fontWeight: 500, fontSize: 10, textTransform: 'uppercase', letterSpacing: .5 }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {pagedTasks.map(t => (
+              <tr key={t.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                <td style={{ padding: '6px 10px' }}>
+                  <div style={{ color: JOB_TYPE_COLOR[taskLabel(t.name)] ?? '#79c0ff', fontSize: 10, textTransform: 'uppercase', fontWeight: 600 }}>
+                    {taskLabel(t.name)}
+                  </div>
+                  <div style={{ color: 'var(--text-dim)', fontFamily: 'monospace', fontSize: 9, marginTop: 1 }} title={t.id}>
+                    {t.id.slice(0, 8)}…
+                  </div>
+                </td>
+                <td style={{ padding: '6px 10px', color: 'var(--text-dim)', fontSize: 11 }}>
+                  {taskDetail(t, versionMap)}
+                </td>
+                <td style={{ padding: '6px 10px', color: 'var(--text-dim)', fontFamily: 'monospace', fontSize: 10 }}>
+                  {t.worker === 'queue' ? '—' : t.worker.replace(/^celery@/, '')}
+                </td>
+                <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                  {t.state === 'active'
+                    ? <span style={{ color: '#58a6ff', fontSize: 11 }}>⟳ running</span>
+                    : t.state === 'reserved'
+                    ? <span style={{ color: '#d29922', fontSize: 11 }}>⏳ next</span>
+                    : <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>· queued</span>
+                  }
+                </td>
+                <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
+                  {t.time_start ? fmtDuration(new Date(t.time_start * 1000).toISOString(), null) : '—'}
+                </td>
+                <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                  <button
+                    onClick={() => handleRevoke(t)}
+                    disabled={revoking.has(t.id)}
+                    style={{
+                      background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)',
+                      borderRadius: 4, color: '#f85149', fontSize: 10, padding: '2px 8px',
+                      cursor: revoking.has(t.id) ? 'default' : 'pointer',
+                      opacity: revoking.has(t.id) ? 0.5 : 1,
+                    }}
+                  >
+                    {revoking.has(t.id) ? '…' : 'Cancel'}
+                  </button>
+                </td>
+              </tr>
             ))}
-          </tr>
-        </thead>
-        <tbody>
-          {tasks.map(t => (
-            <tr key={t.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-              <td style={{ padding: '6px 10px' }}>
-                <div style={{ color: JOB_TYPE_COLOR[taskLabel(t.name)] ?? '#79c0ff', fontSize: 10, textTransform: 'uppercase', fontWeight: 600 }}>
-                  {taskLabel(t.name)}
-                </div>
-                <div style={{ color: 'var(--text-dim)', fontFamily: 'monospace', fontSize: 9, marginTop: 1 }} title={t.id}>
-                  {t.id.slice(0, 8)}…
-                </div>
-              </td>
-              <td style={{ padding: '6px 10px', color: 'var(--text-dim)', fontSize: 11 }}>
-                {taskDetail(t, versionMap)}
-              </td>
-              <td style={{ padding: '6px 10px', color: 'var(--text-dim)', fontFamily: 'monospace', fontSize: 10 }}>
-                {t.worker === 'queue' ? '—' : t.worker.replace(/^celery@/, '')}
-              </td>
-              <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-                {t.state === 'active'
-                  ? <span style={{ color: '#58a6ff', fontSize: 11 }}>⟳ running</span>
-                  : t.state === 'reserved'
-                  ? <span style={{ color: '#d29922', fontSize: 11 }}>⏳ next</span>
-                  : <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>· queued</span>
-                }
-              </td>
-              <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
-                {t.time_start ? fmtDuration(new Date(t.time_start * 1000).toISOString(), null) : '—'}
-              </td>
-              <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-                <button
-                  onClick={() => handleRevoke(t)}
-                  disabled={revoking.has(t.id)}
-                  style={{
-                    background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)',
-                    borderRadius: 4, color: '#f85149', fontSize: 10, padding: '2px 8px',
-                    cursor: revoking.has(t.id) ? 'default' : 'pointer',
-                    opacity: revoking.has(t.id) ? 0.5 : 1,
-                  }}
-                >
-                  {revoking.has(t.id) ? '…' : 'Cancel'}
-                </button>
-              </td>
-            </tr>
-          ))}
-          {tasks.length === 0 && (
-            <tr>
-              <td colSpan={6} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
-                {isFetching ? 'Checking workers…' : 'No active or queued tasks'}
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+            {pagedTasks.length === 0 && (
+              <tr>
+                <td colSpan={6} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                  {isFetching ? 'Checking workers…' : 'No active or queued tasks'}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <TablePager total={total} page={page} pageSize={pageSize} onPage={setPage} onPageSize={setPageSize} />
     </div>
   )
 }
