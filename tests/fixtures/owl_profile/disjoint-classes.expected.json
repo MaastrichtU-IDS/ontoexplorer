@@ -1,0 +1,6 @@
+{
+  "el": {"in_profile": false, "violations_by_axiom_type": {"owl:AllDisjointClasses": 1}},
+  "ql": {"in_profile": false, "violations_by_axiom_type": {"owl:AllDisjointClasses": 1}},
+  "rl": {"in_profile": true},
+  "dl": {"in_profile": true}
+}
