@@ -4,7 +4,21 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import Dashboard from './Dashboard'
 
 vi.mock('../lib/api', () => ({
+  slugFromIri: (iri: string) => {
+    const last = iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? iri
+    return last.replace(/\.(owl|ttl|rdf|obo|json|xml|nt)$/i, '').toLowerCase()
+  },
   api: {
+    auth: {
+      me: vi.fn().mockResolvedValue({
+        id: 'user-1',
+        email: 'test@example.com',
+        display_name: 'Test User',
+        created_at: '2026-05-01T00:00:00Z',
+        is_admin: false,
+        connected_providers: [],
+      }),
+    },
     ontologies: {
       list: vi.fn().mockResolvedValue({
         ontologies: [
@@ -23,9 +37,17 @@ vi.mock('../lib/api', () => ({
           },
         ],
       }),
+      stats: vi.fn().mockResolvedValue({
+        triple_count: 1200000, class_count: 50000,
+        object_property_count: 100, datatype_property_count: 50,
+      }),
       submitByIri: vi.fn().mockResolvedValue({ task_id: 'task-1', status: 'queued' }),
       submitByUrl: vi.fn().mockResolvedValue({ task_id: 'task-2', status: 'queued' }),
       delete: vi.fn().mockResolvedValue(undefined),
+      patch: vi.fn().mockResolvedValue(undefined),
+    },
+    admin: {
+      checkUpdate: vi.fn().mockResolvedValue({ status: 'up_to_date' }),
     },
   },
 }))
@@ -61,14 +83,18 @@ test('hides add form when cancel is clicked', async () => {
 
 test('renders ontology rows', async () => {
   wrap()
-  await waitFor(() => expect(screen.getByText('http://example.org/go.owl')).toBeInTheDocument())
-  expect(screen.getByText('http://example.org/chebi.owl')).toBeInTheDocument()
+  // Dashboard shows displayName (slug from IRI), not the full IRI as text.
+  // The slug appears in multiple places per row (name link + shortname/title), so use getAllByText.
+  await waitFor(() => expect(screen.getAllByText('go').length).toBeGreaterThan(0))
+  expect(screen.getAllByText('chebi').length).toBeGreaterThan(0)
 })
 
 test('shows confirm delete UI on delete button click', async () => {
   wrap()
-  await waitFor(() => screen.getByText('http://example.org/go.owl'))
-  const deleteButtons = screen.getAllByText('delete')
+  await waitFor(() => expect(screen.getAllByText('go').length).toBeGreaterThan(0))
+  const deleteButtons = screen.getAllByText('Delete')
   fireEvent.click(deleteButtons[0])
-  expect(screen.getByText('confirm?')).toBeInTheDocument()
+  // After clicking Delete, confirmation shows yes/no buttons
+  expect(screen.getByText('yes')).toBeInTheDocument()
+  expect(screen.getByText('no')).toBeInTheDocument()
 })
