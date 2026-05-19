@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../hooks/useAuth'
 import { useAdminOverview } from '../hooks/useAdminOverview'
-import { AdminOntologyEntry, AdminJobEntry, WorkerTask, api } from '../lib/api'
+import { AdminOntologyEntry, AdminJobEntry, AdminVersionEntry, WorkerTask, api } from '../lib/api'
 import { usePagedTable } from '../hooks/usePagedTable'
 import { TablePager } from '../components/TablePager'
 
@@ -54,6 +54,21 @@ function StatusDot({ status, label }: { status: string; label?: string }) {
     return <span style={{ color: '#f85149', fontSize: 11 }}>✕ {text}</span>
   }
   return <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{text}</span>
+}
+
+function DiffStatusBadge({ status }: { status: AdminVersionEntry['diff_vs_prev']['status'] }) {
+  const text = status === 'missing' ? 'none' : status
+  if (status === 'ready')   return <span style={{ color: 'var(--accent-green, #3fb950)', fontSize: 11 }}>● {text}</span>
+  if (status === 'running' || status === 'pending') return <span style={{ color: '#58a6ff', fontSize: 11 }}>⟳ {text}</span>
+  if (status === 'failed')  return <span style={{ color: '#f85149', fontSize: 11 }}>✕ {text}</span>
+  if (status === 'stale')   return <span style={{ color: '#d29922', fontSize: 11 }}>↻ {text}</span>
+  return <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>— {text}</span>
+}
+
+function diffActionLabelFor(status: AdminVersionEntry['diff_vs_prev']['status']): string {
+  if (status === 'failed') return '✕ retry'
+  if (status === 'stale')  return '↻ refresh'
+  return '⚖ diff'
 }
 
 // ── Section heading ───────────────────────────────────────────────────────────
@@ -147,6 +162,10 @@ function OntologyTable({
   onEmbed,
   reasonStates,
   onReason,
+  recomputeStates,
+  onRecomputeAll,
+  pairDiffStates,
+  onPairDiff,
 }: {
   rows: AdminOntologyEntry[]
   updateStates: Record<string, UpdateState>
@@ -157,6 +176,10 @@ function OntologyTable({
   onEmbed: (id: string) => void
   reasonStates: Record<string, UpdateState>
   onReason: (id: string) => void
+  recomputeStates: Record<string, UpdateState>
+  onRecomputeAll: (ontologyId: string) => void
+  pairDiffStates: Record<string, UpdateState>
+  onPairDiff: (fromVid: string, toVid: string) => void
 }) {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<{ col: SortCol; dir: 'asc' | 'desc' }>({ col: 'ontology', dir: 'asc' })
@@ -258,6 +281,9 @@ function OntologyTable({
               <SortTh col="embeddings" label="Embeddings" />
               <SortTh col="reasoning"  label="Reasoning" />
               <SortTh col="updated"    label="Updated" />
+              <th style={{ padding: '7px 10px', textAlign: 'center', color: 'var(--text-dim)', fontWeight: 500, fontSize: 10, textTransform: 'uppercase', letterSpacing: .5 }}>
+                Diff vs prev
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -276,6 +302,12 @@ function OntologyTable({
                     {row.label && row.label !== ontologyDisplayName(row) && (
                       <div style={{ color: 'var(--text-dim)', fontSize: 10 }}>{row.label}</div>
                     )}
+                    <ActionButton
+                      label="⚖ recompute all diffs"
+                      title="Queue compute_diff for every consecutive version pair of this ontology"
+                      state={recomputeStates[row.id] ?? 'idle'}
+                      onClick={() => onRecomputeAll(row.id)}
+                    />
                   </td>
                   <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-muted)' }}>
                     {fmtTriples(row.triple_count)}
@@ -337,16 +369,25 @@ function OntologyTable({
                   <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
                     {fmtAge(row.version_created_at)}
                   </td>
+                  <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
+                    —
+                  </td>
                 </tr>
                 {expanded.has(row.id) && (
-                  <VersionsSubRows ontologyId={row.id} colSpan={8} latestVersionId={row.version_id} />
+                  <VersionsSubRows
+                    ontologyId={row.id}
+                    colSpan={9}
+                    latestVersionId={row.version_id}
+                    pairDiffStates={pairDiffStates}
+                    onPairDiff={onPairDiff}
+                  />
                 )}
                 </React.Fragment>
               )
             })}
             {paged.length === 0 && (
               <tr>
-                <td colSpan={8} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                <td colSpan={9} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
                   {search ? 'No matching ontologies' : 'No ontologies'}
                 </td>
               </tr>
@@ -566,10 +607,13 @@ function WorkersPanel({ versionMap }: { versionMap: Record<string, string> }) {
 
 function VersionsSubRows({
   ontologyId, colSpan, latestVersionId,
+  pairDiffStates, onPairDiff,
 }: {
   ontologyId: string
   colSpan: number
   latestVersionId: string
+  pairDiffStates: Record<string, UpdateState>
+  onPairDiff: (fromVid: string, toVid: string) => void
 }) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['admin-versions', ontologyId],
@@ -637,6 +681,19 @@ function VersionsSubRows({
           <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
             {fmtAge(v.version_created_at)}
           </td>
+          <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+              <DiffStatusBadge status={v.diff_vs_prev.status} />
+              {v.diff_vs_prev.previous_version_id && (
+                <ActionButton
+                  label={diffActionLabelFor(v.diff_vs_prev.status)}
+                  title={`Queue compute_diff against ${v.diff_vs_prev.previous_version_id.slice(0, 8)}…`}
+                  state={pairDiffStates[`${v.diff_vs_prev.previous_version_id}->${v.version_id}`] ?? 'idle'}
+                  onClick={() => onPairDiff(v.diff_vs_prev.previous_version_id!, v.version_id)}
+                />
+              )}
+            </div>
+          </td>
         </tr>
       ))}
     </>
@@ -655,6 +712,8 @@ export default function AdminPage() {
   const [reindexAllState, setReindexAllState] = useState<'idle' | 'queued' | 'error'>('idle')
   const [embedStates, setEmbedStates] = useState<Record<string, UpdateState>>({})
   const [reasonStates, setReasonStates] = useState<Record<string, UpdateState>>({})
+  const [recomputeStates, setRecomputeStates] = useState<Record<string, UpdateState>>({})
+  const [pairDiffStates, setPairDiffStates] = useState<Record<string, UpdateState>>({})
 
   async function handleUpdate(ontologyId: string) {
     setUpdateStates(s => ({ ...s, [ontologyId]: 'queued' }))
@@ -698,6 +757,25 @@ export default function AdminPage() {
       await api.admin.reindexAll()
     } catch {
       setReindexAllState('error')
+    }
+  }
+
+  async function handleRecomputeAll(ontologyId: string) {
+    setRecomputeStates(s => ({ ...s, [ontologyId]: 'queued' }))
+    try {
+      await api.admin.recomputeAllDiffs(ontologyId)
+    } catch {
+      setRecomputeStates(s => ({ ...s, [ontologyId]: 'error' }))
+    }
+  }
+
+  async function handlePairDiff(fromVid: string, toVid: string) {
+    const key = `${fromVid}->${toVid}`
+    setPairDiffStates(s => ({ ...s, [key]: 'queued' }))
+    try {
+      await api.admin.queueDiff(fromVid, toVid)
+    } catch {
+      setPairDiffStates(s => ({ ...s, [key]: 'error' }))
     }
   }
 
@@ -791,6 +869,10 @@ export default function AdminPage() {
           onEmbed={handleEmbed}
           reasonStates={reasonStates}
           onReason={handleReason}
+          recomputeStates={recomputeStates}
+          onRecomputeAll={handleRecomputeAll}
+          pairDiffStates={pairDiffStates}
+          onPairDiff={handlePairDiff}
         />
       </div>
 
