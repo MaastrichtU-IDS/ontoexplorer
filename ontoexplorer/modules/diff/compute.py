@@ -1,5 +1,6 @@
 """Compute term-level diff between two ontology versions using Oxigraph quad iteration."""
 import hashlib
+from typing import Literal
 
 import pyoxigraph as ox
 
@@ -8,6 +9,33 @@ from ontoexplorer.modules.diff import manchester as _mos
 
 _RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 _RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
+
+
+ReasoningStatus = Literal["ready", "pending", "failed", "missing"]
+
+
+async def _reasoning_status_for_version(db, version_id: str) -> ReasoningStatus:
+    """Return the reasoning-readiness status for an ontology version.
+
+    Ranking: if ANY 'done' job exists → 'ready'. Else if a 'running' or
+    'pending' (queued) job exists → 'pending'. Else if a 'failed' job exists →
+    'failed'. Else 'missing'.
+    """
+    from sqlalchemy import select
+
+    from ontoexplorer.models.db import Job
+
+    rows = await db.execute(
+        select(Job.status).where(Job.version_id == version_id, Job.type == "reason")
+    )
+    statuses = {r[0] for r in rows.all()}
+    if "done" in statuses:
+        return "ready"
+    if "running" in statuses or "pending" in statuses:
+        return "pending"
+    if "failed" in statuses:
+        return "failed"
+    return "missing"
 
 # Blank node IDs (b123) are assigned at parse time and differ between versions
 # even when the underlying structure is identical, so we replace each bnode in

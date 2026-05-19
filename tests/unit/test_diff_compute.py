@@ -463,3 +463,86 @@ def test_run_diff_iri_referenced_in_filler_but_not_subject_marks_in_ontology_tru
                 assert tok["in_ontology"] is True, "B should be in_ontology because it appears as object"
                 found = True
     assert found, "B's iri token must appear in some line"
+
+
+# ---------------------------------------------------------------------------
+# _reasoning_status_for_version helper (Phase 4 Task 1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def make_version(db_session):
+    """Create an Ontology + OntologyVersion row and return the version."""
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+
+    async def _make(ont_iri: str, sha: str):
+        ont = Ontology(iri=ont_iri)
+        db_session.add(ont)
+        await db_session.flush()
+        ver = OntologyVersion(
+            ontology_id=ont.id,
+            minio_key=f"test/{sha}.ttl",
+            sha256=sha,
+            format="turtle",
+            status="ready",
+        )
+        db_session.add(ver)
+        await db_session.commit()
+        return ver
+
+    return _make
+
+
+@pytest.mark.anyio
+async def test_reasoning_status_returns_ready_for_done_job(db_session, make_version):
+    from ontoexplorer.modules.diff.compute import _reasoning_status_for_version
+    from ontoexplorer.models.db import Job
+
+    v = await make_version("http://example.org/x.owl", "rs001")
+    db_session.add(Job(version_id=v.id, type="reason", status="done"))
+    await db_session.commit()
+    status = await _reasoning_status_for_version(db_session, v.id)
+    assert status == "ready"
+
+
+@pytest.mark.anyio
+async def test_reasoning_status_returns_pending_for_running_job(db_session, make_version):
+    from ontoexplorer.modules.diff.compute import _reasoning_status_for_version
+    from ontoexplorer.models.db import Job
+
+    v = await make_version("http://example.org/y.owl", "rs002")
+    db_session.add(Job(version_id=v.id, type="reason", status="running"))
+    await db_session.commit()
+    assert await _reasoning_status_for_version(db_session, v.id) == "pending"
+
+
+@pytest.mark.anyio
+async def test_reasoning_status_returns_failed_when_only_failure_jobs_exist(db_session, make_version):
+    from ontoexplorer.modules.diff.compute import _reasoning_status_for_version
+    from ontoexplorer.models.db import Job
+
+    v = await make_version("http://example.org/z.owl", "rs003")
+    db_session.add(Job(version_id=v.id, type="reason", status="failed", error="oom"))
+    await db_session.commit()
+    assert await _reasoning_status_for_version(db_session, v.id) == "failed"
+
+
+@pytest.mark.anyio
+async def test_reasoning_status_returns_missing_when_no_reason_job(db_session, make_version):
+    from ontoexplorer.modules.diff.compute import _reasoning_status_for_version
+
+    v = await make_version("http://example.org/q.owl", "rs004")
+    assert await _reasoning_status_for_version(db_session, v.id) == "missing"
+
+
+@pytest.mark.anyio
+async def test_reasoning_status_prefers_ready_over_failed_when_both_exist(db_session, make_version):
+    """If a later 'done' run succeeded after earlier failures, status is 'ready'."""
+    from ontoexplorer.modules.diff.compute import _reasoning_status_for_version
+    from ontoexplorer.models.db import Job
+
+    v = await make_version("http://example.org/p.owl", "rs005")
+    db_session.add(Job(version_id=v.id, type="reason", status="failed", error="x"))
+    db_session.add(Job(version_id=v.id, type="reason", status="done"))
+    await db_session.commit()
+    assert await _reasoning_status_for_version(db_session, v.id) == "ready"
