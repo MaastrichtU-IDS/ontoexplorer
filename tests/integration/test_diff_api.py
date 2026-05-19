@@ -51,3 +51,41 @@ async def test_get_arbitrary_diff_unknown_version(client, user_and_key):
         params={"from": "v1", "to": "v2"},
     )
     assert r.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_diff_api_includes_inferred_status_and_breakdown(client, db_session):
+    """Diff API response carries inferred_status and the asserted/inferred
+    axiom breakdown in the summary."""
+    from ontoexplorer.models.db import Ontology, OntologyVersion, OntologyDiff
+
+    ont = Ontology(iri="http://example.org/test.owl", shortname="test")
+    db_session.add(ont); await db_session.flush()
+    v1 = OntologyVersion(ontology_id=ont.id, minio_key="t1", sha256="t1", format="turtle", status="ready")
+    v2 = OntologyVersion(ontology_id=ont.id, minio_key="t2", sha256="t2", format="turtle", status="ready")
+    db_session.add(v1); db_session.add(v2); await db_session.flush()
+    diff = OntologyDiff(
+        ontology_id=ont.id,
+        version_from_id=v1.id, version_to_id=v2.id,
+        status="ready",
+        summary={
+            "added": 0, "removed": 0, "modified": 1,
+            "literal_changes": 0, "axiom_changes": 3,
+            "asserted_axiom_changes": 2,
+            "inferred_axiom_changes": 1,
+            "by_entity_type": {},
+            "inferred_status": {"from_version": "ready", "to_version": "ready"},
+        },
+        diff_data={"added": [], "removed": [], "modified": []},
+    )
+    db_session.add(diff)
+    await db_session.commit()
+
+    r = await client.get(f"/api/v1/ontologies/{ont.id}/diff", params={"from": v1.id, "to": v2.id})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ready"
+    summary = body["summary"]
+    assert summary["asserted_axiom_changes"] == 2
+    assert summary["inferred_axiom_changes"] == 1
+    assert summary["inferred_status"] == {"from_version": "ready", "to_version": "ready"}
