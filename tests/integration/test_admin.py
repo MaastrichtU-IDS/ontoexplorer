@@ -198,3 +198,73 @@ async def test_diff_status_for_pair_stale_when_inferred_missing(db_session):
 
     result = await _diff_status_for_pair(db_session, v1.id, v2.id)
     assert result["status"] == "stale"
+
+
+@pytest.mark.anyio
+async def test_admin_versions_returns_all_versions_newest_first(client, user_and_key, monkeypatch, db_session):
+    """GET /admin/ontologies/{id}/versions returns all versions, newest first."""
+    from datetime import datetime, timezone, timedelta
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    _, raw_key = user_and_key
+
+    ont = Ontology(iri="http://example.org/av1.owl", shortname="av1")
+    db_session.add(ont); await db_session.flush()
+    now = datetime.now(timezone.utc)
+    v1 = OntologyVersion(ontology_id=ont.id, minio_key="k1", sha256="av101", format="turtle", status="deprecated", triple_count=100, created_at=now - timedelta(seconds=10))
+    v2 = OntologyVersion(ontology_id=ont.id, minio_key="k2", sha256="av102", format="turtle", status="ready", triple_count=200, created_at=now)
+    db_session.add(v1); db_session.add(v2)
+    await db_session.commit()
+
+    with (
+        patch("ontoexplorer.api.admin._search_redis", return_value=MagicMock(exists=lambda k: False)),
+        patch("ontoexplorer.api.admin._reasoning_status", new=AsyncMock(return_value="not_started")),
+    ):
+        resp = await client.get(
+            f"/api/v1/admin/ontologies/{ont.id}/versions",
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ontology_id"] == ont.id
+    versions = body["versions"]
+    assert len(versions) == 2
+    # Newest first
+    assert versions[0]["version_id"] == v2.id
+    assert versions[1]["version_id"] == v1.id
+    # Newest is_latest
+    assert versions[0]["is_latest"] is True
+    assert versions[1]["is_latest"] is False
+    # diff_vs_prev shape on the oldest version: previous_version_id is None
+    assert versions[1]["diff_vs_prev"]["previous_version_id"] is None
+    assert versions[1]["diff_vs_prev"]["status"] == "missing"
+    # diff_vs_prev on the newer version: previous_version_id == v1.id
+    assert versions[0]["diff_vs_prev"]["previous_version_id"] == v1.id
+
+
+@pytest.mark.anyio
+async def test_admin_versions_404_for_unknown_ontology(client, user_and_key, monkeypatch):
+    """Unknown ontology_id → 404."""
+    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    _, raw_key = user_and_key
+    resp = await client.get(
+        "/api/v1/admin/ontologies/nonexistent-id/versions",
+        headers={"Authorization": f"Bearer {raw_key}"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_admin_versions_requires_admin(client, user_and_key, db_session):
+    """Non-admin → 403."""
+    from ontoexplorer.models.db import Ontology
+    _, raw_key = user_and_key
+    ont = Ontology(iri="http://example.org/av2.owl")
+    db_session.add(ont); await db_session.commit()
+
+    resp = await client.get(
+        f"/api/v1/admin/ontologies/{ont.id}/versions",
+        headers={"Authorization": f"Bearer {raw_key}"},
+    )
+    assert resp.status_code == 403
