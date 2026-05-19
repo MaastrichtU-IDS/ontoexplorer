@@ -6,7 +6,7 @@ See docs/superpowers/specs/2026-05-17-manchester-diff-rendering-design.md.
 from __future__ import annotations
 
 import hashlib
-from typing import Literal
+from typing import Literal, TypedDict, NotRequired
 
 import pyoxigraph as ox
 
@@ -98,6 +98,35 @@ _CURIE_PREFIXES: list[tuple[str, str]] = [
     (_OWL,     "owl:"),
     (_XSD,     "xsd:"),
 ]
+
+
+class TextToken(TypedDict):
+    t: Literal["text"]
+    v: str
+
+
+class IriToken(TypedDict):
+    t: Literal["iri"]
+    label: str
+    iri: str
+    in_ontology: bool
+
+
+ManchesterToken = TextToken | IriToken
+
+
+class ManchesterLine(TypedDict):
+    op: Literal["added", "removed"] | None
+    tokens: list[ManchesterToken]
+
+
+class ManchesterFrame(TypedDict):
+    lines: list[ManchesterLine]
+
+
+def _text(v: str) -> TextToken:
+    """Build a text token (whitespace, keyword, punctuation, operator)."""
+    return {"t": "text", "v": v}
 
 
 def _to_curie(iri: str) -> str:
