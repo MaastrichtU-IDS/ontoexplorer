@@ -1,0 +1,123 @@
+"""OLS4-compat ontology endpoints.
+
+Implements:
+  GET /ols/api/ontologies                    — HAL paged list
+  GET /ols/api/ontologies/{ontology_id}      — HAL detail
+  GET /ols/api/v2/ontologies                 — v2 flat paged list
+  GET /ols/api/v2/ontologies/{ontology_id}   — v2 flat detail
+  GET /ols/api/ontologies/{ontology_id}/download  — 302 redirect to internal download route
+"""
+import asyncio
+
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import RedirectResponse
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ontoexplorer.database import get_db
+from ontoexplorer.models.db import Ontology
+from ontoexplorer.modules.search.indexer import _get_redis, _meta_key  # noqa: F401 — patched in tests
+from ontoexplorer.api.ols._envelope import hal_page, v2_page
+from ontoexplorer.api.ols._shapes import ontology_to_v1, ontology_to_v2
+from ontoexplorer.api.ols._common import (
+    get_latest_version_or_404,
+    get_ontology_or_404,
+    hal_page_params,
+    page_to_offset,
+)
+
+router = APIRouter()
+
+
+async def _ontology_shape(
+    db: AsyncSession,
+    o: Ontology,
+    request: Request,
+    *,
+    v2: bool,
+) -> dict:
+    """Resolve the latest version, fetch Redis meta counts, and build an OLS shape."""
+    version = await get_latest_version_or_404(db, o.id)
+    meta = await asyncio.to_thread(
+        lambda: _get_redis().hgetall(_meta_key(str(version.id)))
+    )
+    if v2:
+        return ontology_to_v2(o, version, meta, request=request)
+    return ontology_to_v1(o, version, meta, request=request)
+
+
+# ---------------------------------------------------------------------------
+# HAL (v1) endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/api/ontologies")
+async def list_ontologies_hal(
+    request: Request,
+    page_size: tuple[int, int] = Depends(hal_page_params),
+    db: AsyncSession = Depends(get_db),
+):
+    page, size = page_size
+    offset = page_to_offset(page, size)
+
+    total = (await db.execute(select(func.count(Ontology.id)))).scalar_one()
+    rows = (
+        await db.execute(select(Ontology).order_by(Ontology.id).limit(size).offset(offset))
+    ).scalars().all()
+
+    items = [await _ontology_shape(db, o, request, v2=False) for o in rows]
+    return hal_page(items, request, total=total, page=page, size=size, embedded_key="ontologies")
+
+
+@router.get("/api/ontologies/{ontology_id}/download")
+async def download_proxy(
+    ontology_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Redirect to the internal download route for the latest version."""
+    version = await get_latest_version_or_404(db, ontology_id)
+    return RedirectResponse(
+        url=f"/api/v1/ontologies/{ontology_id}/{version.id}/download",
+        status_code=302,
+    )
+
+
+@router.get("/api/ontologies/{ontology_id}")
+async def get_ontology_hal(
+    ontology_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    o = await get_ontology_or_404(db, ontology_id)
+    return await _ontology_shape(db, o, request, v2=False)
+
+
+# ---------------------------------------------------------------------------
+# V2 flat endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/api/v2/ontologies")
+async def list_ontologies_v2(
+    request: Request,
+    page_size: tuple[int, int] = Depends(hal_page_params),
+    db: AsyncSession = Depends(get_db),
+):
+    page, size = page_size
+    offset = page_to_offset(page, size)
+
+    total = (await db.execute(select(func.count(Ontology.id)))).scalar_one()
+    rows = (
+        await db.execute(select(Ontology).order_by(Ontology.id).limit(size).offset(offset))
+    ).scalars().all()
+
+    items = [await _ontology_shape(db, o, request, v2=True) for o in rows]
+    return v2_page(items, request, total=total, page=page, size=size)
+
+
+@router.get("/api/v2/ontologies/{ontology_id}")
+async def get_ontology_v2(
+    ontology_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    o = await get_ontology_or_404(db, ontology_id)
+    return await _ontology_shape(db, o, request, v2=True)
