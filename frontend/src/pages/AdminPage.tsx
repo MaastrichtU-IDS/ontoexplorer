@@ -166,6 +166,14 @@ function OntologyTable({
   onRecomputeAll,
   pairDiffStates,
   onPairDiff,
+  versionIndexStates,
+  onVersionIndex,
+  versionEmbedStates,
+  onVersionEmbed,
+  versionReasonStates,
+  onVersionReason,
+  versionIngestStates,
+  onVersionIngest,
 }: {
   rows: AdminOntologyEntry[]
   updateStates: Record<string, UpdateState>
@@ -180,6 +188,14 @@ function OntologyTable({
   onRecomputeAll: (ontologyId: string) => void
   pairDiffStates: Record<string, UpdateState>
   onPairDiff: (fromVid: string, toVid: string) => void
+  versionIndexStates: Record<string, UpdateState>
+  onVersionIndex: (versionId: string) => void
+  versionEmbedStates: Record<string, UpdateState>
+  onVersionEmbed: (versionId: string) => void
+  versionReasonStates: Record<string, UpdateState>
+  onVersionReason: (versionId: string) => void
+  versionIngestStates: Record<string, UpdateState>
+  onVersionIngest: (versionId: string) => void
 }) {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<{ col: SortCol; dir: 'asc' | 'desc' }>({ col: 'ontology', dir: 'asc' })
@@ -380,6 +396,14 @@ function OntologyTable({
                     latestVersionId={row.version_id}
                     pairDiffStates={pairDiffStates}
                     onPairDiff={onPairDiff}
+                    versionIndexStates={versionIndexStates}
+                    onVersionIndex={onVersionIndex}
+                    versionEmbedStates={versionEmbedStates}
+                    onVersionEmbed={onVersionEmbed}
+                    versionReasonStates={versionReasonStates}
+                    onVersionReason={onVersionReason}
+                    versionIngestStates={versionIngestStates}
+                    onVersionIngest={onVersionIngest}
                   />
                 )}
                 </React.Fragment>
@@ -608,12 +632,24 @@ function WorkersPanel({ versionMap }: { versionMap: Record<string, string> }) {
 function VersionsSubRows({
   ontologyId, colSpan, latestVersionId,
   pairDiffStates, onPairDiff,
+  versionIndexStates, onVersionIndex,
+  versionEmbedStates, onVersionEmbed,
+  versionReasonStates, onVersionReason,
+  versionIngestStates, onVersionIngest,
 }: {
   ontologyId: string
   colSpan: number
   latestVersionId: string
   pairDiffStates: Record<string, UpdateState>
   onPairDiff: (fromVid: string, toVid: string) => void
+  versionIndexStates: Record<string, UpdateState>
+  onVersionIndex: (versionId: string) => void
+  versionEmbedStates: Record<string, UpdateState>
+  onVersionEmbed: (versionId: string) => void
+  versionReasonStates: Record<string, UpdateState>
+  onVersionReason: (versionId: string) => void
+  versionIngestStates: Record<string, UpdateState>
+  onVersionIngest: (versionId: string) => void
 }) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['admin-versions', ontologyId],
@@ -667,16 +703,52 @@ function VersionsSubRows({
             {fmtTriples(v.triple_count)}
           </td>
           <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-            <StatusDot status={v.ingestion_status} />
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+              <StatusDot status={v.ingestion_status} />
+              <ActionButton
+                label={v.source_url ? '↑ url' : '↑ iri'}
+                title={v.source_url
+                  ? `Re-fetch ${v.source_url} — creates a new version if bytes changed`
+                  : `Re-fetch the ontology IRI — creates a new version if bytes changed`}
+                state={versionIngestStates[v.version_id] ?? 'idle'}
+                onClick={() => onVersionIngest(v.version_id)}
+              />
+            </div>
           </td>
           <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-            <StatusDot status={v.indexed ? 'done' : 'not_started'} label={v.indexed ? 'yes' : 'no'} />
-          </td>
-          <td style={{ padding: '6px 10px', textAlign: 'center', color: v.embed_count > 0 ? 'var(--accent-green, #3fb950)' : 'var(--text-dim)' }}>
-            {v.embed_count > 0 ? fmtTriples(v.embed_count) : '—'}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+              <StatusDot status={v.indexed ? 'done' : 'not_started'} label={v.indexed ? 'yes' : 'no'} />
+              <ActionButton
+                label="↺ index"
+                title="Re-index search for this specific version"
+                state={versionIndexStates[v.version_id] ?? 'idle'}
+                onClick={() => onVersionIndex(v.version_id)}
+              />
+            </div>
           </td>
           <td style={{ padding: '6px 10px', textAlign: 'center' }}>
-            <StatusDot status={v.reasoning_status} label={v.reasoning_status.replace('_', ' ')} />
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+              <span style={{ color: v.embed_count > 0 ? 'var(--accent-green, #3fb950)' : 'var(--text-dim)', fontSize: 11 }}>
+                {v.embed_count > 0 ? fmtTriples(v.embed_count) : '—'}
+              </span>
+              <ActionButton
+                label="⬡ embed"
+                title="Generate embeddings for this specific version"
+                state={versionEmbedStates[v.version_id] ?? 'idle'}
+                onClick={() => onVersionEmbed(v.version_id)}
+              />
+            </div>
+          </td>
+          <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+              <StatusDot status={v.reasoning_status} label={v.reasoning_status.replace('_', ' ')} />
+              <ActionButton
+                label="⚙ reason"
+                title="Run OWL-EL classification for this specific version"
+                state={versionReasonStates[v.version_id] ?? 'idle'}
+                onClick={() => onVersionReason(v.version_id)}
+              />
+            </div>
           </td>
           <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
             {fmtAge(v.version_created_at)}
@@ -714,6 +786,10 @@ export default function AdminPage() {
   const [reasonStates, setReasonStates] = useState<Record<string, UpdateState>>({})
   const [recomputeStates, setRecomputeStates] = useState<Record<string, UpdateState>>({})
   const [pairDiffStates, setPairDiffStates] = useState<Record<string, UpdateState>>({})
+  const [versionIndexStates, setVersionIndexStates] = useState<Record<string, UpdateState>>({})
+  const [versionEmbedStates, setVersionEmbedStates] = useState<Record<string, UpdateState>>({})
+  const [versionReasonStates, setVersionReasonStates] = useState<Record<string, UpdateState>>({})
+  const [versionIngestStates, setVersionIngestStates] = useState<Record<string, UpdateState>>({})
 
   async function handleUpdate(ontologyId: string) {
     setUpdateStates(s => ({ ...s, [ontologyId]: 'queued' }))
@@ -777,6 +853,27 @@ export default function AdminPage() {
     } catch {
       setPairDiffStates(s => ({ ...s, [key]: 'error' }))
     }
+  }
+
+  async function handleVersionIndex(versionId: string) {
+    setVersionIndexStates(s => ({ ...s, [versionId]: 'queued' }))
+    try { await api.admin.queueIndexForVersion(versionId) }
+    catch { setVersionIndexStates(s => ({ ...s, [versionId]: 'error' })) }
+  }
+  async function handleVersionEmbed(versionId: string) {
+    setVersionEmbedStates(s => ({ ...s, [versionId]: 'queued' }))
+    try { await api.admin.queueEmbedForVersion(versionId) }
+    catch { setVersionEmbedStates(s => ({ ...s, [versionId]: 'error' })) }
+  }
+  async function handleVersionReason(versionId: string) {
+    setVersionReasonStates(s => ({ ...s, [versionId]: 'queued' }))
+    try { await api.admin.queueReasonForVersion(versionId) }
+    catch { setVersionReasonStates(s => ({ ...s, [versionId]: 'error' })) }
+  }
+  async function handleVersionIngest(versionId: string) {
+    setVersionIngestStates(s => ({ ...s, [versionId]: 'queued' }))
+    try { await api.admin.queueIngestForVersion(versionId) }
+    catch { setVersionIngestStates(s => ({ ...s, [versionId]: 'error' })) }
   }
 
   // Redirect non-admins after auth resolves
@@ -873,6 +970,14 @@ export default function AdminPage() {
           onRecomputeAll={handleRecomputeAll}
           pairDiffStates={pairDiffStates}
           onPairDiff={handlePairDiff}
+          versionIndexStates={versionIndexStates}
+          onVersionIndex={handleVersionIndex}
+          versionEmbedStates={versionEmbedStates}
+          onVersionEmbed={handleVersionEmbed}
+          versionReasonStates={versionReasonStates}
+          onVersionReason={handleVersionReason}
+          versionIngestStates={versionIngestStates}
+          onVersionIngest={handleVersionIngest}
         />
       </div>
 
