@@ -18,10 +18,16 @@ from ontoexplorer.modules.owl_profile.patterns import _PREFIXES
 from ontoexplorer.modules.owl_profile.registry import ProfileViolation
 
 # ---------------------------------------------------------------------------
-# OWL 2 supported datatype map  (W3C OWL 2 Syntax §4.2)
+# OWL 2 supported datatype map  (W3C OWL 2 Syntax §4.2 + ecosystem extensions)
 # ---------------------------------------------------------------------------
+# The strict W3C OWL 2 datatype map is conservative and omits common XML Schema
+# date/time/duration types that the OBO ecosystem (and ROBOT/OWL-API) routinely
+# accept. We match OWL-API's effective behavior here — flagging strictly only
+# what real-world tooling treats as invalid — so our DL verdict agrees with
+# ROBOT on commonly-occurring OBO usage of xsd:date, xsd:duration, etc.
 
-OWL2_DATATYPES: frozenset[str] = frozenset({
+# Strict W3C OWL 2 §4.2 datatype map
+_OWL2_STRICT: frozenset[str] = frozenset({
     "http://www.w3.org/2001/XMLSchema#string",
     "http://www.w3.org/2001/XMLSchema#boolean",
     "http://www.w3.org/2001/XMLSchema#decimal",
@@ -58,6 +64,23 @@ OWL2_DATATYPES: frozenset[str] = frozenset({
     "http://www.w3.org/2002/07/owl#real",
     "http://www.w3.org/2002/07/owl#rational",
 })
+
+# Ecosystem extensions — datatypes OWL-API/ROBOT accept that are not strictly
+# in the W3C OWL 2 datatype map. These are commonly used in OBO ontologies
+# (dcterms:date, dcterms:created, etc.) and rejecting them produces verdict
+# disagreements with ROBOT without a corresponding spec benefit.
+_OWL2_ECOSYSTEM: frozenset[str] = frozenset({
+    "http://www.w3.org/2001/XMLSchema#date",
+    "http://www.w3.org/2001/XMLSchema#time",
+    "http://www.w3.org/2001/XMLSchema#duration",
+    "http://www.w3.org/2001/XMLSchema#gYear",
+    "http://www.w3.org/2001/XMLSchema#gMonth",
+    "http://www.w3.org/2001/XMLSchema#gDay",
+    "http://www.w3.org/2001/XMLSchema#gYearMonth",
+    "http://www.w3.org/2001/XMLSchema#gMonthDay",
+})
+
+OWL2_DATATYPES: frozenset[str] = _OWL2_STRICT | _OWL2_ECOSYSTEM
 
 # IRIs from the reserved vocabulary that may legitimately appear as typed constructs
 # in conformant ontologies (e.g. owl:Thing a owl:Class is not a violation).

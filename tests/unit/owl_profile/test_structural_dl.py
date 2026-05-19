@@ -4,7 +4,7 @@ Covers:
 1. Punning detection (forbidden co-typing pairs)
 2. Punning allowed case (owl:Class + owl:NamedIndividual is permitted)
 3. Transitive property in a role hierarchy cycle
-4. Literal with unsupported datatype (xsd:duration)
+4. Literal with unsupported datatype (xsd:ID)
 5. Known-good datatypes produce no violations
 6. el-only.ttl fixture produces zero DL violations
 """
@@ -91,28 +91,26 @@ def test_transitive_cycle_detected():
 
 
 # ---------------------------------------------------------------------------
-# Test 4: literal with xsd:duration (not in OWL 2 map) is detected
+# Test 4: literal with xsd:ID (not in OWL 2 map) is detected
 # ---------------------------------------------------------------------------
 
 def test_bad_datatype_detected():
-    """Fixture uses xsd:duration which is not in the OWL 2 datatype map.
-
-    After the Manchester rendering fix, subject_iri is the AXIOM SUBJECT (the
-    individual using the bad datatype), NOT the datatype IRI. The datatype
-    is now reported in the details field.
+    """Fixture uses xsd:ID which is not in any OWL 2 datatype map (strict or
+    ecosystem). After the Manchester rendering fix, subject_iri is the AXIOM
+    SUBJECT (the individual using the bad datatype), NOT the datatype IRI.
+    The datatype is now reported in the details field.
     """
     store = _store_from_fixture("bad-datatype.ttl")
     violations = _detect_bad_datatypes(store, None)
     assert len(violations) >= 1, f"Expected at least 1 datatype violation, got {violations}"
-    # subject_iri is now the individual/subject of the axiom, not the datatype
     subject_iris = {v.subject_iri for v in violations}
-    # :a1 uses xsd:duration — the subject should be :a1, not xsd:duration
+    # :a1 uses xsd:ID — the subject should be :a1, not xsd:ID
     assert any("a1" in (s or "") for s in subject_iris), (
         f"Expected the axiom subject (:a1) in violation subjects, got {subject_iris}"
     )
     # The datatype should be mentioned in details
     details = " ".join(v.details for v in violations)
-    assert "duration" in details, f"Expected 'duration' in violation details, got {details!r}"
+    assert "ID" in details, f"Expected 'ID' (xsd:ID) in violation details, got {details!r}"
 
 
 # ---------------------------------------------------------------------------

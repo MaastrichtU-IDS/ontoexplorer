@@ -852,6 +852,29 @@ def embed_ontology(version_id: str, ontology_id: str = "") -> dict:
         return {"status": "failed", "version_id": version_id, "error": str(exc)}
 
 
+@celery_app.task(name="ontoexplorer.refresh_owl_profile", time_limit=300)
+def refresh_owl_profile(version_id: str, ontology_id: str) -> dict:
+    """Rebuild ONLY the owl_profile:{version_id} Redis cache.
+
+    Cheaper alternative to a full index_ontology when the only thing that
+    needs updating is the OWL profile classification (e.g. after fixing a
+    detector bug). Does NOT touch the search index or queue embeddings.
+    """
+    import json as _json
+    from ontoexplorer.clients.oxigraph import get_store, graph_iri
+    from ontoexplorer.modules.owl_profile.detector import detect_profiles
+    from ontoexplorer.modules.owl_profile.cache import owl_profile_cache_key
+    from ontoexplorer.modules.search.indexer import _get_redis, _SEARCH_TTL
+
+    g = graph_iri(ontology_id, version_id)
+    payload = detect_profiles(get_store(), graph_iri=g,
+                              ontology_id=ontology_id, version_id=version_id)
+    _get_redis().setex(owl_profile_cache_key(version_id), _SEARCH_TTL, _json.dumps(payload))
+    log.info("owl_profile_refresh_done", version_id=version_id)
+    return {"status": "done", "version_id": version_id,
+            "verdicts": {p: payload[p]["in_profile"] for p in ("el", "rl", "ql", "dl")}}
+
+
 @celery_app.task(name="ontoexplorer.refresh_stale_inferred_diffs")
 def refresh_stale_inferred_diffs() -> dict:
     """Safety net: catch diffs whose inferred half is stale because the

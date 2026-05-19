@@ -401,6 +401,16 @@ We say IN, ROBOT says OUT. Coverage gap: ROBOT detects class-expression-level pa
 
 A prior version of EL_PATTERNS / QL_PATTERNS flagged `owl:disjointWith` and `owl:AllDisjointClasses` as violations. This was **spec-incorrect** (W3C §4.2/§6.2 explicitly allow pairwise disjointness between profile-conformant classes). It coincidentally produced the *right verdict* for several ontologies that have other EL/QL violations we don't detect — they showed as agreed-OUT for the wrong reason. Removing the over-flag (commit pending) is spec-correct but exposed those coverage gaps; agreement count stayed flat at 7/19. The honest interpretation: the spec-correct detector is what we want; the next work is closing the genuine coverage gaps documented in (A) and (C) above.
 
+### Update 2026-05-19: ecosystem-extension fix for xsd:date
+
+Added `xsd:date`, `xsd:time`, `xsd:duration`, `xsd:gYear`/`gMonth`/`gDay`/`gYearMonth`/`gMonthDay` to `OWL2_DATATYPES`. The strict W3C OWL 2 datatype map (§4.2) omits these, but OWL-API/ROBOT accept them in practice. The OBO ecosystem uses `xsd:date` widely (`dcterms:date`, `dcterms:created`, etc.). Strictly rejecting these produces verdict disagreements with ROBOT without any spec benefit.
+
+Impact: fixed all 4 previously-flagged DL false positives (`pizza`, `obi`, `ro`, `pro`). New fleet agreement: **9/19 (47%)** up from 7/19 (37%). Performance unchanged at ~18× overall speedup vs ROBOT on the 19-ontology sample.
+
+### Refresh task: `refresh_owl_profile`
+
+Added `ontoexplorer.refresh_owl_profile(version_id, ontology_id)` celery task in `ontoexplorer/modules/jobs/tasks.py`. Rebuilds ONLY the `owl_profile:{vid}` Redis cache — no search re-index, no embeddings. Use after detector bug fixes to refresh affected versions cheaply. The script `scripts/owl_profile_bench/refresh_cache.py` queues this task for selected versions (or all ready versions with `--all`); run via `docker exec -i ontoexplorer-worker-1 python /tmp/refresh_cache.py --all` after `docker cp` of the script.
+
 ### What this means for users today
 
 - **DL verdict for ontologies likely in DL** is reliable (most "in DL" cases agree with ROBOT)

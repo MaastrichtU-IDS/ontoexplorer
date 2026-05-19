@@ -209,15 +209,15 @@ def test_bad_datatype_returns_usage_triple_not_dt_iri():
     @prefix :     <http://example.org/> .
     :A a owl:Class .
     :a1 a :A ;
-        :hasDuration "P1Y2M"^^xsd:duration .
+        :hasIdentifier "xyz"^^xsd:ID .
     """
     store = _store_from_ttl(ttl)
     violations = _detect_bad_datatypes(store, None)
     # Should have at least one violation
     assert len(violations) >= 1
-    # The subject_iri should be the individual (:a1), NOT the datatype xsd:duration
+    # The subject_iri should be the individual (:a1), NOT the datatype xsd:ID
     subject_iris = {v.subject_iri for v in violations}
-    assert "http://www.w3.org/2001/XMLSchema#duration" not in subject_iris, (
+    assert "http://www.w3.org/2001/XMLSchema#ID" not in subject_iris, (
         "subject_iri should NOT be the datatype IRI — it should be the axiom subject"
     )
     # Check that one of the subjects is the individual
@@ -226,8 +226,8 @@ def test_bad_datatype_returns_usage_triple_not_dt_iri():
     )
     # Details should still mention the bad datatype
     details = {v.details for v in violations}
-    assert any("duration" in (d or "") for d in details), (
-        f"Expected 'duration' in details, got {details}"
+    assert any("ID" in (d or "") for d in details), (
+        f"Expected 'ID' in details, got {details}"
     )
 
 
@@ -240,7 +240,7 @@ def test_bad_datatype_violation_has_manchester():
     @prefix :     <http://example.org/> .
     :A a owl:Class .
     :a1 a :A ;
-        :hasDuration "P1Y2M"^^xsd:duration .
+        :hasIdentifier "xyz"^^xsd:ID .
     """
     store = _store_from_ttl(ttl)
     # Use detect_profiles so we go through the Manchester rendering step
