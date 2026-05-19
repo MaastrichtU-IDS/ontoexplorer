@@ -33,6 +33,10 @@ celery_app.conf.update(
             "task": "ontoexplorer.poll_for_updates",
             "schedule": 3600.0,
         },
+        "refresh-stale-inferred-diffs-15min": {
+            "task": "ontoexplorer.refresh_stale_inferred_diffs",
+            "schedule": 900.0,
+        },
     },
 )
 
@@ -815,3 +819,60 @@ def embed_ontology(version_id: str, ontology_id: str = "") -> dict:
     except Exception as exc:
         log.error("embed_ontology_failed", version_id=version_id, error=str(exc))
         return {"status": "failed", "version_id": version_id, "error": str(exc)}
+
+
+@celery_app.task(name="ontoexplorer.refresh_stale_inferred_diffs")
+def refresh_stale_inferred_diffs() -> dict:
+    """Safety net: catch diffs whose inferred half is stale because the
+    inline re-queue hook in reason_ontology failed (e.g. worker crash).
+
+    For each OntologyDiff with status='ready', if either side's
+    inferred_status is not 'ready' AND that side's reasoning job is now
+    'done', re-queue compute_diff.
+    """
+    from ontoexplorer.database import make_celery_db_session
+
+    async def _run():
+        async with make_celery_db_session()() as db:
+            await _refresh_stale_inferred_diffs_body(db)
+
+    try:
+        asyncio.run(_run())
+        return {"status": "done"}
+    except Exception as exc:
+        log.exception("refresh_stale_inferred_diffs_failed", error=str(exc))
+        return {"status": "failed", "error": str(exc)}
+
+
+async def _refresh_stale_inferred_diffs_body(db) -> int:
+    """Returns the count of diffs re-queued."""
+    from sqlalchemy import select
+    from ontoexplorer.models.db import OntologyDiff
+    from ontoexplorer.modules.diff.compute import _reasoning_status_for_version
+
+    result = await db.execute(
+        select(OntologyDiff).where(OntologyDiff.status == "ready")
+    )
+    rows = result.scalars().all()
+    requeued = 0
+    for row in rows:
+        inferred_status = (row.summary or {}).get("inferred_status", {})
+        for side, vid in (
+            ("from_version", row.version_from_id),
+            ("to_version", row.version_to_id),
+        ):
+            if inferred_status.get(side) != "ready":
+                current = await _reasoning_status_for_version(db, vid)
+                if current == "ready":
+                    log.info(
+                        "beat_requeue_stale_diff",
+                        diff_id=row.id,
+                        version_id=vid,
+                        side=side,
+                    )
+                    compute_diff.delay(
+                        row.version_from_id, row.version_to_id, row.ontology_id
+                    )
+                    requeued += 1
+                    break  # one re-queue per row is enough
+    return requeued
