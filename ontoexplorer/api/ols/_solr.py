@@ -65,7 +65,17 @@ def solr_envelope(
             "docs": docs,
         },
         "facet_counts": {
-            "facet_fields": facets or {},
+            # OLS4 always emits these 6 facet field arrays even when empty;
+            # callers may supply real counts via the `facets` kwarg.
+            "facet_fields": {
+                "ontologyPreferredPrefix": [],
+                "isDefiningOntology":      [],
+                "ontologyId":              [],
+                "ontologyIri":             [],
+                "isObsolete":              [],
+                "type":                    [],
+                **(facets or {}),
+            },
         },
         "highlighting": highlighting or {},
     }

@@ -89,12 +89,12 @@ CONTRACT_CASES: list[tuple[str, str]] = [
 # Test fails if the actual gap count differs in either direction — closing a
 # gap requires also reducing this count.
 KNOWN_GAPS: dict[str, int] = {
-    "ontologies_list_v1":  12,
-    "ontology_detail_v1":  11,
-    "terms_list_v1":        2,
-    "term_roots_v1":        5,
-    "search_solr":          6,
-    "ontologies_list_v2":  35,
+    "ontologies_list_v1":   1,  # only _links.next missing (test DB has 1 ontology, no next page)
+    "ontology_detail_v1":   0,  # fully compliant
+    "terms_list_v1":        2,  # annotation.database_cross_reference + _links.next (test-data driven)
+    "term_roots_v1":        4,  # missing annotation keys (created_by etc) — test-data driven
+    "search_solr":          0,  # fully compliant
+    "ontologies_list_v2":  32,  # v2 flat surface deeply denormalized — large redesign required
     "ontology_detail_v2":  39,
 }
 

@@ -587,6 +587,27 @@ async def term_hierarchical_ancestors(
     )
 
 
+@router.get("/api/ontologies/{ontology_id}/terms/{iri_path:path}/hierarchicalChildren")
+async def term_hierarchical_children(
+    ontology_id: str,
+    iri_path: str,
+    request: Request,
+    page_size: tuple[int, int] = Depends(hal_page_params),
+    lang: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Direct inferred subclasses via ELK direct_subclasses (asserted fallback).
+
+    Symmetric to hierarchicalParents but for direct subclasses; matches the
+    OLS4 EBI convention of returning the reasoner's direct subclass set here.
+    """
+    page, size = page_size
+    iri = double_decode_iri(iri_path)
+    return await _hal_hierarchy_page(
+        ontology_id, iri, request, page, size, lang, db, _inferred_children_fetcher,
+    )
+
+
 @router.get("/api/ontologies/{ontology_id}/terms/{iri_path:path}/hierarchicalDescendants")
 async def term_hierarchical_descendants(
     ontology_id: str,

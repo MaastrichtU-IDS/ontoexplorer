@@ -20,7 +20,12 @@ def test_solr_envelope_empty():
     assert out["response"]["numFound"] == 0
     assert out["response"]["start"] == 0
     assert out["response"]["docs"] == []
-    assert out["facet_counts"] == {"facet_fields": {}}
+    # OLS4 always emits 6 facet field arrays; empty when no faceting requested.
+    assert sorted(out["facet_counts"]["facet_fields"].keys()) == [
+        "isDefiningOntology", "isObsolete",
+        "ontologyId", "ontologyIri", "ontologyPreferredPrefix", "type",
+    ]
+    assert all(v == [] for v in out["facet_counts"]["facet_fields"].values())
     assert out["highlighting"] == {}
 
 
@@ -58,7 +63,10 @@ def test_solr_envelope_facets_passthrough():
         qtime_ms=1,
         facets=facets,
     )
-    assert out["facet_counts"]["facet_fields"] == facets
+    # Supplied facets are merged on top of the 6 default keys.
+    assert out["facet_counts"]["facet_fields"]["ontology_name"] == facets["ontology_name"]
+    # Defaults are still present (empty when not overridden).
+    assert out["facet_counts"]["facet_fields"]["isObsolete"] == []
 
 
 def test_solr_envelope_highlighting_passthrough():

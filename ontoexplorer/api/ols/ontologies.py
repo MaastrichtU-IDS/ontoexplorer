@@ -37,14 +37,27 @@ async def _ontology_shape(
     *,
     v2: bool,
 ) -> dict:
-    """Resolve the latest version, fetch Redis meta counts, and build an OLS shape."""
+    """Resolve the latest version, fetch Redis meta counts + langs, and build an OLS shape."""
+    from ontoexplorer.modules.search.indexer import _langs_key
+
     version = await get_latest_version_or_404(db, o.id)
-    meta = await asyncio.to_thread(
-        lambda: _get_redis().hgetall(_meta_key(str(version.id)))
-    )
+
+    def _read_redis() -> tuple[dict, list[str]]:
+        r = _get_redis()
+        meta = r.hgetall(_meta_key(str(version.id)))
+        langs_counts = r.hgetall(_langs_key(str(version.id)))
+        # Drop empty-string key (entries without a lang tag) and sort by descending
+        # frequency so the first item is the dominant language.
+        langs = [k for k, _ in sorted(
+            ((k, int(v)) for k, v in langs_counts.items() if k),
+            key=lambda kv: -kv[1],
+        )]
+        return meta, langs
+
+    meta, langs = await asyncio.to_thread(_read_redis)
     if v2:
-        return ontology_to_v2(o, version, meta, request=request)
-    return ontology_to_v1(o, version, meta, request=request)
+        return ontology_to_v2(o, version, meta, request=request, languages=langs)
+    return ontology_to_v1(o, version, meta, request=request, languages=langs)
 
 
 # ---------------------------------------------------------------------------

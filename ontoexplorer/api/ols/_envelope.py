@@ -58,8 +58,13 @@ def v2_page(
     size: int,
     facets: dict[str, list] | None = None,
 ) -> dict[str, Any]:
+    total_pages = _total_pages(total, size)
     return {
         "elements": items,
-        "page": {"size": size, "totalElements": total, "totalPages": _total_pages(total, size), "number": page},
+        # EBI mirrors the pagination summary at top-level too.
+        "numElements": len(items),
+        "totalElements": total,
+        "totalPages": total_pages,
+        "page": {"size": size, "totalElements": total, "totalPages": total_pages, "number": page},
         "facetFieldsToCounts": facets or {},
     }

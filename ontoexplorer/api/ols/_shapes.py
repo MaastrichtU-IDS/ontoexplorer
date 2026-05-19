@@ -75,6 +75,7 @@ def _entity_links(
         # Terms have additional hierarchical and widget links
         links["hierarchicalParents"]     = {"href": f"{self_url}/hierarchicalParents"}
         links["hierarchicalAncestors"]   = {"href": f"{self_url}/hierarchicalAncestors"}
+        links["hierarchicalChildren"]    = {"href": f"{self_url}/hierarchicalChildren"}
         links["hierarchicalDescendants"] = {"href": f"{self_url}/hierarchicalDescendants"}
         links["jstree"]                  = {"href": f"{self_url}/jstree"}
         links["graph"]                   = {"href": f"{self_url}/graph"}
@@ -172,16 +173,34 @@ def entity_to_v2(
     return v1
 
 
-def ontology_to_v1(ontology: Any, version: Any, meta_counts: dict, *, request: Request) -> dict[str, Any]:
+def ontology_to_v1(
+    ontology: Any,
+    version: Any,
+    meta_counts: dict,
+    *,
+    request: Request,
+    languages: list[str] | None = None,
+) -> dict[str, Any]:
     base = str(request.base_url).rstrip("/")
     short = getattr(ontology, "shortname", None) or ontology.id
+    version_iri = getattr(version, "version_iri", None) or ""
+    sha = getattr(version, "sha256", None) or ""
+    langs = languages or []
     return {
         "ontologyId": short,
         "loaded": version.created_at.isoformat() if hasattr(version.created_at, "isoformat") else str(version.created_at),
         "updated": version.created_at.isoformat() if hasattr(version.created_at, "isoformat") else str(version.created_at),
         "status": "LOADED",
         "message": "",
-        "version": getattr(version, "version_iri", None) or "",
+        "version": version_iri,
+        # OLS4 surfaces multilingual coverage at the top level so clients can
+        # filter the ontology list by language without fetching each detail.
+        "languages": langs,
+        "lang": langs[0] if langs else "en",
+        # File-level provenance (content hash + how many ingest attempts ran).
+        "fileHash": sha,
+        "loadAttempts": 1,
+        "baseUris": [ontology.iri],
         "numberOfTerms": int(meta_counts.get("class_count", 0)),
         "numberOfProperties": int(meta_counts.get("property_count", 0)),
         "numberOfIndividuals": int(meta_counts.get("individual_count", 0)),
@@ -209,8 +228,16 @@ def ontology_to_v1(ontology: Any, version: Any, meta_counts: dict, *, request: R
             "baseUris": [ontology.iri],
             "hiddenProperties": [],
             "isSkosOntology": False,
+            # OLS4 v4 also spells this `isSkos`; we ship both spellings for
+            # client compatibility (some clients only know one).
+            "isSkos": False,
             "allowDownload": True,
             "annotations": {},
+            "versionIri": version_iri,
+            "version": version_iri,
+            "namespace": ontology.iri,
+            "oboSlims": [],
+            "preferredRootTerms": [],
         },
         "_links": {
             "self":       {"href": f"{base}/ols/api/ontologies/{short}"},
@@ -221,7 +248,14 @@ def ontology_to_v1(ontology: Any, version: Any, meta_counts: dict, *, request: R
     }
 
 
-def ontology_to_v2(ontology: Any, version: Any, meta_counts: dict, *, request: Request) -> dict[str, Any]:
-    v1 = ontology_to_v1(ontology, version, meta_counts, request=request)
+def ontology_to_v2(
+    ontology: Any,
+    version: Any,
+    meta_counts: dict,
+    *,
+    request: Request,
+    languages: list[str] | None = None,
+) -> dict[str, Any]:
+    v1 = ontology_to_v1(ontology, version, meta_counts, request=request, languages=languages)
     v1.pop("_links", None)
     return v1
