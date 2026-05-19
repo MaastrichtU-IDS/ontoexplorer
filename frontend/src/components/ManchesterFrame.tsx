@@ -26,6 +26,12 @@ function colorFor(op: ManchesterLine['op']): string {
   return 'var(--text)'
 }
 
+function badgeText(source: ManchesterLine['source']): string | null {
+  if (source === 'asserted') return '[asserted]'
+  if (source === 'inferred') return '[inferred]'
+  return null
+}
+
 function entityUrl(shortname: string, iri: string): string {
   return `/ontologies/${shortname}?term=${encodeURIComponent(iri)}`
 }
@@ -73,12 +79,27 @@ export default function ManchesterFrame({ frame, shortname }: Props) {
         overflowX: 'auto',
       }}
     >
-      {frame.lines.map((line, i) => (
-        <div key={i} style={{ color: colorFor(line.op) }}>
-          {markerFor(line.op)}
-          {line.tokens.map((t, j) => renderToken(t, j, shortname))}
-        </div>
-      ))}
+      {frame.lines.map((line, i) => {
+        const badge = badgeText(line.source)
+        return (
+          <div key={i} style={{ color: colorFor(line.op) }}>
+            {markerFor(line.op)}
+            {line.tokens.map((t, j) => renderToken(t, j, shortname))}
+            {badge && (
+              <span
+                style={{
+                  marginLeft: 8,
+                  fontSize: '0.8em',
+                  fontStyle: 'italic',
+                  color: 'var(--text-dim)',
+                }}
+              >
+                {badge}
+              </span>
+            )}
+          </div>
+        )
+      })}
     </pre>
   )
 }

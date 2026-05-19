@@ -15,6 +15,7 @@ const frame: Frame = {
   lines: [
     {
       op: null,
+      source: null,
       tokens: [
         { t: 'text', v: 'Class: ' },
         { t: 'iri', label: 'Pizza', iri: PIZZA, in_ontology: true },
@@ -23,10 +24,12 @@ const frame: Frame = {
     },
     {
       op: null,
+      source: null,
       tokens: [{ t: 'text', v: '    SubClassOf:' }],
     },
     {
       op: 'added',
+      source: 'asserted',
       tokens: [
         { t: 'text', v: '        ' },
         { t: 'iri', label: 'Food', iri: FOOD, in_ontology: true },
@@ -34,6 +37,7 @@ const frame: Frame = {
     },
     {
       op: 'removed',
+      source: 'asserted',
       tokens: [
         { t: 'text', v: '        ' },
         { t: 'iri', label: 'External', iri: EXTERNAL, in_ontology: false },
@@ -75,4 +79,61 @@ test('added/removed lines use respective color and line marker', () => {
   const removedLine = removedExternal.closest('div')!
   expect(removedLine.style.color).toBe('rgb(248, 81, 73)')  // #f85149
   expect(removedLine.textContent?.startsWith('- ')).toBe(true)
+})
+
+test('axiom line with source=asserted gets an [asserted] badge', () => {
+  const f: Frame = {
+    lines: [
+      {
+        op: 'added',
+        source: 'asserted',
+        tokens: [
+          { t: 'text', v: '        ' },
+          { t: 'iri', label: 'Food', iri: FOOD, in_ontology: true },
+        ],
+      },
+    ],
+  }
+  wrap(<ManchesterFrame frame={f} shortname="pizza" />)
+  expect(screen.getByText('[asserted]')).toBeInTheDocument()
+})
+
+test('axiom line with source=inferred gets an [inferred] badge', () => {
+  const f: Frame = {
+    lines: [
+      {
+        op: 'added',
+        source: 'inferred',
+        tokens: [
+          { t: 'text', v: '        ' },
+          { t: 'iri', label: 'SeasonedFood', iri: 'http://example.org/SeasonedFood', in_ontology: true },
+        ],
+      },
+    ],
+  }
+  wrap(<ManchesterFrame frame={f} shortname="pizza" />)
+  expect(screen.getByText('[inferred]')).toBeInTheDocument()
+})
+
+test('header/keyword lines (source=null) get no badge', () => {
+  const f: Frame = {
+    lines: [
+      {
+        op: null,
+        source: null,
+        tokens: [
+          { t: 'text', v: 'Class: ' },
+          { t: 'iri', label: 'Pizza', iri: PIZZA, in_ontology: true },
+        ],
+      },
+      {
+        op: null,
+        source: null,
+        tokens: [{ t: 'text', v: '    SubClassOf:' }],
+      },
+    ],
+  }
+  wrap(<ManchesterFrame frame={f} shortname="pizza" />)
+  expect(screen.queryByText('[asserted]')).toBeNull()
+  expect(screen.queryByText('[inferred]')).toBeNull()
 })
