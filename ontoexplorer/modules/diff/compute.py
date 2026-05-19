@@ -145,6 +145,63 @@ def _axioms_for_entity(
     return triples
 
 
+_OWL_THING_IRI = "http://www.w3.org/2002/07/owl#Thing"
+_OWL_TOP_OBJECT_PROPERTY = "http://www.w3.org/2002/07/owl#topObjectProperty"
+_OWL_TOP_DATA_PROPERTY = "http://www.w3.org/2002/07/owl#topDataProperty"
+_RDFS_SUBCLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
+_RDFS_SUBPROPERTY_OF = "http://www.w3.org/2000/01/rdf-schema#subPropertyOf"
+
+_TRIVIAL_TOP_TARGETS: frozenset[tuple[str, str]] = frozenset({
+    (_RDFS_SUBCLASS_OF, _OWL_THING_IRI),
+    (_RDFS_SUBPROPERTY_OF, _OWL_TOP_OBJECT_PROPERTY),
+    (_RDFS_SUBPROPERTY_OF, _OWL_TOP_DATA_PROPERTY),
+})
+
+
+def _non_trivial_inferred_axioms(
+    raw: list[tuple[str, "ox.Term"]],
+    *,
+    entity_iri: str,
+    asserted_axioms: list[tuple[str, "ox.Term"]],
+) -> list[tuple[str, "ox.Term"]]:
+    """Filter inferred axiom triples to suppress redundant patterns.
+
+    Drops:
+      1. Top-of-hierarchy targets (subClassOf owl:Thing,
+         subPropertyOf owl:top{Object,Data}Property)
+      2. Reflexive subClassOf / subPropertyOf where object IRI equals entity_iri
+      3. Triples that also appear in asserted_axioms for this entity
+
+    Returns the filtered list, preserving input order.
+    """
+    asserted_set = {(p, _term_key(o)) for p, o in asserted_axioms}
+    keep: list[tuple[str, ox.Term]] = []
+    for pred, obj in raw:
+        if isinstance(obj, ox.NamedNode):
+            # Trivial top
+            if (pred, obj.value) in _TRIVIAL_TOP_TARGETS:
+                continue
+            # Reflexive
+            if pred in (_RDFS_SUBCLASS_OF, _RDFS_SUBPROPERTY_OF) and obj.value == entity_iri:
+                continue
+        # Asserted duplicate
+        if (pred, _term_key(obj)) in asserted_set:
+            continue
+        keep.append((pred, obj))
+    return keep
+
+
+def _term_key(t: "ox.Term") -> str:
+    """Stable string key for a term used for asserted-duplicate detection."""
+    if isinstance(t, ox.NamedNode):
+        return f"<{t.value}>"
+    if isinstance(t, ox.BlankNode):
+        return f"_:{t.value}"
+    if isinstance(t, ox.Literal):
+        return f'"{t.value}"@{t.language or ""}^{t.datatype.value if t.datatype else ""}'
+    return repr(t)
+
+
 def _bnode_fingerprint(
     store: ox.Store,
     graph: ox.NamedNode,

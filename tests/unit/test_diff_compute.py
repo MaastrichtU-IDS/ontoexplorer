@@ -546,3 +546,78 @@ async def test_reasoning_status_prefers_ready_over_failed_when_both_exist(db_ses
     db_session.add(Job(version_id=v.id, type="reason", status="done"))
     await db_session.commit()
     assert await _reasoning_status_for_version(db_session, v.id) == "ready"
+
+
+def test_non_trivial_inferred_drops_subclass_of_owl_thing():
+    from ontoexplorer.modules.diff.compute import _non_trivial_inferred_axioms
+
+    entity = "http://example.org/Foo"
+    raw = [
+        ("http://www.w3.org/2000/01/rdf-schema#subClassOf",
+         ox.NamedNode("http://www.w3.org/2002/07/owl#Thing")),
+        ("http://www.w3.org/2000/01/rdf-schema#subClassOf",
+         ox.NamedNode("http://example.org/Animal")),
+    ]
+    out = _non_trivial_inferred_axioms(raw, entity_iri=entity, asserted_axioms=[])
+    assert len(out) == 1
+    pred, obj = out[0]
+    assert obj.value == "http://example.org/Animal"
+
+
+def test_non_trivial_inferred_drops_reflexive_subclass():
+    from ontoexplorer.modules.diff.compute import _non_trivial_inferred_axioms
+
+    entity = "http://example.org/Foo"
+    raw = [
+        ("http://www.w3.org/2000/01/rdf-schema#subClassOf",
+         ox.NamedNode(entity)),  # reflexive
+        ("http://www.w3.org/2000/01/rdf-schema#subClassOf",
+         ox.NamedNode("http://example.org/Bar")),
+    ]
+    out = _non_trivial_inferred_axioms(raw, entity_iri=entity, asserted_axioms=[])
+    assert len(out) == 1
+    assert out[0][1].value == "http://example.org/Bar"
+
+
+def test_non_trivial_inferred_drops_asserted_duplicate():
+    from ontoexplorer.modules.diff.compute import _non_trivial_inferred_axioms
+
+    entity = "http://example.org/Foo"
+    parent = ox.NamedNode("http://example.org/Parent")
+    pred = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
+    raw = [(pred, parent)]
+    asserted = [(pred, parent)]
+    assert _non_trivial_inferred_axioms(raw, entity_iri=entity, asserted_axioms=asserted) == []
+
+
+def test_non_trivial_inferred_drops_subproperty_of_owl_top_object_property():
+    from ontoexplorer.modules.diff.compute import _non_trivial_inferred_axioms
+
+    entity = "http://example.org/p"
+    raw = [
+        ("http://www.w3.org/2000/01/rdf-schema#subPropertyOf",
+         ox.NamedNode("http://www.w3.org/2002/07/owl#topObjectProperty")),
+        ("http://www.w3.org/2000/01/rdf-schema#subPropertyOf",
+         ox.NamedNode("http://example.org/q")),
+    ]
+    out = _non_trivial_inferred_axioms(raw, entity_iri=entity, asserted_axioms=[])
+    assert len(out) == 1
+    assert out[0][1].value == "http://example.org/q"
+
+
+def test_non_trivial_inferred_keeps_genuine_new_inference():
+    """Positive test — a (pred, obj) absent from asserted, non-trivial → kept."""
+    from ontoexplorer.modules.diff.compute import _non_trivial_inferred_axioms
+
+    entity = "http://example.org/Foo"
+    new_parent = ox.NamedNode("http://example.org/InferredParent")
+    raw = [("http://www.w3.org/2000/01/rdf-schema#subClassOf", new_parent)]
+    out = _non_trivial_inferred_axioms(
+        raw, entity_iri=entity,
+        asserted_axioms=[
+            ("http://www.w3.org/2000/01/rdf-schema#subClassOf",
+             ox.NamedNode("http://example.org/Other")),
+        ],
+    )
+    assert len(out) == 1
+    assert out[0][1].value == new_parent.value
