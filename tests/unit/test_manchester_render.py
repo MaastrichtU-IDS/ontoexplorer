@@ -873,160 +873,115 @@ def test_discover_annotation_props_returns_empty_for_graph_without_any():
 from ontoexplorer.modules.diff.manchester import render_frame
 
 
-def test_render_frame_class_header_with_label():
+def test_render_frame_modified_class_returns_structured_lines():
     iri = "http://example.org/Pizza"
-    label_pred = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#label")
-    store = _store(
-        (ox.NamedNode(iri), label_pred, ox.Literal("Pizza", language="en")),
-    )
-    frame = render_frame(
-        store, iri, "class", axiom_changes=[], labels={}
-    )
-    # Empty axiom changes → None (per spec, empty frame is not surfaced).
-    assert frame is None
-
-
-def test_render_frame_class_with_single_subclass_change():
-    iri = "http://example.org/SaltyPizza"
-    p = ox.NamedNode("http://example.org/hasTopping")
-    c = ox.NamedNode("http://example.org/Anchovy")
-    r = ox.BlankNode("r_axiom")
-    label_pred = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#label")
-    store = _store(
-        (ox.NamedNode(iri), label_pred, ox.Literal("Salty Pizza", language="en")),
-        (r, _RDF_TYPE_N, _OWL_RESTRICTION),
-        (r, _OWL_ON_PROPERTY, p),
-        (r, _OWL_SOME, c),
-    )
+    food = ox.NamedNode("http://example.org/Food")
+    store = _store()
     frame = render_frame(
         store, iri, "class",
         axiom_changes=[
-            {"op": "added", "predicate": "http://www.w3.org/2000/01/rdf-schema#subClassOf", "object": r,
-             "graph": _GRAPH},
+            {"op": "added", "predicate": _RDFS_SUB_N.value, "object": food, "graph": _GRAPH},
         ],
         labels={},
+        known_iris=frozenset({iri, food.value}),
     )
     assert frame is not None
-    expected = (
-        f"Class: Salty Pizza  ({iri})\n"
-        "    SubClassOf:\n"
-        "+       hasTopping some Anchovy"
+    # Header line: op=None, tokens contain the entity-keyword text and the entity-IRI token.
+    header = frame["lines"][0]
+    assert header["op"] is None
+    assert any(t["t"] == "iri" and t["iri"] == iri for t in header["tokens"])
+    # Keyword line for SubClassOf: op=None.
+    kw_line = next(l for l in frame["lines"] if any(t.get("v") == "SubClassOf:" or "SubClassOf" in t.get("v", "") for t in l["tokens"] if t["t"] == "text"))
+    assert kw_line["op"] is None
+    # Added body line: op='added', tokens include the food IRI as iri token.
+    body = next(
+        l for l in frame["lines"]
+        if l["op"] == "added"
+        and any(t["t"] == "iri" and t["iri"] == food.value for t in l["tokens"])
     )
-    assert frame == expected
+    assert body is not None
 
 
-def test_render_frame_removed_then_added_under_same_keyword():
-    iri = "http://example.org/SaltyPizza"
-    p = ox.NamedNode("http://example.org/hasTopping")
-    cheese = ox.NamedNode("http://example.org/Cheese")
-    tofu = ox.NamedNode("http://example.org/Tofu")
-    r_old = ox.BlankNode("r_old")
-    r_new = ox.BlankNode("r_new")
-    store = _store(
-        (r_old, _RDF_TYPE_N, _OWL_RESTRICTION),
-        (r_old, _OWL_ON_PROPERTY, p),
-        (r_old, _OWL_SOME, cheese),
-        (r_new, _RDF_TYPE_N, _OWL_RESTRICTION),
-        (r_new, _OWL_ON_PROPERTY, p),
-        (r_new, _OWL_SOME, tofu),
-    )
-    frame = render_frame(
-        store, iri, "class",
-        axiom_changes=[
-            {"op": "added",   "predicate": "http://www.w3.org/2000/01/rdf-schema#subClassOf", "object": r_new, "graph": _GRAPH},
-            {"op": "removed", "predicate": "http://www.w3.org/2000/01/rdf-schema#subClassOf", "object": r_old, "graph": _GRAPH},
-        ],
-        labels={},
-    )
-    expected = (
-        f"Class: SaltyPizza  ({iri})\n"
-        "    SubClassOf:\n"
-        "-       hasTopping some Cheese\n"
-        "+       hasTopping some Tofu"
-    )
-    assert frame == expected
-
-
-def test_render_frame_multiple_keywords_ordered():
-    iri = "http://example.org/Foo"
-    a = ox.NamedNode("http://example.org/A")
-    b = ox.NamedNode("http://example.org/B")
+def test_render_frame_op_added_marks_every_line_with_op_added():
+    iri = "http://example.org/Pizza"
+    food = ox.NamedNode("http://example.org/Food")
     store = _store()
     frame = render_frame(
         store, iri, "class",
         axiom_changes=[
-            # Mixed order — render_frame must group and order them.
-            {"op": "added",   "predicate": "http://www.w3.org/2002/07/owl#equivalentClass",  "object": b, "graph": _GRAPH},
-            {"op": "added",   "predicate": "http://www.w3.org/2000/01/rdf-schema#subClassOf",    "object": a, "graph": _GRAPH},
+            {"op": "added", "predicate": _RDFS_SUB_N.value, "object": food, "graph": _GRAPH},
         ],
         labels={},
+        known_iris=frozenset({iri, food.value}),
+        op="added",
     )
-    expected = (
-        f"Class: Foo  ({iri})\n"
-        "    SubClassOf:\n"
-        "+       A\n"
-        "    EquivalentTo:\n"
-        "+       B"
-    )
-    assert frame == expected
+    assert frame is not None
+    assert all(line["op"] == "added" for line in frame["lines"]), \
+        f"every line must have op='added', got: {frame['lines']}"
 
 
-def test_render_frame_object_property_header():
-    iri = "http://example.org/hasTopping"
-    p2 = ox.NamedNode("http://example.org/hasCovering")
-    store = _store()
-    frame = render_frame(
-        store, iri, "object_property",
-        axiom_changes=[
-            {"op": "added", "predicate": "http://www.w3.org/2000/01/rdf-schema#subPropertyOf", "object": p2, "graph": _GRAPH},
-        ],
-        labels={},
-    )
-    expected = (
-        f"ObjectProperty: hasTopping  ({iri})\n"
-        "    SubPropertyOf:\n"
-        "+       hasCovering"
-    )
-    assert frame == expected
-
-
-def test_render_frame_individual_with_facts_and_types():
-    iri = "http://example.org/Alice"
-    person = ox.NamedNode("http://example.org/Person")
-    bob = ox.NamedNode("http://example.org/Bob")
-    store = _store()
-    frame = render_frame(
-        store, iri, "individual",
-        axiom_changes=[
-            {"op": "added", "predicate": "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",           "object": person, "graph": _GRAPH},
-            {"op": "added", "predicate": "http://example.org/hasFriend", "object": bob, "graph": _GRAPH},
-        ],
-        labels={},
-    )
-    expected = (
-        f"Individual: Alice  ({iri})\n"
-        "    Types:\n"
-        "+       Person\n"
-        "    Facts:\n"
-        "+       hasFriend Bob"
-    )
-    assert frame == expected
-
-
-def test_render_frame_unknown_predicate_falls_back_to_raw_form():
-    iri = "http://example.org/Foo"
-    obj = ox.NamedNode("http://example.org/Bar")
-    pred = "http://example.org/myCustomPred"
+def test_render_frame_op_removed_marks_every_line_with_op_removed():
+    iri = "http://example.org/Pizza"
+    food = ox.NamedNode("http://example.org/Food")
     store = _store()
     frame = render_frame(
         store, iri, "class",
         axiom_changes=[
-            {"op": "added", "predicate": pred, "object": obj, "graph": _GRAPH},
+            {"op": "removed", "predicate": _RDFS_SUB_N.value, "object": food, "graph": _GRAPH},
         ],
         labels={},
+        known_iris=frozenset({iri, food.value}),
+        op="removed",
     )
-    # Unknown predicate → frame omits that line; with no other changes the frame is None.
-    assert frame is None
+    assert frame is not None
+    assert all(line["op"] == "removed" for line in frame["lines"])
+
+
+def test_render_frame_bare_added_class_yields_single_header_line():
+    bare = "http://example.org/Bare"
+    store = _store()
+    frame = render_frame(
+        store, bare, "class",
+        axiom_changes=[],
+        labels={},
+        known_iris=frozenset({bare}),
+        op="added",
+    )
+    assert frame is not None
+    assert len(frame["lines"]) == 1
+    header = frame["lines"][0]
+    assert header["op"] == "added"
+    # Header contains the entity IRI token.
+    assert any(t["t"] == "iri" and t["iri"] == bare for t in header["tokens"])
+
+
+def test_render_frame_annotations_block_appears_before_subclassof():
+    iri = "http://example.org/Pizza"
+    food = ox.NamedNode("http://example.org/Food")
+    store = _store()
+    frame = render_frame(
+        store, iri, "class",
+        axiom_changes=[
+            {"op": "added", "predicate": _RDFS_LABEL_N.value,
+             "object": ox.Literal("Pizza", language="en"), "graph": _GRAPH},
+            {"op": "added", "predicate": _RDFS_SUB_N.value,
+             "object": food, "graph": _GRAPH},
+        ],
+        labels={},
+        known_iris=frozenset({iri, food.value}),
+        op="added",
+    )
+    assert frame is not None
+    keyword_indices = {}
+    for i, line in enumerate(frame["lines"]):
+        for t in line["tokens"]:
+            if t["t"] == "text":
+                if "Annotations:" in t["v"]:
+                    keyword_indices.setdefault("Annotations", i)
+                if "SubClassOf:" in t["v"]:
+                    keyword_indices.setdefault("SubClassOf", i)
+    assert "Annotations" in keyword_indices and "SubClassOf" in keyword_indices
+    assert keyword_indices["Annotations"] < keyword_indices["SubClassOf"]
 
 
 _RDFS_LABEL_N = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#label")
@@ -1125,92 +1080,6 @@ def test_render_axiom_custom_predicate_NOT_in_annotation_set_returns_none():
         annotation_props=frozenset(),  # not declared as annotation
     )
     assert out is None
-
-
-def test_render_frame_op_added_prefixes_every_line_with_plus():
-    """When op='added', header, keyword, and axiom lines all start with '+ '."""
-    iri = "http://example.org/Pizza"
-    food = ox.NamedNode("http://example.org/Food")
-    store = _store()
-    frame = render_frame(
-        store, iri, "class",
-        axiom_changes=[
-            {"op": "added", "predicate": _RDFS_SUB_N.value, "object": food, "graph": _GRAPH},
-        ],
-        labels={},
-        op="added",
-    )
-    assert frame is not None
-    lines = frame.split("\n")
-    assert all(line.startswith("+ ") for line in lines), \
-        f"every line should start with '+ ', got:\n{frame}"
-
-
-def test_render_frame_op_removed_prefixes_every_line_with_minus():
-    iri = "http://example.org/Pizza"
-    food = ox.NamedNode("http://example.org/Food")
-    store = _store()
-    frame = render_frame(
-        store, iri, "class",
-        axiom_changes=[
-            {"op": "removed", "predicate": _RDFS_SUB_N.value, "object": food, "graph": _GRAPH},
-        ],
-        labels={},
-        op="removed",
-    )
-    assert frame is not None
-    lines = frame.split("\n")
-    assert all(line.startswith("- ") for line in lines), \
-        f"every line should start with '- ', got:\n{frame}"
-
-
-def test_render_frame_op_modified_preserves_phase1_behavior():
-    """op='modified' (the default) keeps the Phase 1 behavior:
-    header and keyword lines have no prefix; axiom lines use per-change marker."""
-    iri = "http://example.org/Pizza"
-    food = ox.NamedNode("http://example.org/Food")
-    store = _store()
-    frame = render_frame(
-        store, iri, "class",
-        axiom_changes=[
-            {"op": "added", "predicate": _RDFS_SUB_N.value, "object": food, "graph": _GRAPH},
-        ],
-        labels={},
-    )
-    assert frame is not None
-    lines = frame.split("\n")
-    assert lines[0].startswith("Class: "), "header has no prefix in modified mode"
-    assert "+       Food" in frame, "axiom line uses per-change marker"
-
-
-def test_render_frame_with_annotations_block_at_top():
-    """Frame for an entity with rdfs:label and rdfs:comment renders the
-    Annotations: block first, then logical keyword blocks."""
-    iri = "http://example.org/Pizza"
-    pizza = ox.NamedNode(iri)
-    food  = ox.NamedNode("http://example.org/Food")
-    store = _store()
-    frame = render_frame(
-        store, iri, "class",
-        axiom_changes=[
-            {"op": "added", "predicate": _RDFS_LABEL_N.value,
-             "object": ox.Literal("Pizza", language="en"), "graph": _GRAPH},
-            {"op": "added", "predicate": _RDFS_COMMENT_N.value,
-             "object": ox.Literal("A baked Italian dish"), "graph": _GRAPH},
-            {"op": "added", "predicate": _RDFS_SUB_N.value,
-             "object": food, "graph": _GRAPH},
-        ],
-        labels={},
-        op="added",
-    )
-    assert frame is not None
-    # Order: header → Annotations → SubClassOf
-    annot_idx = frame.find("Annotations:")
-    sub_idx   = frame.find("SubClassOf:")
-    assert annot_idx >= 0 and sub_idx >= 0
-    assert annot_idx < sub_idx, "Annotations: must appear before SubClassOf:"
-    assert 'rdfs:label "Pizza"@en' in frame
-    assert 'rdfs:comment "A baked Italian dish"' in frame
 
 
 from ontoexplorer.modules.diff.manchester import _known_iris

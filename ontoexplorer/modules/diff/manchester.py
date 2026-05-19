@@ -717,48 +717,43 @@ def render_frame(
     axiom_changes: list[dict],
     *,
     labels: dict[str, str],
+    known_iris: frozenset[str],
     annotation_props: frozenset[str] = _BUILTIN_ANNOTATION_PROPS,
     op: Literal["added", "removed", "modified"] = "modified",
-) -> str | None:
-    """Render a Protégé-style Manchester frame for one diff entity.
+) -> ManchesterFrame | None:
+    """Build a structured Manchester frame.
 
-    `axiom_changes` is a list of dicts with keys:
-      op:        'added' | 'removed' (modified-mode uses per-axiom op)
-      predicate: str
-      object:    ox.Term
-      graph:     ox.NamedNode (which named graph this change came from)
+    Returns a dict `{lines: [{op, tokens}, ...]}` or None for modified entities
+    that produced no renderable axiom lines.
 
-    `op` parameter:
-      - "modified" (default): Phase 1 behavior — header/keyword lines have
-        no prefix; axiom lines use the per-change op marker.
-      - "added" / "removed": uniform marker mode — EVERY line in the output
-        is prefixed with '+ ' or '- ' respectively. Used for fully-added
-        and fully-removed entities in the diff.
-
-    Returns None when no axiom_changes produce a renderable line.
+    `op`:
+      - "modified" → header/keyword lines get op=None; axiom lines carry the
+        per-change op ('added'/'removed').
+      - "added"/"removed" → every line in the frame (including header and
+        keyword lines) gets op=<that value>. Used for fully-added / fully-removed
+        entities so the frontend can apply a uniform line marker.
     """
-    rendered: list[tuple[str, str, str]] = []  # (keyword, op, text)
+    rendered: list[tuple[str, str, list[ManchesterToken]]] = []  # (keyword, op, body-tokens)
     for change in axiom_changes:
         line = render_axiom(
             store, change["graph"], entity_iri,
             change["predicate"], change["object"],
-            labels=labels, entity_type=entity_type,
-            annotation_props=annotation_props,
+            labels=labels, known_iris=known_iris,
+            entity_type=entity_type, annotation_props=annotation_props,
         )
         if line is None:
             continue
-        keyword, _, body = line.partition(": ")
-        rendered.append((keyword, change["op"], body))
+        # First text token always starts with `<keyword>: ` — strip it for grouping.
+        assert line[0]["t"] == "text", "render_axiom must lead with a text token"
+        kw_part, _, body_text = line[0]["v"].partition(": ")
+        body_tokens: list[ManchesterToken] = [_text(body_text)] if body_text else []
+        body_tokens.extend(line[1:])
+        rendered.append((kw_part, change["op"], body_tokens))
 
-    if not rendered:
-        # In added/removed mode we still want a header-only frame for entities
-        # that have only the declaring rdf:type triple — the caller may pass
-        # an empty axiom_changes for a bare class. Detect via `op` parameter.
-        if op == "modified":
-            return None
-        # Fall through: render header only, uniformly prefixed.
+    if not rendered and op == "modified":
+        return None
 
-    # Build the keyword order (annotations first, then logical, then per-type).
+    # Keyword ordering: Annotations first, then class/property/etc. axioms per type.
     keyword_order: list[str] = []
     seen: set[str] = set()
     for _, kw, types in _FRAME_KEYWORD_ORDER:
@@ -773,9 +768,7 @@ def render_frame(
             keyword_order.append(kw)
             seen.add(kw)
 
-    # Entity-label lookup needs ONE graph; prefer the first change's graph,
-    # else fall back to the to-graph mode (caller can pass a sentinel through
-    # axiom_changes when rendering a bare entity).
+    # Header line.
     graph_for_label = axiom_changes[0]["graph"] if axiom_changes else None
     entity_keyword = _ENTITY_KEYWORD.get(entity_type, "Entity")
     if graph_for_label is not None:
@@ -784,34 +777,45 @@ def render_frame(
         entity_label = labels.get(entity_iri) or iri_to_label(
             store, ox.NamedNode("urn:never-used"), entity_iri, labels=labels,
         )
-    lines: list[str] = [f"{entity_keyword}: {entity_label}  ({entity_iri})"]
+    in_onto = entity_iri in known_iris
+    header_op: Literal["added", "removed"] | None = op if op != "modified" else None
+    lines: list[ManchesterLine] = [{
+        "op": header_op,
+        "tokens": [
+            _text(f"{entity_keyword}: "),
+            {"t": "iri", "label": entity_label, "iri": entity_iri, "in_ontology": in_onto},
+            _text(f"  ({entity_iri})"),
+        ],
+    }]
 
     for kw in keyword_order:
         kw_lines = [(o, body) for k, o, body in rendered if k == kw]
         if not kw_lines:
             continue
-        lines.append(f"    {kw}:")
-        removed = sorted([b for o, b in kw_lines if o == "removed"])
-        added   = sorted([b for o, b in kw_lines if o == "added"])
+        lines.append({"op": header_op, "tokens": [_text(f"    {kw}:")]})
+        removed = sorted(
+            (body for o, body in kw_lines if o == "removed"),
+            key=lambda toks: _body_sort_key(toks),
+        )
+        added = sorted(
+            (body for o, body in kw_lines if o == "added"),
+            key=lambda toks: _body_sort_key(toks),
+        )
         for body in removed:
-            lines.append(f"-       {body}")
+            line_op: Literal["added", "removed"] = op if op != "modified" else "removed"
+            lines.append({"op": line_op, "tokens": [_text("        "), *body]})
         for body in added:
-            lines.append(f"+       {body}")
+            line_op = op if op != "modified" else "added"
+            lines.append({"op": line_op, "tokens": [_text("        "), *body]})
 
-    # Uniform-marker mode: replace per-line markers with the frame-level marker.
-    if op == "added":
-        return "\n".join(f"+ {strip_marker(line)}" for line in lines)
-    if op == "removed":
-        return "\n".join(f"- {strip_marker(line)}" for line in lines)
-    return "\n".join(lines)
+    return {"lines": lines}
 
 
-def strip_marker(line: str) -> str:
-    """Strip a leading '-       ' or '+       ' marker (Phase 1 axiom line
-    prefix) so the frame-level marker in uniform mode replaces it cleanly."""
-    if line.startswith("-       ") or line.startswith("+       "):
-        return "      " + line[8:]  # preserve 6-space indent under keyword
-    return line
+def _body_sort_key(tokens: list[ManchesterToken]) -> str:
+    """Stable sort key for body tokens — joins text + label values."""
+    return "".join(
+        t["v"] if t["t"] == "text" else t["label"] for t in tokens
+    )
 
 
 def _known_iris(store: ox.Store, graph: ox.NamedNode) -> frozenset[str]:
