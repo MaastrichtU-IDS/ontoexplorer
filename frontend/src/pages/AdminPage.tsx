@@ -296,10 +296,10 @@ function OntologyTable({
               <SortTh col="indexed"    label="Indexed" />
               <SortTh col="embeddings" label="Embeddings" />
               <SortTh col="reasoning"  label="Reasoning" />
-              <SortTh col="updated"    label="Updated" />
               <th style={{ padding: '7px 10px', textAlign: 'center', color: 'var(--text-dim)', fontWeight: 500, fontSize: 10, textTransform: 'uppercase', letterSpacing: .5 }}>
-                Diff vs prev
+                Diff
               </th>
+              <SortTh col="updated"    label="Updated" />
             </tr>
           </thead>
           <tbody>
@@ -318,12 +318,6 @@ function OntologyTable({
                     {row.label && row.label !== ontologyDisplayName(row) && (
                       <div style={{ color: 'var(--text-dim)', fontSize: 10 }}>{row.label}</div>
                     )}
-                    <ActionButton
-                      label="⚖ recompute all diffs"
-                      title="Queue compute_diff for every consecutive version pair of this ontology"
-                      state={recomputeStates[row.id] ?? 'idle'}
-                      onClick={() => onRecomputeAll(row.id)}
-                    />
                   </td>
                   <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-muted)' }}>
                     {fmtTriples(row.triple_count)}
@@ -382,11 +376,16 @@ function OntologyTable({
                       )}
                     </div>
                   </td>
-                  <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
-                    {fmtAge(row.version_created_at)}
+                  <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                    <ActionButton
+                      label="↺ diffs"
+                      title="Queue compute_diff for every consecutive version pair of this ontology"
+                      state={recomputeStates[row.id] ?? 'idle'}
+                      onClick={() => onRecomputeAll(row.id)}
+                    />
                   </td>
                   <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
-                    —
+                    {fmtAge(row.version_created_at)}
                   </td>
                 </tr>
                 {expanded.has(row.id) && (
@@ -750,9 +749,6 @@ function VersionsSubRows({
               />
             </div>
           </td>
-          <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
-            {fmtAge(v.version_created_at)}
-          </td>
           <td style={{ padding: '6px 10px', textAlign: 'center' }}>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
               <DiffStatusBadge status={v.diff_vs_prev.status} />
@@ -765,6 +761,9 @@ function VersionsSubRows({
                 />
               )}
             </div>
+          </td>
+          <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
+            {fmtAge(v.version_created_at)}
           </td>
         </tr>
       ))}
