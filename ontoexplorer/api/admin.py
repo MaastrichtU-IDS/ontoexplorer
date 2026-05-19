@@ -191,7 +191,8 @@ async def admin_overview(
                    v.id AS version_id, v.version_iri, v.triple_count,
                    v.status AS ingestion_status,
                    v.created_at AS version_created_at, v.source_url,
-                   mp.resolved AS meta_resolved
+                   mp.resolved AS meta_resolved,
+                   (SELECT COUNT(*) FROM versions WHERE ontology_id = o.id) AS version_count
             FROM ontologies o
             JOIN versions v ON v.id = (
                 SELECT id FROM versions WHERE ontology_id = o.id
@@ -236,6 +237,7 @@ async def admin_overview(
             "source_url": row["source_url"],
             "version_id": vid,
             "version_iri": row["version_iri"],
+            "version_count": int(row["version_count"]),
             "triple_count": row["triple_count"],
             "ingestion_status": row["ingestion_status"],
             "indexed": indexed,

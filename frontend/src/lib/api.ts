@@ -696,6 +696,7 @@ export interface AdminOntologyEntry {
   source_url: string | null
   version_id: string
   version_iri: string | null
+  version_count: number
   triple_count: number | null
   ingestion_status: string
   indexed: boolean

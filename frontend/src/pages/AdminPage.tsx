@@ -309,10 +309,14 @@ function OntologyTable({
               return (
                 <React.Fragment key={row.version_id}>
                 <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                  <td style={{ padding: '6px 4px 6px 10px', textAlign: 'center', cursor: 'pointer', color: 'var(--text-dim)' }}
-                      onClick={() => toggleExpanded(row.id)}>
-                    {expanded.has(row.id) ? '▾' : '▸'}
-                  </td>
+                  {row.version_count > 1 ? (
+                    <td style={{ padding: '6px 4px 6px 10px', textAlign: 'center', cursor: 'pointer', color: 'var(--text-dim)' }}
+                        onClick={() => toggleExpanded(row.id)}>
+                      {expanded.has(row.id) ? '▾' : '▸'}
+                    </td>
+                  ) : (
+                    <td />
+                  )}
                   <td style={{ padding: '6px 10px', color: 'var(--text)' }}>
                     <div>{ontologyDisplayName(row)}</div>
                     {row.label && row.label !== ontologyDisplayName(row) && (
