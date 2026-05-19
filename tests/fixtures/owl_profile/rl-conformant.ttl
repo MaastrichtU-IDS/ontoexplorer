@@ -1,0 +1,16 @@
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix :     <http://example.org/rl-conformant#> .
+
+# A minimal OWL 2 RL-conformant ontology.
+# Contains only named classes, SubClassOf axioms, and an object property.
+# No forbidden constructs: no cardinality > 1, no hasSelf, no complementOf, etc.
+
+: a owl:Ontology .
+
+:Animal  a owl:Class .
+:Mammal  a owl:Class ; rdfs:subClassOf :Animal .
+:Dog     a owl:Class ; rdfs:subClassOf :Mammal .
+:Cat     a owl:Class ; rdfs:subClassOf :Mammal .
+
+:hasOwner a owl:ObjectProperty .
