@@ -25,6 +25,17 @@ _ENTITY_TYPES: dict[str, str] = {
 }
 
 
+def _tokens_to_str(tokens: list) -> str:
+    """Flatten a Manchester token list to a plain string for legacy display/search.
+
+    Concatenates text tokens verbatim and IRI tokens by their label.
+    """
+    return "".join(
+        t["v"] if t["t"] == "text" else t["label"]
+        for t in tokens
+    )
+
+
 def _collect_iris(store: ox.Store, graph: ox.NamedNode, type_iri: str) -> set[str]:
     rdf_type = ox.NamedNode(_RDF_TYPE)
     type_node = ox.NamedNode(type_iri)
@@ -258,15 +269,17 @@ def _run_diff_core(
 
             axiom_changes: list[dict] = []
             for rec in change_records:
-                axiom_str = _mos.render_axiom(
+                axiom_tokens = _mos.render_axiom(
                     store, rec["graph"], iri,
                     rec["predicate"], rec["object"],
                     labels=labels, known_iris=known_iris_union,
                     entity_type=entity_type,
                 )
-                if axiom_str is None:
+                if axiom_tokens is None:
                     obj_val = rec["object"].value if hasattr(rec["object"], "value") else str(rec["object"])
                     axiom_str = f"<{rec['predicate']}> <{obj_val}>"
+                else:
+                    axiom_str = _tokens_to_str(axiom_tokens)
                 axiom_changes.append({"op": rec["op"], "axiom": axiom_str})
 
             manchester_frame = _mos.render_frame(

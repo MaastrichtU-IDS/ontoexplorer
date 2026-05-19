@@ -254,8 +254,10 @@ def test_run_diff_produces_manchester_frame_for_modified_entity():
 
 
 def test_run_diff_axiom_changes_use_manchester_strings():
-    """Each axiom_changes entry's axiom payload is in Manchester form (token list
-    starting with the keyword text + filler iri token), not a raw triple."""
+    """Each axiom_changes entry's axiom payload is the flattened Manchester form
+    (keyword text + filler label concatenated into a plain string) for the
+    legacy frontend search filter; the structured token form lives on
+    manchester_frame.lines."""
     pizza = ox.NamedNode("http://example.org/Pizza")
     food = ox.NamedNode("http://example.org/Food")
     s = _store(
@@ -269,13 +271,33 @@ def test_run_diff_axiom_changes_use_manchester_strings():
     mod = diff_data["modified"][0]
     axioms = [a["axiom"] for a in mod["axiom_changes"]]
     assert len(axioms) == 1
-    tokens = axioms[0]
-    assert isinstance(tokens, list)
-    assert tokens[0] == {"t": "text", "v": "SubClassOf: "}
-    assert any(
-        t["t"] == "iri" and t["iri"] == food.value and t["label"] == "Food"
-        for t in tokens
+    s_axiom = axioms[0]
+    assert isinstance(s_axiom, str)
+    assert s_axiom.startswith("SubClassOf: ")
+    assert "Food" in s_axiom
+
+
+def test_run_diff_axiom_changes_axiom_field_is_a_plain_string():
+    """The legacy axiom_changes[i].axiom field MUST be a string for the
+    frontend search filter (which calls .toLowerCase() on it) to work."""
+    cls = ox.NamedNode("http://example.org/X")
+    a   = ox.NamedNode("http://example.org/A")
+    b   = ox.NamedNode("http://example.org/B")
+    s = _store(
+        from_quads=[
+            (cls, _RDF_TYPE, _OWL_CLASS),
+            (cls, _RDFS_SC, a),
+        ],
+        to_quads=[
+            (cls, _RDF_TYPE, _OWL_CLASS),
+            (cls, _RDFS_SC, b),
+        ],
     )
+    _, diff_data = run_diff(s, OID, FROM_VID, TO_VID)
+    modified = diff_data["modified"][0]
+    for ac in modified.get("axiom_changes", []):
+        assert isinstance(ac["axiom"], str), f"axiom field must be str, got {type(ac['axiom'])}"
+        assert ac["axiom"]  # non-empty
 
 
 def test_structural_triples_returns_terms_with_fingerprints():
