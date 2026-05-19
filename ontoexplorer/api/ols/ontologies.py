@@ -9,7 +9,7 @@ Implements:
 """
 import asyncio
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Ontology
 from ontoexplorer.modules.search.indexer import _get_redis, _meta_key  # noqa: F401 — patched in tests
+from ontoexplorer.modules.owl_profile.registry import PROFILE_NAMES
 from ontoexplorer.api.ols._envelope import hal_page, v2_page
 from ontoexplorer.api.ols._shapes import ontology_to_v1, ontology_to_v2
 from ontoexplorer.api.ols._common import (
@@ -54,15 +55,36 @@ async def _ontology_shape(
 async def list_ontologies_hal(
     request: Request,
     page_size: tuple[int, int] = Depends(hal_page_params),
+    profile: str | None = Query(None, description="Filter by OWL 2 profile: el | rl | ql | dl"),
     db: AsyncSession = Depends(get_db),
 ):
     page, size = page_size
     offset = page_to_offset(page, size)
 
-    total = (await db.execute(select(func.count(Ontology.id)))).scalar_one()
-    rows = (
-        await db.execute(select(Ontology).order_by(Ontology.id).limit(size).offset(offset))
-    ).scalars().all()
+    if profile is not None:
+        profile = profile.lower()
+        if profile not in PROFILE_NAMES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid profile '{profile}'. Must be one of: {', '.join(PROFILE_NAMES)}",
+            )
+
+    if profile:
+        # Load all ontologies, filter by profile, then page-slice on the filtered list
+        from ontoexplorer.api.owl_profile import filter_ontology_ids_by_profile
+        all_rows = (
+            await db.execute(select(Ontology).order_by(Ontology.id))
+        ).scalars().all()
+        all_ids = [o.id for o in all_rows]
+        matching_ids = await filter_ontology_ids_by_profile(db, all_ids, profile)
+        filtered_rows = [o for o in all_rows if o.id in matching_ids]
+        total = len(filtered_rows)
+        rows = filtered_rows[offset: offset + size]
+    else:
+        total = (await db.execute(select(func.count(Ontology.id)))).scalar_one()
+        rows = (
+            await db.execute(select(Ontology).order_by(Ontology.id).limit(size).offset(offset))
+        ).scalars().all()
 
     items = [await _ontology_shape(db, o, request, v2=False) for o in rows]
     return hal_page(items, request, total=total, page=page, size=size, embedded_key="ontologies")
@@ -99,15 +121,36 @@ async def get_ontology_hal(
 async def list_ontologies_v2(
     request: Request,
     page_size: tuple[int, int] = Depends(hal_page_params),
+    profile: str | None = Query(None, description="Filter by OWL 2 profile: el | rl | ql | dl"),
     db: AsyncSession = Depends(get_db),
 ):
     page, size = page_size
     offset = page_to_offset(page, size)
 
-    total = (await db.execute(select(func.count(Ontology.id)))).scalar_one()
-    rows = (
-        await db.execute(select(Ontology).order_by(Ontology.id).limit(size).offset(offset))
-    ).scalars().all()
+    if profile is not None:
+        profile = profile.lower()
+        if profile not in PROFILE_NAMES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid profile '{profile}'. Must be one of: {', '.join(PROFILE_NAMES)}",
+            )
+
+    if profile:
+        # Load all ontologies, filter by profile, then page-slice on the filtered list
+        from ontoexplorer.api.owl_profile import filter_ontology_ids_by_profile
+        all_rows = (
+            await db.execute(select(Ontology).order_by(Ontology.id))
+        ).scalars().all()
+        all_ids = [o.id for o in all_rows]
+        matching_ids = await filter_ontology_ids_by_profile(db, all_ids, profile)
+        filtered_rows = [o for o in all_rows if o.id in matching_ids]
+        total = len(filtered_rows)
+        rows = filtered_rows[offset: offset + size]
+    else:
+        total = (await db.execute(select(func.count(Ontology.id)))).scalar_one()
+        rows = (
+            await db.execute(select(Ontology).order_by(Ontology.id).limit(size).offset(offset))
+        ).scalars().all()
 
     items = [await _ontology_shape(db, o, request, v2=True) for o in rows]
     return v2_page(items, request, total=total, page=page, size=size)

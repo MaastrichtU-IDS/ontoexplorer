@@ -317,6 +317,7 @@ async def patch_ontology(
 async def list_ontologies(
     q: str | None = Query(None, description="Keyword filter on ontology name, IRI, or description"),
     group: str | None = Query(None, description="Filter by group tag (upper, obo, fair, biomedical)"),
+    profile: str | None = Query(None, description="Filter by OWL 2 profile: el | rl | ql | dl"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -324,7 +325,17 @@ async def list_ontologies(
     import json as _json
     from sqlalchemy import func
 
-    # When filtering by q we must include description (from Redis), so load all and filter in Python.
+    # Validate ?profile= param early (before any DB work)
+    if profile is not None:
+        from ontoexplorer.modules.owl_profile.registry import PROFILE_NAMES
+        profile = profile.lower()
+        if profile not in PROFILE_NAMES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid profile '{profile}'. Must be one of: {', '.join(PROFILE_NAMES)}",
+            )
+
+    # When filtering by q or profile we must load all and filter in Python.
     # At current scale (~24 ontologies) this is negligible; revisit if catalog grows large.
     stmt = select(Ontology).order_by(Ontology.created_at.desc())
     if group:
@@ -334,7 +345,7 @@ async def list_ontologies(
             stmt = stmt.where(func.jsonb_array_length(Ontology.groups) == 0)
         else:
             stmt = stmt.where(text("groups @> cast(:grp as jsonb)").bindparams(grp=_json_grp.dumps([group])))
-    if not q:
+    if not q and not profile:
         stmt = stmt.offset(offset).limit(limit)
     result = await db.execute(stmt)
     ontologies = result.scalars().all()
@@ -454,6 +465,13 @@ async def list_ontologies(
             d["description"] = meta.get("description") or ""
         rows.append(d)
 
+    # OWL 2 profile filter: keep only ontologies whose latest ready version is in the profile.
+    if profile:
+        from ontoexplorer.api.owl_profile import filter_ontology_ids_by_profile
+        all_ids = [r["id"] for r in rows]
+        matching_ids = await filter_ontology_ids_by_profile(db, all_ids, profile)
+        rows = [r for r in rows if r["id"] in matching_ids]
+
     # Python-side filter + ranked sort when q is present.
     # Primary rank:
     #   0 → exact match on derived short name or IRI
@@ -484,6 +502,9 @@ async def list_ontologies(
 
         ranked = [(r, _rank_score(r)) for r in rows]
         rows = [r for r, score in sorted(ranked, key=lambda x: x[1]) if score[0] < 99]
+        rows = rows[offset: offset + limit]
+    elif profile:
+        # Profile filter already applied above; now apply pagination
         rows = rows[offset: offset + limit]
 
     return {"ontologies": rows, "offset": offset, "limit": limit}
