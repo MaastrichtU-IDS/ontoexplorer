@@ -295,3 +295,50 @@ def test_structural_triples_returns_terms_with_fingerprints():
     bn_keys = [k for k in triples if k[1].startswith("_:fp:")]
     assert len(bn_keys) == 1
     assert isinstance(terms[bn_keys[0]], ox.BlankNode)
+
+
+def test_axioms_for_entity_returns_all_outgoing_triples_except_declaring_type():
+    """For a class declared as owl:Class with one rdfs:subClassOf and one
+    rdfs:label, _axioms_for_entity returns the two non-declaration triples."""
+    from ontoexplorer.modules.diff.compute import _axioms_for_entity
+
+    iri = ox.NamedNode("http://example.org/Foo")
+    parent = ox.NamedNode("http://example.org/Bar")
+    label_pred = ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#label")
+    store = ox.Store()
+    g = ox.NamedNode("urn:test")
+    store.add_graph(g)
+    store.add(ox.Quad(iri, _RDF_TYPE, _OWL_CLASS, g))
+    store.add(ox.Quad(iri, _RDFS_SC, parent, g))
+    store.add(ox.Quad(iri, label_pred, ox.Literal("Foo", language="en"), g))
+
+    axioms = _axioms_for_entity(store, g, iri.value)
+    predicates = {p for p, _ in axioms}
+    # rdf:type owl:Class is EXCLUDED (declaring triple)
+    assert _RDF_TYPE.value not in predicates
+    # The other two are INCLUDED
+    assert _RDFS_SC.value in predicates
+    assert "http://www.w3.org/2000/01/rdf-schema#label" in predicates
+    assert len(axioms) == 2
+
+
+def test_axioms_for_entity_keeps_non_declaring_rdf_type_triples():
+    """A class can be typed both as owl:Class AND as some custom metaclass.
+    Only the owl:Class declaration is excluded; other rdf:type triples remain
+    so they can render as Characteristics or Types axioms."""
+    from ontoexplorer.modules.diff.compute import _axioms_for_entity
+
+    iri = ox.NamedNode("http://example.org/Foo")
+    metaclass = ox.NamedNode("http://example.org/MyMetaclass")
+    store = ox.Store()
+    g = ox.NamedNode("urn:test")
+    store.add_graph(g)
+    store.add(ox.Quad(iri, _RDF_TYPE, _OWL_CLASS, g))
+    store.add(ox.Quad(iri, _RDF_TYPE, metaclass, g))
+
+    axioms = _axioms_for_entity(store, g, iri.value)
+    # owl:Class declaration is excluded; metaclass triple remains.
+    objects = [getattr(o, "value", str(o)) for _, o in axioms]
+    assert _OWL_CLASS.value not in objects
+    assert metaclass.value in objects
+    assert len(axioms) == 1

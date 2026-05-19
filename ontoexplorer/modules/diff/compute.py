@@ -80,6 +80,32 @@ def _structural_triples(
     return triples, terms
 
 
+def _axioms_for_entity(
+    store: ox.Store, graph: ox.NamedNode, iri: str,
+) -> list[tuple[str, ox.NamedNode | ox.BlankNode | ox.Literal]]:
+    """Return all outgoing (predicate, object) pairs for `iri` in `graph`,
+    excluding the declaring `rdf:type` triple whose object is one of the
+    five OWL/RDFS entity meta-classes (owl:Class, owl:ObjectProperty,
+    owl:DatatypeProperty, owl:AnnotationProperty, owl:NamedIndividual).
+
+    Used to collect the full axiom set for an entity in the added/removed
+    buckets of the diff, where the entity is fully present on one side only.
+    Non-meta-class rdf:type triples (e.g. property characteristics, individual
+    types) are retained so render_axiom can route them appropriately.
+    """
+    meta_classes = set(_ENTITY_TYPES.values())
+    triples: list[tuple[str, ox.NamedNode | ox.BlankNode | ox.Literal]] = []
+    for q in store.quads_for_pattern(ox.NamedNode(iri), None, None, graph):
+        if (
+            q.predicate.value == _RDF_TYPE
+            and isinstance(q.object, ox.NamedNode)
+            and q.object.value in meta_classes
+        ):
+            continue
+        triples.append((q.predicate.value, q.object))
+    return triples
+
+
 def _bnode_fingerprint(
     store: ox.Store,
     graph: ox.NamedNode,
