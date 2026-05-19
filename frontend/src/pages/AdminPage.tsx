@@ -318,6 +318,9 @@ function OntologyTable({
                     {row.label && row.label !== ontologyDisplayName(row) && (
                       <div style={{ color: 'var(--text-dim)', fontSize: 10 }}>{row.label}</div>
                     )}
+                    <div style={{ color: 'var(--text-dim)', fontSize: 10, fontFamily: 'monospace' }}>
+                      {row.version_iri ?? row.version_id}
+                    </div>
                   </td>
                   <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-muted)' }}>
                     {fmtTriples(row.triple_count)}
@@ -693,7 +696,9 @@ function VersionsSubRows({
         <tr key={v.version_id} style={{ background: 'rgba(255,255,255,0.02)' }}>
           <td />
           <td style={{ padding: '6px 10px', color: 'var(--text-muted)', fontSize: 11 }}>
-            ↳ <span style={{ fontFamily: 'monospace' }}>{v.version_id.slice(0, 8)}…</span>
+            ↳ <span style={{ fontFamily: 'monospace' }} title={v.version_id}>
+              {v.version_iri ?? v.version_id}
+            </span>
             {v.ingestion_status === 'deprecated' && (
               <span style={{ marginLeft: 6, color: '#f85149' }}>● deprecated</span>
             )}
