@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../hooks/useAuth'
@@ -160,6 +160,16 @@ function OntologyTable({
 }) {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<{ col: SortCol; dir: 'asc' | 'desc' }>({ col: 'ontology', dir: 'asc' })
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+
+  function toggleExpanded(ontologyId: string) {
+    setExpanded(s => {
+      const n = new Set(s)
+      if (n.has(ontologyId)) n.delete(ontologyId)
+      else n.add(ontologyId)
+      return n
+    })
+  }
 
   function toggleSort(col: SortCol) {
     setSort(s => s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'asc' })
@@ -240,6 +250,7 @@ function OntologyTable({
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+              <th style={{ width: 28 }} />
               <SortTh col="ontology"   label="Ontology"    align="left" />
               <SortTh col="triples"    label="Triples" />
               <SortTh col="ingestion"  label="Ingestion" />
@@ -254,7 +265,12 @@ function OntologyTable({
               const canAct = row.ingestion_status !== 'deprecated' && row.ingestion_status !== 'pending'
               const ingestMethod = row.source_url ? 'url' : 'iri'
               return (
-                <tr key={row.version_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                <React.Fragment key={row.version_id}>
+                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                  <td style={{ padding: '6px 4px 6px 10px', textAlign: 'center', cursor: 'pointer', color: 'var(--text-dim)' }}
+                      onClick={() => toggleExpanded(row.id)}>
+                    {expanded.has(row.id) ? '▾' : '▸'}
+                  </td>
                   <td style={{ padding: '6px 10px', color: 'var(--text)' }}>
                     <div>{ontologyDisplayName(row)}</div>
                     {row.label && row.label !== ontologyDisplayName(row) && (
@@ -322,11 +338,15 @@ function OntologyTable({
                     {fmtAge(row.version_created_at)}
                   </td>
                 </tr>
+                {expanded.has(row.id) && (
+                  <VersionsSubRows ontologyId={row.id} colSpan={8} latestVersionId={row.version_id} />
+                )}
+                </React.Fragment>
               )
             })}
             {paged.length === 0 && (
               <tr>
-                <td colSpan={7} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                <td colSpan={8} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
                   {search ? 'No matching ontologies' : 'No ontologies'}
                 </td>
               </tr>
@@ -539,6 +559,87 @@ function WorkersPanel({ versionMap }: { versionMap: Record<string, string> }) {
       </div>
       <TablePager total={total} page={page} pageSize={pageSize} onPage={setPage} onPageSize={setPageSize} />
     </div>
+  )
+}
+
+// ── Version sub-rows ──────────────────────────────────────────────────────────
+
+function VersionsSubRows({
+  ontologyId, colSpan, latestVersionId,
+}: {
+  ontologyId: string
+  colSpan: number
+  latestVersionId: string
+}) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['admin-versions', ontologyId],
+    queryFn: () => api.admin.versions(ontologyId),
+    refetchInterval: 10_000,
+  })
+
+  if (isLoading) {
+    return (
+      <tr>
+        <td colSpan={colSpan} style={{ padding: '8px 16px', color: 'var(--text-dim)', fontSize: 11 }}>
+          Loading versions…
+        </td>
+      </tr>
+    )
+  }
+  if (isError || !data) {
+    return (
+      <tr>
+        <td colSpan={colSpan} style={{ padding: '8px 16px', color: '#f85149', fontSize: 11 }}>
+          Failed to load versions
+        </td>
+      </tr>
+    )
+  }
+
+  // Skip the latest version (already shown by the parent row).
+  const others = data.versions.filter(v => v.version_id !== latestVersionId)
+  if (others.length === 0) {
+    return (
+      <tr>
+        <td colSpan={colSpan} style={{ padding: '8px 16px', color: 'var(--text-dim)', fontSize: 11 }}>
+          No older versions
+        </td>
+      </tr>
+    )
+  }
+
+  return (
+    <>
+      {others.map(v => (
+        <tr key={v.version_id} style={{ background: 'rgba(255,255,255,0.02)' }}>
+          <td />
+          <td style={{ padding: '6px 10px', color: 'var(--text-muted)', fontSize: 11 }}>
+            ↳ <span style={{ fontFamily: 'monospace' }}>{v.version_id.slice(0, 8)}…</span>
+            {v.ingestion_status === 'deprecated' && (
+              <span style={{ marginLeft: 6, color: '#f85149' }}>● deprecated</span>
+            )}
+          </td>
+          <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-muted)' }}>
+            {fmtTriples(v.triple_count)}
+          </td>
+          <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+            <StatusDot status={v.ingestion_status} />
+          </td>
+          <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+            <StatusDot status={v.indexed ? 'done' : 'not_started'} label={v.indexed ? 'yes' : 'no'} />
+          </td>
+          <td style={{ padding: '6px 10px', textAlign: 'center', color: v.embed_count > 0 ? 'var(--accent-green, #3fb950)' : 'var(--text-dim)' }}>
+            {v.embed_count > 0 ? fmtTriples(v.embed_count) : '—'}
+          </td>
+          <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+            <StatusDot status={v.reasoning_status} label={v.reasoning_status.replace('_', ' ')} />
+          </td>
+          <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
+            {fmtAge(v.version_created_at)}
+          </td>
+        </tr>
+      ))}
+    </>
   )
 }
 
