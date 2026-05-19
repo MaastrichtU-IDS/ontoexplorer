@@ -6,8 +6,8 @@ from ontoexplorer.api.ols._shapes import (
 
 def _mock_request():
     r = MagicMock()
-    r.url = MagicMock()
-    r.url.__str__.return_value = "http://api.example/ols/api/ontologies/go/terms"
+    r.base_url = MagicMock()
+    r.base_url.__str__.return_value = "http://api.example/"
     r.query_params = {}
     return r
 
@@ -35,7 +35,7 @@ def test_entity_to_v1_term_basic_fields():
     }
     ontology = MagicMock(id="go", iri="http://purl.obolibrary.org/obo/go.owl",
                          shortname="go")
-    out = entity_to_v1_term(entity, ontology, version_id="v1",
+    out = entity_to_v1_term(entity, ontology,
                             request=_mock_request(), is_obsolete=False,
                             is_root=False, has_children=True)
     assert out["iri"] == "http://purl.obolibrary.org/obo/GO_0008150"
@@ -67,7 +67,7 @@ def test_entity_to_v1_term_lang_filter():
         "definitions": '[]',
     }
     ontology = MagicMock(id="test", iri="http://example.org/test", shortname="test")
-    out_fr = entity_to_v1_term(entity, ontology, version_id="v1", request=_mock_request(),
+    out_fr = entity_to_v1_term(entity, ontology, request=_mock_request(),
                                is_obsolete=False, is_root=False, has_children=False, lang="fr")
     assert out_fr["label"] == "Chat"
     assert out_fr["synonyms"] == ["félin"]

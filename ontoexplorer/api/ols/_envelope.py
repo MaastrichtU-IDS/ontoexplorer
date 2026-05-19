@@ -4,6 +4,12 @@ from typing import Any
 from fastapi import Request
 
 
+def _total_pages(total: int, size: int) -> int:
+    if total <= 0 or size <= 0:
+        return 0
+    return ceil(total / size)
+
+
 def _build_page_links(request: Request, total: int, page: int, size: int) -> dict[str, dict[str, str]]:
     base = str(request.url).split("?")[0]
     # Preserve existing query params except page/size
@@ -13,7 +19,7 @@ def _build_page_links(request: Request, total: int, page: int, size: int) -> dic
         merged = {**params, "page": str(p), "size": str(size)}
         return f"{base}?" + "&".join(f"{k}={v}" for k, v in merged.items())
 
-    total_pages = max(1, ceil(total / size)) if total > 0 else 0
+    total_pages = _total_pages(total, size)
     links: dict[str, dict[str, str]] = {
         "self":  {"href": _url(page)},
         "first": {"href": _url(0)},
@@ -36,11 +42,10 @@ def hal_page(
     size: int,
     embedded_key: str,
 ) -> dict[str, Any]:
-    total_pages = ceil(total / size) if (total > 0 and size > 0) else 0
     return {
         "_embedded": {embedded_key: items},
         "_links": _build_page_links(request, total, page, size),
-        "page": {"size": size, "totalElements": total, "totalPages": total_pages, "number": page},
+        "page": {"size": size, "totalElements": total, "totalPages": _total_pages(total, size), "number": page},
     }
 
 
@@ -53,9 +58,8 @@ def v2_page(
     size: int,
     facets: dict[str, list] | None = None,
 ) -> dict[str, Any]:
-    total_pages = ceil(total / size) if (total > 0 and size > 0) else 0
     return {
         "elements": items,
-        "page": {"size": size, "totalElements": total, "totalPages": total_pages, "number": page},
+        "page": {"size": size, "totalElements": total, "totalPages": _total_pages(total, size), "number": page},
         "facetFieldsToCounts": facets or {},
     }

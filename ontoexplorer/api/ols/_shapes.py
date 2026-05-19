@@ -4,6 +4,7 @@ import re
 from typing import Any
 from fastapi import Request
 
+# Strict-uppercase prefix per OBO Foundry URI conventions (https://obofoundry.org/principles/fp-003-uris.html)
 _OBO_SHORT_RE = re.compile(r"^([A-Z]+)_(\d+)$")
 
 
@@ -42,7 +43,7 @@ def _parse_json_or_empty(s: str | None) -> list[dict]:
 
 def _term_self_url(request: Request, ontology_id: str, iri: str) -> str:
     from ontoexplorer.api.ols._iri import encode_iri_for_ols_path
-    base = str(request.url).split("/ols/api")[0]
+    base = str(request.base_url).rstrip("/")
     return f"{base}/ols/api/ontologies/{ontology_id}/terms/{encode_iri_for_ols_path(iri)}"
 
 
@@ -66,7 +67,6 @@ def entity_to_v1_term(
     entity: dict,
     ontology: Any,
     *,
-    version_id: str,
     request: Request,
     is_obsolete: bool,
     is_root: bool,
@@ -106,7 +106,7 @@ def entity_to_v1_term(
 
 def entity_to_v2_class(entity: dict, ontology: Any, *, request: Request, lang: str | None = None) -> dict[str, Any]:
     """V2 flat shape — same field set, no _links, type-tagged."""
-    v1 = entity_to_v1_term(entity, ontology, version_id="",
+    v1 = entity_to_v1_term(entity, ontology,
                            request=request, is_obsolete=False, is_root=False,
                            has_children=False, lang=lang)
     v1.pop("_links", None)
@@ -115,7 +115,7 @@ def entity_to_v2_class(entity: dict, ontology: Any, *, request: Request, lang: s
 
 
 def ontology_to_v1(ontology: Any, version: Any, meta_counts: dict, *, request: Request) -> dict[str, Any]:
-    base = str(request.url).split("/ols/api")[0]
+    base = str(request.base_url).rstrip("/")
     return {
         "ontologyId": ontology.id,
         "loaded": version.created_at.isoformat() if hasattr(version.created_at, "isoformat") else str(version.created_at),

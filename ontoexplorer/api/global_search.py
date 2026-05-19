@@ -16,43 +16,16 @@ from ontoexplorer.modules.search.indexer import entity_lookup, normalise_label
 from ontoexplorer.modules.search.lang import resolve_lang
 from ontoexplorer.modules.search.mos_parser import ParseError, NamedClass, parse
 from ontoexplorer.modules.search.semantic import semantic_search
+from ontoexplorer.modules.search.versions import (
+    latest_ready_version as _get_latest_version_or_404,
+    latest_ready_versions as _latest_ingested_versions,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["search"])
 
 
 def _is_expression(node) -> bool:
     return not isinstance(node, NamedClass)
-
-
-async def _latest_ingested_versions(db: AsyncSession) -> list[OntologyVersion]:
-    """Return the most-recently-indexed non-deprecated version for every ontology."""
-    result = await db.execute(
-        select(OntologyVersion)
-        .where(OntologyVersion.status.notin_(["pending", "failed", "deprecated"]))
-        .order_by(OntologyVersion.ontology_id, OntologyVersion.created_at.desc())
-    )
-    seen: set[str] = set()
-    latest: list[OntologyVersion] = []
-    for v in result.scalars():
-        if v.ontology_id not in seen:
-            seen.add(v.ontology_id)
-            latest.append(v)
-    return latest
-
-
-async def _get_latest_version_or_404(db: AsyncSession, ontology_id: str) -> OntologyVersion:
-    from fastapi import HTTPException
-    result = await db.execute(
-        select(OntologyVersion)
-        .where(OntologyVersion.ontology_id == ontology_id,
-               OntologyVersion.status.notin_(["pending", "failed", "deprecated"]))
-        .order_by(OntologyVersion.created_at.desc())
-        .limit(1)
-    )
-    v = result.scalar_one_or_none()
-    if not v:
-        raise HTTPException(status_code=404, detail="Ontology not found or has no indexed version")
-    return v
 
 
 # ── Repository-wide languages ─────────────────────────────────────────────────

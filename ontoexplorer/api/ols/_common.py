@@ -3,21 +3,7 @@ from fastapi import HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from ontoexplorer.models.db import Ontology, OntologyVersion
-
-
-async def get_latest_version_or_404(db: AsyncSession, ontology_id: str) -> OntologyVersion:
-    """Resolve a slug to the latest non-deprecated ready version, or 404."""
-    result = await db.execute(
-        select(OntologyVersion)
-        .where(OntologyVersion.ontology_id == ontology_id,
-               OntologyVersion.status.notin_(["pending", "failed", "deprecated"]))
-        .order_by(OntologyVersion.created_at.desc())
-        .limit(1)
-    )
-    v = result.scalar_one_or_none()
-    if not v:
-        raise HTTPException(status_code=404, detail=f"Ontology '{ontology_id}' not found or has no indexed version")
-    return v
+from ontoexplorer.modules.search.versions import latest_ready_version as get_latest_version_or_404  # noqa: F401
 
 
 async def get_ontology_or_404(db: AsyncSession, ontology_id: str) -> Ontology:
