@@ -329,6 +329,27 @@ Mirrors `tests/integration/test_coverage_api.py`:
 
 3. **DL profile detection requires structural checks** beyond per-axiom pattern matching. Decided to implement in full: punning restrictions (consistent named-class vs named-individual use for a given IRI; annotation-property-vs-other-property exclusion), role hierarchy validation (sub-property cycles + transitivity rules per W3C §3.2.1), datatype restrictions (supported-only datatype map), and reserved-vocabulary checks. Adds ~2 days; treated as its own implementation phase.
 
+## Post-implementation: measured comparison vs ROBOT
+
+Validated against ROBOT 1.9.10 / OWL-API on SULO (2026-05-19, after the data-range exclusion fix in commit `0bb49a3`):
+
+| Profile | ROBOT | Ours | Verdict | Count gap |
+|---------|-------|------|---------|-----------|
+| EL | OUT, 26 | OUT, 33 | ✅ match | over-count (triple- vs axiom-level grouping) |
+| RL | OUT, 22 | OUT, 6 | ✅ match | **under-count** (we skip RL positional rules) |
+| QL | OUT, 22 | OUT, 20 | ✅ match | close |
+| DL | **IN**, 0 | **IN**, 0 | ✅ exact | — |
+
+**Findings:**
+- **All four in/out verdicts agree.** The headline classification is reliable.
+- **RL under-counting is the real gap.** RL violations come overwhelmingly from positional rules (LHS vs RHS of subClassOf), which our SPARQL templates don't check. The "out" verdict happens to be correct for SULO because we catch *some* RL violations, but a user fixing RL conformance from our output would miss ~16 of 22 issues.
+- **EL over-counts** because RDF triples expand axioms (one restriction is multiple triples) and some patterns overlap (an axiom violating both `disjointWith` and `inverseOf` is counted twice).
+- **DL exact match** confirms the structural checks (punning, role cycles, datatypes, reserved vocab) plus the data-range exclusion are correctly tuned.
+
+**What this means for users:** the verdict is trustworthy; the violation counts are a lower bound for RL and an upper bound for EL. For authoritative violation lists, point users at ROBOT.
+
+**Future work to tighten RL accuracy:** implement positional-aware SPARQL templates (LHS-only patterns for forbidden-on-superclass-side constructs). Estimated 2-3 days. Tracked but not scheduled.
+
 4. **`?profile=el` filter is O(N) per request.** It iterates all ready versions and Redis-looks-up each. With ~20 ontologies it's fine; at >1000 ontologies we'd want to maintain a reverse index (one Redis set per profile listing in-profile versions). Defer until needed.
 
 5. **Sample IRI extraction.** For each violation pattern we record up to 10 sample axiom IRIs. The SPARQL must return *triples involving* the violation, but axioms in OWL/RDF often span multiple triples (a blank-node restriction). Sample format will be "the subject + the violating predicate" — enough to look the axiom up manually, not a full axiom serialization.
