@@ -268,3 +268,83 @@ async def test_admin_versions_requires_admin(client, user_and_key, db_session):
         headers={"Authorization": f"Bearer {raw_key}"},
     )
     assert resp.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_admin_version_action_index_queues_task(client, user_and_key, monkeypatch, db_session):
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    _, raw_key = user_and_key
+
+    ont = Ontology(iri="http://example.org/va-idx.owl")
+    db_session.add(ont); await db_session.flush()
+    v = OntologyVersion(ontology_id=ont.id, minio_key="k", sha256="vai01", format="turtle", status="ready")
+    db_session.add(v); await db_session.commit()
+
+    mock_task = MagicMock(id="task-idx-1")
+    with patch("ontoexplorer.modules.jobs.tasks.index_ontology.delay", return_value=mock_task) as m:
+        resp = await client.post(
+            f"/api/v1/admin/versions/{v.id}/index",
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "queued", "task_id": "task-idx-1"}
+    m.assert_called_once_with(version_id=v.id, ontology_id=ont.id)
+
+
+@pytest.mark.anyio
+async def test_admin_version_action_embed_queues_task(client, user_and_key, monkeypatch, db_session):
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    _, raw_key = user_and_key
+
+    ont = Ontology(iri="http://example.org/va-emb.owl")
+    db_session.add(ont); await db_session.flush()
+    v = OntologyVersion(ontology_id=ont.id, minio_key="k", sha256="vae01", format="turtle", status="ready")
+    db_session.add(v); await db_session.commit()
+
+    mock_task = MagicMock(id="task-emb-1")
+    with patch("ontoexplorer.modules.jobs.tasks.embed_ontology.delay", return_value=mock_task) as m:
+        resp = await client.post(
+            f"/api/v1/admin/versions/{v.id}/embed",
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "queued", "task_id": "task-emb-1"}
+    m.assert_called_once_with(version_id=v.id, ontology_id=ont.id)
+
+
+@pytest.mark.anyio
+async def test_admin_version_action_reason_queues_task(client, user_and_key, monkeypatch, db_session):
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    _, raw_key = user_and_key
+
+    ont = Ontology(iri="http://example.org/va-rsn.owl")
+    db_session.add(ont); await db_session.flush()
+    v = OntologyVersion(ontology_id=ont.id, minio_key="k", sha256="var01", format="turtle", status="ready")
+    db_session.add(v); await db_session.commit()
+
+    mock_task = MagicMock(id="task-rsn-1")
+    with patch("ontoexplorer.modules.jobs.tasks.reason_ontology.delay", return_value=mock_task) as m:
+        resp = await client.post(
+            f"/api/v1/admin/versions/{v.id}/reason",
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "queued", "task_id": "task-rsn-1"}
+    m.assert_called_once_with(version_id=v.id)
+
+
+@pytest.mark.anyio
+async def test_admin_version_action_404_for_unknown_version(client, user_and_key, monkeypatch):
+    monkeypatch.setattr("ontoexplorer.api.admin.is_admin", lambda u: True)
+    _, raw_key = user_and_key
+    resp = await client.post(
+        "/api/v1/admin/versions/no-such-vid/index",
+        headers={"Authorization": f"Bearer {raw_key}"},
+    )
+    assert resp.status_code == 404

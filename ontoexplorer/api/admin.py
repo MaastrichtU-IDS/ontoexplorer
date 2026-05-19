@@ -689,6 +689,65 @@ async def admin_queue_reason(
     return {"status": "queued", "task_id": task.id}
 
 
+# ── Per-version actions (operate on a specific version_id) ────────────────────
+
+async def _load_version(db: AsyncSession, version_id: str):
+    """Load an OntologyVersion by id or raise 404."""
+    from sqlalchemy import select
+    from ontoexplorer.models.db import OntologyVersion
+    v = (await db.execute(
+        select(OntologyVersion).where(OntologyVersion.id == version_id)
+    )).scalar_one_or_none()
+    if v is None:
+        raise HTTPException(status_code=404, detail="Version not found")
+    return v
+
+
+@router.post(
+    "/versions/{version_id}/index",
+    summary="Queue search re-index for a specific version",
+)
+async def admin_queue_index_for_version(
+    version_id: str,
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from ontoexplorer.modules.jobs.tasks import index_ontology
+    v = await _load_version(db, version_id)
+    task = index_ontology.delay(version_id=v.id, ontology_id=v.ontology_id)
+    return {"status": "queued", "task_id": task.id}
+
+
+@router.post(
+    "/versions/{version_id}/embed",
+    summary="Queue embedding generation for a specific version",
+)
+async def admin_queue_embed_for_version(
+    version_id: str,
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from ontoexplorer.modules.jobs.tasks import embed_ontology
+    v = await _load_version(db, version_id)
+    task = embed_ontology.delay(version_id=v.id, ontology_id=v.ontology_id)
+    return {"status": "queued", "task_id": task.id}
+
+
+@router.post(
+    "/versions/{version_id}/reason",
+    summary="Queue OWL reasoning for a specific version",
+)
+async def admin_queue_reason_for_version(
+    version_id: str,
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from ontoexplorer.modules.jobs.tasks import reason_ontology
+    v = await _load_version(db, version_id)
+    task = reason_ontology.delay(version_id=v.id)
+    return {"status": "queued", "task_id": task.id}
+
+
 # ── Reindex all ───────────────────────────────────────────────────────────────
 
 @router.post("/reindex", summary="Queue search re-index for all ingested versions")
