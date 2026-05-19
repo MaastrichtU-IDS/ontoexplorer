@@ -164,10 +164,8 @@ function InferredUnavailableNotice({
   if (!status) return null
   if (status.from_version === 'ready' && status.to_version === 'ready') return null
   if (dismissed) return null
-  const bad =
-    status.from_version !== 'ready'
-      ? `from_version (${status.from_version})`
-      : `to_version (${status.to_version})`
+  const badSide = status.from_version !== 'ready' ? 'from_version' : 'to_version'
+  const badStatus = status[badSide]
   return (
     <div
       style={{
@@ -183,8 +181,8 @@ function InferredUnavailableNotice({
     >
       <span style={{ color: '#58a6ff' }}>ⓘ</span>
       <span style={{ flex: 1 }}>
-        Inferred diff unavailable: reasoning is not ready for {bad}. The diff
-        will refresh automatically when reasoning completes.
+        Inferred diff unavailable: reasoning is {badStatus} for {badSide}. The
+        diff will refresh automatically when reasoning completes.
       </span>
       <button
         onClick={() => setDismissed(true)}
