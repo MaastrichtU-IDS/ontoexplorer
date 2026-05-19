@@ -1,9 +1,9 @@
 # OntoExplorer — Feature Ideas
 
 ## Search & Discovery
-- **Full-text semantic search** — vector/embedding search across term definitions, not just labels (currently Elasticsearch BM25)
-- **Cross-ontology term lookup** — find all classes matching an IRI or label across all loaded ontologies
-- **SPARQL endpoint** — expose Oxigraph directly with a UI query editor
+- ~~**Full-text semantic search** — vector/embedding search across term definitions, not just labels~~ (shipped: `semantic_search()` + `term_embeddings` pgvector store + `/api/v1/search?semantic=true` + `/ols/api/v2/classes/llm_search` & `llm_similar`)
+- ~~**Cross-ontology term lookup** — find all classes matching an IRI or label across all loaded ontologies~~ (shipped: global `/api/v1/search`, `/ols/api/terms?iri=` + `/ols/api/terms/findByIdAndIsDefiningOntology`)
+- ~~**SPARQL endpoint** — expose Oxigraph directly with a UI query editor~~ (shipped: `/api/v1/sparql` (QLever metadata) + `/api/v1/sparql/content` (in-process Oxigraph) + frontend [Sparql page](frontend/src/pages/Sparql.tsx) + SparqlGallery)
 
 ## Browsing & Visualization
 - **Class hierarchy graph view** — force-directed or tree graph alongside the current list
@@ -35,8 +35,8 @@
 ---
 
 ## Priority Notes
-High-ROI given FAIR focus:
-1. SPARQL endpoint — researchers expect it
-2. Cross-ontology term search
-3. OLS-compatible API — drop-in for existing tooling
-4. Annotation quality / coverage metrics — natural extension of annotation profile work
+Top 4 high-ROI items shipped (SPARQL, cross-ontology search, OLS-compat, coverage). Next candidates worth considering:
+1. **Dependency graph** — which ontologies import which (data already indexed via owl:imports)
+2. **Multi-format term export** — JSON-LD / Turtle / OWL-XML snippets
+3. **SHACL validation reports** — well-scoped FAIR checkbox
+4. **OWL2Vec*** — per-ontology embeddings for alignment + completion (multi-week)
