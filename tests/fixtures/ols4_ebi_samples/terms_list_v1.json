@@ -1,0 +1,138 @@
+{
+  "_embedded" : {
+    "terms" : [ {
+      "iri" : "http://dbpedia.org/resource/Albania",
+      "lang" : "en",
+      "description" : [ ],
+      "synonyms" : [ ],
+      "annotation" : {
+        "database_cross_reference" : [ "GAZ:00002953" ]
+      },
+      "label" : "Albania",
+      "ontology_name" : "efo",
+      "ontology_prefix" : "EFO",
+      "ontology_iri" : "http://www.ebi.ac.uk/efo/efo.owl",
+      "is_obsolete" : false,
+      "term_replaced_by" : null,
+      "is_defining_ontology" : false,
+      "has_children" : false,
+      "is_root" : false,
+      "short_form" : "Albania",
+      "obo_id" : "Albania",
+      "in_subset" : null,
+      "obo_definition_citation" : null,
+      "obo_xref" : [ {
+        "database" : "GAZ",
+        "id" : "00002953",
+        "description" : null,
+        "url" : "http://purl.obolibrary.org/obo/GAZ_00002953"
+      } ],
+      "obo_synonym" : null,
+      "is_preferred_root" : false,
+      "_links" : {
+        "self" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms/http%253A%252F%252Fdbpedia.org%252Fresource%252FAlbania?lang=en"
+        },
+        "parents" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms/http%253A%252F%252Fdbpedia.org%252Fresource%252FAlbania/parents"
+        },
+        "ancestors" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms/http%253A%252F%252Fdbpedia.org%252Fresource%252FAlbania/ancestors"
+        },
+        "hierarchicalParents" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms/http%253A%252F%252Fdbpedia.org%252Fresource%252FAlbania/hierarchicalParents"
+        },
+        "hierarchicalAncestors" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms/http%253A%252F%252Fdbpedia.org%252Fresource%252FAlbania/hierarchicalAncestors"
+        },
+        "jstree" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms/http%253A%252F%252Fdbpedia.org%252Fresource%252FAlbania/jstree"
+        },
+        "graph" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms/http%253A%252F%252Fdbpedia.org%252Fresource%252FAlbania/graph"
+        }
+      }
+    }, {
+      "iri" : "http://dbpedia.org/resource/Algeria",
+      "lang" : "en",
+      "description" : [ ],
+      "synonyms" : [ ],
+      "annotation" : {
+        "Colonial History" : [ "France" ],
+        "database_cross_reference" : [ "GAZ:00000563" ],
+        "language:official" : [ "Arabic", "Tamazight" ],
+        "population:genetic:RefChromY" : [ "https://doi.org/10.1371/journal.pone.0138453" ],
+        "population:genetic:chromosomeYHap" : [ "A", "C", "E1", "E1a", "E1b1a", "E1b1b1", "E1b1b1b", "E1b1b1c1", "E2", "G2a", "I2", "J1e", "Q1", "R1a1", "R1b", "R1b1b2" ],
+        "population:size" : [ "40.9 millions" ],
+        "seeAlso" : [ "https://en.wikipedia.org/wiki/ISO_3166-2:DZ", "https://unstats.un.org/unsd/methods/m49/m49alpha.htm" ]
+      },
+      "label" : "Algeria",
+      "ontology_name" : "efo",
+      "ontology_prefix" : "EFO",
+      "ontology_iri" : "http://www.ebi.ac.uk/efo/efo.owl",
+      "is_obsolete" : false,
+      "term_replaced_by" : null,
+      "is_defining_ontology" : false,
+      "has_children" : false,
+      "is_root" : false,
+      "short_form" : "Algeria",
+      "obo_id" : "Algeria",
+      "in_subset" : null,
+      "obo_definition_citation" : null,
+      "obo_xref" : [ {
+        "database" : "GAZ",
+        "id" : "00000563",
+        "description" : null,
+        "url" : "http://purl.obolibrary.org/obo/GAZ_00000563"
+      } ],
+      "obo_synonym" : null,
+      "is_preferred_root" : false,
+      "_links" : {
+        "self" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms/http%253A%252F%252Fdbpedia.org%252Fresource%252FAlgeria?lang=en"
+        },
+        "parents" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms/http%253A%252F%252Fdbpedia.org%252Fresource%252FAlgeria/parents"
+        },
+        "ancestors" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms/http%253A%252F%252Fdbpedia.org%252Fresource%252FAlgeria/ancestors"
+        },
+        "hierarchicalParents" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms/http%253A%252F%252Fdbpedia.org%252Fresource%252FAlgeria/hierarchicalParents"
+        },
+        "hierarchicalAncestors" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms/http%253A%252F%252Fdbpedia.org%252Fresource%252FAlgeria/hierarchicalAncestors"
+        },
+        "jstree" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms/http%253A%252F%252Fdbpedia.org%252Fresource%252FAlgeria/jstree"
+        },
+        "graph" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms/http%253A%252F%252Fdbpedia.org%252Fresource%252FAlgeria/graph"
+        },
+        "Population_group" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms/http%253A%252F%252Fdbpedia.org%252Fresource%252FAlgeria/http%253A%252F%252Fpurl.obolibrary.org%252Fobo%252FAfPO_0000447"
+        }
+      }
+    } ]
+  },
+  "_links" : {
+    "first" : {
+      "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms?page=0&size=2"
+    },
+    "self" : {
+      "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms?page=0&size=2"
+    },
+    "next" : {
+      "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms?page=1&size=2"
+    },
+    "last" : {
+      "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms?page=46678&size=2"
+    }
+  },
+  "page" : {
+    "size" : 2,
+    "totalElements" : 93358,
+    "totalPages" : 46679,
+    "number" : 0
+  }
+}

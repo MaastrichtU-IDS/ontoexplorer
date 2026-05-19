@@ -638,6 +638,23 @@ The complete OpenAPI 3.1 spec — every endpoint, parameter, response schema —
 
 For the upstream OLS4 protocol reference (the spec our endpoints mimic), see EBI's live docs at [https://www.ebi.ac.uk/ols4/api/v2/swagger-ui/index.html](https://www.ebi.ac.uk/ols4/api/v2/swagger-ui/index.html).
 
+### Compliance audit vs EBI
+
+A small contract test in `tests/integration/ols/test_ebi_compliance.py` validates our response shapes against snapshots of real EBI OLS4 responses (cached in `tests/fixtures/ols4_ebi_samples/`). For each fixture it walks every key EBI returns and asserts our response has the same key — extra fields are fine, missing fields count as a gap. A `KNOWN_GAPS` dict at the top of the test documents the current gap count per fixture; the test fails if the count changes in either direction (regression or — better — a closed gap that just needs the count updated).
+
+Run on demand:
+
+```bash
+uv run pytest tests/integration/ols/test_ebi_compliance.py -v
+```
+
+When EBI evolves the protocol, refresh the fixtures and re-calibrate:
+
+```bash
+bash scripts/refresh_ebi_ols_fixtures.sh
+uv run pytest tests/integration/ols/test_ebi_compliance.py -v   # adjust KNOWN_GAPS to match
+```
+
 ### Coverage tiers
 
 The implementation is organized in three tiers per the design spec at [docs/superpowers/specs/2026-05-18-ols4-compat-design.md](docs/superpowers/specs/2026-05-18-ols4-compat-design.md):

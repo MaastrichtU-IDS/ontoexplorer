@@ -1,0 +1,146 @@
+{
+  "baseUri" : [ "http://www.ebi.ac.uk/efo/EFO_" ],
+  "definition" : [ "2026-05-18", "The Experimental Factor Ontology (EFO) provides a systematic description of many experimental variables available in EBI databases, and for projects such as the NHGRI-EBI GWAS catalog. It combines parts of several biological ontologies, such as UBERON anatomy, ChEBI chemical compounds, Cell Ontology and the Monarch Disease Ontology (MONDO). The scope of EFO is to support the annotation, analysis and visualization of data handled by many groups at the EBI and as the core ontology for Open Targets." ],
+  "definition_property" : [ "http://purl.obolibrary.org/obo/IAO_0000115", "http://www.ebi.ac.uk/efo/definition" ],
+  "description" : "The Experimental Factor Ontology (EFO) provides a systematic description of many experimental variables available in EBI databases, and for external projects such as the NHGRI GWAS catalogue. It combines parts of several biological ontologies, such as anatomy, disease and chemical compounds. The scope of EFO is to support the annotation, analysis and visualization of data handled by many groups at the EBI and as the core ontology for OpenTargets.org",
+  "exportsTo" : [ "apollo_sv", "bao", "bcgo", "bmont", "cao", "clo", "covoc", "dideo", "dpo", "enm", "epio", "eupath", "genepio", "gmho", "gsso", "hcao", "idocovid19", "ngbo", "obib", "ohpi", "ons", "ontoneo", "oostt", "ornaseq", "ovae", "pride", "rbo", "txpo" ],
+  "hidden_property" : [ "http://www.ebi.ac.uk/efo/has_flag" ],
+  "hierarchical_property" : [ "http://purl.obolibrary.org/obo/BFO_0000050", "http://purl.obolibrary.org/obo/RO_0002202" ],
+  "homepage" : "http://www.ebi.ac.uk/efo",
+  "imported" : false,
+  "importsFrom" : [ "afpo", "bao", "bfo", "bto", "chebi", "cl", "clo", "cob", "dc", "dcterms", "doid", "ecto", "fbbi", "fbbt", "fbdv", "gaz", "go", "gsso", "hancestro", "hp", "iao", "ido", "ma", "mondo", "mp", "mpath", "ncbitaxon", "ncit", "oba", "obi", "ogms", "oio", "omit", "omo", "ordo", "owl", "pato", "po", "pr", "rdfs", "ro", "schemaorg_https", "semapv", "skos", "so", "to", "uberon", "uo", "wbls", "zfa" ],
+  "iri" : "http://www.ebi.ac.uk/efo/efo.owl",
+  "isObsolete" : false,
+  "language" : [ "be", "bg", "da", "de", "en", "fr", "sq", "tr" ],
+  "linkedEntities" : {
+    "http://purl.obolibrary.org/obo/BFO_0000050" : {
+      "definedBy" : [ "ro" ],
+      "numAppearsIn" : 171.0,
+      "hasLocalDefinition" : true,
+      "label" : [ "part of" ],
+      "curie" : "RO_",
+      "type" : [ "entity", "objectProperty", "property" ]
+    },
+    "http://purl.obolibrary.org/obo/IAO_0000115" : {
+      "definedBy" : [ "iao" ],
+      "numAppearsIn" : 230.0,
+      "hasLocalDefinition" : true,
+      "label" : [ "definition" ],
+      "curie" : "IAO:0000115",
+      "type" : [ "annotationProperty", "entity", "property" ]
+    },
+    "http://purl.obolibrary.org/obo/RO_0002202" : {
+      "definedBy" : [ "ro" ],
+      "numAppearsIn" : 83.0,
+      "hasLocalDefinition" : true,
+      "label" : [ "develops from" ],
+      "curie" : "RO:0002202",
+      "type" : [ "entity", "objectProperty", "property" ]
+    },
+    "http://purl.obolibrary.org/obo/format-version" : {
+      "numAppearsIn" : 3.0,
+      "hasLocalDefinition" : true,
+      "label" : [ "format-version" ],
+      "curie" : "format-version",
+      "type" : [ "annotationProperty", "entity", "property" ]
+    },
+    "http://purl.org/dc/elements/1.1/creator" : {
+      "definedBy" : [ "dc" ],
+      "numAppearsIn" : 124.0,
+      "hasLocalDefinition" : true,
+      "label" : [ "Creator" ],
+      "curie" : "DC:creator",
+      "type" : [ "entity", "property" ]
+    },
+    "http://purl.org/dc/elements/1.1/description" : {
+      "definedBy" : [ "dc" ],
+      "numAppearsIn" : 139.0,
+      "hasLocalDefinition" : true,
+      "label" : [ "Description" ],
+      "curie" : "DC:description",
+      "type" : [ "entity", "property" ]
+    },
+    "http://purl.org/dc/elements/1.1/rights" : {
+      "definedBy" : [ "dc" ],
+      "numAppearsIn" : 55.0,
+      "hasLocalDefinition" : true,
+      "label" : [ "Rights" ],
+      "curie" : "DC:rights",
+      "type" : [ "entity", "property" ]
+    },
+    "http://purl.org/dc/terms/license" : {
+      "definedBy" : [ "dcterms" ],
+      "numAppearsIn" : 171.0,
+      "hasLocalDefinition" : true,
+      "label" : [ "License" ],
+      "curie" : "DCTERMS:license",
+      "type" : [ "entity", "property" ]
+    },
+    "http://www.ebi.ac.uk/efo/alternative_term" : {
+      "numAppearsIn" : 8.0,
+      "hasLocalDefinition" : false,
+      "type" : [ "annotationProperty", "entity", "property" ],
+      "label" : [ "alternative_term" ],
+      "curie" : "alternative_term"
+    },
+    "http://www.ebi.ac.uk/efo/definition" : {
+      "numAppearsIn" : 6.0,
+      "hasLocalDefinition" : true,
+      "label" : [ "obsolete_definition" ],
+      "curie" : "definition",
+      "type" : [ "annotationProperty", "entity", "property" ]
+    },
+    "http://www.ebi.ac.uk/efo/has_flag" : {
+      "numAppearsIn" : 2.0,
+      "hasLocalDefinition" : true,
+      "label" : [ "has_flag" ],
+      "curie" : "has_flag",
+      "type" : [ "entity", "objectProperty", "property" ]
+    },
+    "http://www.geneontology.org/formats/oboInOwl#hasExactSynonym" : {
+      "definedBy" : [ "oio" ],
+      "numAppearsIn" : 210.0,
+      "hasLocalDefinition" : true,
+      "label" : [ "has_exact_synonym" ],
+      "curie" : "OIO:hasExactSynonym",
+      "type" : [ "annotationProperty", "entity", "property" ]
+    },
+    "http://www.w3.org/2000/01/rdf-schema#comment" : {
+      "definedBy" : [ "rdfs" ],
+      "numAppearsIn" : 184.0,
+      "hasLocalDefinition" : true,
+      "label" : [ "comment" ],
+      "curie" : "RDFS:comment",
+      "type" : [ "entity", "property" ]
+    }
+  },
+  "linksTo" : [ "http://purl.obolibrary.org/obo/BFO_0000050", "http://purl.obolibrary.org/obo/IAO_0000115", "http://purl.obolibrary.org/obo/RO_0002202", "http://purl.obolibrary.org/obo/format-version", "http://purl.org/dc/elements/1.1/creator", "http://purl.org/dc/elements/1.1/description", "http://purl.org/dc/elements/1.1/rights", "http://purl.org/dc/terms/license", "http://www.ebi.ac.uk/efo/alternative_term", "http://www.ebi.ac.uk/efo/definition", "http://www.ebi.ac.uk/efo/has_flag", "http://www.geneontology.org/formats/oboInOwl#hasExactSynonym", "http://www.w3.org/2000/01/rdf-schema#comment" ],
+  "loaded" : "2026-05-19T00:08:48.806881668",
+  "mailingList" : "efo-users@lists.sourceforge.net",
+  "numDescendants" : 0.0,
+  "numHierarchicalDescendants" : 0.0,
+  "numberOfClasses" : "93358",
+  "numberOfEntities" : "93707",
+  "numberOfIndividuals" : "19",
+  "numberOfProperties" : "330",
+  "oboSlims" : false,
+  "ontologyId" : "efo",
+  "ontologyPurl" : "http://www.ebi.ac.uk/efo/efo.owl",
+  "preferredPrefix" : "EFO",
+  "reasoner" : "OWL2",
+  "searchableAnnotationValues" : [ false ],
+  "sourceFileTimestamp" : "Tue May 19 00:08:35 UTC 2026",
+  "synonym_property" : [ "http://www.ebi.ac.uk/efo/alternative_term", "http://www.geneontology.org/formats/oboInOwl#hasExactSynonym" ],
+  "title" : "Experimental Factor Ontology",
+  "type" : [ "ontology" ],
+  "uri" : "http://www.ebi.ac.uk/efo",
+  "http://purl.obolibrary.org/obo/format-version" : "1.4",
+  "http://purl.org/dc/elements/1.1/creator" : [ "Catherine Leroy", "Dani Welter", "Drashtti Vasant", "Ele Holloway", "Eleanor Williams", "Emma Kate Hastings", "Gautier Koscielny", "Helen Parkinson", "James Malone", "Jon Ison", "Laura Huerta Martinez", "Natalja Kurbatova", "Olamidipupo Ajigboye", "Paola Roncaglia", "Simon Jupp", "Sirarat Sarntivijai", "Tomasz Adamusiak", "Trish Whetzel", "Zoe May Pendlington" ],
+  "http://purl.org/dc/elements/1.1/description" : "The Experimental Factor Ontology (EFO) provides a systematic description of many experimental variables available in EBI databases, and for projects such as the NHGRI-EBI GWAS catalog. It combines parts of several biological ontologies, such as UBERON anatomy, ChEBI chemical compounds, Cell Ontology and the Monarch Disease Ontology (MONDO). The scope of EFO is to support the annotation, analysis and visualization of data handled by many groups at the EBI and as the core ontology for Open Targets.",
+  "http://purl.org/dc/elements/1.1/rights" : "Copyright [2014] EMBL - European Bioinformatics Institute\nLicensed under the Apache License, Version 2.0 (the \"License\"); you may not use this file except in compliance with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the\nLicense. ",
+  "http://purl.org/dc/terms/license" : "www.apache.org/licenses/LICENSE-2.0",
+  "http://www.w3.org/1999/02/22-rdf-syntax-ns#type" : "http://www.w3.org/2002/07/owl#Ontology",
+  "http://www.w3.org/2000/01/rdf-schema#comment" : "2026-05-18",
+  "http://www.w3.org/2002/07/owl#versionIRI" : "http://www.ebi.ac.uk/efo/releases/v3.90.0/efo.owl",
+  "http://www.w3.org/2002/07/owl#versionInfo" : "3.90.0"
+}

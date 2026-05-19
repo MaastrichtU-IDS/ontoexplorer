@@ -67,6 +67,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "slow: marks tests that download large models (deselect with '-m \"not slow\"')",
+    "ols_compliance: shape-conformance contract vs EBI OLS4 fixtures (opt-in: '-m ols_compliance')",
 ]
 
 [tool.anyio]

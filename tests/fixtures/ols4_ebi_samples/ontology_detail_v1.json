@@ -1,0 +1,56 @@
+{
+  "languages" : [ "be", "bg", "da", "de", "en", "fr", "sq", "tr" ],
+  "lang" : "en",
+  "ontologyId" : "efo",
+  "loaded" : "2026-05-19T00:08:48.806881668",
+  "updated" : "2026-05-19T00:08:48.806881668",
+  "status" : "LOADED",
+  "message" : "",
+  "version" : "3.90.0",
+  "fileHash" : null,
+  "loadAttempts" : 0,
+  "numberOfTerms" : 93358,
+  "numberOfProperties" : 330,
+  "numberOfIndividuals" : 19,
+  "config" : {
+    "id" : "efo",
+    "versionIri" : "http://www.ebi.ac.uk/efo/releases/v3.90.0/efo.owl",
+    "namespace" : "efo",
+    "preferredPrefix" : "EFO",
+    "title" : "Experimental Factor Ontology",
+    "description" : "The Experimental Factor Ontology (EFO) provides a systematic description of many experimental variables available in EBI databases, and for projects such as the NHGRI-EBI GWAS catalog. It combines parts of several biological ontologies, such as UBERON anatomy, ChEBI chemical compounds, Cell Ontology and the Monarch Disease Ontology (MONDO). The scope of EFO is to support the annotation, analysis and visualization of data handled by many groups at the EBI and as the core ontology for Open Targets.",
+    "homepage" : "http://www.ebi.ac.uk/efo",
+    "version" : "3.90.0",
+    "mailingList" : "efo-users@lists.sourceforge.net",
+    "tracker" : null,
+    "logo" : null,
+    "creators" : [ ],
+    "annotations" : null,
+    "fileLocation" : "http://www.ebi.ac.uk/efo/efo.owl",
+    "oboSlims" : false,
+    "labelProperty" : "http://www.w3.org/2000/01/rdf-schema#label",
+    "definitionProperties" : [ "http://purl.obolibrary.org/obo/IAO_0000115", "http://www.ebi.ac.uk/efo/definition" ],
+    "synonymProperties" : [ "http://www.ebi.ac.uk/efo/alternative_term", "http://www.geneontology.org/formats/oboInOwl#hasExactSynonym" ],
+    "hierarchicalProperties" : [ "http://purl.obolibrary.org/obo/BFO_0000050", "http://purl.obolibrary.org/obo/RO_0002202" ],
+    "baseUris" : [ "http://www.ebi.ac.uk/efo/EFO_" ],
+    "hiddenProperties" : [ "http://www.ebi.ac.uk/efo/has_flag" ],
+    "preferredRootTerms" : [ ],
+    "isSkos" : false,
+    "allowDownload" : false
+  },
+  "baseUris" : [ "http://www.ebi.ac.uk/efo/EFO_" ],
+  "_links" : {
+    "self" : {
+      "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo?lang=en"
+    },
+    "terms" : {
+      "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/terms"
+    },
+    "properties" : {
+      "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/properties"
+    },
+    "individuals" : {
+      "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/efo/individuals"
+    }
+  }
+}

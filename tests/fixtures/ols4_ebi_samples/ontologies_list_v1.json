@@ -1,0 +1,135 @@
+{
+  "_embedded" : {
+    "ontologies" : [ {
+      "languages" : [ "de", "en", "es", "fr", "la" ],
+      "lang" : "en",
+      "ontologyId" : "addicto",
+      "loaded" : "2026-05-19T00:08:36.468135309",
+      "updated" : "2026-05-19T00:08:36.468135309",
+      "status" : "LOADED",
+      "message" : "",
+      "version" : null,
+      "fileHash" : null,
+      "loadAttempts" : 0,
+      "numberOfTerms" : 1363,
+      "numberOfProperties" : 113,
+      "numberOfIndividuals" : 0,
+      "config" : {
+        "id" : "addicto",
+        "versionIri" : "http://addictovocab.org/addicto.owl/2026-05-05",
+        "namespace" : "addicto",
+        "preferredPrefix" : "ADDICTO",
+        "title" : "Addiction Ontology",
+        "description" : "The Addiction Ontology (AddictO) is an ontology being developed all aspects of addiction research.",
+        "homepage" : "https://addictovocab.org",
+        "version" : null,
+        "mailingList" : null,
+        "tracker" : null,
+        "logo" : null,
+        "creators" : [ ],
+        "annotations" : null,
+        "fileLocation" : "http://addictovocab.org/addicto.owl",
+        "oboSlims" : false,
+        "labelProperty" : "http://www.w3.org/2000/01/rdf-schema#label",
+        "definitionProperties" : [ "http://purl.obolibrary.org/obo/IAO_0000115" ],
+        "synonymProperties" : [ "http://purl.obolibrary.org/obo/IAO_0000118" ],
+        "hierarchicalProperties" : [ "http://purl.obolibrary.org/obo/BFO_0000050" ],
+        "baseUris" : [ "http://addictovocab.org/ADDICTO_" ],
+        "hiddenProperties" : [ ],
+        "preferredRootTerms" : [ ],
+        "isSkos" : false,
+        "allowDownload" : false
+      },
+      "baseUris" : [ "http://addictovocab.org/ADDICTO_" ],
+      "_links" : {
+        "self" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/addicto?lang=en"
+        },
+        "terms" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/addicto/terms"
+        },
+        "properties" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/addicto/properties"
+        },
+        "individuals" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/addicto/individuals"
+        }
+      }
+    }, {
+      "languages" : [ "en", "en-us", "zh" ],
+      "lang" : "en",
+      "ontologyId" : "ado",
+      "loaded" : "2026-05-19T00:08:17.078611969",
+      "updated" : "2026-05-19T00:08:17.078611969",
+      "status" : "LOADED",
+      "message" : "",
+      "version" : "2.0.1",
+      "fileHash" : null,
+      "loadAttempts" : 0,
+      "numberOfTerms" : 1963,
+      "numberOfProperties" : 186,
+      "numberOfIndividuals" : 2,
+      "config" : {
+        "id" : "ado",
+        "versionIri" : "http://purl.obolibrary.org/obo/ado/releases/2023-09-20/ado.owl",
+        "namespace" : "ado",
+        "preferredPrefix" : "ADO",
+        "title" : "Alzheimer's Disease Ontology (ADO)",
+        "description" : "Alzheimer's Disease Ontology is a knowledge-based ontology that encompasses varieties of concepts related to Alzheimer'S Disease, foundamentally structured by upper level Basic Formal Ontology(BFO). This Ontology is enriched by the interrelational entities that demonstrate the nextwork of the understanding on Alzheimer's disease and can be readily applied for text mining.",
+        "homepage" : "https://github.com/Fraunhofer-SCAI-Applied-Semantics/ADO",
+        "version" : "2.0.1",
+        "mailingList" : null,
+        "tracker" : "https://github.com/Fraunhofer-SCAI-Applied-Semantics/ADO/issues",
+        "logo" : null,
+        "creators" : [ ],
+        "annotations" : null,
+        "fileLocation" : "http://purl.obolibrary.org/obo/ado.owl",
+        "oboSlims" : false,
+        "labelProperty" : "http://www.w3.org/2000/01/rdf-schema#label",
+        "definitionProperties" : [ ],
+        "synonymProperties" : [ ],
+        "hierarchicalProperties" : [ ],
+        "baseUris" : [ ],
+        "hiddenProperties" : [ ],
+        "preferredRootTerms" : [ ],
+        "isSkos" : false,
+        "allowDownload" : false
+      },
+      "baseUris" : [ ],
+      "_links" : {
+        "self" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/ado?lang=en"
+        },
+        "terms" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/ado/terms"
+        },
+        "properties" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/ado/properties"
+        },
+        "individuals" : {
+          "href" : "http://www.ebi.ac.uk/ols4/api/ontologies/ado/individuals"
+        }
+      }
+    } ]
+  },
+  "_links" : {
+    "first" : {
+      "href" : "http://www.ebi.ac.uk/ols4/api/ontologies?page=0&size=2"
+    },
+    "self" : {
+      "href" : "http://www.ebi.ac.uk/ols4/api/ontologies?page=0&size=2"
+    },
+    "next" : {
+      "href" : "http://www.ebi.ac.uk/ols4/api/ontologies?page=1&size=2"
+    },
+    "last" : {
+      "href" : "http://www.ebi.ac.uk/ols4/api/ontologies?page=139&size=2"
+    }
+  },
+  "page" : {
+    "size" : 2,
+    "totalElements" : 280,
+    "totalPages" : 140,
+    "number" : 0
+  }
+}
