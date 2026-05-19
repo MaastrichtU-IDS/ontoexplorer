@@ -12,15 +12,28 @@ import fakeredis
 import pytest
 
 from ontoexplorer.models.db import Ontology, OntologyVersion
-from ontoexplorer.modules.search.indexer import _iri_key, _meta_key, _type_key
+from ontoexplorer.modules.search.indexer import (
+    _iri_key,
+    _meta_key,
+    _prefix_key,
+    _type_key,
+    normalise_label,
+)
 
 
 @pytest.fixture()
 def fake_redis():
-    """A FakeRedis instance shared across the OLS layer and the indexer."""
+    """A FakeRedis instance shared across the OLS layer and the indexer.
+
+    Patches every module that calls ``_get_redis()`` directly, including the
+    autocomplete engine which re-imports the helper from ``indexer``.
+    """
     r = fakeredis.FakeRedis(decode_responses=True)
     with (
         patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r),
+        # autocomplete imports _get_redis from indexer at module-load time, so patch
+        # the name in autocomplete's own namespace too.
+        patch("ontoexplorer.modules.search.autocomplete._get_redis", return_value=r),
         patch("ontoexplorer.api.ols.ontologies._get_redis", return_value=r),
         patch("ontoexplorer.api.ols.terms._get_redis", return_value=r),
         patch("ontoexplorer.api.ols.properties._get_redis", return_value=r),
@@ -108,6 +121,8 @@ async def sample_term(db_session, sample_ontology, fake_redis):
     )
     # Register in type set for list endpoint
     fake_redis.sadd(_type_key(vid, "class"), iri)
+    # Populate prefix sorted-set so entity_lookup("Foo") returns this entity
+    fake_redis.zadd(_prefix_key(vid), {f"{normalise_label('Foo')}|en|class|{iri}": 0})
 
     # Populate roots cache so /terms/roots works without Oxigraph
     roots_key = f"terms_root:{vid}:class:100"
@@ -162,6 +177,11 @@ async def sample_property(db_session, sample_ontology, fake_redis):
             },
         )
         fake_redis.sadd(_type_key(vid, prop_type), iri)
+        # Populate prefix sorted-set so entity_lookup can find this entity
+        fake_redis.zadd(
+            _prefix_key(vid),
+            {f"{normalise_label(label)}|en|{prop_type}|{iri}": 0},
+        )
 
     _seed(obj_iri,  "hasRelation", "object_property")
     _seed(data_iri, "hasValue",    "data_property")
@@ -287,6 +307,7 @@ async def sample_individual(db_session, sample_ontology, fake_redis):
         },
     )
     fake_redis.sadd(_type_key(vid, "individual"), ind_iri)
+    fake_redis.zadd(_prefix_key(vid), {f"{normalise_label('Alice')}|en|individual|{ind_iri}": 0})
 
     # Seed the class entity so /types can return a fully shaped class
     fake_redis.hset(
@@ -304,6 +325,7 @@ async def sample_individual(db_session, sample_ontology, fake_redis):
         },
     )
     fake_redis.sadd(_type_key(vid, "class"), class_iri)
+    fake_redis.zadd(_prefix_key(vid), {f"{normalise_label('Person')}|en|class|{class_iri}": 0})
 
     yield {
         "ind_iri":    ind_iri,
