@@ -74,6 +74,8 @@ async def sparql_content(request: Request):
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
+    default_graph_uris, named_graph_uris = await _extract_dataset_uris(request)
+
     from ontoexplorer.clients.oxigraph import get_store
 
     settings = get_settings()
@@ -83,7 +85,12 @@ async def sparql_content(request: Request):
     primary_accept = accept.split(",")[0].split(";")[0].strip()
 
     def _run() -> tuple[bytes, str]:
-        result = get_store().query(query)
+        query_kwargs: dict = {}
+        if default_graph_uris:
+            query_kwargs["default_graph"] = [pyoxigraph.NamedNode(u) for u in default_graph_uris]
+        if named_graph_uris:
+            query_kwargs["named_graphs"] = [pyoxigraph.NamedNode(u) for u in named_graph_uris]
+        result = get_store().query(query, **query_kwargs)
         if isinstance(result, bool):
             body = json.dumps({"head": {}, "boolean": result}).encode()
             return body, pyoxigraph.QueryResultsFormat.JSON.media_type
@@ -131,3 +138,23 @@ async def _extract_query_and_accept(request: Request) -> tuple[str, str]:
     if not query:
         raise ValueError("Missing 'query' parameter")
     return query, accept
+
+
+async def _extract_dataset_uris(request: Request) -> tuple[list[str], list[str]]:
+    """Return (default_graph_uris, named_graph_uris) per SPARQL Protocol §2.1.
+
+    URL query params and POST form fields are both accepted; values appearing
+    in either are merged. Empty lists mean "use the store defaults".
+    """
+    default_graphs: list[str] = list(request.query_params.getlist("default-graph-uri"))
+    named_graphs: list[str] = list(request.query_params.getlist("named-graph-uri"))
+
+    if request.method == "POST":
+        content_type = request.headers.get("content-type", "")
+        if "application/sparql-query" not in content_type:
+            form = await request.form()
+            # Starlette's FormData supports getlist for repeated keys.
+            default_graphs.extend(str(v) for v in form.getlist("default-graph-uri"))
+            named_graphs.extend(str(v) for v in form.getlist("named-graph-uri"))
+
+    return default_graphs, named_graphs
