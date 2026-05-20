@@ -160,3 +160,27 @@ describe('ScopeToolbar — empty state', () => {
     expect(screen.getByRole('button', { name: /copy query with scope/i })).toBeInTheDocument()
   })
 })
+
+describe('ScopeToolbar — copy icon', () => {
+  it('emits empty string when no ontologies selected', () => {
+    const onCopy = vi.fn()
+    render(wrap(<ScopeToolbar onScopeChange={vi.fn()} onCopy={onCopy} />))
+    fireEvent.click(screen.getByRole('button', { name: /copy query with scope/i }))
+    expect(onCopy).toHaveBeenCalledWith('')
+  })
+
+  it('emits FROM + FROM NAMED lines for a selected ontology in Both mode', async () => {
+    vi.resetModules()
+    const { ScopeToolbar: Fresh } = await import('./ScopeToolbar')
+    const onCopy = vi.fn()
+    render(wrap(<Fresh onScopeChange={vi.fn()} onCopy={onCopy} />))
+    fireEvent.click(screen.getByRole('button', { name: /add ontology/i }))
+    fireEvent.click(screen.getByText('envo'))
+    fireEvent.click(screen.getByRole('button', { name: /both/i }))
+    fireEvent.click(screen.getByRole('button', { name: /copy query with scope/i }))
+    expect(onCopy).toHaveBeenLastCalledWith(
+      'FROM <urn:ontology:O1:V1>\nFROM NAMED <urn:ontology:O1:V1>\n' +
+      'FROM <urn:ontology:O1:V1:inferred>\nFROM NAMED <urn:ontology:O1:V1:inferred>\n'
+    )
+  })
+})
