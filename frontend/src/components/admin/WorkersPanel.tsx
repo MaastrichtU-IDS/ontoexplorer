@@ -57,8 +57,8 @@ export function WorkersPanel({ versionMap }: { versionMap: Record<string, string
 
   return (
     <div>
-      <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+      <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, overflowX: 'auto' }}>
+        <table style={{ width: '100%', minWidth: 640, borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
               {['Task', 'Ontology', 'Worker', 'State', 'Running', ''].map(h => (

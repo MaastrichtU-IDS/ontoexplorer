@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useAdminOverview } from '../hooks/useAdminOverview'
+import { useIsMobile } from '../hooks/useIsMobile'
 import { api } from '../lib/api'
 import { JobsTable } from '../components/admin/JobsTable'
 import { OntologyTable } from '../components/admin/OntologyTable'
@@ -12,6 +13,7 @@ export default function AdminPage() {
   const navigate = useNavigate()
   const { user, isLoading: authLoading } = useAuth()
   const { data, isLoading, dataUpdatedAt } = useAdminOverview()
+  const isMobile = useIsMobile()
   const [secondsAgo, setSecondsAgo] = useState(0)
   const [updateStates, setUpdateStates] = useState<Record<string, UpdateState>>({})
   const [reindexStates, setReindexStates] = useState<Record<string, UpdateState>>({})
@@ -132,9 +134,9 @@ export default function AdminPage() {
   }
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '1.5rem 2rem' }}>
+    <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '0.75rem 0.5rem' : '1.5rem 2rem' }}>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
         <span style={{ fontWeight: 600, fontSize: 16, color: 'var(--text)' }}>System Admin</span>
         <span style={{
           color: '#3fb950', fontSize: 11,
@@ -158,7 +160,7 @@ export default function AdminPage() {
         <ServiceCard name="Queue" status={s.celery_queue_depth} />
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
         <SectionLabel style={{ margin: 0 }}>Ontology Pipeline ({data!.ontologies.length})</SectionLabel>
         <div style={{ flex: 1 }} />
         <button

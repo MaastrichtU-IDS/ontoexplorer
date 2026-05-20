@@ -5,6 +5,7 @@ import { useOntologies } from '../hooks/useOntologies'
 import { useVersions } from '../hooks/useVersions'
 import { useTerm } from '../hooks/useTerm'
 import { useOntologyProfile } from '../hooks/useOntologyProfile'
+import { useIsMobile } from '../hooks/useIsMobile'
 import { slugFromIri, OntologyVersion, OntologyMetadataEntry, SearchResult, Term, api } from '../lib/api'
 import ClassTree from '../components/ClassTree'
 import TermPanel from '../components/TermPanel'
@@ -102,17 +103,6 @@ const PANE_MAX = 640
 const PANE_DEFAULT = 300
 
 // ── Mobile detection ──────────────────────────────────────────────────────────
-
-function useIsMobile(breakpoint = 768) {
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth < breakpoint)
-  useEffect(() => {
-    const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`)
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches)
-    mq.addEventListener('change', handler)
-    return () => mq.removeEventListener('change', handler)
-  }, [breakpoint])
-  return isMobile
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

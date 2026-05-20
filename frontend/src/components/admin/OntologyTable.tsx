@@ -129,7 +129,7 @@ export function OntologyTable({
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
         <input
           value={search}
           onChange={e => handleSearch(e.target.value)}
@@ -137,7 +137,7 @@ export function OntologyTable({
           style={{
             background: 'var(--bg-secondary)', border: '1px solid var(--border)',
             borderRadius: 6, padding: '5px 10px', color: 'var(--text)',
-            fontSize: 12, outline: 'none', width: 240,
+            fontSize: 12, outline: 'none', width: 'min(240px, 100%)',
           }}
         />
         <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>
@@ -145,8 +145,8 @@ export function OntologyTable({
         </span>
       </div>
 
-      <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+      <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, overflowX: 'auto' }}>
+        <table style={{ width: '100%', minWidth: 900, borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
               <th style={{ width: 28 }} />
