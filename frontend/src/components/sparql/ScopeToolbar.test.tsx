@@ -229,3 +229,20 @@ describe('ScopeToolbar — onSelectionChange callback', () => {
     expect(onSel).toHaveBeenLastCalledWith(['O1'])
   })
 })
+
+describe('ScopeToolbar — labels toggle', () => {
+  it('renders a labels toggle button', () => {
+    render(wrap(<ScopeToolbar onScopeChange={vi.fn()} onCopy={vi.fn()} />))
+    expect(screen.getByRole('button', { name: /toggle result labels/i })).toBeInTheDocument()
+  })
+
+  it('fires onLabelsToggle(true) on first click and (false) on second click', () => {
+    const onToggle = vi.fn()
+    render(wrap(<ScopeToolbar onScopeChange={vi.fn()} onCopy={vi.fn()} onLabelsToggle={onToggle} />))
+    const btn = screen.getByRole('button', { name: /toggle result labels/i })
+    fireEvent.click(btn)
+    expect(onToggle).toHaveBeenLastCalledWith(true)
+    fireEvent.click(btn)
+    expect(onToggle).toHaveBeenLastCalledWith(false)
+  })
+})

@@ -15,6 +15,7 @@ export interface ScopeToolbarProps {
   onCopy: (fromBlock: string) => void
   onOntologyAdded?: (ontologyId: string) => void
   onSelectionChange?: (ontologyIds: string[]) => void
+  onLabelsToggle?: (enabled: boolean) => void
 }
 
 function ontologyLabel(o: Ontology): string {
@@ -30,12 +31,13 @@ function isSelectable(o: Ontology): boolean {
   return !['pending', 'failed', 'deprecated'].includes(o.latest_version.status)
 }
 
-export function ScopeToolbar({ onScopeChange, onCopy, onOntologyAdded, onSelectionChange }: ScopeToolbarProps) {
+export function ScopeToolbar({ onScopeChange, onCopy, onOntologyAdded, onSelectionChange, onLabelsToggle }: ScopeToolbarProps) {
   const { ontologies } = useOntologies()
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [mode, setMode] = useState<ReasoningMode>('asserted')
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [filter, setFilter] = useState('')
+  const [labelsOn, setLabelsOn] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
 
   const selectableOntologies = useMemo(() => ontologies.filter(isSelectable), [ontologies])
@@ -226,6 +228,25 @@ export function ScopeToolbar({ onScopeChange, onCopy, onOntologyAdded, onSelecti
       <div style={{ flex: 1, minWidth: 80, fontSize: 11, color: 'var(--text-dim)' }}>
         {summary}
       </div>
+
+      <button
+        onClick={() => {
+          const next = !labelsOn
+          setLabelsOn(next)
+          onLabelsToggle?.(next)
+        }}
+        aria-label="Toggle result labels"
+        title="Append rdfs:label to IRI cells in result table"
+        style={{
+          fontSize: 14, padding: '2px 8px',
+          border: `1px solid ${labelsOn ? 'var(--accent)' : 'var(--border)'}`,
+          borderRadius: 4, background: labelsOn ? 'rgba(88,166,255,0.1)' : 'transparent',
+          color: labelsOn ? 'var(--accent)' : 'var(--text-dim)',
+          cursor: 'pointer',
+        }}
+      >
+        📑
+      </button>
 
       <button
         onClick={handleCopy}
