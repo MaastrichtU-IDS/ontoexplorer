@@ -80,6 +80,49 @@ describe('ScopeToolbar — selecting ontologies', () => {
   })
 })
 
+describe('ScopeToolbar — reasoning mode', () => {
+  it('reasoning controls become enabled after first selection', async () => {
+    vi.resetModules()
+    const { ScopeToolbar: Fresh } = await import('./ScopeToolbar')
+    render(wrap(<Fresh onScopeChange={vi.fn()} onCopy={vi.fn()} />))
+    fireEvent.click(screen.getByRole('button', { name: /add ontology/i }))
+    fireEvent.click(screen.getByText('envo'))
+    expect(screen.getByRole('button', { name: /asserted/i })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: /inferred/i })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: /both/i })).not.toBeDisabled()
+  })
+
+  it('switching to Inferred re-emits the endpoint with the inferred URI', async () => {
+    vi.resetModules()
+    const { ScopeToolbar: Fresh } = await import('./ScopeToolbar')
+    const onScope = vi.fn()
+    render(wrap(<Fresh onScopeChange={onScope} onCopy={vi.fn()} />))
+    fireEvent.click(screen.getByRole('button', { name: /add ontology/i }))
+    fireEvent.click(screen.getByText('envo'))
+    onScope.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /inferred/i }))
+    expect(onScope).toHaveBeenLastCalledWith(
+      '/api/v1/sparql/content?default-graph-uri=urn%3Aontology%3AO1%3AV1%3Ainferred&named-graph-uri=urn%3Aontology%3AO1%3AV1%3Ainferred'
+    )
+  })
+
+  it('switching to Both emits four URL params per ontology', async () => {
+    vi.resetModules()
+    const { ScopeToolbar: Fresh } = await import('./ScopeToolbar')
+    const onScope = vi.fn()
+    render(wrap(<Fresh onScopeChange={onScope} onCopy={vi.fn()} />))
+    fireEvent.click(screen.getByRole('button', { name: /add ontology/i }))
+    fireEvent.click(screen.getByText('envo'))
+    onScope.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /both/i }))
+    const url = onScope.mock.calls.at(-1)?.[0] as string
+    expect(url).toContain('default-graph-uri=urn%3Aontology%3AO1%3AV1&')
+    expect(url).toContain('named-graph-uri=urn%3Aontology%3AO1%3AV1&')
+    expect(url).toContain('default-graph-uri=urn%3Aontology%3AO1%3AV1%3Ainferred')
+    expect(url).toContain('named-graph-uri=urn%3Aontology%3AO1%3AV1%3Ainferred')
+  })
+})
+
 describe('ScopeToolbar — empty state', () => {
   it('shows the "No scope" summary when nothing is selected', () => {
     render(wrap(
