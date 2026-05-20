@@ -4,8 +4,9 @@ OntoExplorer classifies every indexed ontology version against the four
 W3C OWL 2 profiles — **EL**, **RL**, **QL**, and **DL** — using SPARQL ASK/COUNT
 queries against the in-process pyoxigraph store. The result is cached in Redis
 at indexing time, surfaced via API, per-ontology page tab, fleet page, and
-search filter. **The standalone detector** ships separately as the
-`pyowl2-profiles` PyPI library (https://github.com/MaastrichtU-IDS/pyowl2-profiles).
+search filter.
+
+**The detector core is provided by the [pyowl2-profiles](https://pypi.org/project/pyowl2-profiles/) PyPI library** (source: [github.com/MaastrichtU-IDS/pyowl2-profiles](https://github.com/MaastrichtU-IDS/pyowl2-profiles)). OntoExplorer consumes it as a dependency; the `ontoexplorer/modules/owl_profile/` files are thin re-export shims that preserve the legacy import paths. Bug fixes and new pattern checks land in pyowl2-profiles; OntoExplorer bumps the pin to pick them up.
 
 ## Why this matters
 
@@ -23,15 +24,35 @@ this?" answer without re-validating each time.
 
 ## Architecture
 
+The detection logic lives in the **pyowl2-profiles** library; OntoExplorer
+contains only the integration glue.
+
 ```
-ontoexplorer/modules/owl_profile/
-    __init__.py           # exports
+pyowl2_profiles/                                # PyPI library — pyowl2-profiles>=0.1.0
     registry.py           # ProfileName, PROFILE_NAMES, ProfileViolation
-    cache.py              # Redis cache key helpers
     patterns.py           # SPARQL pattern catalogs (EL/RL/QL ~45 patterns + RL positional)
     structural.py         # DL structural checks (punning, role cycles, undeclared-property, reserved vocab)
-    detector.py           # detect_profiles() — runs all checks, returns cache payload
+    detector.py           # detect_profiles() — runs all checks, returns the payload
+    manchester.py         # Manchester OWL syntax rendering for violation samples
+
+ontoexplorer/modules/owl_profile/               # OntoExplorer integration layer
+    __init__.py           # exports the library's public types (shim)
+    registry.py           # re-export shim
+    patterns.py           # re-export shim
+    structural.py         # re-export shim
+    detector.py           # re-export shim
+    cache.py              # owl_profile_cache_key — Redis key helper (OntoExplorer-specific)
+
+ontoexplorer/modules/search/indexer.py          # _populate_owl_profile_cache hook
+ontoexplorer/modules/jobs/tasks.py              # refresh_owl_profile Celery task
+ontoexplorer/api/owl_profile.py                 # API routes
+frontend/src/pages/OwlProfile.tsx               # Fleet view
+frontend/src/components/OwlProfileSection.tsx   # Per-onto tab
 ```
+
+The shim files preserve the legacy `ontoexplorer.modules.owl_profile.X`
+import paths, so existing internal callers (indexer hook, Celery task, API
+routes, OLS shim) didn't need code changes during the library extraction.
 
 **Detection runs at indexing time** via `_populate_owl_profile_cache` in
 `ontoexplorer/modules/search/indexer.py` — same path as the coverage cache.
@@ -145,10 +166,43 @@ Aggregator merges results and propagates DL=OUT to EL/RL/QL=OUT per spec.
 
 ## Standalone library
 
-The core detector ships as a separate PyPI package, `pyowl2-profiles`, so the
-detection logic is usable outside OntoExplorer. The library includes everything
-in `ontoexplorer/modules/owl_profile/` plus an extracted Manchester renderer
-and a CLI for ROBOT comparison.
+The detector ships as the [pyowl2-profiles](https://pypi.org/project/pyowl2-profiles/)
+PyPI package. OntoExplorer consumes it; anyone else can:
 
-See https://github.com/MaastrichtU-IDS/pyowl2-profiles for installation,
-usage, and API documentation.
+```bash
+pip install pyowl2-profiles
+```
+
+```python
+import pyoxigraph
+from pyowl2_profiles import detect_profiles
+
+store = pyoxigraph.Store()
+store.load(open("my-ont.ttl", "rb").read(), pyoxigraph.RdfFormat.TURTLE)
+result = detect_profiles(store, graph_iri=None, ontology_id="...", version_id="...")
+print(result["el"]["in_profile"])
+```
+
+Or via the included CLI:
+
+```bash
+pyowl2-profiles detect my-ont.ttl
+pyowl2-profiles benchmark *.owl --csv results.csv
+```
+
+## Maintenance & release flow
+
+Because the detector core lives in a separate repo:
+
+- **Detection logic changes** (new patterns, edge-case fixes): PR to
+  [pyowl2-profiles](https://github.com/MaastrichtU-IDS/pyowl2-profiles), bump
+  its version, tag a release (CI auto-publishes to PyPI), then bump
+  `pyowl2-profiles>=X.Y.Z` in OntoExplorer's `pyproject.toml`.
+- **Integration changes** (caching, API, frontend, indexer hook): direct PR
+  to OntoExplorer.
+
+The library's CI runs the same 66 unit + ROBOT-regression tests that proved
+the detector at 19/19 verdict agreement with ROBOT on the OntoExplorer fleet.
+OntoExplorer's remaining `test_owl_profile_api.py` covers only the
+integration surface (Redis cache shape, API endpoints, the `?profile=`
+filter), not the detection logic itself.
