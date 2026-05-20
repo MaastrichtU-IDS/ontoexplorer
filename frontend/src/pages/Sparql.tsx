@@ -77,7 +77,7 @@ export default function Sparql() {
   function handleCopy(fromBlock: string) {
     const current = yasguiRef.current?.getTab()?.getYasqe()?.getValue() ?? ''
     const text = fromBlock ? `${fromBlock}${current}` : current
-    navigator.clipboard?.writeText(text).catch(() => {})
+    navigator.clipboard?.writeText(text)?.catch(() => {})
   }
 
   return (
