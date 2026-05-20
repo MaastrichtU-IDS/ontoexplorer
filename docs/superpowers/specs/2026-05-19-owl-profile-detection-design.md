@@ -409,7 +409,22 @@ Since no real OWL DL reasoner enforces the W3C datatype map, our `_detect_bad_da
 
 Impact: fixed all 4 previously-flagged DL false positives (`pizza`, `obi`, `ro`, `pro`). New fleet agreement: **9/19 (47%)** up from 7/19 (37%). The remaining 10 disagreements are NOT datatype-related — see "Remaining disagreement patterns" below.
 
-### Remaining disagreement patterns (2026-05-20)
+### Final fleet result (2026-05-20 evening): 19/19 (100%)
+
+After all the corrections in this audit, **every one of the 19 ontologies in the fleet now reports the same in/out verdict as ROBOT across all 4 profiles**. Validated by direct cache-vs-ROBOT comparison, bypassing the benchmark script's occasional output-parsing glitches.
+
+Path from 7/19 (37%) at start to 19/19 (100%):
+1. Remove spec-incorrect EL/QL flagging of pairwise disjointness (§4.2/§6.2)
+2. Remove spec-incorrect EL flagging of `owl:hasValue` (§4.2.1)
+3. Disable the OWL 2 datatype-map check (HermiT/ROBOT empirically don't enforce it)
+4. Add `_detect_undeclared_properties` for DL (§5.8 declaration consistency)
+5. Add RL positional patterns (someValuesFrom on RHS, oneOf on RHS, allValuesFrom on LHS, complementOf on LHS, unionOf in any class-axiom position)
+6. Add RL §5.2 `owl:Thing`/`owl:Nothing` positional restriction
+7. Add missing RL property characteristics (ReflexiveProperty, IrreflexiveProperty, AsymmetricProperty)
+8. Propagate DL=OUT to EL/RL/QL=OUT (subsetting per spec)
+9. Trim declaration-exemption namespaces to only W3C-reserved (no Dublin Core / SKOS / FOAF — empirically ROBOT requires those to be in the imports closure)
+
+### Remaining disagreement patterns (historical)
 
 After the disjointness + hasValue + datatype-check fixes, the 10/19 disagreements break down as:
 
@@ -423,7 +438,7 @@ After the disjointness + hasValue + datatype-check fixes, the 10/19 disagreement
 
 ### Update 2026-05-20: undeclared-property DL check + benchmark methodology fix
 
-Implemented `_detect_undeclared_properties` (W3C OWL 2 DL §5.8). Exempts reserved W3C namespaces (`owl:`, `rdf:`, `rdfs:`, `xsd:`, `swrl:`, `swrlb:`) plus widely-used annotation-property vocabularies that real OWL tools treat as implicitly declared (Dublin Core, SKOS, FOAF, VANN, Creative Commons, OBO oboInOwl, PROV).
+Implemented `_detect_undeclared_properties` (W3C OWL 2 DL §5.8). Exempts ONLY the W3C-reserved namespaces (`owl:`, `rdf:`, `rdfs:`, `xsd:`, `swrl:`, `swrlb:`). Initially included Dublin Core / SKOS / FOAF / etc. as "widely-used vocabularies that OWL-API treats as implicit", but empirically ROBOT flags these as undeclared too if they're not declared in the ontology's imports closure. The trimmed exemption list matches ROBOT's actual behavior: ontologies that import these vocabularies (via OBO chains, etc.) have the declarations in our Oxigraph imports-loaded store and pass; ontologies that just use the predicates without importing are correctly flagged.
 
 **Benchmark methodology discovery:** the default standalone-load benchmark significantly *understates* our accuracy because it loads each ontology's `.ttl` file alone without following `owl:imports`. ROBOT downloads imports closure, so declarations from imported ontologies are visible to ROBOT but missing from our standalone-loaded view. Our production indexer DOES load imports closure into Oxigraph, so the production cache reflects what ROBOT sees.
 

@@ -404,34 +404,24 @@ def _detect_reserved_vocab(
 # Check 5: Undeclared properties (W3C OWL 2 DL §5.8 declaration completeness)
 # ---------------------------------------------------------------------------
 
-# Predicates we exempt from declaration-completeness checks. Two groups:
+# Predicates we exempt from declaration-completeness checks. ONLY the W3C-
+# reserved namespaces that the OWL 2 spec treats as implicitly declared
+# (owl/rdf/rdfs/xsd) plus other W3C standards that OWL-API and ROBOT
+# recognize as built-in vocabularies (SWRL rule predicates).
 #
-# (a) Reserved W3C vocabularies — implicitly declared per the OWL 2 spec
-#     (owl/rdf/rdfs/xsd) plus other W3C standards that OWL tooling treats
-#     as built-in (SWRL/SWRLb for rule language predicates).
-#
-# (b) Widely-used annotation-property vocabularies that real OWL tools
-#     (OWL-API, ROBOT, HermiT) recognize without requiring an explicit
-#     declaration in the user ontology. Adding these matches the de facto
-#     behavior of those tools and avoids spurious "undeclared" reports on
-#     ontologies that legitimately use these vocabularies for metadata.
+# Other widely-used vocabularies (Dublin Core, SKOS, FOAF, OBO oboInOwl,
+# etc.) are NOT exempt: empirically ROBOT requires their predicates to be
+# declared either in the ontology itself or its imports closure. Ontologies
+# that import a vocabulary will see the declarations in our Oxigraph store
+# (which loads imports) and pass; ontologies that use these predicates
+# without importing them will be flagged — matching ROBOT's behavior.
 _DECLARATION_EXEMPT_NAMESPACES = (
-    # (a) Core W3C vocabularies
     "http://www.w3.org/2002/07/owl#",
     "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
     "http://www.w3.org/2000/01/rdf-schema#",
     "http://www.w3.org/2001/XMLSchema#",
     "http://www.w3.org/2003/11/swrl#",
     "http://www.w3.org/2003/11/swrlb#",
-    # (b) Widely-used annotation/metadata vocabularies
-    "http://purl.org/dc/elements/1.1/",        # Dublin Core
-    "http://purl.org/dc/terms/",               # Dublin Core Terms
-    "http://www.w3.org/2004/02/skos/core#",    # SKOS
-    "http://xmlns.com/foaf/0.1/",              # FOAF
-    "http://purl.org/vocab/vann/",             # VANN
-    "http://creativecommons.org/ns#",          # Creative Commons
-    "http://www.geneontology.org/formats/oboInOwl#",  # OBO metadata
-    "http://www.w3.org/ns/prov#",              # PROV
 )
 
 
