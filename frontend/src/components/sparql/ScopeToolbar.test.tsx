@@ -184,3 +184,33 @@ describe('ScopeToolbar — copy icon', () => {
     )
   })
 })
+
+describe('ScopeToolbar — onOntologyAdded callback', () => {
+  it('fires with the ontology id on chip add', async () => {
+    vi.resetModules()
+    const { ScopeToolbar: Fresh } = await import('./ScopeToolbar')
+    const onAdded = vi.fn()
+    render(wrap(<Fresh onScopeChange={vi.fn()} onCopy={vi.fn()} onOntologyAdded={onAdded} />))
+    fireEvent.click(screen.getByRole('button', { name: /add ontology/i }))
+    fireEvent.click(screen.getByText('envo'))
+    expect(onAdded).toHaveBeenCalledWith('O1')
+  })
+
+  it('does not fire on chip remove', async () => {
+    vi.resetModules()
+    const { ScopeToolbar: Fresh } = await import('./ScopeToolbar')
+    const onAdded = vi.fn()
+    render(wrap(<Fresh onScopeChange={vi.fn()} onCopy={vi.fn()} onOntologyAdded={onAdded} />))
+    fireEvent.click(screen.getByRole('button', { name: /add ontology/i }))
+    fireEvent.click(screen.getByText('envo'))
+    onAdded.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /remove envo/i }))
+    expect(onAdded).not.toHaveBeenCalled()
+  })
+
+  it('does not fire on initial render with empty selection', () => {
+    const onAdded = vi.fn()
+    render(wrap(<ScopeToolbar onScopeChange={vi.fn()} onCopy={vi.fn()} onOntologyAdded={onAdded} />))
+    expect(onAdded).not.toHaveBeenCalled()
+  })
+})

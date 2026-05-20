@@ -13,6 +13,7 @@ const BASE_ENDPOINT = '/api/v1/sparql/content'
 export interface ScopeToolbarProps {
   onScopeChange: (endpoint: string) => void
   onCopy: (fromBlock: string) => void
+  onOntologyAdded?: (ontologyId: string) => void
 }
 
 function ontologyLabel(o: Ontology): string {
@@ -28,7 +29,7 @@ function isSelectable(o: Ontology): boolean {
   return !['pending', 'failed', 'deprecated'].includes(o.latest_version.status)
 }
 
-export function ScopeToolbar({ onScopeChange, onCopy }: ScopeToolbarProps) {
+export function ScopeToolbar({ onScopeChange, onCopy, onOntologyAdded }: ScopeToolbarProps) {
   const { ontologies } = useOntologies()
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [mode, setMode] = useState<ReasoningMode>('asserted')
@@ -66,7 +67,12 @@ export function ScopeToolbar({ onScopeChange, onCopy }: ScopeToolbarProps) {
   function toggleOntology(id: string) {
     setSelected(prev => {
       const next = new Set(prev)
-      if (next.has(id)) next.delete(id); else next.add(id)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+        onOntologyAdded?.(id)
+      }
       return next
     })
   }
