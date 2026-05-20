@@ -266,15 +266,10 @@ def _rl_patterns(*, graph_iri: str | None = None) -> list[Pattern]:
         return _make_basic_type_pattern("rl", axiom_type, rdf_class, graph_iri=graph_iri)
 
     return [
-        # owl:oneOf — RL §5.2 superClass(CE): forbidden on RHS; also forbidden on LHS except
-        # in the form { a } (one individual).  Over-approximate: flag any use.
-        p("owl:oneOf",               f"{_OWL}oneOf"),
         # owl:hasSelf — entirely forbidden in RL (not allowed in superClass or subClass position)
         p("owl:hasSelf",             f"{_OWL}hasSelf"),
         # owl:disjointUnionOf — forbidden in RL
         p("owl:disjointUnionOf",     f"{_OWL}disjointUnionOf"),
-        # owl:complementOf — forbidden in RL
-        p("owl:complementOf",        f"{_OWL}complementOf"),
         # owl:AllDisjointClasses — RL allows pairwise disjoint between NAMED classes only;
         # over-approximate: flag any AllDisjointClasses usage
         t("owl:AllDisjointClasses",  f"{_OWL}AllDisjointClasses"),
@@ -285,7 +280,151 @@ def _rl_patterns(*, graph_iri: str | None = None) -> list[Pattern]:
         # owl:propertyChainAxiom — RL restricts the forms allowed (the chain must follow the
         # "complex role inclusions" discipline from OWL 2 DL).  Over-approximate: flag any use.
         p("owl:propertyChainAxiom",  f"{_OWL}propertyChainAxiom"),
+        # Property characteristics RL forbids: ReflexiveObjectProperty,
+        # IrreflexiveObjectProperty, AsymmetricObjectProperty (§5.2). TransitiveObjectProperty
+        # IS allowed in RL (unlike QL), so we don't flag that here.
+        t("owl:ReflexiveProperty",   f"{_OWL}ReflexiveProperty"),
+        t("owl:IrreflexiveProperty", f"{_OWL}IrreflexiveProperty"),
+        t("owl:AsymmetricProperty",  f"{_OWL}AsymmetricProperty"),
+        # Negative property assertions — forbidden in RL
+        t("owl:NegativeObjectPropertyAssertion", f"{_OWL}NegativeObjectPropertyAssertion"),
+        t("owl:NegativeDataPropertyAssertion",   f"{_OWL}NegativeDataPropertyAssertion"),
+        # Positional patterns: RL §5.2 distinguishes subClassExpression (LHS of subClassOf)
+        # from superClassExpression (RHS). Several constructs are allowed in one position
+        # but not the other.
+        _rl_positional_someValuesFrom_on_rhs(graph_iri),
+        _rl_positional_oneOf_on_rhs(graph_iri),
+        _rl_positional_allValuesFrom_on_lhs(graph_iri),
+        _rl_positional_unionOf_anywhere(graph_iri),
+        _rl_positional_complementOf_on_lhs(graph_iri),
     ]
+
+
+# ---------------------------------------------------------------------------
+# RL positional patterns
+# ---------------------------------------------------------------------------
+#
+# In RDF, OWL SubClassOf(LHS, RHS) is encoded as `LHS rdfs:subClassOf RHS`.
+# A blank node B used as RHS that has B owl:someValuesFrom ?_ encodes
+# ObjectSomeValuesFrom in superClass position — forbidden in RL (§5.2).
+# These patterns identify exactly that kind of positional misuse.
+#
+# We also include rdfs:domain and rdfs:range as "superClassExpression" positions
+# per OWL 2 RL (ObjectPropertyDomain/Range take superClassExpression).
+
+def _rl_positional_template(
+    axiom_type: str,
+    superclass_predicate: str,
+    *,
+    graph_iri: str | None = None,
+    on_lhs: bool = False,
+) -> Pattern:
+    """Build a pattern detecting `superclass_predicate` on the wrong side of a class axiom.
+
+    on_lhs=False: detect on superClassExpression positions (RHS of subClassOf,
+                  range, domain, equivalentClass).
+    on_lhs=True:  detect on subClassExpression positions (LHS of subClassOf,
+                  subject of complementOf).
+    """
+    if on_lhs:
+        positional_clause = (
+            "{ { ?bn rdfs:subClassOf ?_rhs } "
+            "  UNION { ?_o owl:complementOf ?bn } "
+            "}"
+        )
+    else:
+        positional_clause = (
+            "{ { ?_lhs rdfs:subClassOf ?bn } "
+            "  UNION { ?_prop rdfs:range ?bn } "
+            "  UNION { ?_prop rdfs:domain ?bn } "
+            "  UNION { ?_o owl:equivalentClass ?bn } "
+            "}"
+        )
+    inner = (
+        f"{positional_clause} "
+        f"?bn <{superclass_predicate}> ?_v ."
+    )
+    return Pattern(
+        profile="rl",
+        axiom_type=axiom_type,
+        predicate_iri=superclass_predicate,
+        count_sparql=(
+            f"{_PREFIXES}SELECT (COUNT(DISTINCT ?bn) AS ?n) WHERE "
+            "{ " + (f"GRAPH <{graph_iri}> {{ {inner} }}" if graph_iri else inner) + " }"
+        ),
+        sample_sparql=(
+            f"{_PREFIXES}SELECT DISTINCT ?bn WHERE "
+            "{ " + (f"GRAPH <{graph_iri}> {{ {inner} }}" if graph_iri else inner) + " } LIMIT 10"
+        ),
+    )
+
+
+def _rl_positional_someValuesFrom_on_rhs(graph_iri: str | None) -> Pattern:
+    """ObjectSomeValuesFrom/DataSomeValuesFrom forbidden on RHS in RL (§5.2)."""
+    return _rl_positional_template(
+        "owl:someValuesFrom-on-superClass",
+        f"{_OWL}someValuesFrom",
+        graph_iri=graph_iri,
+    )
+
+
+def _rl_positional_oneOf_on_rhs(graph_iri: str | None) -> Pattern:
+    """ObjectOneOf forbidden on RHS in RL (allowed only as singleton on LHS)."""
+    return _rl_positional_template(
+        "owl:oneOf-on-superClass",
+        f"{_OWL}oneOf",
+        graph_iri=graph_iri,
+    )
+
+
+def _rl_positional_allValuesFrom_on_lhs(graph_iri: str | None) -> Pattern:
+    """ObjectAllValuesFrom forbidden on LHS in RL (allowed only on RHS)."""
+    return _rl_positional_template(
+        "owl:allValuesFrom-on-subClass",
+        f"{_OWL}allValuesFrom",
+        graph_iri=graph_iri,
+        on_lhs=True,
+    )
+
+
+def _rl_positional_unionOf_anywhere(graph_iri: str | None) -> Pattern:
+    """ObjectUnionOf forbidden in BOTH subClass and superClass positions in RL.
+
+    Detect any use in either context. (A bare unionOf with no class-axiom
+    container would be malformed and isn't our concern.)
+    """
+    inner = (
+        "{ { ?_lhs rdfs:subClassOf ?bn } "
+        "  UNION { ?bn rdfs:subClassOf ?_rhs } "
+        "  UNION { ?_prop rdfs:range ?bn } "
+        "  UNION { ?_prop rdfs:domain ?bn } "
+        "  UNION { ?_o owl:equivalentClass ?bn } "
+        "} "
+        f"?bn <{_OWL}unionOf> ?_v ."
+    )
+    return Pattern(
+        profile="rl",
+        axiom_type="owl:unionOf-in-class-axiom",
+        predicate_iri=f"{_OWL}unionOf",
+        count_sparql=(
+            f"{_PREFIXES}SELECT (COUNT(DISTINCT ?bn) AS ?n) WHERE "
+            "{ " + (f"GRAPH <{graph_iri}> {{ {inner} }}" if graph_iri else inner) + " }"
+        ),
+        sample_sparql=(
+            f"{_PREFIXES}SELECT DISTINCT ?bn WHERE "
+            "{ " + (f"GRAPH <{graph_iri}> {{ {inner} }}" if graph_iri else inner) + " } LIMIT 10"
+        ),
+    )
+
+
+def _rl_positional_complementOf_on_lhs(graph_iri: str | None) -> Pattern:
+    """ObjectComplementOf forbidden on LHS in RL (allowed only on RHS)."""
+    return _rl_positional_template(
+        "owl:complementOf-on-subClass",
+        f"{_OWL}complementOf",
+        graph_iri=graph_iri,
+        on_lhs=True,
+    )
 
 
 def make_rl_patterns(graph_iri: str | None) -> list[Pattern]:
