@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import Yasgui from '@triply/yasgui'
 import '@triply/yasgui/build/yasgui.min.css'
 import './Sparql.css'
@@ -9,6 +9,8 @@ import { ScopeToolbar } from '../components/sparql/ScopeToolbar'
 import { hasPrefix, prependPrefix, extractBaseIri } from '../components/sparql/prefixUtils'
 import { useOntologies } from '../hooks/useOntologies'
 import { buildOntoCompleter } from '../components/sparql/ontoCompleter'
+import { installIriClickHandler } from '../components/sparql/iriClickHandler'
+import { collectIris, buildLabelsQuery, applyLabels, removeLabels } from '../components/sparql/labelEnricher'
 import type { Ontology } from '../lib/api'
 
 const DEFAULT_QUERY = `PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -30,8 +32,12 @@ export default function Sparql() {
   const selectedOntologyIdsRef = useRef<string[]>([])
   const ontologiesRef = useRef<Ontology[]>([])
   const location = useLocation()
+  const navigate = useNavigate()
   const [queryError, setQueryError] = useState<string | null>(null)
   const { ontologies } = useOntologies()
+  const [labelsOn, setLabelsOn] = useState(false)
+  const labelsOnRef = useRef(false)
+  useEffect(() => { labelsOnRef.current = labelsOn }, [labelsOn])
 
   useEffect(() => {
     if (!containerRef.current || yasguiRef.current) return
@@ -61,6 +67,20 @@ export default function Sparql() {
       },
     } as any)
 
+    const teardownClickHandler = containerRef.current
+      ? installIriClickHandler(containerRef.current, {
+          getOntologies: () => ontologiesRef.current,
+          navigate,
+        })
+      : () => {}
+
+    const yasr = yasguiRef.current?.getTab()?.getYasr()
+    if (yasr && typeof yasr.on === 'function') {
+      yasr.on('drawn', () => {
+        if (labelsOnRef.current) runLabelEnrichment()
+      })
+    }
+
     const qId = new URLSearchParams(location.search).get('q')
     if (qId) {
       api.savedQueries.get(qId)
@@ -76,6 +96,7 @@ export default function Sparql() {
     }
 
     return () => {
+      teardownClickHandler()
       if (yasguiRef.current) {
         if (typeof yasguiRef.current.destroy === 'function') {
           yasguiRef.current.destroy()
@@ -120,6 +141,50 @@ export default function Sparql() {
     yasqe.setValue(prependPrefix(current, shortname, baseIri))
   }, [ontologies])
 
+  const runLabelEnrichment = useCallback(async () => {
+    const root = containerRef.current
+    if (!root) return
+    const iris = collectIris(root)
+    if (iris.length === 0) return
+    const endpoint = (() => {
+      const cfg = yasguiRef.current?.getTab()?.getRequestConfig()
+      const raw = cfg?.endpoint
+      if (typeof raw === 'string') return raw
+      return '/api/v1/sparql/content'
+    })()
+    try {
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/sparql-results+json',
+        },
+        body: `query=${encodeURIComponent(buildLabelsQuery(iris))}`,
+      })
+      if (!resp.ok) return
+      const data = await resp.json()
+      const labels = new Map<string, string>()
+      for (const b of data?.results?.bindings ?? []) {
+        const iri = b?.iri?.value
+        const lbl = b?.label?.value
+        if (iri && lbl && !labels.has(iri)) labels.set(iri, lbl)
+      }
+      if (containerRef.current) applyLabels(containerRef.current, labels)
+    } catch {
+      // Silent fallback: labels aren't critical
+    }
+  }, [])
+
+  const handleLabelsToggle = useCallback((enabled: boolean) => {
+    setLabelsOn(enabled)
+    if (!containerRef.current) return
+    if (enabled) {
+      runLabelEnrichment()
+    } else {
+      removeLabels(containerRef.current)
+    }
+  }, [runLabelEnrichment])
+
   return (
     <div style={{
       height: 'calc(100vh - var(--nav-height))',
@@ -141,6 +206,7 @@ export default function Sparql() {
         onCopy={handleCopy}
         onOntologyAdded={handleOntologyAdded}
         onSelectionChange={handleSelectionChange}
+        onLabelsToggle={handleLabelsToggle}
       />
       {queryError && (
         <div style={{
@@ -151,7 +217,7 @@ export default function Sparql() {
       )}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden', minHeight: 0 }}>
         <QuerySidebar yasguiRef={yasguiRef} />
-        <div ref={containerRef} style={{ flex: 1, minHeight: 0, overflowY: 'auto' }} />
+        <div ref={containerRef} data-testid="yasgui-container" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }} />
       </div>
     </div>
   )

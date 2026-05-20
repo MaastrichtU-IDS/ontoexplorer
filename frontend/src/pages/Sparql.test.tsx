@@ -7,7 +7,9 @@ vi.mock('@triply/yasgui', () => ({
   default: vi.fn().mockImplementation(() => ({
     getTab: () => ({
       getYasqe: () => ({ setValue: vi.fn(), getValue: vi.fn(() => 'SELECT * WHERE { ?s ?p ?o }') }),
+      getYasr: () => ({ on: vi.fn() }),
       setEndpoint: vi.fn(),
+      getRequestConfig: () => ({ endpoint: '/api/v1/sparql/content' }),
     }),
     destroy: vi.fn(),
   })),
@@ -91,7 +93,9 @@ it('prepends a PREFIX line when an ontology is added to scope', async () => {
     default: vi.fn().mockImplementation(() => ({
       getTab: () => ({
         getYasqe: () => ({ setValue: setValueMock, getValue: getValueMock }),
+        getYasr: () => ({ on: vi.fn() }),
         setEndpoint: vi.fn(),
+        getRequestConfig: () => ({ endpoint: '/api/v1/sparql/content' }),
       }),
       destroy: vi.fn(),
     })),
@@ -131,7 +135,9 @@ it('does not duplicate PREFIX when the same shortname is already in the query', 
     default: vi.fn().mockImplementation(() => ({
       getTab: () => ({
         getYasqe: () => ({ setValue: setValueMock, getValue: getValueMock }),
+        getYasr: () => ({ on: vi.fn() }),
         setEndpoint: vi.fn(),
+        getRequestConfig: () => ({ endpoint: '/api/v1/sparql/content' }),
       }),
       destroy: vi.fn(),
     })),
@@ -163,4 +169,104 @@ it('does not duplicate PREFIX when the same shortname is already in the query', 
 
   await new Promise(resolve => setTimeout(resolve, 50))
   expect(setValueMock).not.toHaveBeenCalled()
+})
+
+it('navigates to the term page when an IRI cell is clicked', async () => {
+  vi.resetModules()
+  vi.doMock('@triply/yasgui', () => ({
+    default: vi.fn().mockImplementation(() => ({
+      getTab: () => ({
+        getYasqe: () => ({ setValue: vi.fn(), getValue: vi.fn(() => '') }),
+        getYasr: () => ({ on: vi.fn() }),
+        setEndpoint: vi.fn(),
+        getRequestConfig: () => ({ endpoint: '/api/v1/sparql/content' }),
+      }),
+      destroy: vi.fn(),
+    })),
+  }))
+  vi.doMock('../hooks/useOntologies', () => ({
+    useOntologies: () => ({
+      ontologies: [
+        { id: 'O1', iri: 'https://w3id.org/ontostart/pizza/', shortname: 'pizza',
+          title: 'Pizza', created_at: '2024-01-01',
+          latest_version: { id: 'V1', ontology_id: 'O1', status: 'ready' } },
+      ],
+      isLoading: false,
+    }),
+  }))
+  const navigateMock = vi.fn()
+  vi.doMock('react-router-dom', async () => {
+    const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom')
+    return { ...actual, useNavigate: () => navigateMock }
+  })
+
+  const { default: SparqlFresh } = await import('./Sparql')
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter><SparqlFresh /></MemoryRouter>
+    </QueryClientProvider>,
+  )
+
+  const yasguiHost = screen.getByTestId('yasgui-container')
+  const a = document.createElement('a')
+  a.className = 'iri'
+  a.href = 'https://w3id.org/ontostart/pizza/Margherita'
+  a.textContent = 'Margherita'
+  yasguiHost.appendChild(a)
+
+  fireEvent.click(a)
+  await waitFor(() => {
+    expect(navigateMock).toHaveBeenCalledWith(
+      '/ontologies/pizza?term=https%3A%2F%2Fw3id.org%2Fontostart%2Fpizza%2FMargherita'
+    )
+  })
+})
+
+it('fetches and applies labels when the labels toggle is enabled', async () => {
+  vi.resetModules()
+  const setEndpointMock = vi.fn()
+  vi.doMock('@triply/yasgui', () => ({
+    default: vi.fn().mockImplementation(() => ({
+      getTab: () => ({
+        getYasqe: () => ({ setValue: vi.fn(), getValue: vi.fn(() => '') }),
+        getYasr: () => ({ on: vi.fn() }),
+        setEndpoint: setEndpointMock,
+        getRequestConfig: () => ({ endpoint: '/api/v1/sparql/content' }),
+      }),
+      destroy: vi.fn(),
+    })),
+  }))
+  vi.doMock('../hooks/useOntologies', () => ({
+    useOntologies: () => ({ ontologies: [], isLoading: false }),
+  }))
+  global.fetch = vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      results: { bindings: [
+        { iri: { type: 'uri', value: 'http://a/' }, label: { type: 'literal', value: 'Alpha' } },
+      ] },
+    }),
+  }) as any
+
+  const { default: SparqlFresh } = await import('./Sparql')
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter><SparqlFresh /></MemoryRouter>
+    </QueryClientProvider>,
+  )
+
+  const yasguiHost = screen.getByTestId('yasgui-container')
+  const a = document.createElement('a')
+  a.className = 'iri'
+  a.href = 'http://a/'
+  a.textContent = 'http://a/'
+  yasguiHost.appendChild(a)
+
+  fireEvent.click(screen.getByRole('button', { name: /toggle result labels/i }))
+
+  await waitFor(() => {
+    const span = yasguiHost.querySelector('.iri-label')
+    expect(span).not.toBeNull()
+    expect(span?.textContent).toBe(' · Alpha')
+  })
 })
