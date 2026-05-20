@@ -642,6 +642,68 @@ export interface OwlProfileFleet {
   }
 }
 
+// ── Reuse types ───────────────────────────────────────────────────────────────
+
+export type ImportEdge = {
+  target_iri: string
+  target_prefix: string | null
+  depth: number
+  resolved: boolean
+}
+
+export type TermIRIReuseEntry = {
+  class_count: number
+  property_count: number
+  sample_iris: string[]
+  resolved: boolean
+}
+
+export type MireotTerm = {
+  iri: string
+  source_prefix: string
+  has_imported_from: boolean
+}
+
+export type MappingEntry = {
+  target_prefix: string | null
+  count: number
+  sample_pairs: [string, string][]
+}
+
+export type ReuseReport = {
+  version_id: string
+  host_prefix: string | null
+  host_iri: string
+  imports: ImportEdge[]
+  term_iri_reuse: Record<string, TermIRIReuseEntry>
+  mireot_terms: MireotTerm[]
+  mappings: Record<string, MappingEntry[]>
+  indexed_at: string
+}
+
+export type ReuseFleetEntry = {
+  id: string
+  shortname: string
+  title: string
+  version_id: string
+  imports_count: number
+  mireot_terms_count: number
+  term_iri_reused_count: number
+  mappings_count: number
+  source_prefixes: string[]
+}
+
+export type ReuseFleet = {
+  ontologies: ReuseFleetEntry[]
+  totals: {
+    fleet_size: number
+    total_import_edges: number
+    total_mireot_terms: number
+    ontologies_with_mireot: number
+  }
+  top_reused_sources: { prefix: string; reusers_count: number }[]
+}
+
 // ── Coverage types ────────────────────────────────────────────────────────────
 
 export type CoverageEntityType =
@@ -1032,6 +1094,9 @@ export const api = {
           `/ontologies/${ontologyId}/${versionId}/meta/candidates`
         ),
     },
+
+    reuse: (ontologyId: string, versionId: string) =>
+      request<ReuseReport>(`/ontologies/${ontologyId}/${versionId}/reuse`),
   },
 
   globalSearch: {
@@ -1130,6 +1195,12 @@ export const api = {
     fleet: () => request<OwlProfileFleet>('/owl-profile/public'),
     version: (ontologyId: string, versionId: string) =>
       request<OwlProfileRecord>(`/ontologies/${ontologyId}/${versionId}/owl-profile`),
+  },
+
+  reuse: {
+    fleet: () => request<ReuseFleet>('/reuse/fleet'),
+    version: (ontologyId: string, versionId: string) =>
+      request<ReuseReport>(`/ontologies/${ontologyId}/${versionId}/reuse`),
   },
 
   stats: {
