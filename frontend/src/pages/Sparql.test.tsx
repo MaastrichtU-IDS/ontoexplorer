@@ -1,11 +1,14 @@
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import Sparql from './Sparql'
 
 vi.mock('@triply/yasgui', () => ({
   default: vi.fn().mockImplementation(() => ({
-    getTab: () => ({ getYasqe: () => ({ setValue: vi.fn() }) }),
+    getTab: () => ({
+      getYasqe: () => ({ setValue: vi.fn(), getValue: vi.fn(() => 'SELECT * WHERE { ?s ?p ?o }') }),
+      setEndpoint: vi.fn(),
+    }),
     destroy: vi.fn(),
   })),
 }))
@@ -72,52 +75,7 @@ beforeEach(() => {
   })
 })
 
-test('shows Graphs toggle with count of ready ontologies, panel collapsed by default', () => {
+it('renders the ScopeToolbar', async () => {
   wrap(<Sparql />)
-  // Only 2 ready ontologies (pending one excluded)
-  expect(screen.getByRole('button', { name: /Graphs \(2\)/i })).toBeInTheDocument()
-  expect(screen.queryByPlaceholderText('Filter ontologies…')).not.toBeInTheDocument()
-})
-
-test('clicking toggle expands panel showing filter input and ontology rows', () => {
-  wrap(<Sparql />)
-  fireEvent.click(screen.getByRole('button', { name: /Graphs \(2\)/i }))
-  expect(screen.getByPlaceholderText('Filter ontologies…')).toBeInTheDocument()
-  expect(screen.getByText('go')).toBeInTheDocument()      // shortname used
-  expect(screen.getByText('mondo')).toBeInTheDocument()   // iri slug used (no shortname)
-  expect(screen.queryByText('pending-ont')).not.toBeInTheDocument() // excluded (status pending)
-})
-
-test('filter input narrows rows by name', () => {
-  wrap(<Sparql />)
-  fireEvent.click(screen.getByRole('button', { name: /Graphs \(2\)/i }))
-  fireEvent.change(screen.getByPlaceholderText('Filter ontologies…'), { target: { value: 'go' } })
-  expect(screen.getByText('go')).toBeInTheDocument()
-  expect(screen.queryByText('mondo')).not.toBeInTheDocument()
-})
-
-test('filter input narrows rows by graph URI substring', () => {
-  wrap(<Sparql />)
-  fireEvent.click(screen.getByRole('button', { name: /Graphs \(2\)/i }))
-  fireEvent.change(screen.getByPlaceholderText('Filter ontologies…'), { target: { value: 'abc2' } })
-  expect(screen.getByText('mondo')).toBeInTheDocument()
-  expect(screen.queryByText('go')).not.toBeInTheDocument()
-})
-
-test('shows empty message when filter matches nothing', () => {
-  wrap(<Sparql />)
-  fireEvent.click(screen.getByRole('button', { name: /Graphs \(2\)/i }))
-  fireEvent.change(screen.getByPlaceholderText('Filter ontologies…'), { target: { value: 'zzz' } })
-  expect(screen.getByText('No matching ontologies')).toBeInTheDocument()
-})
-
-test('copy button writes correct graph URI to clipboard', async () => {
-  wrap(<Sparql />)
-  fireEvent.click(screen.getByRole('button', { name: /Graphs \(2\)/i }))
-  const goCell = screen.getByText('go').closest('div')!
-  fireEvent.click(within(goCell).getByRole('button', { name: 'Copy' }))
-  await waitFor(() => {
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('urn:ontology:abc1:v1')
-  })
-  expect(screen.getByText('✓')).toBeInTheDocument()
+  expect(await screen.findByText(/No scope selected/i)).toBeInTheDocument()
 })
