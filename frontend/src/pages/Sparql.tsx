@@ -8,6 +8,8 @@ import { api } from '../lib/api'
 import { ScopeToolbar } from '../components/sparql/ScopeToolbar'
 import { hasPrefix, prependPrefix, extractBaseIri } from '../components/sparql/prefixUtils'
 import { useOntologies } from '../hooks/useOntologies'
+import { buildOntoCompleter } from '../components/sparql/ontoCompleter'
+import type { Ontology } from '../lib/api'
 
 const DEFAULT_QUERY = `PREFIX owl: <http://www.w3.org/2002/07/owl#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -25,12 +27,24 @@ LIMIT 10`
 export default function Sparql() {
   const containerRef = useRef<HTMLDivElement>(null)
   const yasguiRef = useRef<InstanceType<typeof Yasgui> | null>(null)
+  const selectedOntologyIdsRef = useRef<string[]>([])
+  const ontologiesRef = useRef<Ontology[]>([])
   const location = useLocation()
   const [queryError, setQueryError] = useState<string | null>(null)
   const { ontologies } = useOntologies()
 
   useEffect(() => {
     if (!containerRef.current || yasguiRef.current) return
+
+    const Yasqe = (Yasgui as any).Yasqe
+    if (Yasqe?.registerAutocompleter) {
+      Yasqe.registerAutocompleter(
+        buildOntoCompleter(
+          () => selectedOntologyIdsRef.current,
+          () => ontologiesRef.current,
+        ),
+      )
+    }
 
     yasguiRef.current = new Yasgui(containerRef.current, {
       persistenceId: null,
@@ -73,6 +87,11 @@ export default function Sparql() {
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Keep ontologiesRef in sync with fetched ontologies for the autocompleter.
+  useEffect(() => {
+    ontologiesRef.current = ontologies
+  }, [ontologies])
+
   // Stable handler refs so the toolbar's onScopeChange effect doesn't refire
   // every time this component re-renders (e.g. queryError changes).
   const handleScopeChange = useCallback((endpoint: string) => {
@@ -83,6 +102,10 @@ export default function Sparql() {
     const current = yasguiRef.current?.getTab()?.getYasqe()?.getValue() ?? ''
     const text = fromBlock ? `${fromBlock}${current}` : current
     navigator.clipboard?.writeText(text)?.catch(() => {})
+  }, [])
+
+  const handleSelectionChange = useCallback((ids: string[]) => {
+    selectedOntologyIdsRef.current = ids
   }, [])
 
   const handleOntologyAdded = useCallback((ontologyId: string) => {
@@ -113,7 +136,12 @@ export default function Sparql() {
           Query the full ontology graph · read-only · SPARQL 1.1
         </span>
       </div>
-      <ScopeToolbar onScopeChange={handleScopeChange} onCopy={handleCopy} onOntologyAdded={handleOntologyAdded} />
+      <ScopeToolbar
+        onScopeChange={handleScopeChange}
+        onCopy={handleCopy}
+        onOntologyAdded={handleOntologyAdded}
+        onSelectionChange={handleSelectionChange}
+      />
       {queryError && (
         <div style={{
           padding: '0.4rem 1.5rem', background: 'rgba(239,68,68,0.1)',

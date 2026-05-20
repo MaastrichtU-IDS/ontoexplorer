@@ -14,6 +14,7 @@ export interface ScopeToolbarProps {
   onScopeChange: (endpoint: string) => void
   onCopy: (fromBlock: string) => void
   onOntologyAdded?: (ontologyId: string) => void
+  onSelectionChange?: (ontologyIds: string[]) => void
 }
 
 function ontologyLabel(o: Ontology): string {
@@ -29,7 +30,7 @@ function isSelectable(o: Ontology): boolean {
   return !['pending', 'failed', 'deprecated'].includes(o.latest_version.status)
 }
 
-export function ScopeToolbar({ onScopeChange, onCopy, onOntologyAdded }: ScopeToolbarProps) {
+export function ScopeToolbar({ onScopeChange, onCopy, onOntologyAdded, onSelectionChange }: ScopeToolbarProps) {
   const { ontologies } = useOntologies()
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [mode, setMode] = useState<ReasoningMode>('asserted')
@@ -50,6 +51,11 @@ export function ScopeToolbar({ onScopeChange, onCopy, onOntologyAdded }: ScopeTo
   useEffect(() => {
     onScopeChange(endpoint)
   }, [endpoint, onScopeChange])
+
+  // Notify the parent whenever the selection set changes.
+  useEffect(() => {
+    onSelectionChange?.(Array.from(selected))
+  }, [selected, onSelectionChange])
 
   // Close popover on outside click.
   useEffect(() => {

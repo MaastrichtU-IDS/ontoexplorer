@@ -214,3 +214,18 @@ describe('ScopeToolbar — onOntologyAdded callback', () => {
     expect(onAdded).not.toHaveBeenCalled()
   })
 })
+
+describe('ScopeToolbar — onSelectionChange callback', () => {
+  it('fires with the current ids whenever selection changes', async () => {
+    vi.resetModules()
+    const { ScopeToolbar: Fresh } = await import('./ScopeToolbar')
+    const onSel = vi.fn()
+    render(wrap(<Fresh onScopeChange={vi.fn()} onCopy={vi.fn()} onSelectionChange={onSel} />))
+    // Initial render fires with []
+    expect(onSel).toHaveBeenCalledWith([])
+    onSel.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /add ontology/i }))
+    fireEvent.click(screen.getByText('envo'))
+    expect(onSel).toHaveBeenLastCalledWith(['O1'])
+  })
+})
