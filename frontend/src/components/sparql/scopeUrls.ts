@@ -30,6 +30,8 @@ export function selectedGraphIris(
   return out
 }
 
+// Assumes baseUrl has no existing query string (it's a fixed app-internal
+// SPARQL endpoint path). Don't pass URLs that may already contain a `?`.
 export function buildScopedEndpoint(baseUrl: string, graphIris: string[]): string {
   if (graphIris.length === 0) return baseUrl
   const params: string[] = []
