@@ -49,6 +49,26 @@ def test_indexed_at_iso_format():
     assert "T" in result["indexed_at"]  # ISO datetime separator
 
 
+def test_dl_violation_propagates_to_subprofiles():
+    """OWL 2 EL/RL/QL are strict subsets of OWL 2 DL. An ontology that's not
+    in DL cannot be in EL/RL/QL either, even if no EL/RL/QL-specific patterns
+    matched. Verifies the propagation in detect_profiles."""
+    ttl = """@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix : <http://example.org/x#> .
+:p a owl:ObjectProperty, owl:AnnotationProperty ."""
+    store = _store_from_ttl(ttl)
+    result = detect_profiles(store, graph_iri=None, ontology_id="t", version_id="v")
+    # DL: punning violation
+    assert result["dl"]["in_profile"] is False
+    assert "punning" in result["dl"]["violations_by_axiom_type"]
+    # EL/RL/QL: must propagate to False even though no profile-specific
+    # patterns matched (no profile-specific violations recorded)
+    for p in ("el", "rl", "ql"):
+        assert result[p]["in_profile"] is False, (
+            f"{p} must be False when DL is False (EL/RL/QL ⊂ DL)"
+        )
+
+
 def test_empty_store_all_profiles_clean():
     store = pyoxigraph.Store()
     result = detect_profiles(store, graph_iri=None, ontology_id="t", version_id="v")

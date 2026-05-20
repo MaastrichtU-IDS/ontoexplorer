@@ -1,6 +1,20 @@
 {
-  "el": {"in_profile": true},
-  "rl": {"in_profile": true},
-  "ql": {"in_profile": false, "violations_by_axiom_type": {"owl:TransitiveProperty": 1}},
-  "dl": {"in_profile": false, "violations_by_axiom_type": {"role-hierarchy-cycle": 1}}
+  "el": {
+    "in_profile": false
+  },
+  "rl": {
+    "in_profile": false
+  },
+  "ql": {
+    "in_profile": false,
+    "violations_by_axiom_type": {
+      "owl:TransitiveProperty": 1
+    }
+  },
+  "dl": {
+    "in_profile": false,
+    "violations_by_axiom_type": {
+      "role-hierarchy-cycle": 1
+    }
+  }
 }

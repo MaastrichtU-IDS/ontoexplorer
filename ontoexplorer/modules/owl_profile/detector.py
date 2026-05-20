@@ -235,6 +235,16 @@ def detect_profiles(
     ql_result = _run_profile_patterns(store, graph_iri, make_ql_patterns(graph_iri), graph_node, known, labels)
     dl_result = _run_dl_checks(store, graph_iri, graph_node, known, labels)
 
+    # OWL 2 EL, RL, and QL are strict subsets of OWL 2 DL. An ontology that
+    # violates DL cannot be in any of them, regardless of whether the profile-
+    # specific patterns matched. Propagate DL=OUT to the sub-profile verdicts
+    # (leave per-profile violation lists untouched — the user reads the DL tab
+    # for the reason; the sub-profile tab correctly shows zero EL/RL/QL-
+    # specific violations alongside in_profile=false).
+    if not dl_result["in_profile"]:
+        for sub in (el_result, rl_result, ql_result):
+            sub["in_profile"] = False
+
     return {
         "el": el_result,
         "rl": rl_result,
