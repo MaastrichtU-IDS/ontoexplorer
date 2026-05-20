@@ -483,6 +483,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         version_id, entities, deprecated_iris, labels_by_iri, defs_by_iri, r
     )
     _populate_owl_profile_cache(version_id, ontology_id, r)
+    _populate_reuse_cache(version_id, ontology_id, entities, r)
 
     return IndexStats(
         version_id=version_id,
@@ -782,6 +783,69 @@ def _populate_owl_profile_cache(version_id: str, ontology_id: str, r: "redis.Red
     r.setex(owl_profile_cache_key(version_id), _SEARCH_TTL, json.dumps(payload))
 
 
+def _populate_reuse_cache(
+    version_id: str,
+    ontology_id: str,
+    entities: dict[str, str],
+    r: "redis.Redis",
+) -> None:
+    """Compute the reuse report for this version and cache it in Redis.
+
+    Mirrors `_populate_owl_profile_cache` — runs at the end of indexing so
+    the data is ready before any API call.
+    """
+    import asyncio as _asyncio
+    import json as _json
+
+    from sqlalchemy import select
+
+    from ontoexplorer.clients.oxigraph import get_store, graph_iri as _graph_iri
+    from ontoexplorer.database import make_celery_db_session
+    from ontoexplorer.models.db import Ontology, OntologyImport, OntologyVersion
+    from ontoexplorer.modules.reuse.cache import reuse_cache_key
+    from ontoexplorer.modules.reuse.detector import detect_reuse
+
+    async def _gather():
+        async with make_celery_db_session()() as db:
+            ver = (await db.execute(
+                select(OntologyVersion).where(OntologyVersion.id == version_id)
+            )).scalar_one_or_none()
+            if ver is None:
+                return None, [], []
+            ont = (await db.execute(
+                select(Ontology).where(Ontology.id == ver.ontology_id)
+            )).scalar_one_or_none()
+            imp_rows = (await db.execute(
+                select(OntologyImport).where(OntologyImport.version_id == version_id)
+            )).scalars().all()
+            db_imports = [
+                {"import_iri": row.import_iri, "depth": 1} for row in imp_rows
+            ]
+            host_iri = ont.iri if ont else ""
+            host_namespaces = [host_iri + sep for sep in ("#", "/") if host_iri]
+            return host_iri, host_namespaces, db_imports
+
+    host_iri, host_namespaces, db_imports = _asyncio.run(_gather())
+    if host_iri is None:
+        return  # version disappeared mid-index — skip silently
+
+    g = _graph_iri(ontology_id, version_id)
+    entity_pairs = list(entities.items())
+    report = detect_reuse(
+        get_store(),
+        graph_iri=g,
+        version_id=version_id,
+        host_iri=host_iri,
+        host_namespaces=host_namespaces,
+        db_imports=db_imports,
+        entities=entity_pairs,
+    )
+    # Convert dataclasses to dicts via asdict — preserves the nested structure.
+    from dataclasses import asdict as _asdict
+    payload = _asdict(report)
+    r.setex(reuse_cache_key(version_id), _SEARCH_TTL, _json.dumps(payload))
+
+
 def invalidate_index(version_id: str) -> None:
     """Delete all search index keys for a version."""
     r = _get_redis()
@@ -798,6 +862,8 @@ def invalidate_index(version_id: str) -> None:
     to_delete.append(coverage_cache_key(version_id))
     from ontoexplorer.modules.owl_profile.cache import owl_profile_cache_key
     to_delete.append(owl_profile_cache_key(version_id))
+    from ontoexplorer.modules.reuse.cache import reuse_cache_key
+    to_delete.append(reuse_cache_key(version_id))
     keys_present = [k for k in to_delete if r.exists(k)]
     if keys_present:
         r.delete(*keys_present)
