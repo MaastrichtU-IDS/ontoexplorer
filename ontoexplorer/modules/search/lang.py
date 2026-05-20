@@ -5,6 +5,19 @@ if TYPE_CHECKING:
     from ontoexplorer.models.db import Ontology, User
 
 
+def canonical_lang(tag: str) -> str:
+    """Collapse a BCP-47 language tag to its primary subtag, lowercased.
+
+    Examples: ``en-US`` → ``en``, ``en-GB`` → ``en``, ``pt-BR`` → ``pt``.
+    Whitespace is stripped. The empty string (untagged literals) is preserved
+    so callers can still distinguish tagged from untagged content.
+    """
+    tag = (tag or "").strip().lower()
+    if not tag:
+        return ""
+    return tag.split("-", 1)[0]
+
+
 def resolve_lang(
     query_param: str | None,
     ontology: "Ontology | None",

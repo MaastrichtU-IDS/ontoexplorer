@@ -37,6 +37,7 @@ async def get_repository_languages():
 
     def _aggregate() -> list[dict]:
         from ontoexplorer.modules.search.indexer import _get_redis, _langs_key
+        from ontoexplorer.modules.search.lang import canonical_lang
         r = _get_redis()
         counts: dict[str, int] = {}
         prefix = "search:meta:"
@@ -46,10 +47,11 @@ async def get_repository_languages():
                 continue
             version_id = meta_key[len(prefix):]
             for lang, count in r.hgetall(_langs_key(version_id)).items():
-                counts[lang] = counts.get(lang, 0) + int(count)
+                key = canonical_lang(lang)
+                counts[key] = counts.get(key, 0) + int(count)
         return sorted(
             [{"lang": k, "label_count": v} for k, v in counts.items()],
-            key=lambda x: -x["label_count"],
+            key=lambda x: x["lang"],
         )
 
     return await asyncio.to_thread(_aggregate)

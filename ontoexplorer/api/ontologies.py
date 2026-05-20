@@ -388,19 +388,25 @@ async def list_ontologies(
             if raw:
                 stats_by_vid[vid] = _json.loads(raw)
         # Batch-load language counts for indexed versions
+        from ontoexplorer.modules.search.lang import canonical_lang
         pipe2 = r.pipeline(transaction=False)
         for vid in vid_list:
             pipe2.hgetall(_langs_key(vid))
         langs_raws = pipe2.execute()
         for vid, mapping in zip(vid_list, langs_raws):
-            if mapping:
-                entries = [
-                    {"lang": lang, "label_count": int(cnt)}
-                    for lang, cnt in mapping.items()
-                    if lang  # skip empty-string untagged entries
-                ]
-                if entries:
-                    langs_by_vid[vid] = sorted(entries, key=lambda x: -x["label_count"])
+            if not mapping:
+                continue
+            counts: dict[str, int] = {}
+            for lang, cnt in mapping.items():
+                key = canonical_lang(lang)
+                if not key:  # skip empty-string untagged entries
+                    continue
+                counts[key] = counts.get(key, 0) + int(cnt)
+            if counts:
+                langs_by_vid[vid] = sorted(
+                    ({"lang": k, "label_count": v} for k, v in counts.items()),
+                    key=lambda x: x["lang"],
+                )
     except Exception:
         pass
 
@@ -673,14 +679,19 @@ async def get_languages(
 
     def _read_langs():
         from ontoexplorer.modules.search.indexer import _get_redis, _langs_key, _meta_key
+        from ontoexplorer.modules.search.lang import canonical_lang
         r = _get_redis()
         meta = r.hgetall(_meta_key(version_id))
         if meta.get("schema_version") != "v2":
             return []
-        counts = r.hgetall(_langs_key(version_id))
+        raw = r.hgetall(_langs_key(version_id))
+        merged: dict[str, int] = {}
+        for lang, cnt in raw.items():
+            key = canonical_lang(lang)
+            merged[key] = merged.get(key, 0) + int(cnt)
         return sorted(
-            [{"lang": k or "", "label_count": int(v)} for k, v in counts.items()],
-            key=lambda x: -x["label_count"],
+            ({"lang": k, "label_count": v} for k, v in merged.items()),
+            key=lambda x: x["lang"],
         )
 
     return await asyncio.to_thread(_read_langs)
