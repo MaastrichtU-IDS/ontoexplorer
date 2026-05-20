@@ -297,6 +297,7 @@ def _rl_patterns(*, graph_iri: str | None = None) -> list[Pattern]:
         _rl_positional_allValuesFrom_on_lhs(graph_iri),
         _rl_positional_unionOf_anywhere(graph_iri),
         _rl_positional_complementOf_on_lhs(graph_iri),
+        _rl_thing_or_nothing_as_subclassof_object(graph_iri),
     ]
 
 
@@ -424,6 +425,29 @@ def _rl_positional_complementOf_on_lhs(graph_iri: str | None) -> Pattern:
         f"{_OWL}complementOf",
         graph_iri=graph_iri,
         on_lhs=True,
+    )
+
+
+def _rl_thing_or_nothing_as_subclassof_object(graph_iri: str | None) -> Pattern:
+    """RL §5.2 forbids owl:Thing as the object of SubClassOf
+    (and owl:Nothing as the subject) because both would be trivially true."""
+    inner = (
+        "{ { ?s rdfs:subClassOf owl:Thing } "
+        "  UNION { owl:Nothing rdfs:subClassOf ?o } "
+        "}"
+    )
+    return Pattern(
+        profile="rl",
+        axiom_type="owl:Thing-or-Nothing-misused",
+        predicate_iri=None,
+        count_sparql=(
+            f"{_PREFIXES}SELECT (COUNT(DISTINCT *) AS ?n) WHERE "
+            "{ " + (f"GRAPH <{graph_iri}> {{ {inner} }}" if graph_iri else inner) + " }"
+        ),
+        sample_sparql=(
+            f"{_PREFIXES}SELECT DISTINCT ?s WHERE "
+            "{ " + (f"GRAPH <{graph_iri}> {{ {inner} }}" if graph_iri else inner) + " } LIMIT 10"
+        ),
     )
 
 
