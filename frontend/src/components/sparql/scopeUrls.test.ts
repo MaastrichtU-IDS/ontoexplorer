@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { assertedGraphIri, inferredGraphIri, selectedGraphIris, buildScopedEndpoint, formatScopeAsFromClauses, ReasoningMode } from './scopeUrls'
+import { assertedGraphIri, inferredGraphIri, selectedGraphIris, buildScopedEndpoint, formatScopeAsFromClauses } from './scopeUrls'
 import type { Ontology } from '../../lib/api'
 
 const ONTS: Ontology[] = [

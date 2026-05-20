@@ -115,7 +115,7 @@ describe('ScopeToolbar — reasoning mode', () => {
     fireEvent.click(screen.getByText('envo'))
     onScope.mockClear()
     fireEvent.click(screen.getByRole('button', { name: /both/i }))
-    const url = onScope.mock.calls.at(-1)?.[0] as string
+    const url = onScope.mock.calls[onScope.mock.calls.length - 1]?.[0] as string
     expect(url).toContain('default-graph-uri=urn%3Aontology%3AO1%3AV1&')
     expect(url).toContain('named-graph-uri=urn%3Aontology%3AO1%3AV1&')
     expect(url).toContain('default-graph-uri=urn%3Aontology%3AO1%3AV1%3Ainferred')

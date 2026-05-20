@@ -33,6 +33,7 @@ const ONTOLOGIES = [
     latest_version: {
       id: 'v1', ontology_id: 'abc1', status: 'ready',
       format: 'owl', version_iri: null, sha256: '',
+      triple_count: null, download_url: '', created_at: '2024-01-01',
     },
   },
   {
@@ -44,6 +45,7 @@ const ONTOLOGIES = [
     latest_version: {
       id: 'v2', ontology_id: 'abc2', status: 'ready',
       format: 'owl', version_iri: null, sha256: '',
+      triple_count: null, download_url: '', created_at: '2024-01-01',
     },
   },
   {
@@ -55,6 +57,7 @@ const ONTOLOGIES = [
     latest_version: {
       id: 'v3', ontology_id: 'abc3', status: 'pending',
       format: 'owl', version_iri: null, sha256: '',
+      triple_count: null, download_url: '', created_at: '2024-01-01',
     },
   },
 ]
