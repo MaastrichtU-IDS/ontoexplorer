@@ -125,6 +125,29 @@ def test_el_union_of_detected():
 # (W3C OWL 2 Profiles §4.2). Previously over-flagged; now correctly accepted.
 # ---------------------------------------------------------------------------
 
+def test_el_has_value_is_allowed():
+    """ObjectHasValue and DataHasValue ARE allowed in OWL 2 EL (W3C §4.2.1):
+    ∃R.{a} reduces to ObjectSomeValuesFrom over a singleton ObjectOneOf,
+    which is in the EL grammar. Regression for prior over-flagging that
+    produced false-positive EL=OUT verdicts on ontologies like ORDO that
+    use hundreds/thousands of hasValue restrictions."""
+    ttl = """
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix : <http://example.org/> .
+    :hasName a owl:DatatypeProperty .
+    :p a owl:ObjectProperty .
+    :A a owl:Class ; rdfs:subClassOf
+        [ a owl:Restriction ; owl:onProperty :p ; owl:hasValue :B ] ,
+        [ a owl:Restriction ; owl:onProperty :hasName ; owl:hasValue "Alice" ] .
+    :B a owl:NamedIndividual .
+    """
+    store = _store_from_turtle(ttl)
+    for p in EL_PATTERNS:
+        count, _ = run_pattern_count(store, None, p)
+        assert count == 0, f"owl:hasValue is EL-allowed; pattern {p.axiom_type} matched"
+
+
 def test_el_pairwise_disjoint_named_classes_is_allowed():
     """OWL 2 EL allows pairwise DisjointClasses between EL-conformant classes.
     Named classes are trivially EL-conformant, so this should NOT be flagged."""

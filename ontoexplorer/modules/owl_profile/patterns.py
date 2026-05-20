@@ -142,9 +142,13 @@ def _el_patterns(*, graph_iri: str | None = None) -> list[Pattern]:
         # Boolean class expressions not allowed in EL
         p("owl:complementOf",           f"{_OWL}complementOf"),
         p("owl:unionOf",                f"{_OWL}unionOf"),
-        # Restrictions forbidden in EL
+        # Restrictions forbidden in EL.
+        # NOTE: owl:hasValue (ObjectHasValue / DataHasValue) IS allowed in EL
+        # (W3C §4.2.1) because ∃R.{a} reduces to ObjectSomeValuesFrom over an
+        # ObjectOneOf singleton. ELK supports it. We previously over-flagged it,
+        # producing false-positive EL=OUT verdicts on ontologies like ordo that
+        # use thousands of hasValue restrictions but are otherwise EL-conformant.
         p("owl:allValuesFrom",          f"{_OWL}allValuesFrom"),
-        p("owl:hasValue",               f"{_OWL}hasValue"),
         p("owl:hasSelf",                f"{_OWL}hasSelf"),
         # Property characteristics forbidden in EL
         p("owl:inverseOf",              f"{_OWL}inverseOf"),

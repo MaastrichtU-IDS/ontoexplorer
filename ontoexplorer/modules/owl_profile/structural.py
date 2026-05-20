@@ -417,10 +417,16 @@ def detect_dl_violations(
     Returns:
         List of ProfileViolation instances, one per detected violation.
     """
+    # Note: the OWL 2 datatype-map check (_detect_bad_datatypes) was empirically
+    # verified to have no practical value — HermiT, Pellet, ROBOT's profile
+    # checker, and OWL-API all accept any datatype IRI including ones strictly
+    # not in the W3C OWL 2 datatype map (xsd:date, xsd:duration, xsd:gYear,
+    # xsd:ID, even fabricated custom IRIs). Flagging these produced false-
+    # positive DL=OUT verdicts that disagreed with every real reasoner. The
+    # check is preserved (see _detect_bad_datatypes below) but not invoked.
     violations: list[ProfileViolation] = []
     violations.extend(_detect_punning(store, graph_iri))
     violations.extend(_detect_transitive_cycles(store, graph_iri))
-    violations.extend(_detect_bad_datatypes(store, graph_iri))
     violations.extend(_detect_reserved_vocab(store, graph_iri))
     return violations
 
@@ -437,13 +443,11 @@ def detect_dl_violations_with_terms(
     """
     results: list[tuple[ProfileViolation, str | None, pyoxigraph.Term | None]] = []
 
+    # See detect_dl_violations for why the datatype-map check is skipped.
     for v in _detect_punning(store, graph_iri):
         results.append((v, None, None))
     for v in _detect_transitive_cycles(store, graph_iri):
         results.append((v, None, None))
-    for v, p_term, o_term in _detect_bad_datatypes_with_terms(store, graph_iri):
-        p_iri = p_term.value if p_term is not None else None
-        results.append((v, p_iri, o_term))
     for v in _detect_reserved_vocab(store, graph_iri):
         results.append((v, None, None))
     return results

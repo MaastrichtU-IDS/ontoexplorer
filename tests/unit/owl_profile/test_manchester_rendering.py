@@ -231,8 +231,16 @@ def test_bad_datatype_returns_usage_triple_not_dt_iri():
     )
 
 
-def test_bad_datatype_violation_has_manchester():
-    """_detect_bad_datatypes produces violations with manchester field."""
+def test_detect_profiles_does_not_emit_datatype_violations():
+    """detect_profiles no longer emits unsupported-datatype DL violations.
+
+    Real OWL DL reasoners (HermiT, Pellet) and ROBOT's profile checker all
+    accept any datatype IRI — including ones strictly not in the W3C OWL 2
+    datatype map. The strict check produced false-positive DL=OUT verdicts
+    that disagreed with every reasoner. The aggregator (detect_dl_violations)
+    intentionally skips _detect_bad_datatypes; the helper is preserved for
+    standalone use but not invoked from the public API.
+    """
     ttl = """
     @prefix owl:  <http://www.w3.org/2002/07/owl#> .
     @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -243,21 +251,17 @@ def test_bad_datatype_violation_has_manchester():
         :hasIdentifier "xyz"^^xsd:ID .
     """
     store = _store_from_ttl(ttl)
-    # Use detect_profiles so we go through the Manchester rendering step
     result = detect_profiles(store, graph_iri=None, ontology_id="t", version_id="v")
     dl_samples = result["dl"]["sample_violations"]
     dt_samples = [s for s in dl_samples if s["axiom_type"] == "unsupported-datatype"]
-    assert len(dt_samples) > 0
-    sample = dt_samples[0]
-    assert "manchester" in sample
-    # The manchester content should be useful (not just the datatype IRI)
-    if sample["manchester"]:
-        text = "".join(
-            t["v"] if t["t"] == "text" else t.get("label", t.get("iri", ""))
-            for t in sample["manchester"]
-        )
-        # Should contain the predicate or value in some recognizable form
-        assert len(text) > 0, "Manchester text should be non-empty"
+    assert dt_samples == [], (
+        "detect_profiles should NOT emit unsupported-datatype violations now "
+        f"that the check is disabled; got {dt_samples}"
+    )
+    # The standalone helper still works (preserved for any standalone use)
+    from ontoexplorer.modules.owl_profile.structural import _detect_bad_datatypes
+    violations = _detect_bad_datatypes(store, None)
+    assert len(violations) >= 1, "_detect_bad_datatypes helper should still work standalone"
 
 
 # ---------------------------------------------------------------------------

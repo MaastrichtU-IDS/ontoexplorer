@@ -401,11 +401,25 @@ We say IN, ROBOT says OUT. Coverage gap: ROBOT detects class-expression-level pa
 
 A prior version of EL_PATTERNS / QL_PATTERNS flagged `owl:disjointWith` and `owl:AllDisjointClasses` as violations. This was **spec-incorrect** (W3C §4.2/§6.2 explicitly allow pairwise disjointness between profile-conformant classes). It coincidentally produced the *right verdict* for several ontologies that have other EL/QL violations we don't detect — they showed as agreed-OUT for the wrong reason. Removing the over-flag (commit pending) is spec-correct but exposed those coverage gaps; agreement count stayed flat at 7/19. The honest interpretation: the spec-correct detector is what we want; the next work is closing the genuine coverage gaps documented in (A) and (C) above.
 
-### Update 2026-05-19: ecosystem-extension fix for xsd:date
+### Update 2026-05-19: datatype-map check disabled entirely
 
-Added `xsd:date`, `xsd:time`, `xsd:duration`, `xsd:gYear`/`gMonth`/`gDay`/`gYearMonth`/`gMonthDay` to `OWL2_DATATYPES`. The strict W3C OWL 2 datatype map (§4.2) omits these, but OWL-API/ROBOT accept them in practice. The OBO ecosystem uses `xsd:date` widely (`dcterms:date`, `dcterms:created`, etc.). Strictly rejecting these produces verdict disagreements with ROBOT without any spec benefit.
+Initially added `xsd:date`, `xsd:duration`, etc. to `OWL2_DATATYPES` to match ROBOT. Then empirically tested HermiT (the reference OWL 2 DL reasoner via `robot reason --reasoner HERMIT`): **HermiT accepts EVERY datatype IRI**, including `xsd:date`, `xsd:ID`, `xsd:NOTATION`, and even fabricated custom datatype IRIs — none of which are in the strict W3C OWL 2 datatype map (§4.1). Likewise ROBOT's `validate-profile` checker doesn't enforce the datatype map at all.
 
-Impact: fixed all 4 previously-flagged DL false positives (`pizza`, `obi`, `ro`, `pro`). New fleet agreement: **9/19 (47%)** up from 7/19 (37%). Performance unchanged at ~18× overall speedup vs ROBOT on the 19-ontology sample.
+Since no real OWL DL reasoner enforces the W3C datatype map, our `_detect_bad_datatypes` check produced **spec-strict-correct but practically-meaningless** DL=OUT verdicts that disagreed with every real-world tool. The aggregator `detect_dl_violations` now skips this check; the helper is preserved for any standalone use.
+
+Impact: fixed all 4 previously-flagged DL false positives (`pizza`, `obi`, `ro`, `pro`). New fleet agreement: **9/19 (47%)** up from 7/19 (37%). The remaining 10 disagreements are NOT datatype-related — see "Remaining disagreement patterns" below.
+
+### Remaining disagreement patterns (2026-05-20)
+
+After the disjointness + hasValue + datatype-check fixes, the 10/19 disagreements break down as:
+
+| Pattern | Count | Cause |
+|---|---|---|
+| RL `I/O` (we IN, ROBOT OUT) | 5 | Positional rules we don't check (documented gap) |
+| DL `I/O` (we IN, ROBOT OUT) | 5 | **Undeclared-property check we don't implement** |
+| EL/QL `I/O` | 3 | Same: undeclared property + positional rules |
+
+**Newly identified: undeclared-property check.** Spot-check on dcterms shows ROBOT catches 225 undeclared annotation properties + 133 undeclared data properties. W3C OWL 2 DL §5.8 requires that every IRI used as a property in an axiom must be declared with `rdf:type` of one of `owl:ObjectProperty`, `owl:DatatypeProperty`, or `owl:AnnotationProperty`. We don't check this. Implementation: one SPARQL pattern detecting any predicate used in non-`rdf:type` triples without a declaration. Estimated ~half day. **This is the highest-ROI remaining fix.**
 
 ### Refresh task: `refresh_owl_profile`
 
