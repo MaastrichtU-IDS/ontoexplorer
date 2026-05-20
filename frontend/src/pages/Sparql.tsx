@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import Yasgui from '@triply/yasgui'
 import '@triply/yasgui/build/yasgui.min.css'
@@ -70,15 +70,17 @@ export default function Sparql() {
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handleScopeChange(endpoint: string) {
+  // Stable handler refs so the toolbar's onScopeChange effect doesn't refire
+  // every time this component re-renders (e.g. queryError changes).
+  const handleScopeChange = useCallback((endpoint: string) => {
     yasguiRef.current?.getTab()?.setEndpoint(endpoint)
-  }
+  }, [])
 
-  function handleCopy(fromBlock: string) {
+  const handleCopy = useCallback((fromBlock: string) => {
     const current = yasguiRef.current?.getTab()?.getYasqe()?.getValue() ?? ''
     const text = fromBlock ? `${fromBlock}${current}` : current
     navigator.clipboard?.writeText(text)?.catch(() => {})
-  }
+  }, [])
 
   return (
     <div style={{

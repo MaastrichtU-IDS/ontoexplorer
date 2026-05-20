@@ -115,7 +115,7 @@ export function ScopeToolbar({ onScopeChange, onCopy }: ScopeToolbarProps) {
         <button
           key={o.id}
           onClick={() => removeChip(o.id)}
-          aria-label={`${ontologyLabel(o)} ✕`}
+          aria-label={`Remove ${ontologyLabel(o)}`}
           style={{
             fontSize: 11, padding: '2px 8px', borderRadius: 12,
             border: '1px solid var(--accent)',
@@ -154,6 +154,7 @@ export function ScopeToolbar({ onScopeChange, onCopy }: ScopeToolbarProps) {
               value={filter}
               onChange={e => setFilter(e.target.value)}
               placeholder="Filter ontologies…"
+              aria-label="Filter ontologies"
               style={{
                 width: '100%', boxSizing: 'border-box',
                 padding: '4px 8px', fontSize: 12,

@@ -53,7 +53,7 @@ describe('ScopeToolbar — selecting ontologies', () => {
     expect(onScope).toHaveBeenLastCalledWith(
       '/api/v1/sparql/content?default-graph-uri=urn%3Aontology%3AO1%3AV1&named-graph-uri=urn%3Aontology%3AO1%3AV1'
     )
-    expect(screen.getByRole('button', { name: /envo ✕/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /remove envo/i })).toBeInTheDocument()
   })
 
   it('removes a chip and calls onScopeChange with the base URL', async () => {
@@ -64,7 +64,7 @@ describe('ScopeToolbar — selecting ontologies', () => {
     fireEvent.click(screen.getByRole('button', { name: /add ontology/i }))
     fireEvent.click(screen.getByText('envo'))
     onScope.mockClear()
-    fireEvent.click(screen.getByRole('button', { name: /envo ✕/i }))
+    fireEvent.click(screen.getByRole('button', { name: /remove envo/i }))
     expect(onScope).toHaveBeenLastCalledWith('/api/v1/sparql/content')
   })
 
