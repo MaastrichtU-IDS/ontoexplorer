@@ -6,6 +6,8 @@ import './Sparql.css'
 import QuerySidebar from '../components/QuerySidebar'
 import { api } from '../lib/api'
 import { ScopeToolbar } from '../components/sparql/ScopeToolbar'
+import { hasPrefix, prependPrefix, extractBaseIri } from '../components/sparql/prefixUtils'
+import { useOntologies } from '../hooks/useOntologies'
 
 const DEFAULT_QUERY = `PREFIX owl: <http://www.w3.org/2002/07/owl#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -25,6 +27,7 @@ export default function Sparql() {
   const yasguiRef = useRef<InstanceType<typeof Yasgui> | null>(null)
   const location = useLocation()
   const [queryError, setQueryError] = useState<string | null>(null)
+  const { ontologies } = useOntologies()
 
   useEffect(() => {
     if (!containerRef.current || yasguiRef.current) return
@@ -82,6 +85,18 @@ export default function Sparql() {
     navigator.clipboard?.writeText(text)?.catch(() => {})
   }, [])
 
+  const handleOntologyAdded = useCallback((ontologyId: string) => {
+    const onto = ontologies.find(o => o.id === ontologyId)
+    if (!onto) return
+    const shortname = onto.shortname || onto.iri.replace(/[/#]+$/, '').split(/[/#]/).pop() || 'ns'
+    const baseIri = extractBaseIri(onto.iri)
+    const yasqe = yasguiRef.current?.getTab()?.getYasqe()
+    if (!yasqe) return
+    const current = yasqe.getValue() ?? ''
+    if (hasPrefix(current, shortname)) return
+    yasqe.setValue(prependPrefix(current, shortname, baseIri))
+  }, [ontologies])
+
   return (
     <div style={{
       height: 'calc(100vh - var(--nav-height))',
@@ -98,7 +113,7 @@ export default function Sparql() {
           Query the full ontology graph · read-only · SPARQL 1.1
         </span>
       </div>
-      <ScopeToolbar onScopeChange={handleScopeChange} onCopy={handleCopy} />
+      <ScopeToolbar onScopeChange={handleScopeChange} onCopy={handleCopy} onOntologyAdded={handleOntologyAdded} />
       {queryError && (
         <div style={{
           padding: '0.4rem 1.5rem', background: 'rgba(239,68,68,0.1)',

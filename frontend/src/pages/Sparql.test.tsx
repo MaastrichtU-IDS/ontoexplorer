@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import Sparql from './Sparql'
@@ -81,4 +81,86 @@ beforeEach(() => {
 it('renders the ScopeToolbar', async () => {
   wrap(<Sparql />)
   expect(await screen.findByText(/No scope selected/i)).toBeInTheDocument()
+})
+
+it('prepends a PREFIX line when an ontology is added to scope', async () => {
+  vi.resetModules()
+  const setValueMock = vi.fn()
+  const getValueMock = vi.fn(() => 'SELECT * WHERE { ?s ?p ?o }')
+  vi.doMock('@triply/yasgui', () => ({
+    default: vi.fn().mockImplementation(() => ({
+      getTab: () => ({
+        getYasqe: () => ({ setValue: setValueMock, getValue: getValueMock }),
+        setEndpoint: vi.fn(),
+      }),
+      destroy: vi.fn(),
+    })),
+  }))
+  vi.doMock('../hooks/useOntologies', () => ({
+    useOntologies: () => ({
+      ontologies: [
+        { id: 'O1', iri: 'https://w3id.org/ontostart/pizza/', shortname: 'pizza',
+          title: 'Pizza', created_at: '2024-01-01',
+          latest_version: { id: 'V1', ontology_id: 'O1', status: 'ready' } },
+      ],
+      isLoading: false,
+    }),
+  }))
+
+  const { default: SparqlFresh } = await import('./Sparql')
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter><SparqlFresh /></MemoryRouter>
+    </QueryClientProvider>,
+  )
+  fireEvent.click(screen.getByRole('button', { name: /add ontology/i }))
+  fireEvent.click(screen.getByText('pizza'))
+
+  await waitFor(() => {
+    expect(setValueMock).toHaveBeenCalledWith(
+      'PREFIX pizza: <https://w3id.org/ontostart/pizza/>\nSELECT * WHERE { ?s ?p ?o }'
+    )
+  })
+})
+
+it('does not duplicate PREFIX when the same shortname is already in the query', async () => {
+  vi.resetModules()
+  const setValueMock = vi.fn()
+  const getValueMock = vi.fn(() => 'PREFIX pizza: <https://w3id.org/ontostart/pizza/>\nSELECT * WHERE { ?s ?p ?o }')
+  vi.doMock('@triply/yasgui', () => ({
+    default: vi.fn().mockImplementation(() => ({
+      getTab: () => ({
+        getYasqe: () => ({ setValue: setValueMock, getValue: getValueMock }),
+        setEndpoint: vi.fn(),
+      }),
+      destroy: vi.fn(),
+    })),
+  }))
+  vi.doMock('../hooks/useOntologies', () => ({
+    useOntologies: () => ({
+      ontologies: [
+        { id: 'O1', iri: 'https://w3id.org/ontostart/pizza/', shortname: 'pizza',
+          title: 'Pizza', created_at: '2024-01-01',
+          latest_version: { id: 'V1', ontology_id: 'O1', status: 'ready' } },
+      ],
+      isLoading: false,
+    }),
+  }))
+
+  const { default: SparqlFresh } = await import('./Sparql')
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter><SparqlFresh /></MemoryRouter>
+    </QueryClientProvider>,
+  )
+  // Flush the mount-time setValue(DEFAULT_QUERY) call from the useEffect, then
+  // clear so the assertion below is scoped only to click-triggered behaviour.
+  await waitFor(() => expect(setValueMock).toHaveBeenCalled())
+  setValueMock.mockClear()
+
+  fireEvent.click(screen.getByRole('button', { name: /add ontology/i }))
+  fireEvent.click(screen.getByText('pizza'))
+
+  await new Promise(resolve => setTimeout(resolve, 50))
+  expect(setValueMock).not.toHaveBeenCalled()
 })
