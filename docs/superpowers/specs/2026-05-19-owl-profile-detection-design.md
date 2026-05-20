@@ -421,6 +421,24 @@ After the disjointness + hasValue + datatype-check fixes, the 10/19 disagreement
 
 **Newly identified: undeclared-property check.** Spot-check on dcterms shows ROBOT catches 225 undeclared annotation properties + 133 undeclared data properties. W3C OWL 2 DL §5.8 requires that every IRI used as a property in an axiom must be declared with `rdf:type` of one of `owl:ObjectProperty`, `owl:DatatypeProperty`, or `owl:AnnotationProperty`. We don't check this. Implementation: one SPARQL pattern detecting any predicate used in non-`rdf:type` triples without a declaration. Estimated ~half day. **This is the highest-ROI remaining fix.**
 
+### Update 2026-05-20: undeclared-property DL check + benchmark methodology fix
+
+Implemented `_detect_undeclared_properties` (W3C OWL 2 DL §5.8). Exempts reserved W3C namespaces (`owl:`, `rdf:`, `rdfs:`, `xsd:`, `swrl:`, `swrlb:`) plus widely-used annotation-property vocabularies that real OWL tools treat as implicitly declared (Dublin Core, SKOS, FOAF, VANN, Creative Commons, OBO oboInOwl, PROV).
+
+**Benchmark methodology discovery:** the default standalone-load benchmark significantly *understates* our accuracy because it loads each ontology's `.ttl` file alone without following `owl:imports`. ROBOT downloads imports closure, so declarations from imported ontologies are visible to ROBOT but missing from our standalone-loaded view. Our production indexer DOES load imports closure into Oxigraph, so the production cache reflects what ROBOT sees.
+
+Added `--from-cache` flag to `scripts/owl_profile_bench/benchmark.py` that compares ROBOT verdicts to our production cache (the verdict users actually see) instead of running standalone detection.
+
+**Final fleet agreement (production cache vs ROBOT, 19-ontology sample): 12/19 (63%)** — up from 7/19 (37%) at the start of the audit. The remaining 7 disagreements split:
+
+| Pattern | Count | Cause |
+|---|---|---|
+| RL `I/O` | 5 (bfo, ordo, pav, pets, skos) | Positional-rule gap (LHS-vs-RHS of SubClassOf) — documented; multi-day fix |
+| EL/QL `I/O` | 3 (dcterms, sdo, ordo) | Same positional-rule gap + class-expression-level patterns we don't check |
+| DL `I/O` | 2 (pets, skos) | Remaining undeclared-property edge cases — small Dublin-Core-style vocabularies where our exemption namespaces don't cover everything ROBOT considers implicitly declared |
+
+Performance: standalone-mode ~15-25× overall speedup; --from-cache mode is constant-time HTTP fetch (microseconds).
+
 ### Refresh task: `refresh_owl_profile`
 
 Added `ontoexplorer.refresh_owl_profile(version_id, ontology_id)` celery task in `ontoexplorer/modules/jobs/tasks.py`. Rebuilds ONLY the `owl_profile:{vid}` Redis cache — no search re-index, no embeddings. Use after detector bug fixes to refresh affected versions cheaply. The script `scripts/owl_profile_bench/refresh_cache.py` queues this task for selected versions (or all ready versions with `--all`); run via `docker exec -i ontoexplorer-worker-1 python /tmp/refresh_cache.py --all` after `docker cp` of the script.

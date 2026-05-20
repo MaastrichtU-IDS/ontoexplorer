@@ -30,9 +30,29 @@ uv run python scripts/owl_profile_bench/benchmark.py --ontologies mondo,hp,ubero
 # Our detector only (no ROBOT — quick sanity check across the fleet)
 uv run python scripts/owl_profile_bench/benchmark.py --skip-robot
 
+# Compare ROBOT verdicts to our PRODUCTION cache (recommended for accuracy comparisons)
+uv run python scripts/owl_profile_bench/benchmark.py --from-cache
+
 # Keep downloaded ontology files in the workdir
 uv run python scripts/owl_profile_bench/benchmark.py --keep-downloads --workdir ./bench-out
 ```
+
+## --from-cache vs standalone-load
+
+By default, the script loads each ontology's `.owl` file standalone and runs
+`detect_profiles` against just those triples. This makes the speed comparison
+fair (both sides parse from scratch) but **under-counts** declarations from
+imported ontologies — ROBOT follows `owl:imports` and our production indexer
+also loads imports closure, but the standalone benchmark doesn't.
+
+For accurate verdict-agreement comparisons against ROBOT, use `--from-cache`.
+This reads the production owl_profile cache (which was built from the
+imports-loaded Oxigraph store) and compares directly to ROBOT. The "ours"
+timing column becomes meaningless (HTTP fetch is microseconds), but the
+verdict-agreement number reflects what users actually see.
+
+Empirically on a 19-ontology sample: **standalone agreement ~42%, cache-based
+agreement ~63%** — same detector, different data source.
 
 ## Output
 
@@ -76,7 +96,12 @@ The detector under-counts OWL 2 RL violations because it doesn't check positiona
 rules (LHS vs RHS of `rdfs:subClassOf`). RL verdicts can be correct (out-of-profile
 because we catch *some* violations) while RL counts are well below ROBOT's. See
 `docs/superpowers/specs/2026-05-19-owl-profile-detection-design.md` "Measured
-comparison vs ROBOT" for the SULO case study.
+comparison vs ROBOT" for the case studies.
+
+The default standalone-load benchmark does NOT follow `owl:imports`, so
+declarations made in imported ontologies are missed and the undeclared-property
+DL check over-fires. Use `--from-cache` for an apples-to-apples comparison with
+ROBOT (which downloads imports).
 
 ## Reference results
 

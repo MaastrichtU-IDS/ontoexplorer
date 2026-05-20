@@ -21,6 +21,7 @@ from ontoexplorer.modules.owl_profile.structural import (
     _detect_transitive_cycles,
     _detect_bad_datatypes,
     _detect_reserved_vocab,
+    _detect_undeclared_properties,
 )
 
 # ---------------------------------------------------------------------------
@@ -170,6 +171,73 @@ def test_data_range_unionof_passes():
     store = _store_from_turtle(ttl)
     violations = _detect_bad_datatypes(store, None)
     assert violations == [], f"Data range unionOf is valid OWL 2 DL, got {violations}"
+
+
+# ---------------------------------------------------------------------------
+# Test: undeclared-property check (W3C OWL 2 DL §5.8 declaration completeness)
+# ---------------------------------------------------------------------------
+
+def test_undeclared_property_detected():
+    """A user-namespace IRI used as a predicate without an OWL property
+    declaration is flagged."""
+    ttl = """
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix : <http://example.org/> .
+    :A a owl:Class .
+    :B a owl:Class .
+    :A :customRelation :B .
+    """
+    store = _store_from_turtle(ttl)
+    violations = _detect_undeclared_properties(store, None)
+    assert len(violations) == 1
+    assert violations[0].subject_iri == "http://example.org/customRelation"
+    assert violations[0].axiom_type == "undeclared-property"
+
+
+def test_declared_property_passes():
+    """A property declared as owl:ObjectProperty (etc.) is NOT flagged."""
+    ttl = """
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix : <http://example.org/> .
+    :A a owl:Class .
+    :B a owl:Class .
+    :rel a owl:ObjectProperty .
+    :A :rel :B .
+    """
+    store = _store_from_turtle(ttl)
+    assert _detect_undeclared_properties(store, None) == []
+
+
+def test_reserved_vocab_predicate_passes():
+    """Predicates in owl:/rdf:/rdfs:/xsd: namespaces are implicitly declared
+    per the OWL 2 spec and not flagged."""
+    ttl = """
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix : <http://example.org/> .
+    :A a owl:Class .
+    :B a owl:Class ; rdfs:subClassOf :A ; rdfs:label "B" ; rdfs:comment "the B" .
+    """
+    store = _store_from_turtle(ttl)
+    assert _detect_undeclared_properties(store, None) == []
+
+
+def test_undeclared_annotation_and_data_props_both_caught():
+    """Mix of undeclared annotation-style and assertion-style predicates;
+    detector flags every distinct undeclared IRI."""
+    ttl = """
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix : <http://example.org/> .
+    :A a owl:Class .
+    :a1 a owl:NamedIndividual, :A ;
+        :customAnno "some metadata" ;
+        :customAge 42 .
+    """
+    store = _store_from_turtle(ttl)
+    violations = _detect_undeclared_properties(store, None)
+    iris = {v.subject_iri for v in violations}
+    assert "http://example.org/customAnno" in iris
+    assert "http://example.org/customAge" in iris
 
 
 # ---------------------------------------------------------------------------

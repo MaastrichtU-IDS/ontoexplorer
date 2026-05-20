@@ -52,6 +52,11 @@ def parse_args() -> argparse.Namespace:
                    help="Comma-separated shortnames to benchmark (default: all)")
     p.add_argument("--keep-downloads", action="store_true",
                    help="Keep downloaded ontology files after benchmark")
+    p.add_argument("--from-cache", action="store_true",
+                   help="Use our production owl_profile cache (via API) instead of running "
+                   "detect_profiles on a downloaded standalone file. This gives the verdict "
+                   "users actually see — the standalone-load path under-counts because it "
+                   "doesn't follow owl:imports, while ROBOT and our production indexer both do.")
     return p.parse_args()
 
 
@@ -168,6 +173,19 @@ def time_ours(ttl_path: Path, shortname: str) -> tuple[float, float, dict, dict,
     return load_s, detect_s, verdicts, counts, None
 
 
+def fetch_from_cache(api_base: str, ontology_id: str, version_id: str) -> tuple[dict, dict, str | None]:
+    """Read the production owl_profile cache via API. Returns (verdicts, counts, error)."""
+    url = f"{api_base}/api/v1/ontologies/{ontology_id}/{version_id}/owl-profile"
+    try:
+        with urllib.request.urlopen(url) as resp:
+            data = json.loads(resp.read())
+    except Exception as e:
+        return {}, {}, f"cache fetch failed: {e}"
+    verdicts = {p: data[p]["in_profile"] for p in ("el", "rl", "ql", "dl")}
+    counts = {p: data[p]["total_violations"] for p in ("el", "rl", "ql", "dl")}
+    return verdicts, counts, None
+
+
 # ---------------------------------------------------------------------------
 # ROBOT
 # ---------------------------------------------------------------------------
@@ -228,6 +246,12 @@ def main() -> int:
     metas.sort(key=lambda m: m.triple_count)
     print(f"Benchmarking {len(metas)} ontologies (smallest first)\n")
 
+    if args.from_cache:
+        print("Verdict source: production owl_profile cache (--from-cache)")
+    else:
+        print("Verdict source: standalone-load of downloaded .owl file (use --from-cache for production cache)")
+    print()
+
     results: list[ResultRow] = []
     for i, m in enumerate(metas, 1):
         print(f"[{i:>2}/{len(metas)}] {m.shortname} ({m.triple_count:,} triples)")
@@ -240,8 +264,13 @@ def main() -> int:
 
         row = ResultRow(shortname=m.shortname, triples=m.triple_count)
 
-        # Ours
-        load_s, detect_s, verdicts, counts, err = time_ours(ont_path, m.shortname)
+        # Ours — either from cache (reflects production) or standalone-load
+        if args.from_cache:
+            verdicts, counts, err = fetch_from_cache(args.api_base, m.ontology_id, m.version_id)
+            load_s = 0.0
+            detect_s = 0.0
+        else:
+            load_s, detect_s, verdicts, counts, err = time_ours(ont_path, m.shortname)
         row.ours_load_s = load_s
         row.ours_detect_s = detect_s
         row.ours_verdicts = verdicts
@@ -351,9 +380,12 @@ def main() -> int:
                   f"({100 * agreed / with_robot:.0f}%)")
         total_ours = sum(r.ours_total_s for r in results)
         total_rob = sum(r.robot_total_s for r in results)
-        if total_rob > 0:
+        if total_rob > 0 and total_ours > 0:
             print(f"Total time: ours {total_ours:.1f}s, ROBOT {total_rob:.1f}s "
                   f"({total_rob/total_ours:.1f}× overall speedup)")
+        elif total_rob > 0 and args.from_cache:
+            print(f"Total time: ROBOT {total_rob:.1f}s "
+                  f"(--from-cache mode: ours is a constant-time HTTP fetch)")
 
     return 0
 

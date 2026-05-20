@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pyoxigraph
 
-from ontoexplorer.modules.owl_profile.patterns import _PREFIXES
+from ontoexplorer.modules.owl_profile.patterns import _PREFIXES, _OWL
 from ontoexplorer.modules.owl_profile.registry import ProfileViolation
 
 # ---------------------------------------------------------------------------
@@ -401,6 +401,92 @@ def _detect_reserved_vocab(
 
 
 # ---------------------------------------------------------------------------
+# Check 5: Undeclared properties (W3C OWL 2 DL §5.8 declaration completeness)
+# ---------------------------------------------------------------------------
+
+# Predicates we exempt from declaration-completeness checks. Two groups:
+#
+# (a) Reserved W3C vocabularies — implicitly declared per the OWL 2 spec
+#     (owl/rdf/rdfs/xsd) plus other W3C standards that OWL tooling treats
+#     as built-in (SWRL/SWRLb for rule language predicates).
+#
+# (b) Widely-used annotation-property vocabularies that real OWL tools
+#     (OWL-API, ROBOT, HermiT) recognize without requiring an explicit
+#     declaration in the user ontology. Adding these matches the de facto
+#     behavior of those tools and avoids spurious "undeclared" reports on
+#     ontologies that legitimately use these vocabularies for metadata.
+_DECLARATION_EXEMPT_NAMESPACES = (
+    # (a) Core W3C vocabularies
+    "http://www.w3.org/2002/07/owl#",
+    "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "http://www.w3.org/2000/01/rdf-schema#",
+    "http://www.w3.org/2001/XMLSchema#",
+    "http://www.w3.org/2003/11/swrl#",
+    "http://www.w3.org/2003/11/swrlb#",
+    # (b) Widely-used annotation/metadata vocabularies
+    "http://purl.org/dc/elements/1.1/",        # Dublin Core
+    "http://purl.org/dc/terms/",               # Dublin Core Terms
+    "http://www.w3.org/2004/02/skos/core#",    # SKOS
+    "http://xmlns.com/foaf/0.1/",              # FOAF
+    "http://purl.org/vocab/vann/",             # VANN
+    "http://creativecommons.org/ns#",          # Creative Commons
+    "http://www.geneontology.org/formats/oboInOwl#",  # OBO metadata
+    "http://www.w3.org/ns/prov#",              # PROV
+)
+
+
+def _detect_undeclared_properties(
+    store: pyoxigraph.Store,
+    graph_iri: str | None,
+) -> list[ProfileViolation]:
+    """Detect IRIs used as properties that lack an explicit OWL property declaration.
+
+    W3C OWL 2 DL §5.8 (Declaration Consistency): every IRI used as a property
+    in an axiom must be declared as either owl:ObjectProperty,
+    owl:DatatypeProperty, or owl:AnnotationProperty. Failing this declaration
+    requirement puts the ontology outside OWL 2 DL.
+
+    Reserved-vocabulary predicates (owl:, rdf:, rdfs:, xsd:) are implicitly
+    declared per the spec and exempt.
+    """
+    ns_filter = " ".join(
+        f'FILTER(!STRSTARTS(STR(?p), "{ns}"))' for ns in _DECLARATION_EXEMPT_NAMESPACES
+    )
+    inner = (
+        "?s ?p ?o . "
+        f"{ns_filter} "
+        "FILTER(isIRI(?p)) "
+        "FILTER NOT EXISTS { "
+        "  ?p a ?ptype . "
+        "  FILTER(?ptype IN ("
+        f"    <{_OWL}ObjectProperty>,"
+        f"    <{_OWL}DatatypeProperty>,"
+        f"    <{_OWL}AnnotationProperty>"
+        "  )) "
+        "}"
+    )
+    sparql = (
+        f"{_PREFIXES}"
+        "SELECT DISTINCT ?p WHERE { "
+        + _graph_wrap(inner, graph_iri)
+        + " } LIMIT 200"
+    )
+    violations: list[ProfileViolation] = []
+    for row in store.query(sparql):
+        p_iri = row["p"].value
+        violations.append(ProfileViolation(
+            profile="dl",
+            axiom_type="undeclared-property",
+            subject_iri=p_iri,
+            details=(
+                f"Property <{p_iri}> is used in an axiom but is not declared "
+                "as owl:ObjectProperty / owl:DatatypeProperty / owl:AnnotationProperty"
+            ),
+        ))
+    return violations
+
+
+# ---------------------------------------------------------------------------
 # Aggregator
 # ---------------------------------------------------------------------------
 
@@ -428,6 +514,7 @@ def detect_dl_violations(
     violations.extend(_detect_punning(store, graph_iri))
     violations.extend(_detect_transitive_cycles(store, graph_iri))
     violations.extend(_detect_reserved_vocab(store, graph_iri))
+    violations.extend(_detect_undeclared_properties(store, graph_iri))
     return violations
 
 
@@ -449,5 +536,7 @@ def detect_dl_violations_with_terms(
     for v in _detect_transitive_cycles(store, graph_iri):
         results.append((v, None, None))
     for v in _detect_reserved_vocab(store, graph_iri):
+        results.append((v, None, None))
+    for v in _detect_undeclared_properties(store, graph_iri):
         results.append((v, None, None))
     return results
