@@ -344,36 +344,44 @@ export default function Compare() {
   const toLabel   = buildLabel(toOntObj,   effectiveToVid,   sameOntology ? sharedVersions : toVersionsQ.data?.versions, 'B')
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '1.5rem 2rem', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <h1 style={{ fontSize: '1.4rem', fontWeight: 700, margin: 0 }}>Compare ontologies</h1>
       <div style={{ color: 'var(--text-dim)', fontSize: 12 }}>
         Pick any two ontologies (or the same ontology twice to compare versions).
         Entities are aligned by exact IRI match.
       </div>
 
-      <div style={{ display: 'flex', gap: 16 }}>
-        <OntologyPicker
-          ontologies={ontologies}
-          value={fromOnt}
-          onChange={setFromOnt}
-          side="from"
-        />
-        <OntologyPicker
-          ontologies={ontologies}
-          value={toOnt}
-          onChange={setToOnt}
-          side="to"
-        />
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+        <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+          <OntologyPicker
+            ontologies={ontologies}
+            value={fromOnt}
+            onChange={setFromOnt}
+            side="from"
+          />
+        </div>
+        <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+          <OntologyPicker
+            ontologies={ontologies}
+            value={toOnt}
+            onChange={setToOnt}
+            side="to"
+          />
+        </div>
       </div>
 
       {(fromOnt || toOnt) && (
-        <div style={{ display: 'flex', gap: 16 }}>
-          {fromOnt ? (
-            <VersionPicker ontologyId={fromOnt} value={fromVid} onChange={setFromVid} side="from" />
-          ) : <div style={{ flex: 1 }} />}
-          {toOnt ? (
-            <VersionPicker ontologyId={toOnt} value={toVid} onChange={setToVid} side="to" />
-          ) : <div style={{ flex: 1 }} />}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+          <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+            {fromOnt ? (
+              <VersionPicker ontologyId={fromOnt} value={fromVid} onChange={setFromVid} side="from" />
+            ) : null}
+          </div>
+          <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+            {toOnt ? (
+              <VersionPicker ontologyId={toOnt} value={toVid} onChange={setToVid} side="to" />
+            ) : null}
+          </div>
         </div>
       )}
 

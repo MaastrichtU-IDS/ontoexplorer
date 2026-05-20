@@ -76,3 +76,4 @@ data/
 
 # Claude Code — local settings contain tokens
 .claude/settings.local.json
+.claude/worktrees/

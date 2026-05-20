@@ -51,3 +51,7 @@ input, textarea, select {
 input:focus, textarea:focus, select:focus {
   border-color: var(--accent);
 }
+
+.ontology-row:hover {
+  background: var(--bg-hover);
+}

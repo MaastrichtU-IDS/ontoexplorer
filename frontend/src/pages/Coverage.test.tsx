@@ -47,8 +47,8 @@ function wrap(ui: React.ReactElement) {
 
 test('renders fleet summary cards and per-ontology rows', async () => {
   wrap(<Coverage />)
-  expect(await screen.findByText('Gene Ontology')).toBeInTheDocument()
-  expect(screen.getByText('SULO')).toBeInTheDocument()
+  expect(await screen.findByText('go')).toBeInTheDocument()
+  expect(screen.getByText('sulo')).toBeInTheDocument()
   // 950 / 1000 class labels = 95%
   expect(screen.getByText('95%')).toBeInTheDocument()
 })
@@ -56,21 +56,21 @@ test('renders fleet summary cards and per-ontology rows', async () => {
 test('sort by class label % toggles ascending and descending', async () => {
   const user = userEvent.setup()
   wrap(<Coverage />)
-  await screen.findByText('Gene Ontology')
+  await screen.findByText('go')
 
   const labelHeader = screen.getByRole('button', { name: /class label %/i })
   await user.click(labelHeader) // ascending
   let rows = screen.getAllByTestId('coverage-row').map(r => within(r).getByTestId('ontology-name').textContent)
-  expect(rows).toEqual(['SULO', 'Gene Ontology'])  // SULO 75% < GO 100%
+  expect(rows).toEqual(['sulo', 'go'])  // SULO 75% < GO 100%
 
   await user.click(labelHeader) // descending
   rows = screen.getAllByTestId('coverage-row').map(r => within(r).getByTestId('ontology-name').textContent)
-  expect(rows).toEqual(['Gene Ontology', 'SULO'])
+  expect(rows).toEqual(['go', 'sulo'])
 })
 
 test('renders em-dash for zero-total cells', async () => {
   wrap(<Coverage />)
-  await screen.findByText('Gene Ontology')
+  await screen.findByText('go')
   // Individuals column for GO has total=0 → should render "—" not "NaN%"
   const goRow = screen.getAllByTestId('coverage-row')[0]
   expect(within(goRow).getByTestId('individuals-label-pct').textContent).toBe('—')

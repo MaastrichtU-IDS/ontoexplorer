@@ -1,4 +1,4 @@
-import { Route, Routes } from 'react-router-dom'
+import { Link, Navigate, Route, Routes, useSearchParams } from 'react-router-dom'
 import NavBar from './components/NavBar'
 import AuthGuard from './components/AuthGuard'
 import DashboardLayout from './components/DashboardLayout'
@@ -16,9 +16,6 @@ import AuthCallback from './pages/AuthCallback'
 import AdminPage from './pages/AdminPage'
 import Sparql from './pages/Sparql'
 import SparqlGallery from './pages/SparqlGallery'
-import Compare from './pages/Compare'
-import Coverage from './pages/Coverage'
-import OwlProfile from './pages/OwlProfile'
 
 function Footer() {
   return (
@@ -31,14 +28,14 @@ function Footer() {
       gap: '1.25rem',
     }}>
       <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>APIs</span>
-      <a
-        href="/sparql"
+      <Link
+        to="/sparql"
         style={{ color: 'var(--text-dim)', fontSize: 12, textDecoration: 'none' }}
         onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
         onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-dim)')}
       >
         SPARQL
-      </a>
+      </Link>
       <a
         href="/api/docs"
         target="_blank"
@@ -63,6 +60,13 @@ function Footer() {
   )
 }
 
+function CompareRedirect() {
+  const [params] = useSearchParams()
+  const next = new URLSearchParams(params)
+  next.set('tab', 'compare')
+  return <Navigate to={`/ontologies?${next}`} replace />
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ paddingTop: 'var(--nav-height)', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -80,9 +84,9 @@ export default function App() {
       <Route path="/ontologies" element={<Shell><Ontologies /></Shell>} />
       <Route path="/ontologies/:slug" element={<Shell><OntologyPage /></Shell>} />
       <Route path="/ontologies/:slug/:version" element={<Shell><OntologyPage /></Shell>} />
-      <Route path="/compare" element={<Shell><Compare /></Shell>} />
-      <Route path="/coverage" element={<Shell><Coverage /></Shell>} />
-      <Route path="/owl-profile" element={<Shell><OwlProfile /></Shell>} />
+      <Route path="/compare" element={<CompareRedirect />} />
+      <Route path="/coverage" element={<Navigate to="/ontologies?tab=coverage" replace />} />
+      <Route path="/owl-profile" element={<Navigate to="/ontologies?tab=profiles" replace />} />
       <Route path="/search" element={<Shell><Search /></Shell>} />
       <Route path="/sparql" element={<Shell><Sparql /></Shell>} />
       <Route path="/sparql/gallery" element={<Shell><SparqlGallery /></Shell>} />

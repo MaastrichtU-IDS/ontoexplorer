@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { NavLink, Link } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../hooks/useAuth'
 import { useLang } from '../hooks/useLang'
 import { useRepositoryLanguages } from '../hooks/useRepositoryLanguages'
@@ -7,43 +8,54 @@ import { logout } from '../lib/auth'
 
 const navLinks = [
   { to: '/ontologies',  label: 'Ontologies' },
-  { to: '/coverage',    label: 'Coverage' },
-  { to: '/owl-profile', label: 'OWL Profile' },
-  { to: '/compare',     label: 'Compare' },
 ]
 
-const LANG_NAMES: Record<string, string> = {
-  en: 'English', fr: 'French', de: 'German', nl: 'Dutch', es: 'Spanish',
-  it: 'Italian', pt: 'Portuguese', ru: 'Russian', zh: 'Chinese', ja: 'Japanese',
-  ko: 'Korean', ar: 'Arabic', pl: 'Polish', sv: 'Swedish', da: 'Danish',
-  fi: 'Finnish', no: 'Norwegian', cs: 'Czech', hu: 'Hungarian', ro: 'Romanian',
+// Render a BCP-47 tag in its own language ("el" → "Ελληνικά", "ja" → "日本語").
+function endonym(tag: string): string {
+  if (!tag) return 'untagged'
+  try {
+    return new Intl.DisplayNames([tag], { type: 'language', fallback: 'code' }).of(tag) || tag
+  } catch {
+    return tag
+  }
+}
+
+// English name, used for search-matching only ("el" → "greek", so the picker
+// can still be filtered by typing a familiar Latin-script name).
+function englishName(tag: string): string {
+  if (!tag) return ''
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'language', fallback: 'code' }).of(tag) || ''
+  } catch {
+    return ''
+  }
 }
 
 function LangPicker() {
   const { sessionLang, setSessionLang } = useLang()
   const repoLangs = useRepositoryLanguages()
+  const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
   const [filter, setFilter] = useState('')
 
-  const sorted = [...repoLangs].sort((a, b) => {
-    const na = LANG_NAMES[a.lang] ?? (a.lang || 'untagged')
-    const nb = LANG_NAMES[b.lang] ?? (b.lang || 'untagged')
-    return na.localeCompare(nb)
-  })
-
+  // Backend already returns langs sorted alphabetically by code — no need to re-sort.
   const q = filter.trim().toLowerCase()
   const visible = q
-    ? sorted.filter(({ lang }) => {
-        const name = (LANG_NAMES[lang] ?? lang).toLowerCase()
-        return name.includes(q) || lang.toLowerCase().includes(q)
-      })
-    : sorted
+    ? repoLangs.filter(({ lang }) =>
+        lang.toLowerCase().includes(q)
+        || endonym(lang).toLowerCase().includes(q)
+        || englishName(lang).toLowerCase().includes(q)
+      )
+    : repoLangs
 
   function pick(lang: string | null) {
     setSessionLang(lang)
     setOpen(false)
     setFilter('')
-    window.location.reload()
+    // Refetch any queries whose results depend on the active language without a
+    // full page reload — reloading wipes the in-memory access token and forces
+    // a refresh-token round-trip that can fail and log the user out.
+    queryClient.invalidateQueries()
   }
 
   return (
@@ -105,7 +117,7 @@ function LangPicker() {
                   fontSize: 12, cursor: 'pointer', gap: 8,
                 }}
               >
-                <span>{LANG_NAMES[lang] ?? (lang || 'untagged')}</span>
+                <span>{endonym(lang)}</span>
                 <span style={{ fontSize: 10, color: 'var(--text-dim)', flexShrink: 0 }}>{lang || '—'}</span>
               </button>
             ))}

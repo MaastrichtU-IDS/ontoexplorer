@@ -229,9 +229,18 @@ The navbar exposes an **API** link (opens `/api/docs` in a new tab) for quick ac
 
 ### Browsing the catalog (`/ontologies`)
 
-The Ontologies page lists every registered ontology with its description, statistics, and group membership.
+The Ontologies page lists every registered ontology with its description, statistics, and group membership. A tab strip at the top switches between four fleet views:
 
-**Group filter chips** across the top narrow the list to a specific collection:
+| Tab | URL | Purpose |
+|-----|-----|---------|
+| **List** | `/ontologies` | The default catalog table with filtering, sorting, and OWL profile / language badges per row |
+| **Coverage** | `/ontologies?tab=coverage` | Fleet-wide label / definition / multilingual coverage rollup |
+| **OWL Profile** | `/ontologies?tab=profiles` | Per-ontology OWL 2 EL/RL/QL/DL conformance |
+| **Compare** | `/ontologies?tab=compare` | Side-by-side diff of any two ontologies in the repository |
+
+The legacy URLs `/coverage`, `/owl-profile`, and `/compare` redirect to the matching tab (query parameters on `/compare` are preserved, so old `?from=…&to=…` deep-links still work).
+
+**Group filter chips** across the top of the **List** tab narrow the list to a specific collection:
 
 | Chip | Catalog group tag | Content |
 |------|-------------------|---------|
@@ -241,19 +250,23 @@ The Ontologies page lists every registered ontology with its description, statis
 
 Ontologies tagged `fair` (dcterms, DCAT, PROV-O, PAV, schema.org, SKOS, VoID) and `biomedical` (NCIt, ORDO, Mondo, OBI) appear in the full list but do not yet have dedicated filter chips in the browser. Colored badges on each row show all group memberships at a glance.
 
-**Search** (the filter bar below the chips) matches against name, IRI, and description with ranked results — exact name/IRI matches appear first, followed by partial name/IRI matches, then label matches, then description matches. Chip filter and text search compose: select a chip first, then type to narrow within that group.
+**OWL Profile filter chips** (a second chip row labelled `OWL Profile:`) narrow the list to ontologies that conform to a specific OWL 2 profile — EL, RL, QL, or DL. Chips are tinted in the same colour palette as the per-row badges so an active filter is unambiguous. Combine with group / language chips and free-text search for layered filtering.
 
-Long descriptions are clamped to three lines; click **more…** to expand.
+**Per-row OWL Profile badges** appear to the right of each row's IRI chip — one small coloured pill per profile the ontology currently conforms to (EL/RL/QL/DL). Rows with no conforming profile show no profile badges.
 
-### Coverage (`/coverage`)
+**Search** (the filter bar below the chips) matches against name, IRI, and description with ranked results — exact name/IRI matches appear first, followed by partial name/IRI matches, then label matches, then description matches. Chip filter and text search compose: select chip(s) first, then type to narrow within that group.
 
-The Coverage page reports how well-populated each ontology is in terms of **labels**, **definitions**, and **multilingual labels**, broken out by entity type. Three summary cards show fleet-wide class coverage; below them, a sortable table lists every ontology with per-metric percentages. Clicking a row opens that ontology's detail page on a new **Coverage** tab that shows five scorecards (classes / object props / data props / annotation props / individuals) and a class-label language distribution bar.
+Each row shows: name, IRI chip, group badges, OWL profile badges, language badges, description, then stats (`<n> cls · <n> obj · … · modified <date>`) on the line below. The "modified" date reflects the latest ingested version, not the original creation date. Long descriptions are clamped to three lines; click **more…** to expand.
+
+### Coverage tab
+
+The Coverage tab reports how well-populated each ontology is in terms of **labels**, **definitions**, and **multilingual labels**, broken out by entity type. Three summary cards show fleet-wide class coverage; below them, a sortable table lists every ontology with per-metric percentages. Clicking a row opens that ontology's detail page on a new **Coverage** tab that shows five scorecards (classes / object props / data props / annotation props / individuals) and a class-label language distribution bar.
 
 Coverage is computed at index time using the auto-detected `label_props` / `definition_props` from each ontology's annotation profile — no extra SPARQL at request time. Zero-total cells render as `—`. Ontologies whose coverage cache hasn't been populated yet (e.g., recently submitted, not yet reindexed) are silently skipped in the rollup.
 
-### OWL 2 profiles (`/owl-profile`)
+### OWL 2 profile tab
 
-Every indexed ontology is automatically classified against the four W3C OWL 2 profiles (EL, RL, QL, DL). Detection runs in-process via SPARQL against the existing Oxigraph store at indexing time; results are cached in Redis with a 30-day TTL. The fleet view at `/owl-profile` shows conformance across all loaded ontologies with summary cards and a sortable table. Each ontology page has an **OWL Profile** tab listing violations grouped by axiom type, with sample violations shown for each violation category. Use the `?profile=el|rl|ql|dl` query parameter on the ontologies list endpoint to filter to ontologies conforming to a specific profile — useful for selecting ontologies suitable for a particular reasoner or query rewriter.
+Every indexed ontology is automatically classified against the four W3C OWL 2 profiles (EL, RL, QL, DL). Detection runs in-process via SPARQL against the existing Oxigraph store at indexing time; results are cached in Redis with a 30-day TTL. The fleet view at `/ontologies?tab=profiles` shows conformance across all loaded ontologies with summary cards and a sortable table. Each ontology page has an **OWL Profile** tab listing violations grouped by axiom type, with sample violations shown for each violation category. Use the `?profile=el|rl|ql|dl` query parameter on the ontologies list endpoint to filter to ontologies conforming to a specific profile — useful for selecting ontologies suitable for a particular reasoner or query rewriter.
 
 ### Navigating hierarchies
 

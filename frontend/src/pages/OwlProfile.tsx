@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api, slugFromIri, OwlProfileFleet, OwlProfileFleetEntry } from '../lib/api'
@@ -12,12 +12,37 @@ function profileInKey(profile: Exclude<FilterPill, 'all'>): keyof OwlProfileFlee
 
 function sortValue(entry: OwlProfileFleetEntry, key: SortKey): string | number {
   switch (key) {
-    case 'name': return (entry.title || entry.shortname || entry.id).toLowerCase()
+    case 'name': return (entry.shortname || entry.id).toLowerCase()
     case 'el':   return entry.in_el ? 1 : 0
     case 'rl':   return entry.in_rl ? 1 : 0
     case 'ql':   return entry.in_ql ? 1 : 0
     case 'dl':   return entry.in_dl ? 1 : 0
   }
+}
+
+function OntologyLink({ slug, hash }: { slug: string; hash: string }) {
+  const [hover, setHover] = useState(false)
+  return (
+    <Link
+      to={`/ontologies/${slug}#${hash}`}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        color: 'var(--accent-blue)',
+        textDecoration: 'underline',
+        textDecorationColor: hover ? 'var(--accent-blue)' : 'rgba(97,175,239,0.4)',
+        textUnderlineOffset: 3,
+        fontWeight: 600,
+        fontFamily: 'var(--font-mono, monospace)',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+      }}
+    >
+      <span data-testid="ontology-name">{slug}</span>
+      <span style={{ fontSize: 10, opacity: hover ? 1 : 0.6 }}>→</span>
+    </Link>
+  )
 }
 
 function ProfileBadge({ inProfile, violations }: { inProfile: boolean; violations: number }) {
@@ -125,6 +150,21 @@ export default function OwlProfile() {
   const [sortKey, setSortKey] = useState<SortKey>('name')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
+  const rows = useMemo(() => {
+    if (!data) return []
+    const fleet = data as OwlProfileFleet
+    const filtered = filter === 'all'
+      ? fleet.ontologies
+      : fleet.ontologies.filter(e => e[profileInKey(filter)])
+    return [...filtered].sort((a, b) => {
+      const va = sortValue(a, sortKey)
+      const vb = sortValue(b, sortKey)
+      if (va < vb) return sortDir === 'asc' ? -1 : 1
+      if (va > vb) return sortDir === 'asc' ? 1 : -1
+      return 0
+    })
+  }, [data, filter, sortKey, sortDir])
+
   if (isLoading) {
     return <p style={{ color: 'var(--text-dim)' }}>Loading…</p>
   }
@@ -135,21 +175,6 @@ export default function OwlProfile() {
   const fleet = data as OwlProfileFleet
   const { totals } = fleet
 
-  // Filter rows
-  const filtered =
-    filter === 'all'
-      ? fleet.ontologies
-      : fleet.ontologies.filter(e => e[profileInKey(filter)])
-
-  // Sort rows
-  const rows = [...filtered].sort((a, b) => {
-    const va = sortValue(a, sortKey)
-    const vb = sortValue(b, sortKey)
-    if (va < vb) return sortDir === 'asc' ? -1 : 1
-    if (va > vb) return sortDir === 'asc' ? 1 : -1
-    return 0
-  })
-
   function toggleSort(key: SortKey) {
     if (key === sortKey) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
     else {
@@ -158,10 +183,10 @@ export default function OwlProfile() {
     }
   }
 
-  const pills: FilterPill[] = ['all', 'el', 'rl', 'ql', 'dl']
+  const pills: FilterPill[] = ['all', 'dl', 'el', 'ql', 'rl']
 
   return (
-    <div style={{ padding: '1.5rem' }}>
+    <div>
       <h1
         style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.5rem' }}
       >
@@ -175,7 +200,7 @@ export default function OwlProfile() {
           maxWidth: 640,
         }}
       >
-        W3C OWL 2 defines four tractable profiles — EL, RL, QL, and DL — each
+        W3C OWL 2 defines four tractable profiles — DL, EL, QL, and RL — each
         with different expressivity/reasoning trade-offs. This page shows which
         profiles each ontology version conforms to.
       </p>
@@ -184,22 +209,22 @@ export default function OwlProfile() {
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
           gap: '0.75rem',
           marginBottom: '1.25rem',
         }}
       >
         <SummaryCard
+          label="OWL 2 DL"
+          count={totals.dl_count}
+          total={totals.fleet_size}
+          testId="summary-dl"
+        />
+        <SummaryCard
           label="OWL 2 EL"
           count={totals.el_count}
           total={totals.fleet_size}
           testId="summary-el"
-        />
-        <SummaryCard
-          label="OWL 2 RL"
-          count={totals.rl_count}
-          total={totals.fleet_size}
-          testId="summary-rl"
         />
         <SummaryCard
           label="OWL 2 QL"
@@ -208,10 +233,10 @@ export default function OwlProfile() {
           testId="summary-ql"
         />
         <SummaryCard
-          label="OWL 2 DL"
-          count={totals.dl_count}
+          label="OWL 2 RL"
+          count={totals.rl_count}
           total={totals.fleet_size}
-          testId="summary-dl"
+          testId="summary-rl"
         />
       </div>
 
@@ -248,9 +273,11 @@ export default function OwlProfile() {
       </div>
 
       {/* Table */}
+      <div style={{ overflowX: 'auto' }}>
       <table
         style={{
           width: '100%',
+          minWidth: 560,
           borderCollapse: 'collapse',
           fontSize: 'var(--font-size-sm)',
         }}
@@ -266,18 +293,18 @@ export default function OwlProfile() {
               Ontology
             </Th>
             <Th
+              onClick={() => toggleSort('dl')}
+              active={sortKey === 'dl'}
+              dir={sortDir}
+            >
+              DL
+            </Th>
+            <Th
               onClick={() => toggleSort('el')}
               active={sortKey === 'el'}
               dir={sortDir}
             >
               EL
-            </Th>
-            <Th
-              onClick={() => toggleSort('rl')}
-              active={sortKey === 'rl'}
-              dir={sortDir}
-            >
-              RL
             </Th>
             <Th
               onClick={() => toggleSort('ql')}
@@ -287,11 +314,11 @@ export default function OwlProfile() {
               QL
             </Th>
             <Th
-              onClick={() => toggleSort('dl')}
-              active={sortKey === 'dl'}
+              onClick={() => toggleSort('rl')}
+              active={sortKey === 'rl'}
               dir={sortDir}
             >
-              DL
+              RL
             </Th>
             <th
               style={{
@@ -310,17 +337,16 @@ export default function OwlProfile() {
         <tbody>
           {rows.map(entry => {
             const slug = entry.shortname || slugFromIri(entry.id)
-            const name = entry.title || entry.shortname || entry.id
 
             const violationParts: string[] = []
-            if (!entry.in_el && entry.el_violations > 0)
-              violationParts.push(`EL: ${entry.el_violations.toLocaleString()}`)
-            if (!entry.in_rl && entry.rl_violations > 0)
-              violationParts.push(`RL: ${entry.rl_violations.toLocaleString()}`)
-            if (!entry.in_ql && entry.ql_violations > 0)
-              violationParts.push(`QL: ${entry.ql_violations.toLocaleString()}`)
             if (!entry.in_dl && entry.dl_violations > 0)
               violationParts.push(`DL: ${entry.dl_violations.toLocaleString()}`)
+            if (!entry.in_el && entry.el_violations > 0)
+              violationParts.push(`EL: ${entry.el_violations.toLocaleString()}`)
+            if (!entry.in_ql && entry.ql_violations > 0)
+              violationParts.push(`QL: ${entry.ql_violations.toLocaleString()}`)
+            if (!entry.in_rl && entry.rl_violations > 0)
+              violationParts.push(`RL: ${entry.rl_violations.toLocaleString()}`)
 
             return (
               <tr
@@ -331,23 +357,18 @@ export default function OwlProfile() {
                 }}
               >
                 <td style={{ padding: '5px 8px' }}>
-                  <Link
-                    to={`/ontologies/${slug}#owl-profile`}
-                    style={{ color: 'var(--accent-blue)' }}
-                  >
-                    {name}
-                  </Link>
+                  <OntologyLink slug={slug} hash="owl-profile" />
+                </td>
+                <td style={{ padding: '5px 8px' }}>
+                  <ProfileBadge
+                    inProfile={entry.in_dl}
+                    violations={entry.dl_violations}
+                  />
                 </td>
                 <td style={{ padding: '5px 8px' }}>
                   <ProfileBadge
                     inProfile={entry.in_el}
                     violations={entry.el_violations}
-                  />
-                </td>
-                <td style={{ padding: '5px 8px' }}>
-                  <ProfileBadge
-                    inProfile={entry.in_rl}
-                    violations={entry.rl_violations}
                   />
                 </td>
                 <td style={{ padding: '5px 8px' }}>
@@ -358,8 +379,8 @@ export default function OwlProfile() {
                 </td>
                 <td style={{ padding: '5px 8px' }}>
                   <ProfileBadge
-                    inProfile={entry.in_dl}
-                    violations={entry.dl_violations}
+                    inProfile={entry.in_rl}
+                    violations={entry.rl_violations}
                   />
                 </td>
                 <td
@@ -378,6 +399,7 @@ export default function OwlProfile() {
           })}
         </tbody>
       </table>
+      </div>
 
       {rows.length === 0 && (
         <p
