@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { assertedGraphIri, inferredGraphIri, selectedGraphIris, ReasoningMode } from './scopeUrls'
+import { assertedGraphIri, inferredGraphIri, selectedGraphIris, buildScopedEndpoint, formatScopeAsFromClauses, ReasoningMode } from './scopeUrls'
 import type { Ontology } from '../../lib/api'
 
 const ONTS: Ontology[] = [
@@ -66,5 +66,39 @@ describe('selectedGraphIris', () => {
   it('skips ontologies missing latest_version', () => {
     const noVer = [{ ...ONTS[0], latest_version: null } as any]
     expect(selectedGraphIris(new Set(['O1']), 'asserted', noVer)).toEqual([])
+  })
+})
+
+describe('buildScopedEndpoint', () => {
+  const BASE = '/api/v1/sparql/content'
+
+  it('returns the base URL unchanged when no URIs', () => {
+    expect(buildScopedEndpoint(BASE, [])).toBe(BASE)
+  })
+
+  it('appends default-graph-uri + named-graph-uri for one URI', () => {
+    expect(buildScopedEndpoint(BASE, ['urn:ontology:O1:V1']))
+      .toBe(`${BASE}?default-graph-uri=urn%3Aontology%3AO1%3AV1&named-graph-uri=urn%3Aontology%3AO1%3AV1`)
+  })
+
+  it('appends both params for each URI in order', () => {
+    expect(buildScopedEndpoint(BASE, ['urn:a', 'urn:b']))
+      .toBe(`${BASE}?default-graph-uri=urn%3Aa&named-graph-uri=urn%3Aa&default-graph-uri=urn%3Ab&named-graph-uri=urn%3Ab`)
+  })
+})
+
+describe('formatScopeAsFromClauses', () => {
+  it('returns empty string for empty list', () => {
+    expect(formatScopeAsFromClauses([])).toBe('')
+  })
+
+  it('returns FROM + FROM NAMED for one URI', () => {
+    expect(formatScopeAsFromClauses(['urn:a']))
+      .toBe('FROM <urn:a>\nFROM NAMED <urn:a>\n')
+  })
+
+  it('returns four lines for two URIs in order', () => {
+    expect(formatScopeAsFromClauses(['urn:a', 'urn:b']))
+      .toBe('FROM <urn:a>\nFROM NAMED <urn:a>\nFROM <urn:b>\nFROM NAMED <urn:b>\n')
   })
 })

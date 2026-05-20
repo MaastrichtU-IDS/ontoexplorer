@@ -29,3 +29,18 @@ export function selectedGraphIris(
   }
   return out
 }
+
+export function buildScopedEndpoint(baseUrl: string, graphIris: string[]): string {
+  if (graphIris.length === 0) return baseUrl
+  const params: string[] = []
+  for (const uri of graphIris) {
+    const enc = encodeURIComponent(uri)
+    params.push(`default-graph-uri=${enc}`)
+    params.push(`named-graph-uri=${enc}`)
+  }
+  return `${baseUrl}?${params.join('&')}`
+}
+
+export function formatScopeAsFromClauses(graphIris: string[]): string {
+  return graphIris.map(uri => `FROM <${uri}>\nFROM NAMED <${uri}>\n`).join('')
+}
