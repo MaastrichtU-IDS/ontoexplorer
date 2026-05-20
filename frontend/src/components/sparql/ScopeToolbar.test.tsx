@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
+import { fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ScopeToolbar } from './ScopeToolbar'
 
@@ -14,6 +15,70 @@ function wrap(ui: React.ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return <QueryClientProvider client={qc}>{ui}</QueryClientProvider>
 }
+
+const SAMPLE_ONTS = [
+  {
+    id: 'O1', iri: 'http://x/o1', shortname: 'envo', title: 'ENVO',
+    created_at: '2024-01-01',
+    latest_version: { id: 'V1', ontology_id: 'O1', status: 'ready' } as any,
+  } as any,
+  {
+    id: 'O2', iri: 'http://x/o2', shortname: 'chebi', title: 'ChEBI',
+    created_at: '2024-01-01',
+    latest_version: { id: 'V2', ontology_id: 'O2', status: 'ready' } as any,
+  } as any,
+]
+
+vi.doMock('../../hooks/useOntologies', () => ({
+  useOntologies: () => ({ ontologies: SAMPLE_ONTS, isLoading: false }),
+}))
+
+describe('ScopeToolbar — selecting ontologies', () => {
+  it('lists ontologies in the popover when opened', async () => {
+    vi.resetModules()
+    const { ScopeToolbar: Fresh } = await import('./ScopeToolbar')
+    render(wrap(<Fresh onScopeChange={vi.fn()} onCopy={vi.fn()} />))
+    fireEvent.click(screen.getByRole('button', { name: /add ontology/i }))
+    expect(screen.getByText('envo')).toBeInTheDocument()
+    expect(screen.getByText('chebi')).toBeInTheDocument()
+  })
+
+  it('adds a chip on click and calls onScopeChange with the scoped URL', async () => {
+    vi.resetModules()
+    const { ScopeToolbar: Fresh } = await import('./ScopeToolbar')
+    const onScope = vi.fn()
+    render(wrap(<Fresh onScopeChange={onScope} onCopy={vi.fn()} />))
+    fireEvent.click(screen.getByRole('button', { name: /add ontology/i }))
+    fireEvent.click(screen.getByText('envo'))
+    expect(onScope).toHaveBeenLastCalledWith(
+      '/api/v1/sparql/content?default-graph-uri=urn%3Aontology%3AO1%3AV1&named-graph-uri=urn%3Aontology%3AO1%3AV1'
+    )
+    expect(screen.getByRole('button', { name: /envo ✕/i })).toBeInTheDocument()
+  })
+
+  it('removes a chip and calls onScopeChange with the base URL', async () => {
+    vi.resetModules()
+    const { ScopeToolbar: Fresh } = await import('./ScopeToolbar')
+    const onScope = vi.fn()
+    render(wrap(<Fresh onScopeChange={onScope} onCopy={vi.fn()} />))
+    fireEvent.click(screen.getByRole('button', { name: /add ontology/i }))
+    fireEvent.click(screen.getByText('envo'))
+    onScope.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /envo ✕/i }))
+    expect(onScope).toHaveBeenLastCalledWith('/api/v1/sparql/content')
+  })
+
+  it('filters the popover list', async () => {
+    vi.resetModules()
+    const { ScopeToolbar: Fresh } = await import('./ScopeToolbar')
+    render(wrap(<Fresh onScopeChange={vi.fn()} onCopy={vi.fn()} />))
+    fireEvent.click(screen.getByRole('button', { name: /add ontology/i }))
+    const input = screen.getByPlaceholderText(/filter/i)
+    fireEvent.change(input, { target: { value: 'che' } })
+    expect(screen.queryByText('envo')).not.toBeInTheDocument()
+    expect(screen.getByText('chebi')).toBeInTheDocument()
+  })
+})
 
 describe('ScopeToolbar — empty state', () => {
   it('shows the "No scope" summary when nothing is selected', () => {
