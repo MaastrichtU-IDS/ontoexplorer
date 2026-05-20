@@ -1373,6 +1373,7 @@ dependencies = [
     { name = "prometheus-fastapi-instrumentator" },
     { name = "py-horned-owl" },
     { name = "pydantic-settings" },
+    { name = "pyowl2-profiles" },
     { name = "pyoxigraph" },
     { name = "python-jose", extra = ["cryptography"] },
     { name = "python-multipart" },
@@ -1413,6 +1414,7 @@ requires-dist = [
     { name = "prometheus-fastapi-instrumentator" },
     { name = "py-horned-owl" },
     { name = "pydantic-settings", specifier = ">=2.0" },
+    { name = "pyowl2-profiles", specifier = ">=0.1.0" },
     { name = "pyoxigraph" },
     { name = "python-jose", extras = ["cryptography"] },
     { name = "python-multipart" },
@@ -1814,6 +1816,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c3/b2/bc9c9196916376152d655522fdcebac55e66de6603a76a02bca1b6414f6c/pygments-2.20.0.tar.gz", hash = "sha256:6757cd03768053ff99f3039c1a36d6c0aa0b263438fcab17520b30a303a82b5f", size = 4955991, upload-time = "2026-03-29T13:29:33.898Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f4/7e/a72dd26f3b0f4f2bf1dd8923c85f7ceb43172af56d63c7383eb62b332364/pygments-2.20.0-py3-none-any.whl", hash = "sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176", size = 1231151, upload-time = "2026-03-29T13:29:30.038Z" },
+]
+
+[[package]]
+name = "pyowl2-profiles"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyoxigraph" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f2/bc/5f73b455edcfaea1f744b6e2c41c09c59630ead8f9e2b92830d1faeace28/pyowl2_profiles-0.1.0.tar.gz", hash = "sha256:28c1f123bd3d6e3ab0348e1c707c2e39976ec848bc1de21ed52cc63ec362feb6", size = 38268, upload-time = "2026-05-20T12:39:11.227Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/34/9a/43dd50de73788f6d664e447b4829ea0e2f259677dc4e4c589e297bd2361f/pyowl2_profiles-0.1.0-py3-none-any.whl", hash = "sha256:5fd67ca0c1c64582906828e4de290ebc1fe969ae90fd0587ef770cea120813f5", size = 30438, upload-time = "2026-05-20T12:39:09.631Z" },
 ]
 
 [[package]]

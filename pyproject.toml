@@ -33,6 +33,7 @@ dependencies = [
     "pgvector>=0.3",
     "anthropic>=0.97",
     "jinja2",
+    "pyowl2-profiles>=0.1.0",
 ]
 
 [dependency-groups]

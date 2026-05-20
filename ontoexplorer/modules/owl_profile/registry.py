@@ -1,21 +1,12 @@
-"""Constants and dataclasses for OWL 2 profile detection."""
-from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Literal
+"""Re-exports from the pyowl2-profiles library.
 
-ProfileName = Literal["el", "rl", "ql", "dl"]
-PROFILE_NAMES: tuple[ProfileName, ...] = ("el", "rl", "ql", "dl")
-
-
-@dataclass(frozen=True)
-class ProfileViolation:
-    """One axiom that violates a profile."""
-    profile: ProfileName
-    axiom_type: str                  # e.g. "owl:DisjointClasses", "punning", "role-hierarchy-cycle"
-    subject_iri: str | None
-    details: str                     # human-readable
-    manchester: list[dict] | None = field(default=None, compare=False)
-    """Pre-rendered Manchester OWL tokens for display. Each token is a plain dict
-    matching ManchesterTextToken | ManchesterIriToken from manchester.py.
-    None when rendering was not attempted or failed.
-    """
+The OWL 2 profile detector originally lived in this module and was extracted
+to the standalone pyowl2-profiles PyPI package (github.com/MaastrichtU-IDS/
+pyowl2-profiles). OntoExplorer now consumes it as a dependency; this file
+preserves the old import path so internal callers don't need to change.
+"""
+from pyowl2_profiles.registry import (  # noqa: F401
+    PROFILE_NAMES,
+    ProfileName,
+    ProfileViolation,
+)
