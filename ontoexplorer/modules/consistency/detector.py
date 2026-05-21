@@ -105,6 +105,29 @@ def detect_consistency(
             mireot_skipped_prefixes=list(mireot_result.skipped),
         )
 
+    # If the host_only scope is globally inconsistent (Konclude said inconsistent
+    # AND the unsat list is empty — meaning classification was skipped because the
+    # ontology has no models), materialize the trivializing entailment
+    # `owl:Thing rdfs:subClassOf owl:Nothing` in the inferred graph. This makes
+    # the synthetic owl:Nothing node in the class tree the universal ancestor
+    # (Protégé's standard rendering for an inconsistent ontology).
+    host_only = report.scopes.get("host_only")
+    globally_inconsistent = bool(
+        host_only is not None
+        and host_only.status == "inconsistent"
+        and not host_only.unsatisfiable_classes
+    )
+    try:
+        _materialize_global_inconsistency(
+            ontology_id=ontology_id,
+            version_id=version_id,
+            present=globally_inconsistent,
+        )
+    except Exception:
+        # Don't fail the consistency check if the graph write fails (e.g. store
+        # is read-only because we're inside the api container at test time).
+        pass
+
     report.finished_at = datetime.now(timezone.utc).isoformat()
     report.started_at = started_at
     return report
@@ -181,6 +204,18 @@ def _run_one_scope(
             justification=justification,
         ))
 
+    # Globally inconsistent case: Konclude said "not consistent" AND classification
+    # was skipped (so the unsat list is empty). Add a synthetic owl:Thing entry so
+    # the class tree's synthetic owl:Nothing node correctly shows owl:Thing as its
+    # universal child — the visual realisation of "this ontology has no models, so
+    # every entailment, including owl:Thing ⊑ owl:Nothing, holds".
+    if not konclude_result.consistent and not konclude_result.unsatisfiable_class_iris:
+        result.unsatisfiable_classes.append(UnsatisfiableClass(
+            iri="http://www.w3.org/2002/07/owl#Thing",
+            label="owl:Thing",
+            justification=[],
+        ))
+
     # MIREOT bookkeeping for the relevant scope
     if scope == "host_plus_imports_plus_mireot":
         result.mireot_sources_fetched = mireot_fetched_prefixes
@@ -191,6 +226,48 @@ def _run_one_scope(
 
     result.elapsed_seconds = time.monotonic() - t0
     return result
+
+
+def _materialize_global_inconsistency(
+    *,
+    ontology_id: str,
+    version_id: str,
+    present: bool,
+) -> None:
+    """Add or remove `owl:Thing rdfs:subClassOf owl:Nothing` in the inferred graph.
+
+    Adding the trivializing entailment is the materialized form of "this ontology
+    has no models" — every classical entailment, including this one, holds. Removing
+    it (when consistency is restored on a re-run) keeps the inferred graph clean.
+
+    pyoxigraph's `store.add` is idempotent on duplicates; `store.remove` is a no-op
+    when the quad isn't present. Both are safe to call unconditionally.
+    """
+    import pyoxigraph
+    from ontoexplorer.clients.oxigraph import get_store, graph_iri
+
+    store = get_store()
+    inferred_iri = graph_iri(ontology_id, version_id, inferred=True)
+    inferred_named = pyoxigraph.NamedNode(inferred_iri)
+    quad = pyoxigraph.Quad(
+        pyoxigraph.NamedNode("http://www.w3.org/2002/07/owl#Thing"),
+        pyoxigraph.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf"),
+        pyoxigraph.NamedNode("http://www.w3.org/2002/07/owl#Nothing"),
+        inferred_named,
+    )
+    # Make sure the named graph exists before adding (Oxigraph requires this for some
+    # backends); add_graph is a no-op if already present.
+    try:
+        store.add_graph(inferred_named)
+    except Exception:
+        pass
+    if present:
+        store.add(quad)
+    else:
+        try:
+            store.remove(quad)
+        except Exception:
+            pass
 
 
 def _load_reuse_payload(version_id: str) -> dict:
