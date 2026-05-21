@@ -54,6 +54,20 @@ def compute_justifications(
         if sup not in result.superclasses.get(sub, []) and sup not in result.direct_superclasses.get(sub, []):
             return []
 
+    # NOTE: tried a "persistent reasoner" optimization (one whelk reasoner
+    # kept alive across the greedy walk, mutate ontology in place + flush()
+    # instead of rebuilding from scratch). Empirically blocked by an
+    # upstream limitation in py-whelk 0.4.0 (and whelk-rs): `flush()` after
+    # `onto.remove_axiom(X)` does NOT invalidate the cached classification —
+    # the reasoner continues to report `is_entailed(X)` as True after X is
+    # removed. `flush()` works for add_axiom but not remove. Verified with
+    # a minimal A⊑B ontology: add+flush correctly turns on the entailment,
+    # remove+flush leaves the stale True in place.
+    #
+    # Until upstream is fixed we have to recreate the reasoner on every
+    # mutation, which is exactly what `_entails_via_whelk` already does.
+    # Worth revisiting if py-whelk gains incremental-remove support.
+
     all_axioms = _extract_all_axioms(graph)
     if not all_axioms:
         return []
@@ -172,3 +186,21 @@ def _extract_all_axioms(graph: rdflib.Graph) -> list[str]:
     """Serialise graph as N-Triples, one line per axiom, preserving blank node IDs."""
     nt_text = graph.serialize(format="nt")
     return [line.strip() for line in nt_text.splitlines() if line.strip()]
+
+
+# Persistent-reasoner experiment notes (kept here for the next person who
+# wonders the same thing): we tried keeping a single whelk reasoner alive
+# across the greedy walk and mutating the ontology in place. py-whelk
+# 0.4.0's `flush()` is a one-way invalidation — it picks up add_axiom but
+# does NOT invalidate after remove_axiom. Reproduced with a 2-class
+# ontology: add+flush correctly returns True for the new SubClassOf;
+# remove+flush leaves is_entailed at True for the just-removed axiom.
+#
+# Two paths forward if this gets revisited:
+#   1. Upstream patch in whelk-rs to handle remove invalidation properly.
+#   2. Drop down past py-whelk to whelk-rs's incremental classifier API
+#      (would require a small custom PyO3 binding).
+#
+# Until then, _entails_via_whelk re-creates the reasoner per call. That's
+# already amortized down to ~10ms by pyoxigraph's Rust-speed parse path,
+# so the cost is bearable for ontologies up to pizza-scale.
