@@ -3,7 +3,7 @@
 ## Search & Discovery
 - ~~**Full-text semantic search** — vector/embedding search across term definitions, not just labels~~ (shipped: `semantic_search()` + `term_embeddings` pgvector store + `/api/v1/search?semantic=true` + `/ols/api/v2/classes/llm_search` & `llm_similar`)
 - ~~**Cross-ontology term lookup** — find all classes matching an IRI or label across all loaded ontologies~~ (shipped: global `/api/v1/search`, `/ols/api/terms?iri=` + `/ols/api/terms/findByIdAndIsDefiningOntology`)
-- ~~**SPARQL endpoint** — expose Oxigraph directly with a UI query editor~~ (shipped: `/api/v1/sparql` (QLever metadata) + `/api/v1/sparql/content` (in-process Oxigraph) + frontend [Sparql page](frontend/src/pages/Sparql.tsx) + SparqlGallery)
+- ~~**SPARQL endpoint** — expose Oxigraph directly with a UI query editor~~ (shipped: `/api/v1/sparql` (Fuseki metadata) + `/api/v1/sparql/content` (in-process Oxigraph) + frontend [Sparql page](frontend/src/pages/Sparql.tsx) + SparqlGallery)
 
 ## Browsing & Visualization
 - **Class hierarchy graph view** — force-directed or tree graph alongside the current list
@@ -17,16 +17,17 @@
 - **SHACL validation reports** — per-ontology constraint validation
 - ~~**OWL profile detection** — OWL 2 DL / EL / RL / QL classification~~ (shipped 2026-05-19: SPARQL ASK detection in-process at indexing time, cached in Redis; `/api/v1/owl-profile/*` API; per-onto tab + fleet page + `?profile=el|rl|ql|dl` search filter)
 - **Ontology alignment / mapping** — suggest equivalent classes across ontologies
+- **Consistency Phase 3 — HermiT cross-check productisation** — promote the offline `scripts/consistency_bench/` (Konclude vs ROBOT/HermiT) into a scheduled Celery task; persist per-version HermiT verdicts + `cross_check` field (agree/disagree/unsupported/failed) alongside Konclude's; surface as a trust badge on each scope card and a "show only disagreements" filter on the fleet Consistency tab; on divergence, capture both reasoners' justifications for curator drilldown. MIREOT scope stays Konclude-only (HermiT can't reason over partial MIREOT closures). Pitches the FAIR-repository trust story as "two independent OWL 2 DL reasoners agree" rather than relying on a single reasoner.
 
 ## Collaboration & Curation
 - **Comments / issue tracking** on terms or ontologies
 - **Suggested edits / community annotations**
-- **Subscribe to ontology update notifications**
+- ~~**Subscribe to ontology update notifications**~~ (shipped: webhook subscriptions for `ontology.ingested` / `version.deprecated` / `reasoning.completed` / `reasoning.failed` / `indexing.completed` with delivery history — `/api/v1/webhooks/*` + frontend Webhooks page)
 
 ## Export & API
 - **Multi-format term export** — JSON-LD, Turtle snippet, OWL/XML
 - ~~**OLS-compatible API layer** — so tools already speaking OLS can point here~~ (shipped 2026-05-18: /ols/api/* — OLS4 v1 HAL + v2 flat + LLM endpoints via existing semantic_search + term_embeddings; jstree/graph widgets; 9 endpoints stubbed as 501 for features without backing data)
-- **Citation / DOI integration** — link to published papers about an ontology
+- **Citation / DOI integration** — link to published papers about an ontology (backend partial: meta-profile detects `citation_props` and stores them; no UI surface yet)
 
 ## Analytics
 - **Search analytics** — most-queried terms, trending ontologies
