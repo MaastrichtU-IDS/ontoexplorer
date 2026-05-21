@@ -5,8 +5,69 @@ import pytest
 from ontoexplorer.modules.consistency.konclude import (
     KoncludeResult,
     KoncludeUnavailable,
+    _parse_unsatisfiable_classes,
     run_konclude_consistency,
 )
+
+
+# Sample Konclude classify-output (OWL/XML functional-style with EquivalentClasses)
+# matching what Konclude v0.7.0 actually emits.
+KONCLUDE_CLASSIFY_OWL_XML = """<?xml version="1.0"?>
+<Ontology xmlns="http://www.w3.org/2002/07/owl#"
+          xml:base="http://example.org/bad"
+          ontologyIRI="http://example.org/bad">
+    <Declaration>
+        <Class IRI="http://www.w3.org/2002/07/owl#Nothing"/>
+    </Declaration>
+    <Declaration>
+        <Class IRI="http://example.org/bad#MineralAnimal"/>
+    </Declaration>
+    <Declaration>
+        <Class IRI="http://example.org/bad#SuperMineralAnimal"/>
+    </Declaration>
+    <Declaration>
+        <Class IRI="http://example.org/bad#Animal"/>
+    </Declaration>
+    <EquivalentClasses>
+        <Class IRI="http://www.w3.org/2002/07/owl#Nothing"/>
+        <Class IRI="http://example.org/bad#MineralAnimal"/>
+        <Class IRI="http://example.org/bad#SuperMineralAnimal"/>
+    </EquivalentClasses>
+    <SubClassOf>
+        <Class IRI="http://example.org/bad#Animal"/>
+        <Class IRI="http://www.w3.org/2002/07/owl#Thing"/>
+    </SubClassOf>
+</Ontology>
+"""
+
+
+def test_parser_extracts_unsat_classes_from_owl_xml_equivalent_classes_form(tmp_path):
+    """Konclude v0.7.0 emits unsat classes via <EquivalentClasses> grouping with owl:Nothing.
+
+    All other Class IRIs in that group must be returned as unsatisfiable; the
+    owl:Nothing IRI itself must NOT appear in the result.
+    """
+    classify_path = tmp_path / "classified.owl"
+    classify_path.write_text(KONCLUDE_CLASSIFY_OWL_XML)
+    unsat = _parse_unsatisfiable_classes(classify_path)
+    assert unsat == [
+        "http://example.org/bad#MineralAnimal",
+        "http://example.org/bad#SuperMineralAnimal",
+    ]
+
+
+def test_parser_ignores_equivalent_classes_groups_without_nothing(tmp_path):
+    """A regular EquivalentClasses axiom (no owl:Nothing involved) must not be flagged."""
+    classify_path = tmp_path / "classified.owl"
+    classify_path.write_text("""<?xml version="1.0"?>
+<Ontology xmlns="http://www.w3.org/2002/07/owl#" xml:base="http://example.org/ok">
+    <EquivalentClasses>
+        <Class IRI="http://example.org/ok#Mammal"/>
+        <Class IRI="http://example.org/ok#WarmBloodedVertebrate"/>
+    </EquivalentClasses>
+</Ontology>
+""")
+    assert _parse_unsatisfiable_classes(classify_path) == []
 
 
 # Trivial consistent fixture: empty ontology

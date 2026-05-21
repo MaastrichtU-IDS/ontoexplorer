@@ -118,9 +118,20 @@ _OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing"
 def _parse_unsatisfiable_classes(classified_path: Path) -> list[str]:
     """Extract IRIs of classes equivalent to owl:Nothing from Konclude's classify output.
 
-    Konclude emits the inferred classification as OWL/XML. An unsatisfiable named
-    class C appears as `<owl:Class rdf:about="C"> <owl:equivalentClass rdf:resource="owl:Nothing"/> </owl:Class>`
-    OR as `<owl:EquivalentClasses>` with two children, one of which is owl:Nothing.
+    Konclude's `-o` flag writes the inferred classification as OWL/XML. An
+    unsatisfiable named class C may appear in either form:
+
+    Form 1 (RDF/XML style):
+        <owl:Class rdf:about="C">
+            <owl:equivalentClass rdf:resource="owl:Nothing"/>
+        </owl:Class>
+
+    Form 2 (OWL/XML functional-style — what Konclude actually emits):
+        <EquivalentClasses>
+            <Class IRI="http://www.w3.org/2002/07/owl#Nothing"/>
+            <Class IRI="C"/>
+            <Class IRI="D"/>   <!-- any other classes equivalent to Nothing -->
+        </EquivalentClasses>
 
     We tolerate both forms.
     """
@@ -134,7 +145,8 @@ def _parse_unsatisfiable_classes(classified_path: Path) -> list[str]:
         "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
     }
     unsat: set[str] = set()
-    # Form 1: owl:Class with owl:equivalentClass pointing at owl:Nothing
+
+    # Form 1: <owl:Class rdf:about="..."> with owl:equivalentClass → owl:Nothing
     for cls in root.iter(f"{{{ns['owl']}}}Class"):
         about = cls.get(f"{{{ns['rdf']}}}about")
         if about is None:
@@ -143,4 +155,18 @@ def _parse_unsatisfiable_classes(classified_path: Path) -> list[str]:
             ref = eq.get(f"{{{ns['rdf']}}}resource")
             if ref == _OWL_NOTHING:
                 unsat.add(about)
+
+    # Form 2: <EquivalentClasses> with one child being owl:Nothing → all OTHER children unsat
+    for eq_classes in root.iter(f"{{{ns['owl']}}}EquivalentClasses"):
+        iris_in_group: list[str] = []
+        for child in eq_classes:
+            # Child may be <owl:Class IRI="..."/> or just <Class IRI="..."/>
+            iri = child.get("IRI") or child.get(f"{{{ns['rdf']}}}about")
+            if iri is not None:
+                iris_in_group.append(iri)
+        if _OWL_NOTHING in iris_in_group:
+            for iri in iris_in_group:
+                if iri != _OWL_NOTHING:
+                    unsat.add(iri)
+
     return sorted(unsat)
