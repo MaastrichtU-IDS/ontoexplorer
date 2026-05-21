@@ -2051,6 +2051,20 @@ async def inferred_children(
     r = _get_redis()
     deprecated_iris: set[str] = r.smembers(_deprecated_key(version_id)) if hide_obsolete else set()
 
+    # Union ELK's unsat list with the Phase-2 consistency cache. Two cases
+    # this fixes:
+    #   - Globally inconsistent ontologies: Konclude flags owl:Thing as unsat
+    #     (our detector materializes a synthetic entry in the cache); ELK never
+    #     reports owl:Thing as unsat because it only does TBox classification.
+    #     Without this union the inferred tree won't show Thing under Nothing.
+    #   - Classes Konclude can prove unsat but ELK's structural EL classifier
+    #     can't (e.g., existential-restriction-over-unsat). They appear in the
+    #     consistency cache but not in ELK's classification.unsatisfiable.
+    try:
+        consistency_unsat_iris: set[str] = set(_load_unsat_scopes(version_id).keys())
+    except Exception:
+        consistency_unsat_iris = set()
+
     def _compute() -> dict:
         elk_direct: dict[str, list[str]] = classification.get("direct_superclasses", {})
         elk_all:    dict[str, list[str]] = classification.get("superclasses", {})
@@ -2058,7 +2072,12 @@ async def inferred_children(
         # classes — they need to be looked up from the separate `unsatisfiable`
         # list. Treat that list as if those classes had owl:Nothing as a direct
         # parent so the inferred tree can place them under it.
-        unsat_iris: set[str] = set(classification.get("unsatisfiable", []))
+        # Union with the consistency cache picks up classes ELK couldn't prove
+        # (see the block above _compute() for the rationale).
+        unsat_iris: set[str] = (
+            set(classification.get("unsatisfiable", []))
+            | consistency_unsat_iris
+        )
         # owl:Thing is filtered (it's the universal root; every class trivially
         # subclasses it — noise). owl:Nothing is KEPT as a navigable parent so
         # unsatisfiable classes appear under it (Protégé-style "broken corner").
