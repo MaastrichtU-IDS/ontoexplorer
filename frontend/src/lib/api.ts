@@ -437,6 +437,30 @@ export interface SavedQuery {
   user_display_name?: string
 }
 
+export interface StarterQuery {
+  id: string
+  name: string
+  description: string | null
+  category: string | null
+  tags: string[]
+  query_text: string
+  is_starter: boolean
+  is_public: boolean
+  created_at: string | null
+  updated_at: string | null
+}
+
+export type ImportStartersPayload =
+  | { text: string }
+  | { source_url: string }
+  | { file: File }
+
+export interface ImportStartersResponse {
+  created: number
+  skipped: number
+  errors: Array<{ index: number; name?: string; reason: string }>
+}
+
 // ── Profile types ─────────────────────────────────────────────────────────────
 
 export interface OntologyProfileData {
@@ -1184,6 +1208,9 @@ export const api = {
 
     delete: (id: string) =>
       request<void>(`/sparql/queries/${id}`, { method: 'DELETE' }),
+
+    listStarters: () =>
+      request<{ starters: StarterQuery[] }>('/sparql/starters'),
   },
 
   coverage: {
@@ -1321,6 +1348,22 @@ export const api = {
         `/admin/ontologies/${ontologyId}/diffs/recompute-all`,
         { method: 'POST' }
       ),
+
+    importStarters: (payload: ImportStartersPayload): Promise<ImportStartersResponse> => {
+      const form = new FormData()
+      if ('file' in payload) {
+        form.append('file', payload.file)
+      } else if ('source_url' in payload) {
+        form.append('source_url', payload.source_url)
+      } else {
+        form.append('text', payload.text)
+      }
+      return fetch('/api/v1/sparql/starters/import', { method: 'POST', body: form })
+        .then(async r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`)
+          return r.json() as Promise<ImportStartersResponse>
+        })
+    },
   },
 
   meta: {
