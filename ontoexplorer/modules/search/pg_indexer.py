@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Iterable
 
 from sqlalchemy import text
@@ -19,6 +20,32 @@ from ontoexplorer.modules.search.indexer import (
     _type_key,
     normalise_label,
 )
+
+
+# Insert a space at every camelCase boundary: `aB → a B` and `XMLP → XML P`.
+# Also splits snake_case and kebab-case. Critical because Postgres's `simple`
+# tokenizer treats `PizzaSauce` as a single lexeme `pizzasauce`, which makes
+# queries like `pizza sauce` fail to match it. By splitting before tsvector
+# generation, the same label tokenizes as `pizza` + `sauce`.
+_CAMEL_BOUNDARY_1 = re.compile(r"([a-z0-9])([A-Z])")  # aB
+_CAMEL_BOUNDARY_2 = re.compile(r"([A-Z]+)([A-Z][a-z])")  # XMLP → XML P
+
+
+def split_compound_labels(s: str) -> str:
+    """Split camelCase / snake_case / kebab-case so tsvector & LIKE-prefix work.
+
+    Examples:
+        PizzaSauce            → Pizza Sauce
+        pizza_sauce           → pizza sauce
+        G-protein-coupled     → G protein coupled
+        RNAPolymerase         → RNA Polymerase
+    """
+    if not s:
+        return s
+    s = _CAMEL_BOUNDARY_1.sub(r"\1 \2", s)
+    s = _CAMEL_BOUNDARY_2.sub(r"\1 \2", s)
+    s = s.replace("_", " ").replace("-", " ")
+    return s
 
 logger = logging.getLogger(__name__)
 
@@ -37,19 +64,24 @@ def _iter_version_iris(version_id: str) -> Iterable[str]:
 def _build_search_text(entity: dict) -> str:
     """Concatenate every label + synonym for tsvector indexing.
 
-    The Redis hash stores labels/synonyms as JSON arrays of {value, lang}. We collapse
-    everything into one space-joined string. The CURIE short form is included so users
-    can search by `GO_0008150` etc.
+    Each piece is also passed through split_compound_labels so camelCase /
+    snake_case labels (`PizzaSauce`, `pizza_sauce`) tokenize as separate words
+    in the tsvector. Both the raw and decamelized forms go in so the user can
+    still match by the original spelling via prefix lookup.
     """
     parts: list[str] = []
 
-    primary = entity.get("primary_label") or entity.get("label") or ""
-    if primary:
-        parts.append(primary)
+    def _add(val: str) -> None:
+        if not val:
+            return
+        if val not in parts:
+            parts.append(val)
+        decam = split_compound_labels(val)
+        if decam != val and decam not in parts:
+            parts.append(decam)
 
-    short = entity.get("short", "")
-    if short and short != primary:
-        parts.append(short)
+    _add(entity.get("primary_label") or entity.get("label") or "")
+    _add(entity.get("short", ""))
 
     for field in ("labels", "synonyms"):
         raw = entity.get(field, "[]")
@@ -58,9 +90,7 @@ def _build_search_text(entity: dict) -> str:
         except (json.JSONDecodeError, ValueError):
             continue
         for item in items:
-            val = item.get("value", "")
-            if val and val not in parts:
-                parts.append(val)
+            _add(item.get("value", ""))
 
     return " ".join(parts)
 
@@ -82,6 +112,10 @@ async def populate_entity_index(
             continue
 
         primary_label = entity.get("primary_label") or entity.get("label") or entity.get("short", "")
+        # Decamelize so `PizzaSauce` matches query `pizza sauce` via the fast
+        # prefix tier. Both display label and original-spelling search are
+        # preserved (search_text still includes the original form).
+        primary_label_norm = normalise_label(split_compound_labels(primary_label))
         search_text = _build_search_text(entity)
 
         rows.append({
@@ -90,7 +124,7 @@ async def populate_entity_index(
             "ontology_id": ontology_id,
             "type": entity.get("type", "class"),
             "primary_label": primary_label,
-            "primary_label_norm": normalise_label(primary_label),
+            "primary_label_norm": primary_label_norm,
             "short": entity.get("short", ""),
             "source": entity.get("source") or None,
             "search_text": search_text,

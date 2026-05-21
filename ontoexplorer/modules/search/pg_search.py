@@ -47,7 +47,9 @@ async def pg_entity_search(
     Deduplicates by IRI (first-seen-wins across ontologies). Result list is already
     globally tier-ranked: exact label match first, then prefix, then word-suffix.
     """
-    norm = normalise_label(q)
+    from ontoexplorer.modules.search.pg_indexer import split_compound_labels
+    # Decamelize the query so `PizzaSauce` and `pizza sauce` normalize alike.
+    norm = normalise_label(split_compound_labels(q))
     if not norm:
         return []
 
@@ -84,7 +86,8 @@ async def pg_entity_search(
             return merged[:limit]
 
     # Stage 2: word-suffix fallback via tsvector. Only runs if prefix tier didn't fill.
-    # The :* postfix on the lexeme matches any token starting with the query.
+    # Multi-word queries are AND'd; the last token is prefix-matched (user may
+    # still be typing it).
     if len(merged) < limit:
         tsv_sql = text("""
             SELECT ei.iri, ei.primary_label, ei.short, ei.type,
@@ -95,12 +98,12 @@ async def pg_entity_search(
             WHERE v.status NOT IN ('pending','failed','deprecated')
               AND ei.search_tsv @@ to_tsquery('simple', :tsq)
               AND ei.primary_label_norm NOT LIKE :prefix
-            ORDER BY ei.primary_label_norm, ei.iri
+            ORDER BY LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
             LIMIT :over
         """)
         result = await db.execute(
             tsv_sql,
-            {"tsq": _tsquery_lexeme(norm) + ":*", "prefix": norm + "%", "over": over},
+            {"tsq": _build_tsquery(norm), "prefix": norm + "%", "over": over},
         )
         for row in result.all():
             if row.iri in seen_iris:
@@ -131,7 +134,8 @@ async def pg_autocomplete_entities(
     ontology_shortname, primary_label_norm}. Caller is responsible for wrapping
     each dict into a Completion with the correct `insert` text.
     """
-    norm = normalise_label(partial) if partial else ""
+    from ontoexplorer.modules.search.pg_indexer import split_compound_labels
+    norm = normalise_label(split_compound_labels(partial)) if partial else ""
     # Single-letter prefixes match tens of thousands of rows (e.g. 'c' → ~22k);
     # autocomplete on a single letter isn't useful and triggers a full table sort.
     # Bail early — the frontend should debounce to ≥2 chars anyway.
@@ -205,11 +209,11 @@ async def pg_autocomplete_entities(
           AND ei.primary_label_norm NOT LIKE :prefix
           {type_filter_sql}
           {ontology_filter_sql}
-        ORDER BY ei.primary_label_norm, ei.iri
+        ORDER BY LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
         LIMIT :over
     """)
     params2: dict = {
-        "tsq": _tsquery_lexeme(norm) + ":*",
+        "tsq": _build_tsquery(norm),  # multi-word AND, last token prefix
         "prefix": norm + "%",
         "over": limit * _OVERSAMPLE,
     }
@@ -239,16 +243,28 @@ async def pg_autocomplete_entities(
     return out[:limit]
 
 
-def _tsquery_lexeme(norm: str) -> str:
-    """Strip whitespace/operators so a multi-word query doesn't break to_tsquery.
+def _sanitize_tsquery_token(t: str) -> str:
+    """Strip anything that would confuse to_tsquery's grammar (operators, quotes)."""
+    return "".join(c for c in t if c.isalnum() or c in "_-")
 
-    For multi-word inputs ("cell death"), use the FIRST token plus :* — the simple
-    dictionary tokenizer already handles individual word matching, and the prefix
-    semantics are about completing the user's current keystroke.
+
+def _build_tsquery(norm: str) -> str:
+    """Build a tsquery from a normalized multi-word query.
+
+    Single-word "pizza"          → "pizza:*"
+    Two-word    "pizza sauce"    → "pizza & sauce:*"   (AND, last is prefix)
+    Three-word  "cell death pathway" → "cell & death & pathway:*"
+
+    The last token gets the :* prefix-match because the user may still be
+    typing it. Earlier tokens are exact-lexeme requirements.
     """
-    first = norm.split()[0] if norm.split() else norm
-    # Strip anything that would confuse to_tsquery's grammar.
-    return "".join(c for c in first if c.isalnum() or c in "_-")
+    tokens = [_sanitize_tsquery_token(t) for t in norm.split()]
+    tokens = [t for t in tokens if t]
+    if not tokens:
+        return ""
+    if len(tokens) == 1:
+        return tokens[0] + ":*"
+    return " & ".join(tokens[:-1]) + " & " + tokens[-1] + ":*"
 
 
 def rrf_merge(
