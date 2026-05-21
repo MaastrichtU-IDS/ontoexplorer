@@ -1,4 +1,4 @@
-import type { Ontology } from '../../lib/api'
+import type { Ontology, OntologyVersion } from '../../lib/api'
 
 export type ReasoningMode = 'asserted' | 'inferred' | 'both'
 
@@ -45,4 +45,20 @@ export function buildScopedEndpoint(baseUrl: string, graphIris: string[]): strin
 
 export function formatScopeAsFromClauses(graphIris: string[]): string {
   return graphIris.map(uri => `FROM <${uri}>\nFROM NAMED <${uri}>\n`).join('')
+}
+
+/**
+ * Build a scoped /sparql/content endpoint URL for a single (version, mode)
+ * tuple. Convenience over `buildScopedEndpoint` for callers that already have
+ * the OntologyVersion in hand (e.g. the diff-mode toolbar).
+ */
+export function endpointForVersion(version: OntologyVersion, mode: ReasoningMode): string {
+  const iris: string[] = []
+  if (mode === 'asserted' || mode === 'both') {
+    iris.push(assertedGraphIri(version.ontology_id, version.id))
+  }
+  if (mode === 'inferred' || mode === 'both') {
+    iris.push(inferredGraphIri(version.ontology_id, version.id))
+  }
+  return buildScopedEndpoint('/api/v1/sparql/content', iris)
 }

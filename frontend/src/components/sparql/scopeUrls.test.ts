@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { assertedGraphIri, inferredGraphIri, selectedGraphIris, buildScopedEndpoint, formatScopeAsFromClauses } from './scopeUrls'
-import type { Ontology } from '../../lib/api'
+import { assertedGraphIri, inferredGraphIri, selectedGraphIris, buildScopedEndpoint, formatScopeAsFromClauses, endpointForVersion } from './scopeUrls'
+import type { Ontology, OntologyVersion } from '../../lib/api'
 
 const ONTS: Ontology[] = [
   {
@@ -100,5 +100,40 @@ describe('formatScopeAsFromClauses', () => {
   it('returns four lines for two URIs in order', () => {
     expect(formatScopeAsFromClauses(['urn:a', 'urn:b']))
       .toBe('FROM <urn:a>\nFROM NAMED <urn:a>\nFROM <urn:b>\nFROM NAMED <urn:b>\n')
+  })
+})
+
+describe('endpointForVersion', () => {
+  const BASE = '/api/v1/sparql/content'
+  const V1: OntologyVersion = {
+    id: 'V1',
+    ontology_id: 'O1',
+    status: 'ready',
+    format: 'owl',
+    version_iri: null,
+    sha256: '',
+    triple_count: 0,
+    download_url: '',
+    created_at: '',
+  }
+
+  it('asserted mode emits both default and named graph params for the asserted URI', () => {
+    const url = endpointForVersion(V1, 'asserted')
+    const enc = encodeURIComponent('urn:ontology:O1:V1')
+    expect(url).toBe(`${BASE}?default-graph-uri=${enc}&named-graph-uri=${enc}`)
+  })
+
+  it('inferred mode uses the :inferred suffix', () => {
+    const url = endpointForVersion(V1, 'inferred')
+    expect(url).toContain(encodeURIComponent('urn:ontology:O1:V1:inferred'))
+    expect(url).not.toContain(encodeURIComponent('urn:ontology:O1:V1&'))
+  })
+
+  it('both mode emits four params (asserted + inferred)', () => {
+    const url = endpointForVersion(V1, 'both')
+    expect(url).toContain(encodeURIComponent('urn:ontology:O1:V1'))
+    expect(url).toContain(encodeURIComponent('urn:ontology:O1:V1:inferred'))
+    expect((url.match(/default-graph-uri=/g) ?? []).length).toBe(2)
+    expect((url.match(/named-graph-uri=/g) ?? []).length).toBe(2)
   })
 })
