@@ -12,7 +12,7 @@ services:
       - postgres
       - redis
       - minio
-      - qlever
+      - fuseki
     volumes:
       - ./ontoexplorer:/app/ontoexplorer
       - ./alembic:/app/alembic
@@ -62,7 +62,7 @@ services:
       MINIO_ROOT_PASSWORD: minioadmin
       MINIO_SERVER_URL: "http://localhost:9000"
 
-  qlever:
+  fuseki:
     image: stain/jena-fuseki
     user: root
     ports:
@@ -70,7 +70,7 @@ services:
     environment:
       ADMIN_PASSWORD: admin
       JVM_ARGS: "-Xmx1g"
-    command: /jena-fuseki/fuseki-server --update --mem /qlever
+    command: /jena-fuseki/fuseki-server --update --mem /fuseki
 
   postgres:
     image: pgvector/pgvector:pg16
@@ -102,6 +102,16 @@ services:
       JUSTIFICATION_TIME_LIMIT_SECONDS: "300"
     depends_on:
       - redis
+
+  robot-service:
+    build: docker/robot-service
+    ports:
+      - "8002:8002"
+    environment:
+      # HermiT heap. Independent of the worker's cgroup so we can size DL
+      # reasoning generously without bloating the worker.
+      JAVA_OPTS: "-Xmx6g"
+    mem_limit: 7g
 
   prometheus:
     image: prom/prometheus

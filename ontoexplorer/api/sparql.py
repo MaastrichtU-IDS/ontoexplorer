@@ -1,6 +1,6 @@
 """SPARQL 1.1 endpoints.
 
-GET/POST /sparql         → QLever/Fuseki (FAIR metadata)
+GET/POST /sparql         → Jena Fuseki (FAIR metadata)
 GET/POST /sparql/content → in-process Oxigraph store (asserted ontology triples)
 """
 
@@ -41,23 +41,23 @@ def _check_query_guard(query: str) -> None:
         raise ValueError("SPARQL Update not permitted")
 
 
-@router.get("/sparql", summary="SPARQL 1.1 over QLever metadata store")
+@router.get("/sparql", summary="SPARQL 1.1 over Fuseki metadata store")
 @router.post("/sparql")
 async def sparql_metadata(request: Request):
     try:
         query, accept = await _extract_query_and_accept(request)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
-    metrics.sparql_requests_total.labels(endpoint="qlever", method=request.method).inc()
+    metrics.sparql_requests_total.labels(endpoint="fuseki", method=request.method).inc()
     t0 = time.monotonic()
     try:
-        from ontoexplorer.clients import qlever as qlever_client
-        body, content_type = await qlever_client.query_passthrough(query, accept)
+        from ontoexplorer.clients import fuseki as fuseki_client
+        body, content_type = await fuseki_client.query_passthrough(query, accept)
     except Exception:
-        metrics.sparql_errors_total.labels(endpoint="qlever").inc()
+        metrics.sparql_errors_total.labels(endpoint="fuseki").inc()
         raise
     finally:
-        metrics.sparql_latency_seconds.labels(endpoint="qlever").observe(time.monotonic() - t0)
+        metrics.sparql_latency_seconds.labels(endpoint="fuseki").observe(time.monotonic() - t0)
     return Response(content=body, media_type=content_type)
 
 

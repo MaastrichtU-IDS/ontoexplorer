@@ -27,11 +27,11 @@ class Settings(BaseSettings):
     minio_ontologies_bucket: str = "ontologies"
     minio_imports_bucket: str = "imports"
 
-    # SPARQL metadata store (Fuseki)
-    qlever_endpoint: str = "http://localhost:7001"
-    qlever_sparql_path: str = "/sparql"
-    qlever_update_user: str = ""
-    qlever_update_password: str = ""
+    # SPARQL metadata store (Jena Fuseki)
+    fuseki_endpoint: str = "http://localhost:7001"
+    fuseki_sparql_path: str = "/sparql"
+    fuseki_update_user: str = ""
+    fuseki_update_password: str = ""
 
     # Oxigraph (embedded content triplestore) — path to data directory
     oxigraph_data_path: str = "/data/oxigraph"

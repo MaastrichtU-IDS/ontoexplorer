@@ -1,6 +1,6 @@
-"""Async SPARQL 1.1 HTTP client for QLever.
+"""Async SPARQL 1.1 HTTP client for Jena Fuseki.
 
-QLever exposes a standard SPARQL endpoint and a SPARQL Update endpoint.
+Fuseki exposes a standard SPARQL endpoint and a SPARQL Update endpoint.
 All methods are async (httpx).
 """
 
@@ -18,8 +18,8 @@ _CONSTRUCT_ACCEPT = "text/turtle"
 
 def _endpoints() -> tuple[str, str]:
     s = get_settings()
-    base = s.qlever_endpoint.rstrip("/")
-    return f"{base}{s.qlever_sparql_path}", f"{base}/update"
+    base = s.fuseki_endpoint.rstrip("/")
+    return f"{base}{s.fuseki_sparql_path}", f"{base}/update"
 
 
 async def sparql_select(query: str, timeout: float = 30.0) -> dict:
@@ -53,8 +53,8 @@ async def sparql_update(update: str, timeout: float = 30.0) -> None:
     _, update_endpoint = _endpoints()
     s = get_settings()
     auth = (
-        httpx.BasicAuth(s.qlever_update_user, s.qlever_update_password)
-        if s.qlever_update_user
+        httpx.BasicAuth(s.fuseki_update_user, s.fuseki_update_password)
+        if s.fuseki_update_user
         else None
     )
     async with httpx.AsyncClient(timeout=timeout, auth=auth) as client:
@@ -92,7 +92,7 @@ async def delete_graph(graph_iri: str) -> None:
 
 async def query_passthrough(raw_query: str, accept: str, timeout: float = 30.0) -> tuple[bytes, str]:
     """
-    Forward a raw SPARQL query string to QLever and return (body_bytes, content_type).
+    Forward a raw SPARQL query string to Fuseki and return (body_bytes, content_type).
     Used by the SPARQL proxy endpoint.
     """
     endpoint, _ = _endpoints()

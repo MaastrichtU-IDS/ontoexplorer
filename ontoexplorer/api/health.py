@@ -31,15 +31,15 @@ async def ready():
         checks["postgres"] = f"error: {exc}"
         healthy = False
 
-    # QLever
+    # Fuseki
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(f"{settings.qlever_endpoint}{settings.qlever_sparql_path}", params={"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 1"})
-            checks["qlever"] = "ok" if resp.status_code < 500 else f"error: {resp.status_code}"
+            resp = await client.get(f"{settings.fuseki_endpoint}{settings.fuseki_sparql_path}", params={"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 1"})
+            checks["fuseki"] = "ok" if resp.status_code < 500 else f"error: {resp.status_code}"
             if resp.status_code >= 500:
                 healthy = False
     except Exception as exc:
-        checks["qlever"] = f"error: {exc}"
+        checks["fuseki"] = f"error: {exc}"
         healthy = False
 
     # MinIO (check if endpoint is reachable)

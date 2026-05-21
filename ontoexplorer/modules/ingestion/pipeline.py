@@ -9,7 +9,7 @@ Steps:
   4. Deduplicate (SHA-256 content hash)
   5. Store artifact in MinIO
   6. Load asserted triples into Oxigraph
-  7. (Phase 3) Extract FAIR metadata → QLever
+  7. (Phase 3) Extract FAIR metadata → Fuseki
   8. Queue reasoning job (stub)
   9. Queue search indexing (stub)
   10. Deliver webhooks (stub)
@@ -35,7 +35,7 @@ from ontoexplorer.clients.oxigraph import bulk_load_bytes, load_graph
 from ontoexplorer.models.db import Ontology, OntologyImport, OntologyVersion
 from ontoexplorer.modules.metadata.dcat import build_dcat_record
 from ontoexplorer.modules.metadata.prov import build_ingestion_activity
-from ontoexplorer.modules.metadata.qlever_writer import write_version_metadata
+from ontoexplorer.modules.metadata.fuseki_writer import write_version_metadata
 from ontoexplorer.modules.metadata.void import compute_void_stats_sparql
 from ontoexplorer.modules.storage.minio_client import ontology_download_url
 from ontoexplorer.modules.ingestion.deduplicator import compute_sha256_bytes
@@ -219,7 +219,7 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
 
     await db.commit()
 
-    # ── Step 7: Extract FAIR metadata → QLever ────────────────────────────────
+    # ── Step 7: Extract FAIR metadata → Fuseki ────────────────────────────────
     ontology_iri = canonical_iri or provisional_iri
     await _write_fair_metadata(
         ontology_id=ontology_id,
@@ -410,7 +410,7 @@ async def _write_fair_metadata(
     source: ResolvedSource,
     triple_count: int,
 ) -> None:
-    """Compute VoID stats via SPARQL, build DCAT + PROV-O graphs, write to QLever."""
+    """Compute VoID stats via SPARQL, build DCAT + PROV-O graphs, write to Fuseki."""
     try:
         settings = get_settings()
         void_stats = compute_void_stats_sparql(ontology_id, version_id)
