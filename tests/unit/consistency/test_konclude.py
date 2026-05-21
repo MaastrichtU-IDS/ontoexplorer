@@ -3,8 +3,10 @@ from pathlib import Path
 import pytest
 
 from ontoexplorer.modules.consistency.konclude import (
+    KoncludeCrashed,
     KoncludeResult,
     KoncludeUnavailable,
+    _parse_consistency_verdict,
     _parse_unsatisfiable_classes,
     run_konclude_consistency,
 )
@@ -127,6 +129,42 @@ def test_inconsistent_ontology_yields_unsatisfiable_classes(tmp_path):
     assert (result.consistent is False) or (
         "http://example.org/bad#C" in result.unsatisfiable_class_iris
     )
+
+
+_KONCLUDE_OOM_TRUNCATED_STDOUT = (
+    "{info} 14:52:34:084 >> Starting Konclude ...\n"
+    "{info} 14:52:34:084 >> Konclude - Uni Ulm Parallel Reasoner\n"
+    "{info} 14:52:34:086 >> Starting consistency checking for '/tmp/cl-asserted.nt'.\n"
+    "{info} 14:52:34:088 >> Reasoner initialized with 1 processing unit(s).\n"
+    "{info} 14:52:39:055 >> Query 'UnnamedConsistencyQuery' processed in '0' ms.\n"
+    "{info} 14:52:39:056 >> Preprocessing ontology 'http://konclude.com/test/kb'.\n"
+    "{info} 14:52:40:781 >> Finished preprocessing in 1725 ms for ontology 'http://konclude.com/test/kb'.\n"
+    "{info} 14:52:40:781 >> Precomputing ontology 'http://konclude.com/test/kb', expressiveness 'SROIQ'.\n"
+)
+
+
+def test_parse_verdict_recognises_consistent_line():
+    assert _parse_consistency_verdict(
+        "{info} >> Ontology '/x.nt' is consistent.\n", returncode=0, stderr=""
+    ) is True
+
+
+def test_parse_verdict_recognises_inconsistent_line():
+    assert _parse_consistency_verdict(
+        "{info} >> Ontology '/x.nt' is inconsistent.\n", returncode=0, stderr=""
+    ) is False
+
+
+def test_parse_verdict_raises_crashed_on_oom_kill():
+    """Regression: Konclude OOM-killed (exit 137) mid-SROIQ-precomputation
+    used to be silently classified as 'inconsistent'. It must now raise."""
+    with pytest.raises(KoncludeCrashed):
+        _parse_consistency_verdict(_KONCLUDE_OOM_TRUNCATED_STDOUT, returncode=-9, stderr="")
+
+
+def test_parse_verdict_raises_crashed_on_empty_output():
+    with pytest.raises(KoncludeCrashed):
+        _parse_consistency_verdict("", returncode=137, stderr="Killed")
 
 
 def test_missing_binary_raises_konclude_unavailable(tmp_path, monkeypatch):

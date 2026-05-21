@@ -27,7 +27,12 @@ services:
       FASTEMBED_CACHE_PATH: /root/.cache/fastembed
       OMP_NUM_THREADS: "2"
       ONNXRUNTIME_NUM_THREADS: "2"
-    mem_limit: 3g
+    # Bumped from 3g → 8g so Konclude can complete SROIQ DL precomputation on
+    # large biomedical ontologies (CL ~777K, HP ~900K, UBERON ~1.2M, MP ~1.3M,
+    # GO ~1.4M, MONDO ~3M triples). At 3g, Konclude was being SIGKILLed mid-
+    # precomputation and the resulting truncated stdout was misparsed as
+    # "inconsistent" by the verdict parser (now fixed; see konclude.py).
+    mem_limit: 8g
     depends_on:
       - postgres
       - redis

@@ -18,12 +18,22 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ontoexplorer.clients.robot import (
+    RobotConsistencyResult,
+    RobotServiceCrashed,
+    RobotServiceUnavailable,
+    run_robot_consistency,
+)
+# Konclude wrapper kept around for emergency fallback / comparison runs;
+# the active reasoning path now goes through the robot-service HTTP API.
 from ontoexplorer.modules.consistency.konclude import (
+    KoncludeCrashed,
     KoncludeResult,
     KoncludeTimeout,
     KoncludeUnavailable,
     run_konclude_consistency,
 )
+import requests as _requests
 from ontoexplorer.modules.consistency.merger import build_merge
 from ontoexplorer.modules.consistency.mireot_source_resolver import (
     MireotSourceResolveResult,
@@ -160,44 +170,56 @@ def _run_one_scope(
         result.elapsed_seconds = time.monotonic() - t0
         return result
 
+    # Active reasoning path: HTTP call to the robot-service container (HermiT).
+    # ROBOT returns both the consistency verdict AND the unsat class list in a
+    # single invocation (Konclude needed two), so we no longer need a separate
+    # explain step here just to enumerate the unsats.
     try:
-        konclude_result = run_konclude_consistency(merge_path)
-    except KoncludeUnavailable as exc:
+        rr: RobotConsistencyResult = run_robot_consistency(merge_path)
+    except RobotServiceUnavailable as exc:
+        result.status = "error"
+        result.error_message = f"robot-service unreachable: {exc}"
+        result.elapsed_seconds = time.monotonic() - t0
+        return result
+    except RobotServiceCrashed as exc:
+        # Reasoner OOM'd or threw an unhandled exception inside the service.
+        # Report `error` rather than guessing a verdict — same defensive
+        # principle that fixed the prior Konclude OOM-as-inconsistent bug.
         result.status = "error"
         result.error_message = str(exc)
         result.elapsed_seconds = time.monotonic() - t0
         return result
-    except KoncludeTimeout as exc:
+    except _requests.Timeout as exc:
         result.status = "timeout"
-        result.error_message = str(exc)
+        result.error_message = f"HTTP timeout calling robot-service: {exc}"
         result.elapsed_seconds = time.monotonic() - t0
         return result
 
-    # ROBOT explain ONCE per scope — bulk mode, all unsats explained in one JVM start
+    # ROBOT explain ONCE per scope — bulk mode, all unsats explained in one JVM start.
+    # Still routed through ROBOT's local subprocess (not the service) for now;
+    # folding this into the service is a follow-up.
     explanations: dict[str, list[list]] = {}
-    if konclude_result.unsatisfiable_class_iris:
+    if rr.unsatisfiable_class_iris:
         try:
             explanations = explain_unsatisfiability(
                 merge_path,
                 max_explanations=_MAX_EXPLAINED_PER_SCOPE,
             )
         except RobotExplainUnavailable:
-            # ROBOT missing → no justifications, but unsat list is still recorded.
             explanations = {}
         except RobotExplainTimeout:
-            # ROBOT timed out → similar fallback.
             explanations = {}
         except Exception:
             explanations = {}
 
     # Verdict
-    if konclude_result.consistent and not konclude_result.unsatisfiable_class_iris:
+    if rr.consistent:
         result.status = "consistent"
     else:
         result.status = "inconsistent"
 
-    # Build UnsatisfiableClass entries from Konclude's list, looking up justifications
-    for iri in konclude_result.unsatisfiable_class_iris:
+    # Build UnsatisfiableClass entries from ROBOT's list, looking up justifications
+    for iri in rr.unsatisfiable_class_iris:
         axiom_token_lists = explanations.get(iri, [])
         justification = [JustificationAxiom(manchester=a) for a in axiom_token_lists]
         result.unsatisfiable_classes.append(UnsatisfiableClass(
@@ -205,13 +227,13 @@ def _run_one_scope(
             justification=justification,
         ))
 
-    # Globally inconsistent case: Konclude said "not consistent" AND classification
-    # was skipped (so the unsat list is empty). Set the flag FIRST (it's the reliable
-    # signal), then add a synthetic owl:Thing entry so the class tree's synthetic
-    # owl:Nothing node correctly shows owl:Thing as its universal child — the visual
-    # realisation of "this ontology has no models, so every entailment, including
+    # Globally inconsistent case: ROBOT reported `globally_inconsistent: True`
+    # (the "The ontology is inconsistent" message). Set the flag and add a
+    # synthetic owl:Thing entry so the class tree's synthetic owl:Nothing node
+    # correctly shows owl:Thing as its universal child — the visual realisation
+    # of "this ontology has no models, so every entailment, including
     # owl:Thing ⊑ owl:Nothing, holds".
-    if not konclude_result.consistent and not konclude_result.unsatisfiable_class_iris:
+    if rr.globally_inconsistent:
         result.globally_inconsistent = True
         result.unsatisfiable_classes.append(UnsatisfiableClass(
             iri="http://www.w3.org/2002/07/owl#Thing",

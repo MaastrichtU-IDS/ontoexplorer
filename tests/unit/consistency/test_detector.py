@@ -4,12 +4,12 @@ from unittest.mock import patch
 import pyoxigraph
 import pytest
 
+from ontoexplorer.clients.robot import RobotConsistencyResult
 from ontoexplorer.modules.consistency.detector import (
     ConsistencyReport,
     ScopeResult,
     detect_consistency,
 )
-from ontoexplorer.modules.consistency.konclude import KoncludeResult
 
 
 HOST_GRAPH = "urn:test:host"
@@ -35,8 +35,8 @@ def test_report_has_three_scope_sections(populated_store, tmp_path):
     fake_reuse = {"mireot_terms": [], "imports": []}
     with patch("ontoexplorer.modules.consistency.detector._load_reuse_payload",
                return_value=fake_reuse), \
-         patch("ontoexplorer.modules.consistency.detector.run_konclude_consistency",
-               return_value=KoncludeResult(consistent=True)), \
+         patch("ontoexplorer.modules.consistency.detector.run_robot_consistency",
+               return_value=RobotConsistencyResult(consistent=True, globally_inconsistent=False)), \
          patch("ontoexplorer.modules.consistency.detector.explain_unsatisfiability",
                return_value={}):
         report = detect_consistency(
@@ -58,13 +58,11 @@ def test_report_has_three_scope_sections(populated_store, tmp_path):
 
 def test_inconsistent_konclude_result_propagates_to_scope(populated_store, tmp_path):
     fake_reuse = {"mireot_terms": [], "imports": []}
-    bad_result = KoncludeResult(
-        consistent=False,
-        unsatisfiable_class_iris=["http://example.org/bad#X"],
+    bad_result = RobotConsistencyResult(consistent=False, globally_inconsistent=False, unsatisfiable_class_iris=["http://example.org/bad#X"],
     )
     with patch("ontoexplorer.modules.consistency.detector._load_reuse_payload",
                return_value=fake_reuse), \
-         patch("ontoexplorer.modules.consistency.detector.run_konclude_consistency",
+         patch("ontoexplorer.modules.consistency.detector.run_robot_consistency",
                return_value=bad_result), \
          patch("ontoexplorer.modules.consistency.detector.explain_unsatisfiability",
                return_value={}):
@@ -84,7 +82,7 @@ def test_inconsistent_konclude_result_propagates_to_scope(populated_store, tmp_p
 def test_explain_called_once_per_scope_with_max_cap(populated_store, tmp_path):
     """ROBOT explain is invoked ONCE per scope (3 total), with max_explanations=10."""
     iris = [f"http://example.org/bad#{i}" for i in range(15)]
-    bad_result = KoncludeResult(consistent=False, unsatisfiable_class_iris=iris)
+    bad_result = RobotConsistencyResult(consistent=False, globally_inconsistent=False, unsatisfiable_class_iris=iris)
     call_records: list[dict] = []
 
     def fake_explain(merge_path, *, max_explanations=10, **kwargs):
@@ -93,7 +91,7 @@ def test_explain_called_once_per_scope_with_max_cap(populated_store, tmp_path):
 
     with patch("ontoexplorer.modules.consistency.detector._load_reuse_payload",
                return_value={"mireot_terms": [], "imports": []}), \
-         patch("ontoexplorer.modules.consistency.detector.run_konclude_consistency",
+         patch("ontoexplorer.modules.consistency.detector.run_robot_consistency",
                return_value=bad_result), \
          patch("ontoexplorer.modules.consistency.detector.explain_unsatisfiability",
                side_effect=fake_explain):
@@ -117,7 +115,7 @@ def test_explain_called_once_per_scope_with_max_cap(populated_store, tmp_path):
 def test_justifications_looked_up_from_explanation_dict(populated_store, tmp_path):
     """Per-class justification axioms come from the dict ROBOT returns."""
     iris = ["http://example.org/bad#X", "http://example.org/bad#Y"]
-    bad_result = KoncludeResult(consistent=False, unsatisfiable_class_iris=iris)
+    bad_result = RobotConsistencyResult(consistent=False, globally_inconsistent=False, unsatisfiable_class_iris=iris)
     fake_explanations = {
         "http://example.org/bad#X": [
             [{"t": "iri", "iri": "http://example.org/bad#X", "label": "X", "in_ontology": True},
@@ -128,7 +126,7 @@ def test_justifications_looked_up_from_explanation_dict(populated_store, tmp_pat
     }
     with patch("ontoexplorer.modules.consistency.detector._load_reuse_payload",
                return_value={"mireot_terms": [], "imports": []}), \
-         patch("ontoexplorer.modules.consistency.detector.run_konclude_consistency",
+         patch("ontoexplorer.modules.consistency.detector.run_robot_consistency",
                return_value=bad_result), \
          patch("ontoexplorer.modules.consistency.detector.explain_unsatisfiability",
                return_value=fake_explanations):
@@ -164,8 +162,8 @@ def test_mireot_skipped_marks_partial(populated_store, tmp_path):
                return_value=fake_reuse), \
          patch("ontoexplorer.modules.consistency.detector.fetch_mireot_sources",
                return_value=fake_mireot_result), \
-         patch("ontoexplorer.modules.consistency.detector.run_konclude_consistency",
-               return_value=KoncludeResult(consistent=True)), \
+         patch("ontoexplorer.modules.consistency.detector.run_robot_consistency",
+               return_value=RobotConsistencyResult(consistent=True, globally_inconsistent=False)), \
          patch("ontoexplorer.modules.consistency.detector.explain_unsatisfiability",
                return_value={}):
         report = detect_consistency(
