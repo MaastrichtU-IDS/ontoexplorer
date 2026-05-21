@@ -5,6 +5,22 @@ import pytest
 
 from ontoexplorer.models.db import SavedQuery, User
 
+
+@pytest.fixture()
+async def admin_client(app, client):
+    """Yield the test client with _require_admin overridden to skip DB/email checks."""
+    from ontoexplorer.api.admin._common import _require_admin
+
+    admin_user = User(
+        id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        email="admin@test.example",
+        display_name="Admin Test",
+    )
+    app.dependency_overrides[_require_admin] = lambda: admin_user
+    yield client
+    # Clean up override so it doesn't bleed into other tests
+    app.dependency_overrides.pop(_require_admin, None)
+
 SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000000"
 
 STARTERS = [

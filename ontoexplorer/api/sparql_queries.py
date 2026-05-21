@@ -1,19 +1,55 @@
 """Saved SPARQL queries endpoints."""
 
+import uuid
 from datetime import UTC, datetime
 from typing import Optional
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import httpx
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ontoexplorer.api.admin._common import _require_admin
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import SavedQuery, User
 from ontoexplorer.modules.auth.dependencies import get_current_user, require_auth
+from ontoexplorer.modules.sparql_starters.parser import (
+    StarterDraft,
+    detect_format,
+    parse_json_library,
+    parse_rq_with_metadata,
+)
 
 router = APIRouter(prefix="/api/v1/sparql/queries", tags=["sparql-queries"])
 starters_router = APIRouter(prefix="/api/v1/sparql", tags=["sparql-starters"])
+
+SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000000"
+_MAX_URL_BYTES = 1_048_576  # 1 MB
+_URL_TIMEOUT_SECONDS = 5.0
+
+
+async def _fetch_starter_url(url: str) -> str:
+    """Fetch the body of `url` with a size cap, timeout, and scheme guard.
+
+    Allowed: https://, plus http:// for localhost only. Returns UTF-8 body.
+    """
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    is_local_http = parsed.scheme == "http" and host in ("localhost", "127.0.0.1")
+    if parsed.scheme != "https" and not is_local_http:
+        raise ValueError("Only https:// URLs are allowed (localhost http allowed for dev)")
+
+    async with httpx.AsyncClient(
+        timeout=_URL_TIMEOUT_SECONDS, follow_redirects=True, max_redirects=3
+    ) as http:
+        resp = await http.get(url)
+    if resp.status_code != 200:
+        raise ValueError(f"Upstream returned HTTP {resp.status_code}")
+    if len(resp.content) > _MAX_URL_BYTES:
+        raise ValueError(f"Response exceeded {_MAX_URL_BYTES} byte cap")
+    return resp.content.decode("utf-8", errors="replace")
 
 
 class SavedQueryCreate(BaseModel):
@@ -188,3 +224,72 @@ async def list_starters(db: AsyncSession = Depends(get_db)):
         .order_by(SavedQuery.category, SavedQuery.name)
     )
     return {"starters": [_serialize(q) for q in result.scalars().all()]}
+
+
+@starters_router.post("/starters/import")
+async def import_starters(
+    text: Optional[str] = Form(None),
+    source_url: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
+    _admin: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin-only import. Accepts one of: text body field, source_url field,
+    or file upload. Auto-detects JSON-library vs .rq-with-metadata format.
+    """
+    # Resolve the source text
+    if file is not None:
+        text_content = (await file.read()).decode("utf-8", errors="replace")
+    elif source_url:
+        try:
+            text_content = await _fetch_starter_url(source_url)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    elif text:
+        text_content = text
+    else:
+        raise HTTPException(status_code=400, detail="No text, source_url, or file provided")
+
+    fmt = detect_format(text_content)
+    drafts: list[StarterDraft]
+    errors: list[dict] = []
+    if fmt == "json":
+        try:
+            drafts = parse_json_library(text_content)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"JSON parse error: {exc}")
+    else:
+        try:
+            drafts = [parse_rq_with_metadata(text_content)]
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"rq parse error: {exc}")
+
+    # Look up which names already exist among starters
+    existing_names_q = await db.execute(
+        select(SavedQuery.name).where(SavedQuery.is_starter == True)  # noqa: E712
+    )
+    existing_names = {row for (row,) in existing_names_q.all()}
+
+    created = 0
+    skipped = 0
+    for i, draft in enumerate(drafts):
+        if draft.name in existing_names:
+            skipped += 1
+            errors.append({"index": i, "name": draft.name, "reason": "duplicate name"})
+            continue
+        sq = SavedQuery(
+            id=str(uuid.uuid4()),
+            user_id=SYSTEM_USER_ID,
+            name=draft.name,
+            description=draft.description,
+            query_text=draft.query_text,
+            tags=draft.tags,
+            is_public=True,
+            is_starter=True,
+            category=draft.category,
+        )
+        db.add(sq)
+        existing_names.add(draft.name)  # dedup within this batch too
+        created += 1
+    await db.commit()
+    return {"created": created, "skipped": skipped, "errors": errors}
