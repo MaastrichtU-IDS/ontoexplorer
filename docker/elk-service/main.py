@@ -112,11 +112,16 @@ def run_classify(req: ClassifyRequest):
                 result = _whelk_classify_nt(ntriples_for_worker, version_id)
             else:
                 result = classify(graph_for_worker, version_id)
-            store_classification(result)
-            # Persist the input axioms alongside the result so /justification
-            # can run its hitting-set algorithm without depending on
-            # proof_traces (which are empty under the whelk backend).
+            # IMPORTANT: store input_axioms BEFORE classification. GET /classify/
+            # {vid} returns 200 as soon as the classification cache key exists
+            # (it doesn't gate on _in_progress when the result is already in
+            # Redis). If we wrote classification first, a follow-up
+            # /justification call could race ahead of the input_axioms write
+            # — which is exactly what bit ordo: 80 MB gzip takes ~5 s, leaving
+            # a window where the inference looks "done" but justification
+            # gets an empty input graph and returns no justifications.
             store_input_axioms(version_id, req.ntriples)
+            store_classification(result)
         except Exception:
             log.exception("classify_background_error", extra={"version_id": version_id})
         finally:
@@ -184,22 +189,31 @@ def compute_justification_endpoint(version_id: str, req: JustificationRequest):
     # cache populated at classification time (works for any backend). Fall back
     # to proof-trace reconstruction for older cache entries that pre-date the
     # input_axioms key. If both miss, justifications will come back empty.
-    g = _load_input_graph(version_id) or _reconstruct_graph_from_traces(result)
+    g_loaded = _load_input_graph(version_id)
+    if g_loaded is not None and len(g_loaded) > 0:
+        g = g_loaded
+    else:
+        # Pre-input-axioms-cache classifications (proof-trace backend or old
+        # cached results) — reconstruct from proof_traces.
+        g = _reconstruct_graph_from_traces(result)
 
     t0 = time.monotonic()
     timed_out = False
-    import concurrent.futures
+    # Direct call (no ThreadPoolExecutor): py-whelk + pyhornedowl rely on
+    # PyO3 objects whose lifetimes/handles don't transfer cleanly to a
+    # worker thread. The previous executor-based timeout was found to
+    # return empty results in ~1ms for some ontologies (e.g. ordo) when
+    # the executor's worker couldn't initialise the reasoner state.
+    # The trade-off: we lose the per-request internal timeout. Uvicorn's
+    # request lifetime is still bounded by the client's HTTP timeout, and
+    # the per-step is_entailed calls are bounded by ontology size.
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
-            _fut = _ex.submit(compute_justifications, g, result, req.sub, sup, req.max_justifications)
-            try:
-                justs = _fut.result(timeout=_JUSTIFICATION_TIME_LIMIT)
-            except concurrent.futures.TimeoutError:
-                timed_out = True
-                justs = []
+        justs = compute_justifications(g, result, req.sub, sup, req.max_justifications)
     except Exception:
-        timed_out = False
         justs = []
+        log.exception("justification_compute_failed", extra={
+            "version_id": version_id, "sub": req.sub, "sup": sup,
+        })
 
     elapsed_ms = round((time.monotonic() - t0) * 1000, 1)
     justification_id = str(uuid.uuid4())
