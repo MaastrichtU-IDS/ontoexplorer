@@ -33,6 +33,7 @@ LIMIT 10`
 
 export default function Sparql() {
   const containerRef = useRef<HTMLDivElement>(null)
+  const resultsWrapperRef = useRef<HTMLDivElement>(null)
   const yasguiRef = useRef<InstanceType<typeof Yasgui> | null>(null)
   const selectedOntologyIdsRef = useRef<string[]>([])
   const ontologiesRef = useRef<Ontology[]>([])
@@ -84,8 +85,8 @@ export default function Sparql() {
       },
     } as any)
 
-    const teardownClickHandler = containerRef.current
-      ? installIriClickHandler(containerRef.current, {
+    const teardownClickHandler = resultsWrapperRef.current
+      ? installIriClickHandler(resultsWrapperRef.current, {
           getOntologies: () => ontologiesRef.current,
           navigate,
         })
@@ -263,7 +264,10 @@ export default function Sparql() {
 
   // Clear stale diffResult when exiting diff mode.
   useEffect(() => {
-    if (!diffScope) setDiffResult(null)
+    if (!diffScope) {
+      diffAbortRef.current?.abort()
+      setDiffResult(null)
+    }
   }, [diffScope])
 
   return (
@@ -299,7 +303,7 @@ export default function Sparql() {
       )}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden', minHeight: 0 }}>
         <QuerySidebar yasguiRef={yasguiRef} />
-        <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+        <div ref={resultsWrapperRef} style={{ flex: 1, minHeight: 0, position: 'relative' }}>
           <div ref={containerRef} data-testid="yasgui-container" style={{
             height: '100%', overflowY: 'auto',
           }} />

@@ -340,6 +340,91 @@ it('runs two parallel fetches in Diff mode and renders DiffQueryView', async () 
   })
 })
 
+it('intercepts IRI clicks inside DiffQueryView and navigates in-app', async () => {
+  vi.resetModules()
+  const queryHandlers: Array<(req: any, cfg: any) => void> = []
+  const fakeYasqe = {
+    setValue: vi.fn(),
+    getValue: vi.fn(() => 'SELECT ?x WHERE { ?x ?p ?o }'),
+    on: vi.fn((evt: string, cb: any) => {
+      if (evt === 'query') queryHandlers.push(cb)
+    }),
+  }
+  vi.doMock('@triply/yasgui', () => ({
+    default: vi.fn().mockImplementation(() => ({
+      getTab: () => ({
+        getYasqe: () => fakeYasqe,
+        getYasr: () => ({ on: vi.fn() }),
+        setEndpoint: vi.fn(),
+        getRequestConfig: () => ({ endpoint: '/api/v1/sparql/content' }),
+      }),
+      destroy: vi.fn(),
+    })),
+  }))
+  vi.doMock('../hooks/useOntologies', () => ({
+    useOntologies: () => ({
+      ontologies: [
+        { id: 'O1', iri: 'https://w3id.org/ontostart/pizza/', shortname: 'pizza',
+          title: 'Pizza', created_at: '2024-01-01',
+          latest_version: { id: 'V2', ontology_id: 'O1', status: 'ready' } },
+      ],
+      isLoading: false,
+    }),
+  }))
+  const navigateMock = vi.fn()
+  vi.doMock('react-router-dom', async () => {
+    const actual = await vi.importActual<any>('react-router-dom')
+    return { ...actual, useNavigate: () => navigateMock }
+  })
+  vi.doMock('../lib/api', async () => {
+    const actual = await vi.importActual<any>('../lib/api')
+    return {
+      ...actual,
+      api: {
+        ...actual.api,
+        ontologies: {
+          ...actual.api.ontologies,
+          versions: vi.fn().mockResolvedValue({
+            versions: [
+              { id: 'V2', ontology_id: 'O1', status: 'ready', format: 'owl',
+                version_iri: 'pizza-2.0', sha256: '', triple_count: 0, download_url: '', created_at: '2026-05-20' },
+              { id: 'V1', ontology_id: 'O1', status: 'ready', format: 'owl',
+                version_iri: 'pizza-1.0', sha256: '', triple_count: 0, download_url: '', created_at: '2024-01-01' },
+            ],
+          }),
+        },
+      },
+    }
+  })
+  global.fetch = vi.fn().mockImplementation(async (url: string) => {
+    return {
+      ok: true, status: 200,
+      json: async () => ({
+        head: { vars: ['x'] },
+        results: { bindings: [{ x: { type: 'uri', value: 'https://w3id.org/ontostart/pizza/Margherita' } }] },
+      }),
+    } as Response
+  }) as any
+
+  const { default: SparqlFresh } = await import('./Sparql')
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter><SparqlFresh /></MemoryRouter>
+    </QueryClientProvider>,
+  )
+  fireEvent.click(await screen.findByRole('button', { name: /^diff$/i }))
+  await waitFor(() => expect(queryHandlers.length).toBeGreaterThan(0))
+  queryHandlers[0]({ abort: vi.fn() }, { endpoint: '/api/v1/sparql/content' })
+
+  const anchor = await screen.findByText('https://w3id.org/ontostart/pizza/Margherita')
+  fireEvent.click(anchor)
+  await waitFor(() => {
+    expect(navigateMock).toHaveBeenCalledWith(
+      '/ontologies/pizza?term=https%3A%2F%2Fw3id.org%2Fontostart%2Fpizza%2FMargherita'
+    )
+  })
+})
+
 it('fetches and applies labels when the labels toggle is enabled', async () => {
   vi.resetModules()
   const setEndpointMock = vi.fn()

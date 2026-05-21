@@ -188,6 +188,14 @@ Click a pill to filter; default is `All` with the changes (`Only From` + `Only T
 - Diff over per-row inferred-vs-asserted within the same version *automatically* (the user can achieve it by picking the same version on both sides with different modes).
 - Server-side diff endpoint (kept in frontend for v1 — no backend change).
 
+## Known deferred from v1
+
+- Sortable column headers (click-to-sort by any variable column). Default ordering
+  (changes first) ships but column-level sort is deferred.
+- Non-SELECT query → re-show Yasr native pane. v1 shows an in-DiffQueryView banner
+  instead because re-showing Yasr would require letting its bound fetch complete
+  rather than aborting it (different architecture). Documented for follow-up.
+
 ## Open questions
 
 None. Ready for implementation planning.
