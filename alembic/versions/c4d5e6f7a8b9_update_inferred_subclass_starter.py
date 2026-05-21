@@ -1,6 +1,6 @@
 """update Inferred subClassOf chain starter: add DISTINCT, generalise URI to ?class
 
-Revision ID: b3c4d5e6f7a8
+Revision ID: c4d5e6f7a8b9
 Revises: a0b1c2d3e4f5
 Create Date: 2026-05-21
 """
@@ -10,7 +10,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "b3c4d5e6f7a8"
+revision = "c4d5e6f7a8b9"
 down_revision = "a0b1c2d3e4f5"
 branch_labels = None
 depends_on = None
