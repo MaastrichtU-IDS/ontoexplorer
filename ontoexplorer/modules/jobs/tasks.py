@@ -633,12 +633,12 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
             invalidate_latest_ready_versions_cache()
         except Exception:
             pass
-        # Drop the shared cross-process /search and /autocomplete response caches
-        # so newly-indexed entities show up immediately rather than waiting on TTL.
+        # Drop the shared cross-process /search, /autocomplete, /terms response
+        # caches so newly-indexed entities show up immediately rather than waiting on TTL.
         try:
             from ontoexplorer.modules.search.indexer import _get_redis
             _r = _get_redis()
-            for _pattern in ("search:result:*", "search:autocomplete:*"):
+            for _pattern in ("search:result:*", "search:autocomplete:*", "search:term:*"):
                 for _k in _r.scan_iter(_pattern, count=500):
                     _r.delete(_k)
         except Exception:

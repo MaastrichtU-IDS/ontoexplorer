@@ -1383,6 +1383,16 @@ def _sparql_class_usage(store, cu_q: str, disj_q: str, label_fn, adc_map: dict, 
     return result
 
 
+_TERM_DETAIL_CACHE_TTL = 300  # 5 minutes — term details are essentially static within a version
+
+
+def _term_detail_cache_key(ontology_id: str, version_id: str, term_iri: str, lang: str | None) -> str:
+    import hashlib
+    payload = f"{ontology_id}\x1f{version_id}\x1f{term_iri}\x1f{lang or ''}"
+    h = hashlib.blake2b(payload.encode(), digest_size=16).hexdigest()
+    return f"search:term:{h}"
+
+
 @router.get("/{ontology_id}/{version_id}/terms/{term_iri:path}", summary="Term detail")
 async def get_term(
     ontology_id: str,
@@ -1393,10 +1403,18 @@ async def get_term(
     _user=Depends(get_current_user),
 ):
     import asyncio
+    import json as _json_cache
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
     from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
 
     await _get_version_or_404(db, ontology_id, version_id)
+
+    # Response cache — repeat clicks across a session are essentially free.
+    _r_cache = _get_redis()
+    _cache_key = _term_detail_cache_key(ontology_id, version_id, term_iri, lang)
+    _cached = await asyncio.to_thread(_r_cache.get, _cache_key)
+    if _cached:
+        return _json_cache.loads(_cached)
 
     store = get_store()
     g_iri = graph_iri(ontology_id, version_id)
@@ -1482,20 +1500,56 @@ async def get_term(
                          if v.startswith("http://") or v.startswith("https://") or v.startswith("urn:")]
 
 
-    # Resolve labels from Redis index
+    # Resolve labels from Redis index — bulk-pipelined to avoid one round-trip
+    # per IRI (the dominant cost on the cold path for terms with many relationships).
     r = _get_redis()
+    _label_cache: dict[str, str] = {}
 
-    def _label(iri: str) -> str:
-        detail = r.hgetall(_iri_key(version_id, iri))
-        if detail and detail.get("label"):
-            return detail["label"]
+    def _fallback(iri: str) -> str:
         fragment = iri.rstrip("/")
         return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
 
+    def _resolve_labels(iris) -> None:
+        """Bulk-prefetch labels for any IRIs not already in the cache (one round-trip)."""
+        missing = [i for i in dict.fromkeys(iris) if i and i not in _label_cache]
+        if not missing:
+            return
+        pipe = r.pipeline(transaction=False)
+        for i in missing:
+            pipe.hgetall(_iri_key(version_id, i))
+        for i, detail in zip(missing, pipe.execute()):
+            _label_cache[i] = (detail or {}).get("label") or _fallback(i)
+
+    def _label(iri: str) -> str:
+        cached = _label_cache.get(iri)
+        if cached is not None:
+            return cached
+        # Fallback for IRIs discovered late (e.g. inside recursive _build_class_expr).
+        detail = r.hgetall(_iri_key(version_id, iri))
+        label = (detail or {}).get("label") or _fallback(iri)
+        _label_cache[iri] = label
+        return label
+
     def _term_list(iris: list[str]) -> list[dict]:
+        _resolve_labels(iris)
         items = [{"iri": iri, "label": _label(iri)} for iri in iris]
         items.sort(key=lambda t: (t["label"] or t["iri"]).lower())
         return items
+
+    # Prefetch labels for everything we already know we'll need — one Redis pipeline
+    # roundtrip instead of N. The recursive _build_class_expr path falls back to
+    # single HGETALL only for IRIs discovered late.
+    _pre_iris: list[str] = []
+    _pre_iris.extend(asserted_sub_iris)
+    _pre_iris.extend(inferred_sub_iris)
+    _pre_iris.extend(asserted_sup_iris)
+    _pre_iris.extend(inferred_sup_iris)
+    # Object-value IRIs from the term's properties (rdf:type, rdfs:subClassOf, etc.)
+    for _vals in properties.values():
+        for _v in _vals:
+            if isinstance(_v, str) and _v.startswith(("http://", "https://", "urn:")):
+                _pre_iris.append(_v)
+    _resolve_labels(_pre_iris)
 
     # Superclass expressions — blank-node targets of rdfs:subClassOf (complex class expressions)
     import pyoxigraph as _ox
@@ -1567,6 +1621,13 @@ async def get_term(
             _adc_map.setdefault(_miri, []).extend(o for o in _miris if o != _miri)
 
     # Inferred disjoint-with — walk ALL ancestors (asserted + inferred); check pairwise + AllDisjointClasses
+    # Bulk-prefetch partner IRIs that the loop will label so we don't pay
+    # one Redis HGETALL per partner.
+    _partner_iris: list[str] = []
+    for _anc in _all_ancestor_iris:
+        _partner_iris.extend(_adc_map.get(_anc, []))
+    _resolve_labels(_partner_iris)
+
     _seen_disjoint_keys: set[str] = {_json_mod.dumps(_e, sort_keys=True) for _e in disjoint_with}
     inferred_disjoint_with: list[dict] = []
     for _sup_iri in _all_ancestor_iris:
@@ -1750,7 +1811,10 @@ async def get_term(
                 for row in s.query(_dp_q)
             ]
 
-        for row in await asyncio.to_thread(_query_dp, store):
+        _dp_rows = await asyncio.to_thread(_query_dp, store)
+        # Bulk-resolve all prop/range IRIs in one pipeline before iterating.
+        _resolve_labels([r["prop_iri"] for r in _dp_rows] + [r["range_iri"] for r in _dp_rows if r["range_iri"]])
+        for row in _dp_rows:
             schema_properties.append({
                 "prop_iri": row["prop_iri"],
                 "prop_label": _label(row["prop_iri"]),
@@ -1792,9 +1856,15 @@ async def get_term(
                     for row in s.query(_idp_q)
                 ]
 
+            _idp_rows = await asyncio.to_thread(_query_idp, store)
+            _resolve_labels(
+                [r["prop_iri"] for r in _idp_rows]
+                + [r["range_iri"] for r in _idp_rows if r["range_iri"]]
+                + [r["from_iri"] for r in _idp_rows]
+            )
             _direct_iris = {sp["prop_iri"] for sp in schema_properties}
             _seen_inh: set[tuple] = set()
-            for row in await asyncio.to_thread(_query_idp, store):
+            for row in _idp_rows:
                 key = (row["prop_iri"], row["from_iri"])
                 if key not in _seen_inh and row["prop_iri"] not in _direct_iris:
                     _seen_inh.add(key)
@@ -1892,7 +1962,7 @@ async def get_term(
     if "http://www.w3.org/2002/07/owl#NamedIndividual" in properties.get(_RDF_TYPE, []):
         type_of = _term_list([iri for iri in properties.get(_RDF_TYPE, []) if iri not in _OWL_META])
 
-    return {
+    _payload = {
         "iri": term_iri,
         "label": typed_label if term_labels else top_label,
         "labels": term_labels,
@@ -1923,6 +1993,8 @@ async def get_term(
         "schema_properties": schema_properties,
         "inherited_schema_properties": inherited_schema_properties,
     }
+    await asyncio.to_thread(_r_cache.set, _cache_key, _json_cache.dumps(_payload), _TERM_DETAIL_CACHE_TTL)
+    return _payload
 
 
 # ── Inferred axioms ────────────────────────────────────────────────────────────
@@ -2424,7 +2496,7 @@ async def deprecate_version(
     try:
         from ontoexplorer.modules.search.indexer import _get_redis
         _r = _get_redis()
-        for _pattern in ("search:result:*", "search:autocomplete:*"):
+        for _pattern in ("search:result:*", "search:autocomplete:*", "search:term:*"):
             for _k in _r.scan_iter(_pattern, count=500):
                 _r.delete(_k)
     except Exception:
