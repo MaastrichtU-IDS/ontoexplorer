@@ -11,11 +11,11 @@ function useDebounce<T>(value: T, ms: number): T {
   return debounced
 }
 
-export function useOntologySearch(query: string, group?: string, profile?: ProfileName) {
+export function useOntologySearch(query: string, group?: string, profile?: ProfileName, reuses?: string) {
   const q = useDebounce(query.trim(), 250)
   return useQuery({
-    queryKey: ['ontologies', 'search', q, group ?? '', profile ?? ''],
-    queryFn: () => api.ontologies.list(0, 200, q || undefined, group || undefined, profile),
+    queryKey: ['ontologies', 'search', q, group ?? '', profile ?? '', reuses ?? ''],
+    queryFn: () => api.ontologies.list(0, 200, q || undefined, group || undefined, profile, reuses),
     staleTime: 30_000,
   })
 }

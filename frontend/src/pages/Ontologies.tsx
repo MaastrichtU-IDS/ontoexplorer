@@ -8,14 +8,16 @@ import { api, Ontology, OwlProfileFleetEntry, ProfileName, slugFromIri } from '.
 import Coverage from './Coverage'
 import OwlProfile from './OwlProfile'
 import Compare from './Compare'
+import { Reuse } from './Reuse'
 
-type Tab = 'list' | 'coverage' | 'profiles' | 'compare'
-const TAB_VALUES: Tab[] = ['list', 'coverage', 'profiles', 'compare']
+type Tab = 'list' | 'coverage' | 'profiles' | 'compare' | 'reuse'
+const TAB_VALUES: Tab[] = ['list', 'coverage', 'profiles', 'compare', 'reuse']
 const TAB_LABELS: Record<Tab, string> = {
   list:     'List',
   coverage: 'Coverage',
   profiles: 'OWL Profile',
   compare:  'Compare',
+  reuse:    'Reuse',
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -278,7 +280,8 @@ export default function Ontologies() {
   const [langs, setLangs] = useState<Set<string>>(new Set())
   const [sortCol, setSortCol] = useState<SortCol>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
-  const { data, isLoading } = useOntologySearch(query, group || undefined, profile || undefined)
+  const reuses = searchParams.get('reuses') ?? undefined
+  const { data, isLoading } = useOntologySearch(query, group || undefined, profile || undefined, reuses)
   const repoLangs = useRepositoryLanguages()
   const { data: profileFleet } = useQuery({
     queryKey: ['owl-profile', 'fleet'],
@@ -356,6 +359,7 @@ export default function Ontologies() {
       {tab === 'coverage' && <Coverage />}
       {tab === 'profiles' && <OwlProfile />}
       {tab === 'compare' && <Compare />}
+      {tab === 'reuse' && <Reuse />}
       {tab === 'list' && <>
       {/* Group filter chips */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.6rem' }}>
@@ -509,7 +513,7 @@ export default function Ontologies() {
         <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</p>
       ) : ontologies.length === 0 ? (
         <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
-          {(query || group || profile) ? 'No ontologies match your filter.' : 'No ontologies loaded yet.'}
+          {(query || group || profile || reuses) ? 'No ontologies match your filter.' : 'No ontologies loaded yet.'}
         </p>
       ) : (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -523,7 +527,7 @@ export default function Ontologies() {
 
       <p style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: '1rem' }}>
         {ontologies.length} ontolog{ontologies.length === 1 ? 'y' : 'ies'}
-        {(query || group || profile || langs.size > 0) && ' matching filter'}
+        {(query || group || profile || reuses || langs.size > 0) && ' matching filter'}
       </p>
       </>}
     </div>

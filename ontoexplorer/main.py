@@ -23,6 +23,7 @@ from ontoexplorer.api.mod import router as mod_router
 from ontoexplorer.api.compare import router as compare_router
 from ontoexplorer.api.coverage import router as coverage_router
 from ontoexplorer.api.owl_profile import router as owl_profile_router
+from ontoexplorer.api.reuse import router as reuse_router
 from ontoexplorer.api.ols import router as ols_router
 from ontoexplorer.config import get_settings
 from ontoexplorer.logging_config import configure_logging
@@ -78,6 +79,9 @@ def create_app() -> FastAPI:
     # owl_profile_router before ontologies_router: /{id}/{vid}/owl-profile static segment must
     # match before ontologies_router's parameterized sub-routes
     app.include_router(owl_profile_router)
+    # reuse_router before ontologies_router: /{id}/{vid}/reuse static segment must
+    # match before ontologies_router's parameterized sub-routes
+    app.include_router(reuse_router)
     app.include_router(ontologies_router)
     app.include_router(search_router)
     app.include_router(webhooks_router)

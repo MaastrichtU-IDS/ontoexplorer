@@ -955,3 +955,74 @@ async def _refresh_stale_inferred_diffs_body(db) -> int:
                     break
                     break  # one re-queue per row is enough
     return requeued
+
+
+@celery_app.task(name="ontoexplorer.refresh_reuse", time_limit=300)
+def refresh_reuse(version_id: str, ontology_id: str) -> dict:
+    """Rebuild ONLY the reuse:{version_id} Redis cache.
+
+    Cheaper alternative to a full index_ontology when only the reuse report
+    needs updating (e.g. after a detector bug fix). Does NOT touch the
+    search index, OWL profile cache, or queue embeddings.
+    """
+    import json as _json
+    from dataclasses import asdict as _asdict
+
+    from sqlalchemy import select
+
+    from ontoexplorer.clients.oxigraph import get_store, graph_iri
+    from ontoexplorer.database import make_celery_db_session
+    from ontoexplorer.models.db import Ontology, OntologyImport, OntologyVersion
+    from ontoexplorer.modules.reuse.cache import reuse_cache_key
+    from ontoexplorer.modules.reuse.detector import detect_reuse
+    from ontoexplorer.modules.search.indexer import (
+        _get_redis,
+        _SEARCH_TTL,
+        _iri_key,
+        _type_key,
+    )
+
+    async def _gather():
+        async with make_celery_db_session()() as db:
+            ont = (await db.execute(
+                select(Ontology).where(Ontology.id == ontology_id)
+            )).scalar_one_or_none()
+            imp_rows = (await db.execute(
+                select(OntologyImport).where(OntologyImport.version_id == version_id)
+            )).scalars().all()
+            db_imports = [
+                {"import_iri": row.import_iri, "depth": 1} for row in imp_rows
+            ]
+            return ont.iri if ont else "", db_imports
+
+    host_iri, db_imports = asyncio.run(_gather())
+    host_namespaces = [host_iri + sep for sep in ("#", "/")] if host_iri else []
+
+    # Re-collect entities from the existing search index in Redis
+    r = _get_redis()
+    entities: list[tuple[str, str]] = []
+    for etype in ("class", "object_property", "data_property",
+                  "annotation_property", "individual"):
+        for iri in r.smembers(_type_key(version_id, etype)):
+            entities.append((iri, etype))
+
+    g = graph_iri(ontology_id, version_id)
+    report = detect_reuse(
+        get_store(),
+        graph_iri=g,
+        version_id=version_id,
+        host_iri=host_iri,
+        host_namespaces=host_namespaces,
+        db_imports=db_imports,
+        entities=entities,
+    )
+    r.setex(reuse_cache_key(version_id), _SEARCH_TTL,
+            _json.dumps(_asdict(report)))
+    log.info("reuse_refresh_done", version_id=version_id)
+    return {
+        "status": "done",
+        "version_id": version_id,
+        "imports_count": len(report.imports),
+        "mireot_terms_count": len(report.mireot_terms),
+        "sources_reused": len(report.term_iri_reuse),
+    }
