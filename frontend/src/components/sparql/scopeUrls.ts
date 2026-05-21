@@ -58,6 +58,18 @@ export function formatScopeAsFromClauses(graphIris: string[]): string {
 }
 
 /**
+ * Remove any FROM / FROM NAMED lines whose IRI matches our managed
+ * `urn:ontology:` scheme. Hand-written FROM clauses with other IRI patterns
+ * are left alone. Used to keep the editor's scope-managed FROM list in sync
+ * with the ScopeToolbar's chip selection.
+ */
+const MANAGED_FROM_LINE = /^[ \t]*FROM(?:[ \t]+NAMED)?[ \t]+<urn:ontology:[^>]+>[ \t]*\r?\n?/gm
+
+export function stripManagedFromClauses(text: string): string {
+  return text.replace(MANAGED_FROM_LINE, '')
+}
+
+/**
  * Build a scoped /sparql/content endpoint URL for a single (version, mode)
  * tuple. Convenience over `buildScopedEndpoint` for callers that already have
  * the OntologyVersion in hand (e.g. the diff-mode toolbar).

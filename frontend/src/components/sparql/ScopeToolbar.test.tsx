@@ -101,8 +101,14 @@ describe('ScopeToolbar — reasoning mode', () => {
     fireEvent.click(screen.getByText('envo'))
     onScope.mockClear()
     fireEvent.click(screen.getByRole('button', { name: /inferred/i }))
+    // Inferred mode also scopes to the Phase-2 :consistency-inferred graph
+    // alongside the ELK :inferred graph — see scopeUrls.ts.
     expect(onScope).toHaveBeenLastCalledWith(
-      '/api/v1/sparql/content?default-graph-uri=urn%3Aontology%3AO1%3AV1%3Ainferred&named-graph-uri=urn%3Aontology%3AO1%3AV1%3Ainferred'
+      '/api/v1/sparql/content' +
+      '?default-graph-uri=urn%3Aontology%3AO1%3AV1%3Ainferred' +
+      '&named-graph-uri=urn%3Aontology%3AO1%3AV1%3Ainferred' +
+      '&default-graph-uri=urn%3Aontology%3AO1%3AV1%3Aconsistency-inferred' +
+      '&named-graph-uri=urn%3Aontology%3AO1%3AV1%3Aconsistency-inferred'
     )
   })
 
@@ -178,9 +184,12 @@ describe('ScopeToolbar — copy icon', () => {
     fireEvent.click(screen.getByText('envo'))
     fireEvent.click(screen.getByRole('button', { name: /both/i }))
     fireEvent.click(screen.getByRole('button', { name: /copy query with scope/i }))
+    // Both mode includes asserted, ELK-inferred, and Phase-2
+    // consistency-inferred graphs — see scopeUrls.ts.
     expect(onCopy).toHaveBeenLastCalledWith(
       'FROM <urn:ontology:O1:V1>\nFROM NAMED <urn:ontology:O1:V1>\n' +
-      'FROM <urn:ontology:O1:V1:inferred>\nFROM NAMED <urn:ontology:O1:V1:inferred>\n'
+      'FROM <urn:ontology:O1:V1:inferred>\nFROM NAMED <urn:ontology:O1:V1:inferred>\n' +
+      'FROM <urn:ontology:O1:V1:consistency-inferred>\nFROM NAMED <urn:ontology:O1:V1:consistency-inferred>\n'
     )
   })
 })

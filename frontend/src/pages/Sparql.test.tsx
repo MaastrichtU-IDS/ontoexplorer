@@ -168,7 +168,18 @@ it('does not duplicate PREFIX when the same shortname is already in the query', 
   fireEvent.click(screen.getByText('pizza'))
 
   await new Promise(resolve => setTimeout(resolve, 50))
-  expect(setValueMock).not.toHaveBeenCalled()
+  // The PREFIX-add path is suppressed (shortname already present), but the
+  // scope-FROM sync still fires to inject FROM/FROM NAMED for the chip.
+  // Verify: no call includes a duplicated PREFIX line; at least one call
+  // includes the managed FROM clauses prepended to the original query.
+  const calls = setValueMock.mock.calls.map(c => c[0] as string)
+  for (const text of calls) {
+    expect(text.match(/PREFIX pizza:/g) ?? []).toHaveLength(1)
+  }
+  expect(calls.some(t =>
+    t.includes('FROM <urn:ontology:O1:V1>') &&
+    t.includes('FROM NAMED <urn:ontology:O1:V1>')
+  )).toBe(true)
 })
 
 it('navigates to the term page when an IRI cell is clicked', async () => {

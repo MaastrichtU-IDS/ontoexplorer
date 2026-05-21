@@ -24,6 +24,11 @@ export interface ScopeToolbarProps {
   onSelectionChange?: (ontologyIds: string[]) => void
   onLabelsToggle?: (enabled: boolean) => void
   onDiffScopeChange?: (scope: DiffScope | null) => void
+  /** Called whenever the scope's graph IRI list changes in Single mode. The
+   *  page uses this to keep the editor's managed FROM/FROM NAMED clauses in
+   *  sync with the chip selection. In Diff mode the toolbar emits [] (Diff
+   *  uses URL params, not editor-injected FROM clauses). */
+  onScopeGraphsChange?: (graphIris: string[]) => void
 }
 
 function ontologyLabel(o: Ontology): string {
@@ -39,7 +44,7 @@ function isSelectable(o: Ontology): boolean {
   return !['pending', 'failed', 'deprecated'].includes(o.latest_version.status)
 }
 
-export function ScopeToolbar({ onScopeChange, onCopy, onOntologyAdded, onSelectionChange, onLabelsToggle, onDiffScopeChange }: ScopeToolbarProps) {
+export function ScopeToolbar({ onScopeChange, onCopy, onOntologyAdded, onSelectionChange, onLabelsToggle, onDiffScopeChange, onScopeGraphsChange }: ScopeToolbarProps) {
   const { ontologies } = useOntologies()
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [mode, setMode] = useState<ReasoningMode>('asserted')
@@ -87,6 +92,18 @@ export function ScopeToolbar({ onScopeChange, onCopy, onOntologyAdded, onSelecti
   useEffect(() => {
     onSelectionChange?.(Array.from(selected))
   }, [selected, onSelectionChange])
+
+  // Notify the parent whenever the scope's graph IRI list changes (Single mode
+  // only; Diff mode uses URL params, not editor-injected FROM clauses). The
+  // page uses this to keep the editor's managed FROM/FROM NAMED list in sync
+  // with chip selection.
+  useEffect(() => {
+    if (toolbarMode === 'diff') {
+      onScopeGraphsChange?.([])
+      return
+    }
+    onScopeGraphsChange?.(graphIris)
+  }, [toolbarMode, graphIris, onScopeGraphsChange])
 
   // Close popover on outside click.
   useEffect(() => {
@@ -428,7 +445,7 @@ export function ScopeToolbar({ onScopeChange, onCopy, onOntologyAdded, onSelecti
       <button
         onClick={handleCopy}
         aria-label="Copy query with scope"
-        title="Copy editor query with FROM/FROM NAMED clauses prepended"
+        title="Copy the editor query to clipboard"
         style={{
           fontSize: 14, padding: '2px 8px', border: '1px solid var(--border)',
           borderRadius: 4, background: 'transparent', color: 'var(--text-dim)',

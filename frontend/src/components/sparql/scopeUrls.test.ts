@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { assertedGraphIri, inferredGraphIri, selectedGraphIris, buildScopedEndpoint, formatScopeAsFromClauses, endpointForVersion } from './scopeUrls'
+import { assertedGraphIri, inferredGraphIri, selectedGraphIris, buildScopedEndpoint, formatScopeAsFromClauses, stripManagedFromClauses, endpointForVersion } from './scopeUrls'
 import type { Ontology, OntologyVersion } from '../../lib/api'
 
 const ONTS: Ontology[] = [
@@ -109,6 +109,59 @@ describe('formatScopeAsFromClauses', () => {
   it('returns four lines for two URIs in order', () => {
     expect(formatScopeAsFromClauses(['urn:a', 'urn:b']))
       .toBe('FROM <urn:a>\nFROM NAMED <urn:a>\nFROM <urn:b>\nFROM NAMED <urn:b>\n')
+  })
+})
+
+describe('stripManagedFromClauses', () => {
+  it('returns the text unchanged when no FROM lines present', () => {
+    const q = 'PREFIX owl: <http://www.w3.org/2002/07/owl#>\nSELECT * WHERE { ?s ?p ?o }'
+    expect(stripManagedFromClauses(q)).toBe(q)
+  })
+
+  it('strips a managed FROM line', () => {
+    const q = 'FROM <urn:ontology:O1:V1>\nSELECT * WHERE { ?s ?p ?o }'
+    expect(stripManagedFromClauses(q)).toBe('SELECT * WHERE { ?s ?p ?o }')
+  })
+
+  it('strips both FROM and FROM NAMED for managed IRIs', () => {
+    const q = 'FROM <urn:ontology:O1:V1>\nFROM NAMED <urn:ontology:O1:V1>\nSELECT * WHERE { ?s ?p ?o }'
+    expect(stripManagedFromClauses(q)).toBe('SELECT * WHERE { ?s ?p ?o }')
+  })
+
+  it('strips multiple managed FROM blocks (e.g. inferred + consistency-inferred)', () => {
+    const q =
+      'FROM <urn:ontology:O1:V1:inferred>\n' +
+      'FROM NAMED <urn:ontology:O1:V1:inferred>\n' +
+      'FROM <urn:ontology:O1:V1:consistency-inferred>\n' +
+      'FROM NAMED <urn:ontology:O1:V1:consistency-inferred>\n' +
+      'PREFIX owl: <http://www.w3.org/2002/07/owl#>\nASK { ?s ?p ?o }'
+    expect(stripManagedFromClauses(q)).toBe(
+      'PREFIX owl: <http://www.w3.org/2002/07/owl#>\nASK { ?s ?p ?o }'
+    )
+  })
+
+  it('leaves user-written FROM with non-managed IRIs alone', () => {
+    const q =
+      'FROM <http://example.org/graph>\n' +
+      'FROM NAMED <http://example.org/graph2>\n' +
+      'SELECT * WHERE { ?s ?p ?o }'
+    expect(stripManagedFromClauses(q)).toBe(q)
+  })
+
+  it('strips managed FROM but leaves user-written FROM in the same query', () => {
+    const q =
+      'FROM <urn:ontology:O1:V1>\n' +
+      'FROM <http://example.org/other>\n' +
+      'SELECT * WHERE { ?s ?p ?o }'
+    expect(stripManagedFromClauses(q)).toBe(
+      'FROM <http://example.org/other>\n' +
+      'SELECT * WHERE { ?s ?p ?o }'
+    )
+  })
+
+  it('tolerates leading whitespace on FROM lines', () => {
+    const q = '  FROM <urn:ontology:O1:V1>\n\t FROM NAMED <urn:ontology:O1:V1>\nSELECT * WHERE { ?s ?p ?o }'
+    expect(stripManagedFromClauses(q)).toBe('SELECT * WHERE { ?s ?p ?o }')
   })
 })
 

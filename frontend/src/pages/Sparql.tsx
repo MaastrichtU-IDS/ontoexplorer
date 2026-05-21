@@ -13,7 +13,7 @@ import { installIriClickHandler } from '../components/sparql/iriClickHandler'
 import { collectIris, buildLabelsQuery, applyLabels, removeLabels } from '../components/sparql/labelEnricher'
 import type { Ontology, OntologyVersion } from '../lib/api'
 import { DiffQueryView } from '../components/sparql/DiffQueryView'
-import { endpointForVersion } from '../components/sparql/scopeUrls'
+import { endpointForVersion, formatScopeAsFromClauses, stripManagedFromClauses } from '../components/sparql/scopeUrls'
 import type { BindingRow } from '../components/sparql/diffBindings'
 import type { DiffScope } from '../components/sparql/ScopeToolbar'
 import type { ReasoningMode } from '../components/sparql/scopeUrls'
@@ -151,10 +151,27 @@ export default function Sparql() {
     yasguiRef.current?.getTab()?.setEndpoint(endpoint)
   }, [])
 
-  const handleCopy = useCallback((fromBlock: string) => {
+  // The editor's managed FROM clauses are kept in sync with chip state via
+  // handleScopeGraphsChange, so the editor already contains the correct
+  // FROM/FROM NAMED list. Copy just snapshots whatever's in the editor.
+  const handleCopy = useCallback((_fromBlock: string) => {
     const current = yasguiRef.current?.getTab()?.getYasqe()?.getValue() ?? ''
-    const text = fromBlock ? `${fromBlock}${current}` : current
-    navigator.clipboard?.writeText(text)?.catch(() => {})
+    navigator.clipboard?.writeText(current)?.catch(() => {})
+  }, [])
+
+  // Keep the editor's managed FROM/FROM NAMED clauses (those using our
+  // `urn:ontology:` IRI scheme) in sync with the ScopeToolbar's chip
+  // selection. Hand-written FROM clauses with other IRI patterns are left
+  // alone. In Diff mode this fires with [] so any stale managed FROM lines
+  // get stripped (Diff mode scopes via URL params instead).
+  const handleScopeGraphsChange = useCallback((graphIris: string[]) => {
+    const yasqe = yasguiRef.current?.getTab()?.getYasqe()
+    if (!yasqe) return
+    const current = yasqe.getValue() ?? ''
+    const stripped = stripManagedFromClauses(current)
+    const block = formatScopeAsFromClauses(graphIris)
+    const next = block + stripped
+    if (next !== current) yasqe.setValue(next)
   }, [])
 
   const handleSelectionChange = useCallback((ids: string[]) => {
@@ -309,6 +326,7 @@ export default function Sparql() {
         onSelectionChange={handleSelectionChange}
         onLabelsToggle={handleLabelsToggle}
         onDiffScopeChange={setDiffScope}
+        onScopeGraphsChange={handleScopeGraphsChange}
       />
       {queryError && (
         <div style={{
