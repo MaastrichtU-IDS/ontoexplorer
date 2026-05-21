@@ -9,6 +9,7 @@ responsible for materializing the merge.
 """
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -22,6 +23,17 @@ class KoncludeUnavailable(RuntimeError):
 
 class KoncludeTimeout(RuntimeError):
     """Raised when Konclude exceeds the timeout."""
+
+
+class KoncludeCrashed(RuntimeError):
+    """Raised when Konclude exits without printing a verdict (typically OOM/SIGKILL).
+
+    Surfaced separately from `KoncludeUnavailable` so the detector reports
+    these as `error` with a memory-pressure hint rather than silently
+    classifying the ontology as inconsistent (which is the prior bug:
+    konclude exit 137 → stdout truncated mid-preamble → "no verdict"
+    → previous code returned `False` and claimed inconsistency).
+    """
 
 
 @dataclass
@@ -70,7 +82,7 @@ def run_konclude_consistency(
 
     stdout = cons_proc.stdout
     stderr = cons_proc.stderr
-    consistent = _parse_consistency_verdict(stdout)
+    consistent = _parse_consistency_verdict(stdout, returncode=cons_proc.returncode, stderr=stderr)
 
     # Step 2: classification (only needed to find unsatisfiable classes; skip if globally inconsistent)
     unsat_iris: list[str] = []
@@ -101,15 +113,35 @@ def run_konclude_consistency(
     )
 
 
-def _parse_consistency_verdict(stdout: str) -> bool:
-    """Konclude prints 'Ontology is consistent.' or 'Ontology is inconsistent.' to stdout."""
-    lowered = stdout.lower()
-    if "inconsistent" in lowered:
-        return False
-    if "consistent" in lowered:
-        return True
-    # Konclude exited 0 but didn't print the expected verdict — treat as inconsistent (conservative).
-    return False
+_VERDICT_LINE_RE = re.compile(r"Ontology\s+'[^']*'\s+is\s+(in)?consistent", re.IGNORECASE)
+
+
+def _parse_consistency_verdict(stdout: str, *, returncode: int, stderr: str) -> bool:
+    """Parse Konclude's verdict line.
+
+    Konclude prints exactly one line like:
+        {info} ... >> Ontology '/path/to/file' is consistent.
+    or  {info} ... >> Ontology '/path/to/file' is inconsistent.
+
+    We require a precise match. If the verdict line is absent and Konclude
+    exited non-zero, that's a crash (typically OOM-kill / SIGKILL exit 137
+    on the SROIQ precomputation step for large DL ontologies). Previously
+    this fell through to `return False` and silently produced false-positive
+    "inconsistent" verdicts; now we raise so the detector reports `error`.
+    """
+    m = _VERDICT_LINE_RE.search(stdout)
+    if m is not None:
+        return m.group(1) is None  # "in"? consistent → consistent iff group is None
+    if returncode != 0:
+        snippet = (stderr or stdout).strip().splitlines()[-1:] if (stderr or stdout) else []
+        hint = snippet[0] if snippet else ""
+        raise KoncludeCrashed(
+            f"Konclude exited {returncode} without printing a verdict "
+            f"(likely SROIQ-precomputation OOM-kill on a large ontology). "
+            f"Last line: {hint[:200]}"
+        )
+    # Exit 0 with no verdict line should never happen. Be loud rather than guess.
+    raise KoncludeCrashed("Konclude exited 0 but produced no verdict line (unexpected)")
 
 
 _OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing"

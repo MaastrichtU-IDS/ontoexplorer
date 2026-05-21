@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ontoexplorer.modules.consistency.konclude import (
+    KoncludeCrashed,
     KoncludeResult,
     KoncludeTimeout,
     KoncludeUnavailable,
@@ -169,6 +170,14 @@ def _run_one_scope(
         return result
     except KoncludeTimeout as exc:
         result.status = "timeout"
+        result.error_message = str(exc)
+        result.elapsed_seconds = time.monotonic() - t0
+        return result
+    except KoncludeCrashed as exc:
+        # Konclude crashed (e.g. OOM-kill on SROIQ precomputation for a large DL
+        # ontology). Surfacing as `error` rather than `inconsistent` prevents the
+        # prior false-positive bug where missing verdict was misread as inconsistent.
+        result.status = "error"
         result.error_message = str(exc)
         result.elapsed_seconds = time.monotonic() - t0
         return result
