@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Yasgui from '@triply/yasgui'
 import { useAuth } from '../hooks/useAuth'
-import { api, SavedQuery } from '../lib/api'
+import { api, SavedQuery, StarterQuery } from '../lib/api'
 
 interface Props {
   yasguiRef: React.RefObject<InstanceType<typeof Yasgui> | null>
@@ -33,6 +33,9 @@ export default function QuerySidebar({ yasguiRef }: Props) {
   const [ontologyNames, setOntologyNames] = useState<string[]>([])
   const [showTagSuggestions, setShowTagSuggestions] = useState(false)
   const tagInputRef = useRef<HTMLInputElement>(null)
+  const [starters, setStarters] = useState<StarterQuery[]>([])
+  type SidebarTab = 'my' | 'starters'
+  const [tab, setTab] = useState<SidebarTab>(user ? 'my' : 'starters')
 
   useEffect(() => {
     if (!user) return
@@ -40,8 +43,18 @@ export default function QuerySidebar({ yasguiRef }: Props) {
   }, [user])
 
   useEffect(() => {
+    setTab(user ? 'my' : 'starters')
+  }, [user])
+
+  useEffect(() => {
     api.ontologies.list(0, 200)
       .then(r => setOntologyNames(r.ontologies.map(o => o.shortname).filter(Boolean) as string[]))
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    api.savedQueries.listStarters()
+      .then(r => setStarters(r.starters))
       .catch(() => {})
   }, [])
 
@@ -136,6 +149,16 @@ export default function QuerySidebar({ yasguiRef }: Props) {
     ? ontologyNames.filter(n => n.toLowerCase().includes(form.tagInput.toLowerCase()) && !form.tags.includes(n)).slice(0, 6)
     : []
 
+  const startersByCategory = useMemo(() => {
+    const m = new Map<string, StarterQuery[]>()
+    for (const s of starters) {
+      const cat = s.category ?? 'Other'
+      if (!m.has(cat)) m.set(cat, [])
+      m.get(cat)!.push(s)
+    }
+    return Array.from(m.entries()).sort(([a], [b]) => a.localeCompare(b))
+  }, [starters])
+
   const base: React.CSSProperties = {
     width: 200,
     flexShrink: 0,
@@ -147,32 +170,43 @@ export default function QuerySidebar({ yasguiRef }: Props) {
     overflow: 'hidden',
   }
 
-  if (!user) {
-    return (
-      <div style={{ ...base, alignItems: 'center', justifyContent: 'center', padding: '1rem', textAlign: 'center' }}>
-        <span style={{ color: 'var(--text-dim)', fontSize: '0.7rem', lineHeight: 1.5 }}>
-          Sign in to save queries
-        </span>
-      </div>
-    )
-  }
-
   return (
     <div style={base}>
       {/* Header */}
-      <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-        <span style={{ color: 'var(--text-muted)', fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.05em' }}>MY QUERIES</span>
-        {view === 'list' ? (
+      <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, gap: 8 }}>
+        <div style={{ display: 'flex', gap: 10 }}>
+          {user && (
+            <button
+              onClick={() => { setTab('my'); setView('list') }}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                color: tab === 'my' && view !== 'form' ? 'var(--text)' : 'var(--text-dim)',
+                fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.05em',
+              }}
+            >MINE</button>
+          )}
           <button
-            onClick={openSaveForm}
-            style={{ background: 'var(--accent)', color: 'var(--bg)', border: 'none', borderRadius: 3, padding: '2px 7px', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer' }}
-          >＋ Save</button>
-        ) : (
-          <span onClick={cancelForm} style={{ color: 'var(--text-dim)', cursor: 'pointer', fontSize: '0.7rem' }}>✕ cancel</span>
+            onClick={() => { setTab('starters'); setView('list') }}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+              color: tab === 'starters' && view !== 'form' ? 'var(--text)' : 'var(--text-dim)',
+              fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.05em',
+            }}
+          >STARTERS</button>
+        </div>
+        {user && (
+          view === 'list' ? (
+            <button
+              onClick={openSaveForm}
+              style={{ background: 'var(--accent)', color: 'var(--bg)', border: 'none', borderRadius: 3, padding: '2px 7px', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer' }}
+            >＋ Save</button>
+          ) : (
+            <span onClick={cancelForm} style={{ color: 'var(--text-dim)', cursor: 'pointer', fontSize: '0.7rem' }}>✕ cancel</span>
+          )
         )}
       </div>
 
-      {view === 'list' && (
+      {view === 'list' && tab === 'my' && user && (
         <>
           {/* Search */}
           <div style={{ padding: '5px 8px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
@@ -242,6 +276,41 @@ export default function QuerySidebar({ yasguiRef }: Props) {
             >→ Browse Gallery</span>
           </div>
         </>
+      )}
+
+      {view === 'list' && tab === 'starters' && (
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          {startersByCategory.length === 0 && (
+            <div style={{ padding: '10px', color: 'var(--text-dim)', fontSize: '0.65rem', textAlign: 'center' }}>
+              No starters available
+            </div>
+          )}
+          {startersByCategory.map(([category, items]) => (
+            <div key={category} style={{ borderBottom: '1px solid rgba(51,65,85,0.4)' }}>
+              <div style={{ padding: '4px 10px', color: 'var(--text-dim)', fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.05em', background: 'rgba(51,65,85,0.2)' }}>
+                {category}
+              </div>
+              {items.map(s => (
+                <div
+                  key={s.id}
+                  onClick={() => yasguiRef.current?.getTab()?.getYasqe()?.setValue(s.query_text)}
+                  style={{ padding: '5px 10px', cursor: 'pointer', borderLeft: '2px solid transparent' }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(34,197,94,0.05)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <div style={{ color: 'var(--text-muted)', fontSize: '0.7rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {s.name}
+                  </div>
+                  {s.description && (
+                    <div style={{ color: 'var(--text-dim)', fontSize: '0.6rem', marginTop: 1, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                      {s.description}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
       )}
 
       {view === 'form' && (
