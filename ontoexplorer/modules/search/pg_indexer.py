@@ -1,0 +1,134 @@
+"""Populate the Postgres `entity_index` table from the Redis search index.
+
+The Redis index (built by `indexer.build_index`) remains the source of truth: it owns
+the heavy SPARQL → label/synonym/definition assembly. This module mirrors a slim
+projection of that work into Postgres so /search can run as one SQL query with
+real tsvector ranking and trigram fuzzy matching.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from typing import Iterable
+
+from sqlalchemy import text
+
+from ontoexplorer.modules.search.indexer import (
+    _get_redis,
+    _iri_key,
+    _type_key,
+    normalise_label,
+)
+
+logger = logging.getLogger(__name__)
+
+_ENTITY_TYPES = ("class", "object_property", "data_property", "annotation_property", "individual")
+
+
+def _iter_version_iris(version_id: str) -> Iterable[str]:
+    """Yield every entity IRI indexed for the version. Reads the per-type sets."""
+    r = _get_redis()
+    for entity_type in _ENTITY_TYPES:
+        members = r.smembers(_type_key(version_id, entity_type))
+        for iri in members:
+            yield iri
+
+
+def _build_search_text(entity: dict) -> str:
+    """Concatenate every label + synonym for tsvector indexing.
+
+    The Redis hash stores labels/synonyms as JSON arrays of {value, lang}. We collapse
+    everything into one space-joined string. The CURIE short form is included so users
+    can search by `GO_0008150` etc.
+    """
+    parts: list[str] = []
+
+    primary = entity.get("primary_label") or entity.get("label") or ""
+    if primary:
+        parts.append(primary)
+
+    short = entity.get("short", "")
+    if short and short != primary:
+        parts.append(short)
+
+    for field in ("labels", "synonyms"):
+        raw = entity.get(field, "[]")
+        try:
+            items = json.loads(raw) if raw else []
+        except (json.JSONDecodeError, ValueError):
+            continue
+        for item in items:
+            val = item.get("value", "")
+            if val and val not in parts:
+                parts.append(val)
+
+    return " ".join(parts)
+
+
+async def populate_entity_index(
+    session, version_id: str, ontology_id: str
+) -> int:
+    """Mirror Redis entity records for *version_id* into the `entity_index` table.
+
+    Deletes existing rows for the version first, then bulk-inserts. Returns the number
+    of rows written. Safe to re-run; uses a single transaction.
+    """
+    r = _get_redis()
+
+    rows: list[dict] = []
+    for iri in _iter_version_iris(version_id):
+        entity = r.hgetall(_iri_key(version_id, iri))
+        if not entity:
+            continue
+
+        primary_label = entity.get("primary_label") or entity.get("label") or entity.get("short", "")
+        search_text = _build_search_text(entity)
+
+        rows.append({
+            "version_id": version_id,
+            "iri": iri,
+            "ontology_id": ontology_id,
+            "type": entity.get("type", "class"),
+            "primary_label": primary_label,
+            "primary_label_norm": normalise_label(primary_label),
+            "short": entity.get("short", ""),
+            "source": entity.get("source") or None,
+            "search_text": search_text,
+        })
+
+    # Clear any prior rows for this version, then bulk insert.
+    await session.execute(
+        text("DELETE FROM entity_index WHERE version_id = :vid"),
+        {"vid": version_id},
+    )
+
+    if rows:
+        # executemany via SQLAlchemy 2.x async API
+        await session.execute(
+            text("""
+                INSERT INTO entity_index
+                    (version_id, iri, ontology_id, type,
+                     primary_label, primary_label_norm, short, source, search_text)
+                VALUES
+                    (:version_id, :iri, :ontology_id, :type,
+                     :primary_label, :primary_label_norm, :short, :source, :search_text)
+            """),
+            rows,
+        )
+
+    await session.commit()
+    logger.info("entity_index populated", extra={"version_id": version_id, "rows": len(rows)})
+    return len(rows)
+
+
+def populate_entity_index_sync(version_id: str, ontology_id: str) -> int:
+    """Synchronous wrapper for use inside Celery tasks."""
+    import asyncio
+
+    from ontoexplorer.database import make_celery_db_session
+
+    async def _run() -> int:
+        async with make_celery_db_session()() as session:
+            return await populate_entity_index(session, version_id, ontology_id)
+
+    return asyncio.run(_run())

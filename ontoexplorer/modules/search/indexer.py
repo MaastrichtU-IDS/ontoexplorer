@@ -61,8 +61,22 @@ def _stats_cache_key(version_id: str) -> str:
     return f"version_stats:{version_id}"
 
 
+_REDIS_CLIENT: redis.Redis | None = None
+
+
 def _get_redis() -> redis.Redis:
-    return redis.Redis.from_url(get_settings().redis_url, decode_responses=True)
+    """Singleton Redis client. Reuses a connection pool across threads (redis-py is thread-safe).
+
+    No max_connections cap so per-version fan-out (25 threads/request × N concurrent
+    requests) doesn't block waiting for free connections.
+    """
+    global _REDIS_CLIENT
+    if _REDIS_CLIENT is None:
+        _REDIS_CLIENT = redis.Redis.from_url(
+            get_settings().redis_url,
+            decode_responses=True,
+        )
+    return _REDIS_CLIENT
 
 
 def _short_iri(iri: str) -> str:
@@ -147,9 +161,9 @@ def entity_lookup(
         return etype == entity_type
 
     seen_iris: set[str] = set()
-    candidates: list[dict] = []
+    ordered_iris: list[str] = []
 
-    def _collect(members: list[str]) -> None:
+    def _filter(members: list[str]) -> None:
         for member in members:
             parts = member.split("|", 3)
             if len(parts) == 4:
@@ -163,17 +177,135 @@ def entity_lookup(
             if iri in seen_iris:
                 continue
             seen_iris.add(iri)
-            detail = r.hgetall(_iri_key(version_id, iri))
-            if not detail:
-                continue
-            candidates.append(detail)
+            ordered_iris.append(iri)
 
-    _collect(exact_members)   # tier-0 results first
-    _collect(all_members)     # then prefix / word-suffix results
+    _filter(exact_members)   # tier-0 results first
+    _filter(all_members)     # then prefix / word-suffix results
+
+    if not ordered_iris:
+        return []
+
+    # Pipeline the per-IRI HGETALL lookups into a single round-trip.
+    pipe = r.pipeline(transaction=False)
+    for iri in ordered_iris:
+        pipe.hgetall(_iri_key(version_id, iri))
+    details = pipe.execute()
+    candidates: list[dict] = [d for d in details if d]
 
     # Within each tier, sort alphabetically by label for stable ordering
     candidates.sort(key=lambda d: _rank_key(d, norm))
     return candidates[:limit]
+
+
+def entity_lookup_multi(
+    version_ids: list[str],
+    prefix: str,
+    entity_type: str | None,
+    per_version_limit: int,
+) -> dict[str, list[dict]]:
+    """Run entity_lookup across many versions using one shared pipeline (2 round-trips total).
+
+    Returns {version_id: [entity_dict, …]} preserving the same tier ordering as entity_lookup.
+    """
+    if not version_ids:
+        return {}
+
+    r = _get_redis()
+
+    _PROP_SUBTYPES = {"object_property", "data_property", "annotation_property"}
+
+    def _type_matches(etype: str) -> bool:
+        if entity_type is None:
+            return True
+        if entity_type == "property":
+            return etype in _PROP_SUBTYPES or etype == "property"
+        return etype == entity_type
+
+    def _detail_type_matches(detail: dict) -> bool:
+        if entity_type is None:
+            return True
+        stored = detail.get("type", "")
+        if entity_type == "property":
+            return stored in _PROP_SUBTYPES or stored == "property"
+        return stored == entity_type
+
+    stripped = prefix.strip()
+    is_iri = stripped.startswith("http://") or stripped.startswith("https://")
+
+    if is_iri:
+        pipe = r.pipeline(transaction=False)
+        for vid in version_ids:
+            pipe.hgetall(_iri_key(vid, stripped))
+        details = pipe.execute()
+        return {
+            vid: ([d] if d and _detail_type_matches(d) else [])
+            for vid, d in zip(version_ids, details)
+        }
+
+    curie_match = _CURIE_PATTERN.match(stripped)
+    if curie_match:
+        norm = normalise_label(curie_match.group(2))
+    else:
+        norm = normalise_label(prefix)
+
+    if not norm:
+        return {vid: [] for vid in version_ids}
+
+    # Phase 1: ZRANGEBYLEX (exact + prefix) for every version in one pipeline.
+    pipe = r.pipeline(transaction=False)
+    for vid in version_ids:
+        key = _prefix_key(vid)
+        pipe.zrangebylex(key, f"[{norm}|", f"[{norm}|\xff", start=0, num=max(per_version_limit, 50))
+        pipe.zrangebylex(key, f"[{norm}", f"[{norm}\xff", start=0, num=per_version_limit * 5)
+    zres = pipe.execute()
+
+    # Filter members per version and build the list of HGETALL targets.
+    per_version_iris: dict[str, list[str]] = {}
+    hgetall_keys: list[tuple[str, str]] = []  # (version_id, iri)
+
+    for idx, vid in enumerate(version_ids):
+        exact_members = zres[2 * idx]
+        all_members = zres[2 * idx + 1]
+        seen_iris: set[str] = set()
+        ordered: list[str] = []
+
+        def _filter(members: list[str]) -> None:
+            for member in members:
+                parts = member.split("|", 3)
+                if len(parts) == 4:
+                    _, _lang, etype, iri = parts
+                elif len(parts) == 3:
+                    _, etype, iri = parts
+                else:
+                    continue
+                if not _type_matches(etype):
+                    continue
+                if iri in seen_iris:
+                    continue
+                seen_iris.add(iri)
+                ordered.append(iri)
+
+        _filter(exact_members)
+        _filter(all_members)
+        per_version_iris[vid] = ordered
+        for iri in ordered:
+            hgetall_keys.append((vid, iri))
+
+    if not hgetall_keys:
+        return {vid: [] for vid in version_ids}
+
+    # Phase 2: HGETALL all entity details in one pipeline.
+    pipe = r.pipeline(transaction=False)
+    for vid, iri in hgetall_keys:
+        pipe.hgetall(_iri_key(vid, iri))
+    details = pipe.execute()
+
+    # Reassemble per-version result lists, preserving order.
+    by_vid: dict[str, list[dict]] = {vid: [] for vid in version_ids}
+    for (vid, _iri), detail in zip(hgetall_keys, details):
+        if detail:
+            by_vid[vid].append(detail)
+    return by_vid
 
 
 def build_index(version_id: str, ontology_id: str = "", profile: dict | None = None) -> IndexStats:

@@ -37,8 +37,21 @@ celery_app.conf.update(
             "task": "ontoexplorer.refresh_stale_inferred_diffs",
             "schedule": 900.0,
         },
+        "beat-heartbeat-60s": {
+            "task": "ontoexplorer.beat_heartbeat",
+            "schedule": 60.0,
+        },
     },
 )
+
+
+@celery_app.task(name="ontoexplorer.beat_heartbeat")
+def beat_heartbeat() -> None:
+    """Write the current UTC timestamp to Redis so the admin health check can detect a dead beat."""
+    from datetime import UTC, datetime
+    import redis as redis_sync
+    r = redis_sync.from_url(get_settings().redis_url, decode_responses=True)
+    r.set("beat:heartbeat", datetime.now(UTC).isoformat(), ex=300)
 
 
 @celery_app.on_after_finalize.connect
@@ -590,6 +603,15 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         from ontoexplorer.modules.search.indexer import build_index
         stats = build_index(version_id, ontology_id, profile=profile)
 
+        # Mirror the Redis index into Postgres `entity_index` for the SQL-backed
+        # /search path. Best-effort: keyword search falls back to Redis if this fails.
+        try:
+            from ontoexplorer.modules.search.pg_indexer import populate_entity_index_sync
+            pg_rows = populate_entity_index_sync(version_id, ontology_id)
+            log.info("entity_index_populated", version_id=version_id, rows=pg_rows)
+        except Exception as exc:
+            log.warning("entity_index_populate_failed", version_id=version_id, error=str(exc))
+
         from sqlalchemy import update as _sa_update
         from ontoexplorer.models.db import OntologyVersion as _OV
 
@@ -603,6 +625,24 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                 await db.commit()
 
         asyncio.run(_mark_ready())
+        # The Celery worker invalidates only its own in-process cache; the API
+        # process picks up the new version on its own 30s TTL expiry. That's
+        # acceptable — ingest is not a low-latency path.
+        try:
+            from ontoexplorer.modules.search.versions import invalidate_latest_ready_versions_cache
+            invalidate_latest_ready_versions_cache()
+        except Exception:
+            pass
+        # Drop the shared cross-process /search and /autocomplete response caches
+        # so newly-indexed entities show up immediately rather than waiting on TTL.
+        try:
+            from ontoexplorer.modules.search.indexer import _get_redis
+            _r = _get_redis()
+            for _pattern in ("search:result:*", "search:autocomplete:*"):
+                for _k in _r.scan_iter(_pattern, count=500):
+                    _r.delete(_k)
+        except Exception:
+            pass
         embed_ontology.delay(version_id, ontology_id=ontology_id)
         log.info("index_ontology_done", version_id=version_id,
                  class_count=stats.class_count, property_count=stats.property_count)

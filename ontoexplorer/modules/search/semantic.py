@@ -18,21 +18,25 @@ async def semantic_search(
 ) -> list[dict]:
     """Return entities semantically similar to query across the given versions.
 
-    Returns [] if version_ids is empty, query is blank, or no embeddings exist.
-    Deduplicates by IRI, keeping the highest-scoring occurrence.
+    Single SQL query joining `term_embeddings` → `entity_index` for metadata, so we
+    don't need to fan out to Redis for HGETALLs. Falls back to Redis for any IRIs
+    that aren't in entity_index yet (e.g. very new ingests before backfill).
     """
     if not version_ids or not query.strip():
         return []
 
     try:
         qvec = await asyncio.to_thread(embed_query, query)
-
         vec_str = "[" + ",".join(f"{x:.8f}" for x in qvec) + "]"
         sql = text("""
-            SELECT te.entity_iri, te.entity_type, te.version_id, v.ontology_id,
-                   1 - (te.embedding <=> CAST(:vec AS vector)) AS score
+            SELECT te.entity_iri AS iri, te.entity_type AS type,
+                   te.version_id, v.ontology_id,
+                   1 - (te.embedding <=> CAST(:vec AS vector)) AS score,
+                   ei.primary_label, ei.short, ei.source
             FROM term_embeddings te
             JOIN versions v ON v.id = te.version_id
+            LEFT JOIN entity_index ei
+                   ON ei.version_id = te.version_id AND ei.iri = te.entity_iri
             WHERE te.version_id = ANY(:ids)
             ORDER BY te.embedding <=> CAST(:vec AS vector)
             LIMIT :lim
@@ -45,26 +49,36 @@ async def semantic_search(
     if not rows:
         return []
 
-    r = _get_redis()
-
     seen_iris: set[str] = set()
     out: list[dict] = []
+    # Cache the Redis client only for the (rare) entity_index miss fallback.
+    r = _get_redis()
+
     for row in rows:
-        iri = row.entity_iri
+        iri = row.iri
         if iri in seen_iris:
             continue
         seen_iris.add(iri)
 
-        entity = await asyncio.to_thread(r.hgetall, _iri_key(row.version_id, iri))
-        if not entity:
-            continue
+        if row.primary_label is not None:
+            label = row.primary_label
+            short = row.short or ""
+            source = row.source or ""
+        else:
+            # Fallback for IRIs not yet mirrored to entity_index.
+            entity = await asyncio.to_thread(r.hgetall, _iri_key(row.version_id, iri))
+            if not entity:
+                continue
+            label = entity.get("primary_label") or entity.get("label", iri)
+            short = entity.get("short", "")
+            source = entity.get("source", "")
 
         out.append({
             "iri": iri,
-            "label": entity.get("primary_label") or entity.get("label", iri),
-            "short": entity.get("short", ""),
-            "type": row.entity_type,
-            "source": entity.get("source", ""),
+            "label": label,
+            "short": short,
+            "type": row.type,
+            "source": source,
             "match_type": "semantic",
             "score": round(float(row.score), 4),
             "version_id": row.version_id,

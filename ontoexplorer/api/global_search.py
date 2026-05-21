@@ -1,5 +1,7 @@
 """Global cross-ontology search — GET /api/v1/search."""
 import asyncio
+import hashlib
+import json as _json
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
@@ -12,7 +14,7 @@ from ontoexplorer.models.db import Ontology, OntologyVersion, User
 from ontoexplorer.modules.auth.dependencies import get_current_user
 from ontoexplorer.modules.search.autocomplete import get_completions
 from ontoexplorer.modules.search.evaluator import AmbiguousLabelError, evaluate
-from ontoexplorer.modules.search.indexer import entity_lookup, normalise_label
+from ontoexplorer.modules.search.indexer import entity_lookup, entity_lookup_multi, normalise_label
 from ontoexplorer.modules.search.lang import resolve_lang
 from ontoexplorer.modules.search.mos_parser import ParseError, NamedClass, parse
 from ontoexplorer.modules.search.semantic import semantic_search
@@ -22,6 +24,24 @@ from ontoexplorer.modules.search.versions import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["search"])
+
+_SEARCH_CACHE_TTL = 60  # seconds
+_AUTOCOMPLETE_CACHE_TTL = 60  # seconds
+
+
+def _search_cache_key(q: str, limit: int, lang: str | None, semantic: bool, backend: str = "redis") -> str:
+    payload = f"{q}\x1f{limit}\x1f{lang or ''}\x1f{int(semantic)}\x1f{backend}"
+    h = hashlib.blake2b(payload.encode(), digest_size=16).hexdigest()
+    return f"search:result:{h}"
+
+
+def _autocomplete_cache_key(
+    q: str, cursor: int, limit: int, ontology_ids: list[str], lang: str | None
+) -> str:
+    ont_part = ",".join(sorted(ontology_ids))
+    payload = f"{q}\x1f{cursor}\x1f{limit}\x1f{ont_part}\x1f{lang or ''}"
+    h = hashlib.blake2b(payload.encode(), digest_size=16).hexdigest()
+    return f"search:autocomplete:{h}"
 
 
 def _is_expression(node) -> bool:
@@ -66,10 +86,21 @@ async def global_search(
     limit: int = Query(20, ge=1, le=200),
     lang: str | None = Query(None, description="BCP-47 language tag for preferred results"),
     semantic: bool = Query(False, description="Include vector semantic results"),
+    backend: str = Query("pg", description="Search backend: pg (default, Postgres entity_index) | redis (legacy)"),
     _user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     effective_lang = lang or (getattr(_user, 'preferred_lang', None) if isinstance(_user, User) else None)
+
+    # Short-TTL response cache for entity-mode queries (the hot path from the homepage).
+    # MOS-expression queries are not cached — they depend on reasoning state.
+    cache_key = _search_cache_key(q, limit, effective_lang, semantic, backend)
+    from ontoexplorer.modules.search.indexer import _get_redis
+    _r = _get_redis()
+    cached = await asyncio.to_thread(_r.get, cache_key)
+    if cached:
+        return _json.loads(cached)
+
     versions = await _latest_ingested_versions(db)
     if not versions:
         return {"mode": "entity", "query": q, "results": [], "count": 0, "truncated": False}
@@ -96,49 +127,71 @@ async def global_search(
     merged: list[dict] = []
 
     if effective_mode == "entity":
-        # Fetch more candidates per version than the final limit so that exact
-        # matches in any ontology are not discarded before global re-ranking.
-        per_version = max(limit, 20)
+        if backend == "pg":
+            # Postgres-backed path: one SQL query over entity_index, no fan-out.
+            from ontoexplorer.modules.search.pg_search import pg_entity_search, rrf_merge
+            kw_results = await pg_entity_search(db, q, limit * 2 if semantic else limit)
 
-        async def search_one_entity(v: OntologyVersion) -> list[dict]:
-            rows = await asyncio.to_thread(entity_lookup, str(v.id), q, None, per_version)
-            for r in rows:
-                r["version_id"] = str(v.id)
-                r["ontology_id"] = str(v.ontology_id)
-                r.setdefault("type", "")
-            return rows
+            if semantic and len(q) >= 3:
+                version_id_strs = [str(v.id) for v in versions]
+                sem_results = await semantic_search(q, db, version_id_strs, limit=limit * 2)
+                # Hybrid mode: RRF-fuse keyword + semantic, return a single ranked list.
+                merged = rrf_merge(kw_results, sem_results, limit)
+                payload = {
+                    "mode": "entity", "query": q, "results": merged,
+                    "count": len(merged), "truncated": len(merged) >= limit,
+                    "semantic_results": [],  # already fused into `results`
+                    "fusion": "rrf",
+                }
+                await asyncio.to_thread(_r.set, cache_key, _json.dumps(payload), _SEARCH_CACHE_TTL)
+                return payload
+            else:
+                merged = kw_results[:limit]
+        else:
+            # Redis-backed path: cross-version multi-pipeline.
+            # Fetch more candidates per version than the final limit so that exact
+            # matches in any ontology are not discarded before global re-ranking.
+            per_version = max(limit, 20)
 
-        nested = await asyncio.gather(*[search_one_entity(v) for v in versions])
-        for rows in nested:
-            for row in rows:
-                if row["iri"] not in seen_iris:
-                    seen_iris.add(row["iri"])
-                    merged.append(row)
+            version_ids = [str(v.id) for v in versions]
+            ont_by_vid = {str(v.id): str(v.ontology_id) for v in versions}
+            per_vid = await asyncio.to_thread(entity_lookup_multi, version_ids, q, None, per_version)
 
-        # Re-rank globally: exact label match → prefix → word-suffix, then alpha.
-        norm_q = normalise_label(q)
+            for vid in version_ids:
+                for row in per_vid.get(vid, []):
+                    row["version_id"] = vid
+                    row["ontology_id"] = ont_by_vid[vid]
+                    row.setdefault("type", "")
+                    if row["iri"] not in seen_iris:
+                        seen_iris.add(row["iri"])
+                        merged.append(row)
 
-        def _global_rank(row: dict) -> tuple:
-            lbl = normalise_label(row.get("label", ""))
-            if lbl == norm_q:
-                return (0, lbl)
-            if lbl.startswith(norm_q):
-                return (1, lbl)
-            return (2, lbl)
+            # Re-rank globally: exact label match → prefix → word-suffix, then alpha.
+            norm_q = normalise_label(q)
 
-        merged.sort(key=_global_rank)
-        merged = merged[:limit]
+            def _global_rank(row: dict) -> tuple:
+                lbl = normalise_label(row.get("label", ""))
+                if lbl == norm_q:
+                    return (0, lbl)
+                if lbl.startswith(norm_q):
+                    return (1, lbl)
+                return (2, lbl)
+
+            merged.sort(key=_global_rank)
+            merged = merged[:limit]
 
         sem_results: list[dict] = []
         if semantic and len(q) >= 3:
             version_id_strs = [str(v.id) for v in versions]
             sem_results = await semantic_search(q, db, version_id_strs, limit=10)
 
-        return {
+        payload = {
             "mode": "entity", "query": q, "results": merged,
             "count": len(merged), "truncated": len(merged) >= limit,
             "semantic_results": sem_results,
         }
+        await asyncio.to_thread(_r.set, cache_key, _json.dumps(payload), _SEARCH_CACHE_TTL)
+        return payload
 
     # Expression mode — evaluate against each version separately
     warnings: list[dict] = []
@@ -271,6 +324,16 @@ async def global_autocomplete(
     from ontoexplorer.modules.search.mos_parser import partial_parse
 
     effective_cursor = cursor if cursor >= 0 else len(q)
+
+    # Short-TTL response cache — autocomplete fires per-keystroke, so the same
+    # prefix is requested repeatedly across users.
+    cache_key = _autocomplete_cache_key(q, effective_cursor, limit, ontology_ids, lang)
+    from ontoexplorer.modules.search.indexer import _get_redis
+    _r = _get_redis()
+    cached = await asyncio.to_thread(_r.get, cache_key)
+    if cached:
+        return _json.loads(cached)
+
     ctx = partial_parse(q, effective_cursor)
 
     if ontology_ids:
@@ -341,7 +404,7 @@ async def global_autocomplete(
     merged.sort(key=_rank)
     merged = merged[:limit]
 
-    return {
+    payload = {
         "completions": [
             {"text": c.text, "type": c.type, "iri": c.iri, "short": c.short, "insert": c.insert,
              "lang": c.lang, "cross_language": c.cross_language, "ontology_shortname": sn}
@@ -351,6 +414,8 @@ async def global_autocomplete(
         "replace_from": ctx.token_start,
         "replace_to": effective_cursor,
     }
+    await asyncio.to_thread(_r.set, cache_key, _json.dumps(payload), _AUTOCOMPLETE_CACHE_TTL)
+    return payload
 
 
 # ── Per-ontology autocomplete (latest version) ────────────────────────────────

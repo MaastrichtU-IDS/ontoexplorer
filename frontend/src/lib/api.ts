@@ -848,6 +848,13 @@ export interface AdminServiceStatus {
   redis: string
   minio: string
   elk: string
+  fuseki: string
+  oxigraph: string
+  workers: string
+  beat: string
+  entity_index: string
+  entity_index_rows: number
+  entity_index_drift: { version_id: string; redis: number; pg: number }[]
   celery_queue_depth: number
 }
 

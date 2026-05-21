@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.clients.reasoning import (
@@ -2408,6 +2408,27 @@ async def deprecate_version(
         _get_redis().delete(_stats_cache_key(version_id))
     except Exception:
         pass  # Non-fatal
+
+    # Drop entity_index rows for the deprecated version so they don't waste
+    # space (the SQL search filter excludes them anyway, but the rows persist).
+    try:
+        await db.execute(
+            text("DELETE FROM entity_index WHERE version_id = :vid"),
+            {"vid": version_id},
+        )
+        await db.commit()
+    except Exception:
+        pass  # Non-fatal
+
+    # Drop shared cross-process search caches so deprecated results disappear immediately.
+    try:
+        from ontoexplorer.modules.search.indexer import _get_redis
+        _r = _get_redis()
+        for _pattern in ("search:result:*", "search:autocomplete:*"):
+            for _k in _r.scan_iter(_pattern, count=500):
+                _r.delete(_k)
+    except Exception:
+        pass
 
     return {"detail": f"Version {version_id} deprecated"}
 

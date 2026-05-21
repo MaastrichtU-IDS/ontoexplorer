@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useAdminOverview } from '../hooks/useAdminOverview'
 import { useIsMobile } from '../hooks/useIsMobile'
@@ -10,11 +10,31 @@ import { WorkersPanel } from '../components/admin/WorkersPanel'
 import { StarterQueriesPanel } from '../components/admin/StarterQueriesPanel'
 import { SectionLabel, ServiceCard, UpdateState, ontologyDisplayName } from '../components/admin/shared'
 
+type Tab = 'ontology' | 'sparql' | 'jobs'
+const TAB_VALUES: Tab[] = ['ontology', 'sparql', 'jobs']
+const TAB_LABELS: Record<Tab, string> = {
+  ontology: 'Ontology',
+  sparql: 'SPARQL queries',
+  jobs: 'Jobs',
+}
+
 export default function AdminPage() {
   const navigate = useNavigate()
   const { user, isLoading: authLoading } = useAuth()
-  const { data, isLoading, dataUpdatedAt } = useAdminOverview()
+  const { data, isLoading, dataUpdatedAt, refetch } = useAdminOverview()
   const isMobile = useIsMobile()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const tab: Tab = (TAB_VALUES as string[]).includes(tabParam ?? '')
+    ? (tabParam as Tab)
+    : 'ontology'
+  function setTab(next: Tab) {
+    const params = new URLSearchParams(searchParams)
+    if (next === 'ontology') params.delete('tab')
+    else params.set('tab', next)
+    setSearchParams(params)
+  }
+
   const [secondsAgo, setSecondsAgo] = useState(0)
   const [updateStates, setUpdateStates] = useState<Record<string, UpdateState>>({})
   const [reindexStates, setReindexStates] = useState<Record<string, UpdateState>>({})
@@ -29,6 +49,7 @@ export default function AdminPage() {
   const [versionEmbedStates, setVersionEmbedStates] = useState<Record<string, UpdateState>>({})
   const [versionReasonStates, setVersionReasonStates] = useState<Record<string, UpdateState>>({})
   const [versionIngestStates, setVersionIngestStates] = useState<Record<string, UpdateState>>({})
+  const [clearJobsState, setClearJobsState] = useState<'idle' | 'working' | 'error'>('idle')
 
   async function handleUpdate(ontologyId: string) {
     setUpdateStates(s => ({ ...s, [ontologyId]: 'queued' }))
@@ -106,6 +127,19 @@ export default function AdminPage() {
     catch { setVersionIngestStates(s => ({ ...s, [versionId]: 'error' })) }
   }
 
+  async function handleClearJobs() {
+    if (clearJobsState === 'working') return
+    if (!confirm('Clear all completed and failed jobs from the recent-jobs log?')) return
+    setClearJobsState('working')
+    try {
+      await api.admin.clearJobs()
+      await refetch()
+      setClearJobsState('idle')
+    } catch {
+      setClearJobsState('error')
+    }
+  }
+
   // Redirect non-admins after auth resolves
   useEffect(() => {
     if (!authLoading && user && !user.is_admin) {
@@ -154,74 +188,175 @@ export default function AdminPage() {
 
       <SectionLabel>Service Health</SectionLabel>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 24 }}>
-        <ServiceCard name="Postgres" status={s.postgres} />
-        <ServiceCard name="Redis" status={s.redis} />
-        <ServiceCard name="MinIO" status={s.minio} />
-        <ServiceCard name="ELK" status={s.elk} />
-        <ServiceCard name="Queue" status={s.celery_queue_depth} />
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-        <SectionLabel style={{ margin: 0 }}>Ontology Pipeline ({data!.ontologies.length})</SectionLabel>
-        <div style={{ flex: 1 }} />
-        <button
-          onClick={handleReindexAll}
-          disabled={reindexAllState === 'queued'}
-          title="Queue index_ontology for every ingested version (rebuilds search index and deprecated-term filter)"
-          style={{
-            background: reindexAllState === 'error' ? 'rgba(248,81,73,0.1)' : 'none',
-            border: `1px solid ${reindexAllState === 'error' ? 'rgba(248,81,73,0.3)' : 'var(--border)'}`,
-            borderRadius: 4, cursor: reindexAllState === 'queued' ? 'default' : 'pointer',
-            color: reindexAllState === 'error' ? '#f85149' : reindexAllState === 'queued' ? '#ffa657' : 'var(--text-dim)',
-            fontSize: 11, padding: '4px 12px',
-            opacity: reindexAllState === 'queued' ? 0.7 : 1,
-          }}
-        >
-          {reindexAllState === 'queued' ? '↑ queuing…' : reindexAllState === 'error' ? '✕ retry re-index all' : '↺ Re-index all'}
-        </button>
-      </div>
-      <div style={{ marginBottom: 24 }}>
-        <OntologyTable
-          rows={data!.ontologies}
-          updateStates={updateStates}
-          onUpdate={handleUpdate}
-          reindexStates={reindexStates}
-          onReindex={handleReindex}
-          embedStates={embedStates}
-          onEmbed={handleEmbed}
-          reasonStates={reasonStates}
-          onReason={handleReason}
-          profileStates={profileStates}
-          onDetectProfile={handleDetectProfile}
-          versionProfileStates={versionProfileStates}
-          onVersionDetectProfile={handleVersionDetectProfile}
-          recomputeStates={recomputeStates}
-          onRecomputeAll={handleRecomputeAll}
-          pairDiffStates={pairDiffStates}
-          onPairDiff={handlePairDiff}
-          versionIndexStates={versionIndexStates}
-          onVersionIndex={handleVersionIndex}
-          versionEmbedStates={versionEmbedStates}
-          onVersionEmbed={handleVersionEmbed}
-          versionReasonStates={versionReasonStates}
-          onVersionReason={handleVersionReason}
-          versionIngestStates={versionIngestStates}
-          onVersionIngest={handleVersionIngest}
+        <ServiceCard
+          name="Postgres"
+          status={s.postgres}
+          description="Relational database: users, ontology catalog, versions, jobs, diffs, and pgvector term embeddings"
+        />
+        <ServiceCard
+          name="Redis"
+          status={s.redis}
+          description="Celery broker + result/cache backend (search index, OWL-profile cache, ELK classification cache on DB 2)"
+        />
+        <ServiceCard
+          name="MinIO"
+          status={s.minio}
+          description="Object storage for raw ontology artifacts and the imports closure cache"
+        />
+        <ServiceCard
+          name="Fuseki"
+          status={s.fuseki}
+          description="External SPARQL endpoint for FAIR metadata (DCAT + VoID + PROV-O) about each ontology version"
+        />
+        <ServiceCard
+          name="Oxigraph"
+          status={s.oxigraph}
+          description="Embedded RDF triplestore (RocksDB) holding the asserted triples of every ingested ontology — one named graph per version"
+        />
+        <ServiceCard
+          name="ELK"
+          status={s.elk}
+          description="OWL 2 EL reasoning microservice — classifies ontologies and supplies inferred subClassOf axioms"
+        />
+        <ServiceCard
+          name="Workers"
+          status={s.workers}
+          description="Celery workers running the ingestion, indexing, embedding, reasoning, profile-detection and diff pipelines"
+        />
+        <ServiceCard
+          name="Beat"
+          status={s.beat}
+          description="Celery Beat — scheduler for periodic tasks (hourly upstream-update poll, 15-min stale-diff refresh). Stale if no heartbeat for 120s."
+        />
+        <ServiceCard
+          name="Entity Index"
+          status={s.entity_index}
+          description={`Postgres entity_index — flat per-entity table powering /search backend=pg. ${s.entity_index_rows.toLocaleString()} rows across all ready versions. Drifts when Redis and Postgres entity counts diverge > 5% on any version.`}
+        />
+        <ServiceCard
+          name="Queue"
+          status={s.celery_queue_depth}
+          description="Depth of the Celery task queue in Redis (pending tasks waiting for a worker)"
         />
       </div>
 
-      <SectionLabel>Starter Queries</SectionLabel>
-      <div style={{ marginBottom: 24 }}>
-        <StarterQueriesPanel />
+      {/* Tab strip */}
+      <div style={{
+        display: 'flex', gap: 0, borderBottom: '1px solid var(--border)',
+        marginBottom: '1.25rem',
+        flexWrap: 'wrap',
+      }}>
+        {TAB_VALUES.map(t => {
+          const active = tab === t
+          return (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                padding: '8px 14px', fontSize: 13,
+                color: active ? 'var(--text)' : 'var(--text-dim)',
+                fontWeight: active ? 600 : 400,
+                borderBottom: '2px solid',
+                borderBottomColor: active ? 'var(--accent)' : 'transparent',
+                marginBottom: -1,
+                flexShrink: 0, whiteSpace: 'nowrap',
+              }}
+            >
+              {TAB_LABELS[t]}
+            </button>
+          )
+        })}
       </div>
 
-      <SectionLabel>Workers</SectionLabel>
-      <div style={{ marginBottom: 24 }}>
-        <WorkersPanel versionMap={versionMap} />
-      </div>
+      {tab === 'ontology' && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+            <SectionLabel style={{ margin: 0 }}>Ontology Pipeline ({data!.ontologies.length})</SectionLabel>
+            <div style={{ flex: 1 }} />
+            <button
+              onClick={handleReindexAll}
+              disabled={reindexAllState === 'queued'}
+              title="Queue index_ontology for every ingested version (rebuilds search index and deprecated-term filter)"
+              style={{
+                background: reindexAllState === 'error' ? 'rgba(248,81,73,0.1)' : 'none',
+                border: `1px solid ${reindexAllState === 'error' ? 'rgba(248,81,73,0.3)' : 'var(--border)'}`,
+                borderRadius: 4, cursor: reindexAllState === 'queued' ? 'default' : 'pointer',
+                color: reindexAllState === 'error' ? '#f85149' : reindexAllState === 'queued' ? '#ffa657' : 'var(--text-dim)',
+                fontSize: 11, padding: '4px 12px',
+                opacity: reindexAllState === 'queued' ? 0.7 : 1,
+              }}
+            >
+              {reindexAllState === 'queued' ? '↑ queuing…' : reindexAllState === 'error' ? '✕ retry re-index all' : '↺ Re-index all'}
+            </button>
+          </div>
+          <OntologyTable
+            rows={data!.ontologies}
+            updateStates={updateStates}
+            onUpdate={handleUpdate}
+            reindexStates={reindexStates}
+            onReindex={handleReindex}
+            embedStates={embedStates}
+            onEmbed={handleEmbed}
+            reasonStates={reasonStates}
+            onReason={handleReason}
+            profileStates={profileStates}
+            onDetectProfile={handleDetectProfile}
+            versionProfileStates={versionProfileStates}
+            onVersionDetectProfile={handleVersionDetectProfile}
+            recomputeStates={recomputeStates}
+            onRecomputeAll={handleRecomputeAll}
+            pairDiffStates={pairDiffStates}
+            onPairDiff={handlePairDiff}
+            versionIndexStates={versionIndexStates}
+            onVersionIndex={handleVersionIndex}
+            versionEmbedStates={versionEmbedStates}
+            onVersionEmbed={handleVersionEmbed}
+            versionReasonStates={versionReasonStates}
+            onVersionReason={handleVersionReason}
+            versionIngestStates={versionIngestStates}
+            onVersionIngest={handleVersionIngest}
+          />
+        </>
+      )}
 
-      <SectionLabel>Recent Jobs</SectionLabel>
-      <JobsTable jobs={data!.jobs} />
+      {tab === 'sparql' && (
+        <>
+          <SectionLabel>Starter Queries</SectionLabel>
+          <StarterQueriesPanel />
+        </>
+      )}
+
+      {tab === 'jobs' && (
+        <>
+          <SectionLabel>Workers</SectionLabel>
+          <div style={{ marginBottom: 24 }}>
+            <WorkersPanel versionMap={versionMap} />
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+            <SectionLabel style={{ margin: 0 }}>Recent Jobs</SectionLabel>
+            <div style={{ flex: 1 }} />
+            <button
+              onClick={handleClearJobs}
+              disabled={clearJobsState === 'working'}
+              title="Delete completed and failed job rows (keeps running and pending)"
+              style={{
+                background: clearJobsState === 'error' ? 'rgba(248,81,73,0.1)' : 'none',
+                border: `1px solid ${clearJobsState === 'error' ? 'rgba(248,81,73,0.3)' : 'var(--border)'}`,
+                borderRadius: 4,
+                cursor: clearJobsState === 'working' ? 'default' : 'pointer',
+                color: clearJobsState === 'error' ? '#f85149' : clearJobsState === 'working' ? '#ffa657' : 'var(--text-dim)',
+                fontSize: 11, padding: '4px 12px',
+                opacity: clearJobsState === 'working' ? 0.7 : 1,
+              }}
+            >
+              {clearJobsState === 'working' ? 'clearing…' : clearJobsState === 'error' ? '✕ retry clear' : '✕ Clear recent jobs'}
+            </button>
+          </div>
+          <JobsTable jobs={data!.jobs} />
+        </>
+      )}
 
     </div>
   )

@@ -327,6 +327,27 @@ class TermEmbedding(Base):
     embedding: Mapped[list] = mapped_column(Vector(768))
 
 
+class EntityIndex(Base):
+    """Slim per-entity row mirrored from Redis so /search can run as one SQL query.
+
+    Compound primary key (version_id, iri) — the same IRI appears in many ontologies.
+    search_tsv is a generated tsvector covering primary label + all labels + synonyms
+    so prefix/word-suffix matches behave like the Redis-side sorted-set index.
+    """
+    __tablename__ = "entity_index"
+
+    version_id: Mapped[str] = mapped_column(ForeignKey("versions.id", ondelete="CASCADE"), primary_key=True)
+    iri: Mapped[str] = mapped_column(Text, primary_key=True)
+    ontology_id: Mapped[str] = mapped_column(ForeignKey("ontologies.id", ondelete="CASCADE"))
+    type: Mapped[str] = mapped_column(String, nullable=False)
+    primary_label: Mapped[str] = mapped_column(Text, nullable=False)
+    primary_label_norm: Mapped[str] = mapped_column(Text, nullable=False)
+    short: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    search_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # search_tsv is a generated column; SQLAlchemy reads it but never writes it.
+
+
 class SavedQuery(Base):
     __tablename__ = "saved_queries"
 
