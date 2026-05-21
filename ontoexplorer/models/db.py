@@ -337,6 +337,8 @@ class SavedQuery(Base):
     query_text: Mapped[str] = mapped_column(Text, nullable=False)
     tags: Mapped[list] = mapped_column(JSON, default=list)
     is_public: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_starter: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
