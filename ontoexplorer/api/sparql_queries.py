@@ -13,6 +13,7 @@ from ontoexplorer.models.db import SavedQuery, User
 from ontoexplorer.modules.auth.dependencies import get_current_user, require_auth
 
 router = APIRouter(prefix="/api/v1/sparql/queries", tags=["sparql-queries"])
+starters_router = APIRouter(prefix="/api/v1/sparql", tags=["sparql-starters"])
 
 
 class SavedQueryCreate(BaseModel):
@@ -40,6 +41,8 @@ def _serialize(sq: SavedQuery, user_display_name: Optional[str] = None) -> dict:
         "query_text": sq.query_text,
         "tags": sq.tags or [],
         "is_public": sq.is_public,
+        "is_starter": sq.is_starter,
+        "category": sq.category,
         "created_at": sq.created_at.isoformat() if sq.created_at else None,
         "updated_at": sq.updated_at.isoformat() if sq.updated_at else None,
     }
@@ -78,6 +81,7 @@ async def list_saved_queries(
     result = await db.execute(
         select(SavedQuery)
         .where(SavedQuery.user_id == user.id)
+        .where(SavedQuery.is_starter == False)  # noqa: E712
         .order_by(SavedQuery.updated_at.desc())
     )
     return {"queries": [_serialize(q) for q in result.scalars().all()]}
@@ -96,6 +100,7 @@ async def list_public_queries(
         select(SavedQuery, User.display_name)
         .join(User, SavedQuery.user_id == User.id)
         .where(SavedQuery.is_public == True)  # noqa: E712
+        .where(SavedQuery.is_starter == False)  # noqa: E712
     )
     if user_id:
         stmt = stmt.where(SavedQuery.user_id == user_id)
@@ -172,3 +177,14 @@ async def delete_saved_query(
         raise HTTPException(status_code=404, detail="Query not found or not accessible")
     await db.delete(sq)
     await db.commit()
+
+
+@starters_router.get("/starters")
+async def list_starters(db: AsyncSession = Depends(get_db)):
+    """Return the curated starter-query library. No authentication required."""
+    result = await db.execute(
+        select(SavedQuery)
+        .where(SavedQuery.is_starter == True)  # noqa: E712
+        .order_by(SavedQuery.category, SavedQuery.name)
+    )
+    return {"starters": [_serialize(q) for q in result.scalars().all()]}
