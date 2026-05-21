@@ -1,5 +1,5 @@
-import { render, screen } from '@testing-library/react'
-import { describe, it, expect, vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ScopeToolbar } from './ScopeToolbar'
@@ -244,5 +244,118 @@ describe('ScopeToolbar — labels toggle', () => {
     expect(onToggle).toHaveBeenLastCalledWith(true)
     fireEvent.click(btn)
     expect(onToggle).toHaveBeenLastCalledWith(false)
+  })
+})
+
+describe('ScopeToolbar — Diff mode', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
+  it('renders the Single ↔ Diff mode toggle', async () => {
+    vi.doMock('../../hooks/useOntologies', () => ({
+      useOntologies: () => ({
+        ontologies: [
+          { id: 'O1', iri: 'http://x/o1', shortname: 'envo', title: 'ENVO',
+            created_at: '2024-01-01',
+            latest_version: { id: 'V2', ontology_id: 'O1', status: 'ready' } as any,
+          } as any,
+        ],
+        isLoading: false,
+      }),
+    }))
+    const { ScopeToolbar: Fresh } = await import('./ScopeToolbar')
+    render(wrap(<Fresh onScopeChange={vi.fn()} onCopy={vi.fn()} />))
+    expect(screen.getByRole('button', { name: /^single$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^diff$/i })).toBeInTheDocument()
+  })
+
+  it('clicking Diff reveals From and To picker rows', async () => {
+    vi.doMock('../../hooks/useOntologies', () => ({
+      useOntologies: () => ({
+        ontologies: [
+          { id: 'O1', iri: 'http://x/o1', shortname: 'envo', title: 'ENVO',
+            created_at: '2024-01-01',
+            latest_version: { id: 'V2', ontology_id: 'O1', status: 'ready' } as any,
+          } as any,
+        ],
+        isLoading: false,
+      }),
+    }))
+    const { ScopeToolbar: Fresh } = await import('./ScopeToolbar')
+    render(wrap(<Fresh onScopeChange={vi.fn()} onCopy={vi.fn()} />))
+    fireEvent.click(screen.getByRole('button', { name: /^diff$/i }))
+    expect(await screen.findByText(/from:/i)).toBeInTheDocument()
+    expect(screen.getByText(/to:/i)).toBeInTheDocument()
+  })
+
+  it('selecting both sides fires onDiffScopeChange with the full version objects', async () => {
+    const SAMPLE_VERSIONS = [
+      { id: 'V2', ontology_id: 'O1', status: 'ready', format: 'owl',
+        version_iri: 'env-2.0', sha256: '', triple_count: 0, download_url: '', created_at: '2026-05-20' },
+      { id: 'V1', ontology_id: 'O1', status: 'ready', format: 'owl',
+        version_iri: 'env-1.0', sha256: '', triple_count: 0, download_url: '', created_at: '2024-01-01' },
+    ]
+    vi.doMock('../../hooks/useOntologies', () => ({
+      useOntologies: () => ({
+        ontologies: [
+          { id: 'O1', iri: 'http://x/o1', shortname: 'envo', title: 'ENVO',
+            created_at: '2024-01-01',
+            latest_version: { id: 'V2', ontology_id: 'O1', status: 'ready' } as any,
+          } as any,
+        ],
+        isLoading: false,
+      }),
+    }))
+    vi.doMock('../../lib/api', async () => {
+      const actual = await vi.importActual<any>('../../lib/api')
+      return {
+        ...actual,
+        api: {
+          ...actual.api,
+          ontologies: {
+            ...actual.api.ontologies,
+            versions: vi.fn().mockResolvedValue({ versions: SAMPLE_VERSIONS }),
+          },
+        },
+      }
+    })
+    const { ScopeToolbar: Fresh } = await import('./ScopeToolbar')
+    const onDiff = vi.fn()
+    render(wrap(<Fresh onScopeChange={vi.fn()} onCopy={vi.fn()} onDiffScopeChange={onDiff} />))
+    fireEvent.click(screen.getByRole('button', { name: /^diff$/i }))
+    // Wait for the diff scope to settle; both sides default to envo's latest two versions
+    await waitFor(() => {
+      expect(onDiff).toHaveBeenCalled()
+      const last = onDiff.mock.calls[onDiff.mock.calls.length - 1]?.[0]
+      expect(last).not.toBeNull()
+      expect(last.from.version.id).toBe('V1')
+      expect(last.from.version.ontology_id).toBe('O1')
+      expect(last.to.version.id).toBe('V2')
+      expect(last.to.version.ontology_id).toBe('O1')
+      expect(last.from.mode).toBe('asserted')
+      expect(last.to.mode).toBe('asserted')
+    })
+  })
+
+  it('toggling back to Single fires onDiffScopeChange(null)', async () => {
+    vi.doMock('../../hooks/useOntologies', () => ({
+      useOntologies: () => ({
+        ontologies: [
+          { id: 'O1', iri: 'http://x/o1', shortname: 'envo', title: 'ENVO',
+            created_at: '2024-01-01',
+            latest_version: { id: 'V2', ontology_id: 'O1', status: 'ready' } as any,
+          } as any,
+        ],
+        isLoading: false,
+      }),
+    }))
+    const { ScopeToolbar: Fresh } = await import('./ScopeToolbar')
+    const onDiff = vi.fn()
+    render(wrap(<Fresh onScopeChange={vi.fn()} onCopy={vi.fn()} onDiffScopeChange={onDiff} />))
+    fireEvent.click(screen.getByRole('button', { name: /^diff$/i }))
+    onDiff.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /^single$/i }))
+    expect(onDiff).toHaveBeenCalledWith(null)
   })
 })
