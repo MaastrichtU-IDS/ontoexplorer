@@ -1551,129 +1551,11 @@ async def get_term(
                 _pre_iris.append(_v)
     _resolve_labels(_pre_iris)
 
-    # Superclass expressions — blank-node targets of rdfs:subClassOf (complex class expressions)
-    import pyoxigraph as _ox
-    import json as _json_mod
-    _graph_node   = _ox.NamedNode(g_iri)
-    _term_node    = _ox.NamedNode(term_iri)
-    _RDFS_SC_NODE = _ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
-    superclass_expressions: list[dict] = []
-    for _quad in store.quads_for_pattern(_term_node, _RDFS_SC_NODE, None, _graph_node):
-        if isinstance(_quad.object, _ox.BlankNode):
-            _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
-            if _expr.get("type") != "unknown":
-                superclass_expressions.append(_expr)
-
     # All ancestors: asserted direct parents first, then ELK-inferred (ELK strips asserted parents from its output)
     _all_ancestor_iris: list[str] = list(dict.fromkeys(asserted_sup_iris + inferred_sup_iris))
 
-    # Inferred superclass expressions — anonymous subClassOf expressions inherited via named superclasses
-    _seen_expr_keys: set[str] = {_json_mod.dumps(_e, sort_keys=True) for _e in superclass_expressions}
-    inferred_superclass_expressions: list[dict] = []
-    for _sup_iri in _all_ancestor_iris[:20]:
-        _sup_node = _ox.NamedNode(_sup_iri)
-        for _quad in store.quads_for_pattern(_sup_node, _RDFS_SC_NODE, None, _graph_node):
-            if isinstance(_quad.object, _ox.BlankNode):
-                _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
-                if _expr.get("type") != "unknown":
-                    _key = _json_mod.dumps(_expr, sort_keys=True)
-                    if _key not in _seen_expr_keys:
-                        _seen_expr_keys.add(_key)
-                        inferred_superclass_expressions.append({
-                            "expr": _expr,
-                            "from_iri": _sup_iri,
-                            "from_label": _label(_sup_iri),
-                        })
-        if len(inferred_superclass_expressions) >= 50:
-            break
-
-    # Equivalent classes (owl:equivalentClass)
-    equivalent_to: list[dict] = []
-    _OWL_EQ_CLASS = _ox.NamedNode(_OWL + "equivalentClass")
-    for _quad in store.quads_for_pattern(_term_node, _OWL_EQ_CLASS, None, _graph_node):
-        _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
-        if _expr.get("type") != "unknown":
-            equivalent_to.append(_expr)
-
-    # Disjoint with (owl:disjointWith)
-    disjoint_with: list[dict] = []
-    _OWL_DISJOINT = _ox.NamedNode(_OWL + "disjointWith")
-    for _quad in store.quads_for_pattern(_term_node, _OWL_DISJOINT, None, _graph_node):
-        _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
-        if _expr.get("type") != "unknown":
-            disjoint_with.append(_expr)
-
-    # Precompute owl:AllDisjointClasses map: iri → list of co-member IRIs
-    # BFO and similar ontologies often use multi-way DisjointClasses rather than pairwise disjointWith.
-    _OWL_ADC_NODE    = _ox.NamedNode(_OWL + "AllDisjointClasses")
-    _OWL_MEMBERS_NODE = _ox.NamedNode(_OWL + "members")
-    _RDF_TYPE_NODE   = _ox.NamedNode(_RDF + "type")
-    _adc_map: dict[str, list[str]] = {}
-    for _q in store.quads_for_pattern(None, _RDF_TYPE_NODE, _OWL_ADC_NODE, _graph_node):
-        _mem_qs = list(store.quads_for_pattern(_q.subject, _OWL_MEMBERS_NODE, None, _graph_node))
-        if not _mem_qs:
-            continue
-        _miris = [
-            m.value for m in _rdf_list_items(store, _graph_node, _mem_qs[0].object)
-            if isinstance(m, _ox.NamedNode)
-        ]
-        for _miri in _miris:
-            _adc_map.setdefault(_miri, []).extend(o for o in _miris if o != _miri)
-
-    # Inferred disjoint-with — walk ALL ancestors (asserted + inferred); check pairwise + AllDisjointClasses
-    # Bulk-prefetch partner IRIs that the loop will label so we don't pay
-    # one Redis HGETALL per partner.
-    _partner_iris: list[str] = []
-    for _anc in _all_ancestor_iris:
-        _partner_iris.extend(_adc_map.get(_anc, []))
-    _resolve_labels(_partner_iris)
-
-    _seen_disjoint_keys: set[str] = {_json_mod.dumps(_e, sort_keys=True) for _e in disjoint_with}
-    inferred_disjoint_with: list[dict] = []
-    for _sup_iri in _all_ancestor_iris:
-        _sup_node = _ox.NamedNode(_sup_iri)
-
-        # Pairwise owl:disjointWith
-        for _quad in store.quads_for_pattern(_sup_node, _OWL_DISJOINT, None, _graph_node):
-            _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
-            if _expr.get("type") != "unknown":
-                _key = _json_mod.dumps(_expr, sort_keys=True)
-                if _key not in _seen_disjoint_keys:
-                    _seen_disjoint_keys.add(_key)
-                    inferred_disjoint_with.append({
-                        "expr": _expr, "from_iri": _sup_iri, "from_label": _label(_sup_iri),
-                    })
-
-        # Multi-way owl:AllDisjointClasses
-        for _partner_iri in _adc_map.get(_sup_iri, []):
-            _expr = {"type": "named", "iri": _partner_iri, "label": _label(_partner_iri)}
-            _key = _json_mod.dumps(_expr, sort_keys=True)
-            if _key not in _seen_disjoint_keys:
-                _seen_disjoint_keys.add(_key)
-                inferred_disjoint_with.append({
-                    "expr": _expr, "from_iri": _sup_iri, "from_label": _label(_sup_iri),
-                })
-
-    # Disjoint union of (owl:disjointUnionOf) — each value is an rdf:List of members
-    disjoint_union_of: list[list[dict]] = []
-    _OWL_DISJOINT_UNION = _ox.NamedNode(_OWL + "disjointUnionOf")
-    for _quad in store.quads_for_pattern(_term_node, _OWL_DISJOINT_UNION, None, _graph_node):
-        _members = [
-            _build_class_expr(store, _graph_node, _item, _label)
-            for _item in _rdf_list_items(store, _graph_node, _quad.object)
-        ]
-        if _members:
-            disjoint_union_of.append(_members)
-
-    # General class axioms — blank nodes whose rdfs:subClassOf target is this term
-    general_class_axioms: list[dict] = []
-    for _quad in store.quads_for_pattern(None, _RDFS_SC_NODE, _term_node, _graph_node):
-        if isinstance(_quad.subject, _ox.BlankNode):
-            _expr = _build_class_expr(store, _graph_node, _quad.subject, _label)
-            if _expr.get("type") != "unknown":
-                general_class_axioms.append(_expr)
-
-    # Property usage — classes that reference this term via owl:onProperty restrictions
+    # Determine is_property upfront so we can fan out the right SPARQL queries
+    # without waiting on the Oxigraph sync block.
     _OWL_PROP_TYPES = {
         "http://www.w3.org/2002/07/owl#ObjectProperty",
         "http://www.w3.org/2002/07/owl#DatatypeProperty",
@@ -1682,117 +1564,201 @@ async def get_term(
     rdf_types = set(properties.get("http://www.w3.org/1999/02/22-rdf-syntax-ns#type", []))
     is_property = bool(rdf_types & _OWL_PROP_TYPES)
 
-    usage: list[dict] = []
-    if is_property:
-        usage_query = f"""
+    import pyoxigraph as _ox
+    import json as _json_mod
+
+    # ── Sync Oxigraph block ──────────────────────────────────────────────────
+    # All blank-node / quad-pattern walks bundled into one threaded function so
+    # the entire block runs concurrently with the SPARQL queries below.
+    def _compute_oxigraph_block() -> dict:
+        _graph_node   = _ox.NamedNode(g_iri)
+        _term_node    = _ox.NamedNode(term_iri)
+        _RDFS_SC_NODE = _ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
+        _OWL_EQ_CLASS = _ox.NamedNode(_OWL + "equivalentClass")
+        _OWL_DISJOINT_NODE = _ox.NamedNode(_OWL + "disjointWith")
+        _OWL_ADC_NODE      = _ox.NamedNode(_OWL + "AllDisjointClasses")
+        _OWL_MEMBERS_NODE  = _ox.NamedNode(_OWL + "members")
+        _OWL_DISJOINT_UNION_NODE = _ox.NamedNode(_OWL + "disjointUnionOf")
+        _RDF_TYPE_NODE     = _ox.NamedNode(_RDF + "type")
+
+        # Superclass expressions — blank-node targets of rdfs:subClassOf
+        superclass_expressions: list[dict] = []
+        for _quad in store.quads_for_pattern(_term_node, _RDFS_SC_NODE, None, _graph_node):
+            if isinstance(_quad.object, _ox.BlankNode):
+                _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
+                if _expr.get("type") != "unknown":
+                    superclass_expressions.append(_expr)
+
+        # Inferred superclass expressions — anonymous subClassOf expressions inherited via named superclasses
+        _seen_expr_keys: set[str] = {_json_mod.dumps(_e, sort_keys=True) for _e in superclass_expressions}
+        inferred_superclass_expressions: list[dict] = []
+        for _sup_iri in _all_ancestor_iris[:20]:
+            _sup_node = _ox.NamedNode(_sup_iri)
+            for _quad in store.quads_for_pattern(_sup_node, _RDFS_SC_NODE, None, _graph_node):
+                if isinstance(_quad.object, _ox.BlankNode):
+                    _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
+                    if _expr.get("type") != "unknown":
+                        _key = _json_mod.dumps(_expr, sort_keys=True)
+                        if _key not in _seen_expr_keys:
+                            _seen_expr_keys.add(_key)
+                            inferred_superclass_expressions.append({
+                                "expr": _expr,
+                                "from_iri": _sup_iri,
+                                "from_label": _label(_sup_iri),
+                            })
+            if len(inferred_superclass_expressions) >= 50:
+                break
+
+        # Equivalent classes (owl:equivalentClass)
+        equivalent_to: list[dict] = []
+        for _quad in store.quads_for_pattern(_term_node, _OWL_EQ_CLASS, None, _graph_node):
+            _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
+            if _expr.get("type") != "unknown":
+                equivalent_to.append(_expr)
+
+        # Disjoint with (owl:disjointWith)
+        disjoint_with: list[dict] = []
+        for _quad in store.quads_for_pattern(_term_node, _OWL_DISJOINT_NODE, None, _graph_node):
+            _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
+            if _expr.get("type") != "unknown":
+                disjoint_with.append(_expr)
+
+        # AllDisjointClasses map: iri → co-member IRIs
+        _adc_map: dict[str, list[str]] = {}
+        for _q in store.quads_for_pattern(None, _RDF_TYPE_NODE, _OWL_ADC_NODE, _graph_node):
+            _mem_qs = list(store.quads_for_pattern(_q.subject, _OWL_MEMBERS_NODE, None, _graph_node))
+            if not _mem_qs:
+                continue
+            _miris = [
+                m.value for m in _rdf_list_items(store, _graph_node, _mem_qs[0].object)
+                if isinstance(m, _ox.NamedNode)
+            ]
+            for _miri in _miris:
+                _adc_map.setdefault(_miri, []).extend(o for o in _miris if o != _miri)
+
+        # Bulk-prefetch partner IRIs for the inferred-disjoint walk.
+        _partner_iris: list[str] = []
+        for _anc in _all_ancestor_iris:
+            _partner_iris.extend(_adc_map.get(_anc, []))
+        _resolve_labels(_partner_iris)
+
+        # Inferred disjoint-with — walk ALL ancestors; pairwise + AllDisjointClasses
+        _seen_disjoint_keys: set[str] = {_json_mod.dumps(_e, sort_keys=True) for _e in disjoint_with}
+        inferred_disjoint_with: list[dict] = []
+        for _sup_iri in _all_ancestor_iris:
+            _sup_node = _ox.NamedNode(_sup_iri)
+            for _quad in store.quads_for_pattern(_sup_node, _OWL_DISJOINT_NODE, None, _graph_node):
+                _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
+                if _expr.get("type") != "unknown":
+                    _key = _json_mod.dumps(_expr, sort_keys=True)
+                    if _key not in _seen_disjoint_keys:
+                        _seen_disjoint_keys.add(_key)
+                        inferred_disjoint_with.append({
+                            "expr": _expr, "from_iri": _sup_iri, "from_label": _label(_sup_iri),
+                        })
+            for _partner_iri in _adc_map.get(_sup_iri, []):
+                _expr = {"type": "named", "iri": _partner_iri, "label": _label(_partner_iri)}
+                _key = _json_mod.dumps(_expr, sort_keys=True)
+                if _key not in _seen_disjoint_keys:
+                    _seen_disjoint_keys.add(_key)
+                    inferred_disjoint_with.append({
+                        "expr": _expr, "from_iri": _sup_iri, "from_label": _label(_sup_iri),
+                    })
+
+        # Disjoint union of (owl:disjointUnionOf) — each value is an rdf:List
+        disjoint_union_of: list[list[dict]] = []
+        for _quad in store.quads_for_pattern(_term_node, _OWL_DISJOINT_UNION_NODE, None, _graph_node):
+            _members = [
+                _build_class_expr(store, _graph_node, _item, _label)
+                for _item in _rdf_list_items(store, _graph_node, _quad.object)
+            ]
+            if _members:
+                disjoint_union_of.append(_members)
+
+        # General class axioms — blank nodes whose rdfs:subClassOf target is this term
+        general_class_axioms: list[dict] = []
+        for _quad in store.quads_for_pattern(None, _RDFS_SC_NODE, _term_node, _graph_node):
+            if isinstance(_quad.subject, _ox.BlankNode):
+                _expr = _build_class_expr(store, _graph_node, _quad.subject, _label)
+                if _expr.get("type") != "unknown":
+                    general_class_axioms.append(_expr)
+
+        return {
+            "superclass_expressions": superclass_expressions,
+            "inferred_superclass_expressions": inferred_superclass_expressions,
+            "equivalent_to": equivalent_to,
+            "disjoint_with": disjoint_with,
+            "inferred_disjoint_with": inferred_disjoint_with,
+            "disjoint_union_of": disjoint_union_of,
+            "general_class_axioms": general_class_axioms,
+            "_adc_map": _adc_map,
+        }
+
+    # ── Per-query helpers ───────────────────────────────────────────────────
+    # Each returns its raw rows; label resolution happens after the gather.
+    def _run_usage_query(s) -> list[dict]:
+        q = f"""
             PREFIX owl:  <http://www.w3.org/2002/07/owl#>
             PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
             SELECT ?class ?relation ?restrictType ?filler WHERE {{
                 GRAPH <{g_iri}> {{
-                    {{
-                        ?class rdfs:subClassOf ?r .
-                        BIND("subClassOf" AS ?relation)
-                    }} UNION {{
-                        ?class owl:equivalentClass ?r .
-                        BIND("equivalentClass" AS ?relation)
-                    }}
+                    {{ ?class rdfs:subClassOf ?r . BIND("subClassOf" AS ?relation) }}
+                    UNION {{ ?class owl:equivalentClass ?r . BIND("equivalentClass" AS ?relation) }}
                     ?r owl:onProperty <{term_iri}> .
                     FILTER(isIRI(?class))
-                    {{
-                        ?r owl:someValuesFrom ?filler .
-                        BIND("some" AS ?restrictType)
-                    }} UNION {{
-                        ?r owl:allValuesFrom ?filler .
-                        BIND("only" AS ?restrictType)
-                    }} UNION {{
-                        ?r owl:hasValue ?filler .
-                        BIND("value" AS ?restrictType)
-                    }} UNION {{
-                        ?r owl:minCardinality ?filler .
-                        BIND("min" AS ?restrictType)
-                    }} UNION {{
-                        ?r owl:maxCardinality ?filler .
-                        BIND("max" AS ?restrictType)
-                    }} UNION {{
-                        ?r owl:exactCardinality ?filler .
-                        BIND("exactly" AS ?restrictType)
-                    }} UNION {{
-                        ?r owl:minQualifiedCardinality ?filler .
-                        BIND("min" AS ?restrictType)
-                    }} UNION {{
-                        ?r owl:maxQualifiedCardinality ?filler .
-                        BIND("max" AS ?restrictType)
-                    }} UNION {{
-                        ?r owl:exactQualifiedCardinality ?filler .
-                        BIND("exactly" AS ?restrictType)
-                    }}
+                    {{ ?r owl:someValuesFrom ?filler . BIND("some" AS ?restrictType) }}
+                    UNION {{ ?r owl:allValuesFrom ?filler . BIND("only" AS ?restrictType) }}
+                    UNION {{ ?r owl:hasValue ?filler . BIND("value" AS ?restrictType) }}
+                    UNION {{ ?r owl:minCardinality ?filler . BIND("min" AS ?restrictType) }}
+                    UNION {{ ?r owl:maxCardinality ?filler . BIND("max" AS ?restrictType) }}
+                    UNION {{ ?r owl:exactCardinality ?filler . BIND("exactly" AS ?restrictType) }}
+                    UNION {{ ?r owl:minQualifiedCardinality ?filler . BIND("min" AS ?restrictType) }}
+                    UNION {{ ?r owl:maxQualifiedCardinality ?filler . BIND("max" AS ?restrictType) }}
+                    UNION {{ ?r owl:exactQualifiedCardinality ?filler . BIND("exactly" AS ?restrictType) }}
                 }}
             }}
             ORDER BY ?class ?relation ?restrictType
             LIMIT 200
         """
-        usage = await asyncio.to_thread(_sparql_usage, store, usage_query, _label)
+        return _sparql_usage(s, q, _label)
 
-    # Class usage — axioms in other classes that reference this term as a filler or disjointWith target
-    class_usage: list[dict] = []
-    if not is_property:
-        _cu_query = f"""
+    def _run_class_usage_queries(s, adc_map: dict) -> list[dict]:
+        cu_q = f"""
             PREFIX owl:  <http://www.w3.org/2002/07/owl#>
             PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
             SELECT DISTINCT ?class ?relation ?prop ?restrictType WHERE {{
                 GRAPH <{g_iri}> {{
-                    {{
-                        ?r owl:someValuesFrom <{term_iri}> . ?r owl:onProperty ?prop .
-                        BIND("some" AS ?restrictType)
-                    }} UNION {{
-                        ?r owl:allValuesFrom <{term_iri}> . ?r owl:onProperty ?prop .
-                        BIND("only" AS ?restrictType)
-                    }} UNION {{
-                        ?r owl:hasValue <{term_iri}> . ?r owl:onProperty ?prop .
-                        BIND("value" AS ?restrictType)
-                    }}
-                    {{
-                        ?class rdfs:subClassOf ?r . FILTER(isIRI(?class))
-                        BIND("subClassOf" AS ?relation)
-                    }} UNION {{
-                        ?class owl:equivalentClass ?r . FILTER(isIRI(?class))
-                        BIND("equivalentClass" AS ?relation)
-                    }}
+                    {{ ?r owl:someValuesFrom <{term_iri}> . ?r owl:onProperty ?prop . BIND("some" AS ?restrictType) }}
+                    UNION {{ ?r owl:allValuesFrom <{term_iri}> . ?r owl:onProperty ?prop . BIND("only" AS ?restrictType) }}
+                    UNION {{ ?r owl:hasValue <{term_iri}> . ?r owl:onProperty ?prop . BIND("value" AS ?restrictType) }}
+                    {{ ?class rdfs:subClassOf ?r . FILTER(isIRI(?class)) BIND("subClassOf" AS ?relation) }}
+                    UNION {{ ?class owl:equivalentClass ?r . FILTER(isIRI(?class)) BIND("equivalentClass" AS ?relation) }}
                 }}
             }}
             ORDER BY ?class ?relation ?prop
             LIMIT 200
         """
-        _disj_query = f"""
+        disj_q = f"""
             PREFIX owl: <http://www.w3.org/2002/07/owl#>
             SELECT ?class WHERE {{
                 GRAPH <{g_iri}> {{
-                    ?class owl:disjointWith <{term_iri}> .
-                    FILTER(isIRI(?class))
+                    ?class owl:disjointWith <{term_iri}> . FILTER(isIRI(?class))
                 }}
             }}
             ORDER BY ?class
             LIMIT 100
         """
-        class_usage = await asyncio.to_thread(
-            _sparql_class_usage, store, _cu_query, _disj_query, _label, _adc_map, term_iri
-        )
+        return _sparql_class_usage(s, cu_q, disj_q, _label, adc_map, term_iri)
 
-    # Domain properties — properties whose rdfs:domain or schema:domainIncludes is this term (or an ancestor)
-    schema_properties: list[dict] = []
-    inherited_schema_properties: list[dict] = []
-    if not is_property:
-        _dp_q = f"""
+    def _run_schema_props_query(s) -> list[dict]:
+        q = f"""
             PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
             SELECT DISTINCT ?prop ?range WHERE {{
                 GRAPH <{g_iri}> {{
                     {{ ?prop rdfs:domain <{term_iri}> }}
-                    UNION
-                    {{ ?prop <https://schema.org/domainIncludes> <{term_iri}> }}
+                    UNION {{ ?prop <https://schema.org/domainIncludes> <{term_iri}> }}
                     OPTIONAL {{
-                        {{ ?prop rdfs:range ?range }}
-                        UNION
-                        {{ ?prop <https://schema.org/rangeIncludes> ?range }}
+                        {{ ?prop rdfs:range ?range }} UNION {{ ?prop <https://schema.org/rangeIncludes> ?range }}
                         FILTER(isIRI(?range))
                     }}
                     FILTER(isIRI(?prop))
@@ -1801,83 +1767,40 @@ async def get_term(
             ORDER BY ?prop
             LIMIT 200
         """
+        return [
+            {"prop_iri": row["prop"].value,
+             "range_iri": row["range"].value if row["range"] is not None else None}
+            for row in s.query(q)
+        ]
 
-        def _query_dp(s):
-            return [
-                {
-                    "prop_iri": row["prop"].value,
-                    "range_iri": row["range"].value if row["range"] is not None else None,
-                }
-                for row in s.query(_dp_q)
-            ]
-
-        _dp_rows = await asyncio.to_thread(_query_dp, store)
-        # Bulk-resolve all prop/range IRIs in one pipeline before iterating.
-        _resolve_labels([r["prop_iri"] for r in _dp_rows] + [r["range_iri"] for r in _dp_rows if r["range_iri"]])
-        for row in _dp_rows:
-            schema_properties.append({
-                "prop_iri": row["prop_iri"],
-                "prop_label": _label(row["prop_iri"]),
-                "range_iri": row["range_iri"],
-                "range_label": _label(row["range_iri"]) if row["range_iri"] else None,
-            })
-
-        _anc_iris = _all_ancestor_iris[:30]
-        if _anc_iris:
-            _anc_values = " ".join(f"<{iri}>" for iri in _anc_iris)
-            _idp_q = f"""
-                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-                SELECT DISTINCT ?prop ?range ?ancestor WHERE {{
-                    GRAPH <{g_iri}> {{
-                        {{ ?prop rdfs:domain ?ancestor }}
-                        UNION
-                        {{ ?prop <https://schema.org/domainIncludes> ?ancestor }}
-                        OPTIONAL {{
-                            {{ ?prop rdfs:range ?range }}
-                            UNION
-                            {{ ?prop <https://schema.org/rangeIncludes> ?range }}
-                            FILTER(isIRI(?range))
-                        }}
-                        FILTER(isIRI(?prop))
-                        VALUES ?ancestor {{ {_anc_values} }}
+    def _run_inh_schema_props_query(s, anc_iris: list[str]) -> list[dict]:
+        if not anc_iris:
+            return []
+        anc_values = " ".join(f"<{iri}>" for iri in anc_iris)
+        q = f"""
+            PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+            SELECT DISTINCT ?prop ?range ?ancestor WHERE {{
+                GRAPH <{g_iri}> {{
+                    {{ ?prop rdfs:domain ?ancestor }}
+                    UNION {{ ?prop <https://schema.org/domainIncludes> ?ancestor }}
+                    OPTIONAL {{
+                        {{ ?prop rdfs:range ?range }} UNION {{ ?prop <https://schema.org/rangeIncludes> ?range }}
+                        FILTER(isIRI(?range))
                     }}
+                    FILTER(isIRI(?prop))
+                    VALUES ?ancestor {{ {anc_values} }}
                 }}
-                ORDER BY ?ancestor ?prop
-                LIMIT 500
-            """
+            }}
+            ORDER BY ?ancestor ?prop
+            LIMIT 500
+        """
+        return [
+            {"prop_iri": row["prop"].value,
+             "range_iri": row["range"].value if row["range"] is not None else None,
+             "from_iri": row["ancestor"].value}
+            for row in s.query(q)
+        ]
 
-            def _query_idp(s):
-                return [
-                    {
-                        "prop_iri": row["prop"].value,
-                        "range_iri": row["range"].value if row["range"] is not None else None,
-                        "from_iri": row["ancestor"].value,
-                    }
-                    for row in s.query(_idp_q)
-                ]
-
-            _idp_rows = await asyncio.to_thread(_query_idp, store)
-            _resolve_labels(
-                [r["prop_iri"] for r in _idp_rows]
-                + [r["range_iri"] for r in _idp_rows if r["range_iri"]]
-                + [r["from_iri"] for r in _idp_rows]
-            )
-            _direct_iris = {sp["prop_iri"] for sp in schema_properties}
-            _seen_inh: set[tuple] = set()
-            for row in _idp_rows:
-                key = (row["prop_iri"], row["from_iri"])
-                if key not in _seen_inh and row["prop_iri"] not in _direct_iris:
-                    _seen_inh.add(key)
-                    inherited_schema_properties.append({
-                        "prop_iri": row["prop_iri"],
-                        "prop_label": _label(row["prop_iri"]),
-                        "range_iri": row["range_iri"],
-                        "range_label": _label(row["range_iri"]) if row["range_iri"] else None,
-                        "from_iri": row["from_iri"],
-                        "from_label": _label(row["from_iri"]),
-                    })
-
-    # Is this term the object of owl:inverseOf declared by another property?
     def _check_is_inverse_target(s) -> bool:
         q = f"""
             PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -1885,7 +1808,75 @@ async def get_term(
         """
         return bool(s.query(q))
 
-    is_inverse_target = await asyncio.to_thread(_check_is_inverse_target, store)
+    # ── Run everything concurrently ──────────────────────────────────────────
+    # Phase 1 (Oxigraph sync block + the SPARQL queries that DON'T need _adc_map)
+    _anc_iris = _all_ancestor_iris[:30]
+    _phase1 = [
+        asyncio.to_thread(_compute_oxigraph_block),       # 0: includes _adc_map
+        asyncio.to_thread(_check_is_inverse_target, store),  # 1
+    ]
+    if is_property:
+        _phase1.append(asyncio.to_thread(_run_usage_query, store))         # 2
+    else:
+        _phase1.append(asyncio.to_thread(_run_schema_props_query, store))  # 2
+        _phase1.append(asyncio.to_thread(_run_inh_schema_props_query, store, _anc_iris))  # 3
+
+    _results_1 = await asyncio.gather(*_phase1)
+    _ox_result = _results_1[0]
+    is_inverse_target = _results_1[1]
+
+    superclass_expressions          = _ox_result["superclass_expressions"]
+    inferred_superclass_expressions = _ox_result["inferred_superclass_expressions"]
+    equivalent_to                   = _ox_result["equivalent_to"]
+    disjoint_with                   = _ox_result["disjoint_with"]
+    inferred_disjoint_with          = _ox_result["inferred_disjoint_with"]
+    disjoint_union_of               = _ox_result["disjoint_union_of"]
+    general_class_axioms            = _ox_result["general_class_axioms"]
+    _adc_map                        = _ox_result["_adc_map"]
+
+    usage: list[dict] = []
+    schema_properties: list[dict] = []
+    inherited_schema_properties: list[dict] = []
+
+    if is_property:
+        usage = _results_1[2]
+    else:
+        _dp_rows = _results_1[2]
+        _idp_rows = _results_1[3] if len(_results_1) > 3 else []
+        # Bulk-resolve labels for all IRIs we'll need to render these rows.
+        _resolve_labels(
+            [r["prop_iri"] for r in _dp_rows]
+            + [r["range_iri"] for r in _dp_rows if r["range_iri"]]
+            + [r["prop_iri"] for r in _idp_rows]
+            + [r["range_iri"] for r in _idp_rows if r["range_iri"]]
+            + [r["from_iri"] for r in _idp_rows]
+        )
+        for row in _dp_rows:
+            schema_properties.append({
+                "prop_iri": row["prop_iri"],
+                "prop_label": _label(row["prop_iri"]),
+                "range_iri": row["range_iri"],
+                "range_label": _label(row["range_iri"]) if row["range_iri"] else None,
+            })
+        _direct_iris = {sp["prop_iri"] for sp in schema_properties}
+        _seen_inh: set[tuple] = set()
+        for row in _idp_rows:
+            key = (row["prop_iri"], row["from_iri"])
+            if key not in _seen_inh and row["prop_iri"] not in _direct_iris:
+                _seen_inh.add(key)
+                inherited_schema_properties.append({
+                    "prop_iri": row["prop_iri"],
+                    "prop_label": _label(row["prop_iri"]),
+                    "range_iri": row["range_iri"],
+                    "range_label": _label(row["range_iri"]) if row["range_iri"] else None,
+                    "from_iri": row["from_iri"],
+                    "from_label": _label(row["from_iri"]),
+                })
+
+    # Phase 2 — class_usage needs _adc_map (only run when this term is a class).
+    class_usage: list[dict] = []
+    if not is_property:
+        class_usage = await asyncio.to_thread(_run_class_usage_queries, store, _adc_map)
 
     term_detail = r.hgetall(_iri_key(version_id, term_iri))
     source = term_detail.get("source", "") if term_detail else ""
