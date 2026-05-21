@@ -62,6 +62,11 @@ class ScopeResult:
     mireot_sources_skipped: list[str] = field(default_factory=list)
     elapsed_seconds: float = 0.0
     error_message: str | None = None
+    # True iff the ontology is GLOBALLY inconsistent (Konclude said inconsistent,
+    # classification was skipped, no concrete unsat-class list available). Set
+    # BEFORE the synthetic owl:Thing entry is added so it remains a reliable
+    # signal even after unsatisfiable_classes is non-empty.
+    globally_inconsistent: bool = False
 
 
 @dataclass
@@ -112,11 +117,7 @@ def detect_consistency(
     # the synthetic owl:Nothing node in the class tree the universal ancestor
     # (Protégé's standard rendering for an inconsistent ontology).
     host_only = report.scopes.get("host_only")
-    globally_inconsistent = bool(
-        host_only is not None
-        and host_only.status == "inconsistent"
-        and not host_only.unsatisfiable_classes
-    )
+    globally_inconsistent = bool(host_only is not None and host_only.globally_inconsistent)
     try:
         _materialize_global_inconsistency(
             ontology_id=ontology_id,
@@ -205,11 +206,13 @@ def _run_one_scope(
         ))
 
     # Globally inconsistent case: Konclude said "not consistent" AND classification
-    # was skipped (so the unsat list is empty). Add a synthetic owl:Thing entry so
-    # the class tree's synthetic owl:Nothing node correctly shows owl:Thing as its
-    # universal child — the visual realisation of "this ontology has no models, so
-    # every entailment, including owl:Thing ⊑ owl:Nothing, holds".
+    # was skipped (so the unsat list is empty). Set the flag FIRST (it's the reliable
+    # signal), then add a synthetic owl:Thing entry so the class tree's synthetic
+    # owl:Nothing node correctly shows owl:Thing as its universal child — the visual
+    # realisation of "this ontology has no models, so every entailment, including
+    # owl:Thing ⊑ owl:Nothing, holds".
     if not konclude_result.consistent and not konclude_result.unsatisfiable_class_iris:
+        result.globally_inconsistent = True
         result.unsatisfiable_classes.append(UnsatisfiableClass(
             iri="http://www.w3.org/2002/07/owl#Thing",
             label="owl:Thing",
@@ -234,31 +237,35 @@ def _materialize_global_inconsistency(
     version_id: str,
     present: bool,
 ) -> None:
-    """Add or remove `owl:Thing rdfs:subClassOf owl:Nothing` in the inferred graph.
+    """Add or remove `owl:Thing rdfs:subClassOf owl:Nothing` in the consistency-inferred graph.
 
     Adding the trivializing entailment is the materialized form of "this ontology
     has no models" — every classical entailment, including this one, holds. Removing
-    it (when consistency is restored on a re-run) keeps the inferred graph clean.
+    it (when consistency is restored on a re-run) keeps the graph clean.
+
+    We use a SEPARATE named graph (`urn:ontology:{oid}:{vid}:consistency-inferred`)
+    rather than ELK's `:inferred` graph because the reasoning task does
+    `remove_graph + bulk_load` and would clobber our triple every time it re-runs.
+    The `/inferred` API endpoint and SPARQL queries should UNION both graphs.
 
     pyoxigraph's `store.add` is idempotent on duplicates; `store.remove` is a no-op
     when the quad isn't present. Both are safe to call unconditionally.
     """
     import pyoxigraph
-    from ontoexplorer.clients.oxigraph import get_store, graph_iri
+    from ontoexplorer.clients.oxigraph import consistency_inferred_graph_iri, get_store
 
     store = get_store()
-    inferred_iri = graph_iri(ontology_id, version_id, inferred=True)
-    inferred_named = pyoxigraph.NamedNode(inferred_iri)
+    graph_uri = consistency_inferred_graph_iri(ontology_id, version_id)
+    named = pyoxigraph.NamedNode(graph_uri)
     quad = pyoxigraph.Quad(
         pyoxigraph.NamedNode("http://www.w3.org/2002/07/owl#Thing"),
         pyoxigraph.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf"),
         pyoxigraph.NamedNode("http://www.w3.org/2002/07/owl#Nothing"),
-        inferred_named,
+        named,
     )
-    # Make sure the named graph exists before adding (Oxigraph requires this for some
-    # backends); add_graph is a no-op if already present.
+    # Make sure the named graph exists before adding; add_graph is a no-op if present.
     try:
-        store.add_graph(inferred_named)
+        store.add_graph(named)
     except Exception:
         pass
     if present:

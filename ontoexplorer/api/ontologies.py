@@ -1456,13 +1456,19 @@ async def get_term(
 
     _OWL_THING = "http://www.w3.org/2002/07/owl#Thing"
     _OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing"
+    # owl:Thing is filtered (noise — every class is a subclass of Thing).
+    # owl:Nothing is NOT filtered out of superclasses — when ELK reports
+    # `<C> ⊑ owl:Nothing` it means C is unsatisfiable, and the UI explicitly
+    # wants to surface that. Symmetric: don't filter Thing out of subclasses
+    # because Thing is rarely (only-for-inconsistent-ontologies) reported as a
+    # subclass of anything.
     inferred_sub_iris: list[str] = [
         s for s in elk_sub_result.get("subclasses", [])
-        if s not in (_OWL_THING, _OWL_NOTHING)
+        if s != _OWL_THING
     ]
     inferred_sup_iris: list[str] = [
         s for s in elk_sup_result.get("superclasses", [])
-        if s not in (_OWL_THING, _OWL_NOTHING)
+        if s != _OWL_THING
     ]
 
     # Asserted superclasses — named-class targets of rdfs:subClassOf
@@ -1930,19 +1936,23 @@ async def list_inferred(
     Returns 404 if reasoning has not yet completed.
     """
     await _get_version_or_404(db, ontology_id, version_id)
-    from ontoexplorer.clients.oxigraph import get_store, graph_iri
+    from ontoexplorer.clients.oxigraph import consistency_inferred_graph_iri, get_store, graph_iri
 
     store = get_store()
     inferred_iri = graph_iri(ontology_id, version_id, inferred=True)
+    consistency_iri = consistency_inferred_graph_iri(ontology_id, version_id)
 
+    # Union ELK's inferred graph with the consistency-detector's separate graph
+    # so callers see the trivializing `owl:Thing ⊑ owl:Nothing` entailment alongside
+    # ELK's subclass inferences. The two graphs are kept separate so re-running ELK
+    # doesn't clobber consistency entries (ELK does `remove_graph + bulk_load`).
     query = f"""
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
         SELECT ?sub ?sup WHERE {{
-            GRAPH <{inferred_iri}> {{
-                ?sub rdfs:subClassOf ?sup .
-                FILTER(isIRI(?sub) && isIRI(?sup))
-            }}
+            {{ GRAPH <{inferred_iri}>    {{ ?sub rdfs:subClassOf ?sup . FILTER(isIRI(?sub) && isIRI(?sup)) }} }}
+            UNION
+            {{ GRAPH <{consistency_iri}> {{ ?sub rdfs:subClassOf ?sup . FILTER(isIRI(?sub) && isIRI(?sup)) }} }}
         }}
         ORDER BY ?sub ?sup
         LIMIT {limit} OFFSET {offset}
@@ -1957,6 +1967,7 @@ async def list_inferred(
         "version_id": version_id,
         "ontology_id": ontology_id,
         "inferred_graph": inferred_iri,
+        "consistency_inferred_graph": consistency_iri,
         "axioms": axioms,
         "offset": offset,
         "limit": limit,
@@ -2038,16 +2049,30 @@ async def inferred_children(
     def _compute() -> dict:
         elk_direct: dict[str, list[str]] = classification.get("direct_superclasses", {})
         elk_all:    dict[str, list[str]] = classification.get("superclasses", {})
-        _excluded = {_OWL_THING, _OWL_NOTHING}
+        # ELK doesn't put owl:Nothing in direct_superclasses even for unsat
+        # classes — they need to be looked up from the separate `unsatisfiable`
+        # list. Treat that list as if those classes had owl:Nothing as a direct
+        # parent so the inferred tree can place them under it.
+        unsat_iris: set[str] = set(classification.get("unsatisfiable", []))
+        # owl:Thing is filtered (it's the universal root; every class trivially
+        # subclasses it — noise). owl:Nothing is KEPT as a navigable parent so
+        # unsatisfiable classes appear under it (Protégé-style "broken corner").
+        _excluded = {_OWL_THING}
 
         def _direct_parents(c: str) -> list[str]:
             if c in elk_direct:
-                return [p for p in elk_direct[c] if p not in _excluded]
-            raw = [p for p in elk_all.get(c, []) if p not in _excluded]
-            return [p for p in raw
-                    if not any(p in elk_all.get(q, []) for q in raw if q != p)]
+                parents = [p for p in elk_direct[c] if p not in _excluded]
+            else:
+                raw = [p for p in elk_all.get(c, []) if p not in _excluded]
+                parents = [p for p in raw
+                           if not any(p in elk_all.get(q, []) for q in raw if q != p)]
+            # If ELK marked this class as unsatisfiable, include owl:Nothing as
+            # a direct parent — Protégé convention.
+            if c in unsat_iris and _OWL_NOTHING not in parents:
+                parents.append(_OWL_NOTHING)
+            return parents
 
-        all_classes = set(elk_direct.keys()) | set(elk_all.keys())
+        all_classes = set(elk_direct.keys()) | set(elk_all.keys()) | unsat_iris
         if hide_obsolete:
             all_classes -= deprecated_iris
 
@@ -2057,8 +2082,18 @@ async def inferred_children(
             for p in _direct_parents(c):
                 children_of.setdefault(p, set()).add(c)
 
+        # When unsat classes exist, surface owl:Nothing as a synthetic top-level
+        # node so the user can expand into the population of unsatisfiable
+        # classes from the inferred tree's root.
+        nothing_children = children_of.get(_OWL_NOTHING, set())
+
         if cls == _OWL_THING:
-            child_iris = sorted(c for c in all_classes if not _direct_parents(c))
+            roots = sorted(c for c in all_classes if not _direct_parents(c))
+            if nothing_children:
+                roots = [_OWL_NOTHING] + roots
+            child_iris = roots
+        elif cls == _OWL_NOTHING:
+            child_iris = sorted(nothing_children)
         else:
             child_iris = sorted(children_of.get(cls, []))
 
