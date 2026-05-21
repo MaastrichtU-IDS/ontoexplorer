@@ -938,11 +938,12 @@ export const api = {
   },
 
   ontologies: {
-    list: (offset = 0, limit = 50, q?: string, group?: string, profile?: ProfileName) => {
+    list: (offset = 0, limit = 50, q?: string, group?: string, profile?: ProfileName, reuses?: string) => {
       const params = new URLSearchParams({ offset: String(offset), limit: String(limit) })
       if (q) params.set('q', q)
       if (group) params.set('group', group)   // single group filter sent to API
       if (profile) params.set('profile', profile)
+      if (reuses) params.set('reuses', reuses)
       return request<{ ontologies: Ontology[]; offset: number; limit: number }>(
         `/ontologies?${params}`
       )
@@ -1199,8 +1200,6 @@ export const api = {
 
   reuse: {
     fleet: () => request<ReuseFleet>('/reuse/fleet'),
-    version: (ontologyId: string, versionId: string) =>
-      request<ReuseReport>(`/ontologies/${ontologyId}/${versionId}/reuse`),
   },
 
   stats: {
