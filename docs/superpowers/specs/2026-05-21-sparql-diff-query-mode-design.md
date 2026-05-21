@@ -48,10 +48,12 @@ The toolbar emits a new optional callback `onDiffScopeChange(scope: DiffScope | 
 
 ```ts
 interface DiffScope {
-  from: { versionId: string; mode: ReasoningMode }
-  to:   { versionId: string; mode: ReasoningMode }
+  from: { version: OntologyVersion; mode: ReasoningMode }
+  to:   { version: OntologyVersion; mode: ReasoningMode }
 }
 ```
+
+The toolbar carries the full `OntologyVersion` object (not just an id) because the page-level diff orchestrator needs both `id` and `ontology_id` to build the scoped endpoint URL via `endpointForVersion(version, mode)`. The toolbar already fetched the version list in order to populate its dropdowns, so it has the full objects in hand.
 
 `null` is emitted whenever the toolbar exits Diff mode or the selection is incomplete. The page treats `null` as "no diff possible".
 
