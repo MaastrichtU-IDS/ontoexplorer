@@ -6,6 +6,7 @@ import { usePagedTable } from '../../hooks/usePagedTable'
 import { TablePager } from '../TablePager'
 import {
   ActionButton,
+  CopyableIri,
   DiffStatusBadge,
   StatusDot,
   UpdateState,
@@ -192,8 +193,9 @@ export function OntologyTable({
                     {row.label && row.label !== ontologyDisplayName(row) && (
                       <div style={{ color: 'var(--text-dim)', fontSize: 10 }}>{row.label}</div>
                     )}
-                    <div style={{ color: 'var(--text-dim)', fontSize: 10, fontFamily: 'monospace' }}>
-                      {row.version_iri ?? row.version_id}
+                    <div style={{ display: 'flex', gap: 4, marginTop: 2, flexWrap: 'wrap' }}>
+                      <CopyableIri iri={row.iri} label="IRI" />
+                      {row.version_iri && <CopyableIri iri={row.version_iri} label="vIRI" />}
                     </div>
                   </td>
                   <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-muted)' }}>
@@ -391,16 +393,19 @@ function VersionsSubRows({
         <tr key={v.version_id} style={{ background: 'rgba(255,255,255,0.02)' }}>
           <td />
           <td style={{ padding: '6px 10px', color: 'var(--text-muted)', fontSize: 11 }}>
-            ↳ <Link
-              to={`/ontologies/${slug}/${v.version_id}`}
-              style={{ color: 'var(--text-muted)', textDecoration: 'none', fontFamily: 'monospace' }}
-              title={v.version_id}
-            >
-              {v.version_iri ?? v.version_id}
-            </Link>
-            {v.ingestion_status === 'deprecated' && (
-              <span style={{ marginLeft: 6, color: '#f85149' }}>● deprecated</span>
-            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <Link
+                to={`/ontologies/${slug}/${v.version_id}`}
+                style={{ color: 'var(--text-muted)', textDecoration: 'none', fontFamily: 'monospace' }}
+                title={v.version_id}
+              >
+                ↳ {v.version_id.slice(0, 8)}
+              </Link>
+              {v.version_iri && <CopyableIri iri={v.version_iri} label="vIRI" />}
+              {v.ingestion_status === 'deprecated' && (
+                <span style={{ color: '#f85149' }}>● deprecated</span>
+              )}
+            </div>
           </td>
           <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-muted)' }}>
             {fmtTriples(v.triple_count)}

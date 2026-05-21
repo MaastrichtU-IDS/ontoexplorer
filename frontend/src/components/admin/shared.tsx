@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { AdminOntologyEntry, AdminVersionEntry } from '../../lib/api'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -100,7 +100,15 @@ export function SectionLabel({ children, style }: { children: React.ReactNode; s
   )
 }
 
-export function ServiceCard({ name, status }: { name: string; status: string | number }) {
+export function ServiceCard({
+  name,
+  status,
+  description,
+}: {
+  name: string
+  status: string | number
+  description?: string
+}) {
   const isOk = status === 'ok'
   const isNum = typeof status === 'number'
   const color = isNum
@@ -114,7 +122,14 @@ export function ServiceCard({ name, status }: { name: string; status: string | n
       <div style={{ color, fontSize: 11, marginBottom: 3, fontWeight: 500 }}>
         {isNum ? `▶ ${status} queued` : (isOk ? '● ok' : '✕ error')}
       </div>
-      <div style={{ color: 'var(--text-dim)', fontSize: 10, textTransform: 'uppercase', letterSpacing: .5 }}>
+      <div
+        title={description}
+        style={{
+          color: 'var(--text-dim)', fontSize: 10,
+          textTransform: 'uppercase', letterSpacing: .5,
+          cursor: description ? 'help' : undefined,
+        }}
+      >
         {name}
       </div>
     </div>
@@ -151,6 +166,50 @@ export function ActionButton({
       }}
     >
       {isError ? '✕ retry' : label}
+    </button>
+  )
+}
+
+// ── Copyable IRI chip ─────────────────────────────────────────────────────────
+
+/**
+ * Compact chip that shows a short label, reveals the full IRI on mouseover,
+ * and copies the IRI to the clipboard on click.
+ */
+export function CopyableIri({ iri, label }: { iri: string; label: string }) {
+  const [copied, setCopied] = useState(false)
+
+  async function handleCopy(e: React.MouseEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    try {
+      await navigator.clipboard.writeText(iri)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1200)
+    } catch {
+      // clipboard blocked — leave state alone
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title={iri}
+      style={{
+        background: 'none',
+        border: '1px solid var(--border)',
+        borderRadius: 3,
+        padding: '0 5px',
+        cursor: 'pointer',
+        color: copied ? 'var(--accent-green, #3fb950)' : 'var(--text-dim)',
+        fontSize: 10,
+        fontFamily: 'monospace',
+        lineHeight: '14px',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label} {copied ? '✓' : '⎘'}
     </button>
   )
 }

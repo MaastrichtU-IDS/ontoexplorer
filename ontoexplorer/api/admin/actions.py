@@ -390,3 +390,18 @@ async def admin_reindex(
             f"and {index_queued} index_ontology tasks"
         ),
     }
+
+
+# ── Jobs: clear recent terminal jobs ─────────────────────────────────────────
+
+@router.delete("/jobs", summary="Clear completed/failed job rows from the recent-jobs log")
+async def admin_clear_jobs(
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete job rows in a terminal state (done | failed). Running and pending rows are kept."""
+    result = await db.execute(
+        text("DELETE FROM jobs WHERE status IN ('done', 'failed')")
+    )
+    await db.commit()
+    return {"deleted": result.rowcount or 0}
