@@ -2,8 +2,15 @@
 # Accepts ontology triples (N-Triples) via HTTP and returns materialised
 # subClassOf / equivalentClass inferences as N-Triples.
 #
-# Uses py_horned_owl for OWL 2 parsing and a pure-Python OWL-EL reasoner
-# (structural subsumption over the OWL-EL fragment). No JVM required.
+# Two classification backends are available:
+#   - "whelk" (default): py-whelk = whelk-rs (Rust port of Whelk EL reasoner)
+#     invoked in-process via py-horned-owl. Strict superset of ROBOT/ELK's
+#     inferences on tested ontologies; ~4x faster than the legacy backend on
+#     ordo-scale inputs.
+#   - "rdflib" (legacy): pure-Python structural EL classifier in classifier.py.
+#     Kept because its proof-trace output drives the hitting-set justification
+#     algorithm. Has a known coverage gap (misses ~17K inferences on ordo).
+# Switch via env var CLASSIFIER_BACKEND.
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -12,9 +19,12 @@ RUN pip install --no-cache-dir \
     "fastapi==0.111.*" \
     "uvicorn[standard]" \
     "rdflib" \
-    "redis>=5.0"
+    "redis>=5.0" \
+    "py-horned-owl==1.4.*" \
+    "py-whelk==0.4.*" \
+    "pyoxigraph>=0.4"
 
-COPY main.py classifier.py cache.py justification.py ./
+COPY main.py classifier.py whelk_classifier.py cache.py justification.py ./
 
 EXPOSE 8001
 

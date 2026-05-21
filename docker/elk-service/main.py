@@ -19,11 +19,25 @@ from cache import (
     store_classification,
     store_justification,
 )
-from classifier import classify
+from classifier import classify as _rdflib_classify
 from justification import compute_justifications
+
+# Backend switch: "whelk" (default, py-whelk/whelk-rs) or "rdflib" (legacy).
+# When CLASSIFIER_BACKEND=rdflib we keep the old CR1–CR6 classifier — useful
+# for regression testing and as a fallback while proof-trace-driven
+# justifications haven't been migrated yet.
+_CLASSIFIER_BACKEND = os.getenv("CLASSIFIER_BACKEND", "whelk").lower()
+if _CLASSIFIER_BACKEND == "whelk":
+    from whelk_classifier import classify as _whelk_classify
+    from whelk_classifier import classify_ntriples as _whelk_classify_nt
+    classify = _whelk_classify
+else:
+    classify = _rdflib_classify
+    _whelk_classify_nt = None
 
 log = logging.getLogger("elk-service")
 logging.basicConfig(level=logging.INFO)
+log.info("classifier_backend_selected backend=%s", _CLASSIFIER_BACKEND)
 
 _JUSTIFICATION_TIME_LIMIT = int(os.getenv("JUSTIFICATION_TIME_LIMIT_SECONDS", "300"))
 
@@ -73,24 +87,36 @@ def run_classify(req: ClassifyRequest):
     if req.version_id in _in_progress:
         return {"version_id": req.version_id, "status": "running"}
 
-    try:
-        g = rdflib.Graph()
-        g.parse(io.StringIO(req.ntriples), format="nt")
-    except Exception as exc:
-        raise HTTPException(422, f"Failed to parse N-Triples: {exc}")
+    # For the whelk backend we skip the rdflib parse here — it would be
+    # redundant since whelk_classifier.classify_ntriples uses pyoxigraph
+    # (Rust) to convert NT → RDF/XML directly. On ordo this saves ~10s.
+    # The rdflib backend still needs the parsed graph upfront.
+    if _whelk_classify_nt is not None:
+        ntriples_for_worker: str | None = req.ntriples
+        graph_for_worker: rdflib.Graph | None = None
+    else:
+        try:
+            graph_for_worker = rdflib.Graph()
+            graph_for_worker.parse(io.StringIO(req.ntriples), format="nt")
+        except Exception as exc:
+            raise HTTPException(422, f"Failed to parse N-Triples: {exc}")
+        ntriples_for_worker = None
 
     _in_progress.add(req.version_id)
 
-    def _run(graph: rdflib.Graph, version_id: str) -> None:
+    def _run(version_id: str) -> None:
         try:
-            result = classify(graph, version_id)
+            if _whelk_classify_nt is not None and ntriples_for_worker is not None:
+                result = _whelk_classify_nt(ntriples_for_worker, version_id)
+            else:
+                result = classify(graph_for_worker, version_id)
             store_classification(result)
         except Exception:
             log.exception("classify_background_error", extra={"version_id": version_id})
         finally:
             _in_progress.discard(version_id)
 
-    _classifier_pool.submit(_run, g, req.version_id)
+    _classifier_pool.submit(_run, req.version_id)
     return {"version_id": req.version_id, "status": "running"}
 
 
