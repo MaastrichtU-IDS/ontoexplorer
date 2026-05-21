@@ -11,7 +11,12 @@ import { useOntologies } from '../hooks/useOntologies'
 import { buildOntoCompleter } from '../components/sparql/ontoCompleter'
 import { installIriClickHandler } from '../components/sparql/iriClickHandler'
 import { collectIris, buildLabelsQuery, applyLabels, removeLabels } from '../components/sparql/labelEnricher'
-import type { Ontology } from '../lib/api'
+import type { Ontology, OntologyVersion } from '../lib/api'
+import { DiffQueryView } from '../components/sparql/DiffQueryView'
+import { endpointForVersion } from '../components/sparql/scopeUrls'
+import type { BindingRow } from '../components/sparql/diffBindings'
+import type { DiffScope } from '../components/sparql/ScopeToolbar'
+import type { ReasoningMode } from '../components/sparql/scopeUrls'
 
 const DEFAULT_QUERY = `PREFIX owl: <http://www.w3.org/2002/07/owl#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -38,6 +43,18 @@ export default function Sparql() {
   const [labelsOn, setLabelsOn] = useState(false)
   const labelsOnRef = useRef(false)
   useEffect(() => { labelsOnRef.current = labelsOn }, [labelsOn])
+
+  const [diffScope, setDiffScope] = useState<DiffScope | null>(null)
+  const diffScopeRef = useRef<DiffScope | null>(null)
+  useEffect(() => { diffScopeRef.current = diffScope }, [diffScope])
+
+  const [diffResult, setDiffResult] = useState<{
+    from: BindingRow[]
+    to: BindingRow[]
+    fromError: string | null
+    toError: string | null
+  } | null>(null)
+  const diffAbortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     if (!containerRef.current || yasguiRef.current) return
@@ -78,6 +95,16 @@ export default function Sparql() {
     if (yasr && typeof yasr.on === 'function') {
       yasr.on('drawn', () => {
         if (labelsOnRef.current) runLabelEnrichment()
+      })
+    }
+
+    const yasqeForQuery = yasguiRef.current?.getTab()?.getYasqe() as any
+    if (yasqeForQuery && typeof yasqeForQuery.on === 'function') {
+      yasqeForQuery.on('query', (req: any) => {
+        const scope = diffScopeRef.current
+        if (!scope) return
+        try { req?.abort?.() } catch { /* superagent abort can be noisy */ }
+        void runDiffQuery(yasqeForQuery.getValue() ?? '', scope)
       })
     }
 
@@ -185,6 +212,60 @@ export default function Sparql() {
     }
   }, [runLabelEnrichment])
 
+  const runDiffQuery = useCallback(async (query: string, scope: DiffScope) => {
+    if (diffAbortRef.current) diffAbortRef.current.abort()
+    const ac = new AbortController()
+    diffAbortRef.current = ac
+
+    async function fetchSide(side: { version: OntologyVersion; mode: ReasoningMode }): Promise<{ bindings: BindingRow[]; error: string | null }> {
+      try {
+        const resp = await fetch(endpointForVersion(side.version, side.mode), {
+          method: 'POST',
+          signal: ac.signal,
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/sparql-results+json',
+          },
+          body: `query=${encodeURIComponent(query)}`,
+        })
+        if (!resp.ok) return { bindings: [], error: `HTTP ${resp.status}` }
+        const data = await resp.json()
+        if (!data?.head?.vars) {
+          return { bindings: [], error: 'Diff mode supports SELECT queries only' }
+        }
+        return { bindings: data.results?.bindings ?? [], error: null }
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') return { bindings: [], error: 'aborted' }
+        return { bindings: [], error: e instanceof Error ? e.message : 'fetch failed' }
+      }
+    }
+
+    const [fromResp, toResp] = await Promise.all([
+      fetchSide(scope.from),
+      fetchSide(scope.to),
+    ])
+
+    if (ac.signal.aborted) return
+
+    setDiffResult({
+      from: fromResp.bindings,
+      to: toResp.bindings,
+      fromError: fromResp.error,
+      toError: toResp.error,
+    })
+  }, [])
+
+  // Hide the native Yasr pane when in diff mode.
+  useEffect(() => {
+    const yasrEl = containerRef.current?.querySelector('.yasr') as HTMLElement | null
+    if (yasrEl) yasrEl.style.display = diffScope ? 'none' : ''
+  }, [diffScope])
+
+  // Clear stale diffResult when exiting diff mode.
+  useEffect(() => {
+    if (!diffScope) setDiffResult(null)
+  }, [diffScope])
+
   return (
     <div style={{
       height: 'calc(100vh - var(--nav-height))',
@@ -207,6 +288,7 @@ export default function Sparql() {
         onOntologyAdded={handleOntologyAdded}
         onSelectionChange={handleSelectionChange}
         onLabelsToggle={handleLabelsToggle}
+        onDiffScopeChange={setDiffScope}
       />
       {queryError && (
         <div style={{
@@ -217,7 +299,26 @@ export default function Sparql() {
       )}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden', minHeight: 0 }}>
         <QuerySidebar yasguiRef={yasguiRef} />
-        <div ref={containerRef} data-testid="yasgui-container" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }} />
+        <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+          <div ref={containerRef} data-testid="yasgui-container" style={{
+            height: '100%', overflowY: 'auto',
+          }} />
+          {diffScope && diffResult && (
+            <div style={{
+              position: 'absolute', left: 0, right: 0, bottom: 0,
+              top: '50%',
+              background: 'var(--bg)', borderTop: '2px solid var(--border)',
+              overflow: 'hidden',
+            }}>
+              <DiffQueryView
+                from={diffResult.from}
+                to={diffResult.to}
+                fromError={diffResult.fromError}
+                toError={diffResult.toError}
+              />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

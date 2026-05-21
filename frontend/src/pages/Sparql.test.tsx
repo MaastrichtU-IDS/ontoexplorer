@@ -222,6 +222,124 @@ it('navigates to the term page when an IRI cell is clicked', async () => {
   })
 })
 
+it('runs two parallel fetches in Diff mode and renders DiffQueryView', async () => {
+  vi.resetModules()
+
+  const queryHandlers: Array<(req: any, cfg: any) => void> = []
+  const fakeYasqe = {
+    setValue: vi.fn(),
+    getValue: vi.fn(() => 'SELECT ?x WHERE { ?x ?p ?o }'),
+    on: vi.fn((evt: string, cb: any) => {
+      if (evt === 'query') queryHandlers.push(cb)
+    }),
+  }
+  vi.doMock('@triply/yasgui', () => ({
+    default: vi.fn().mockImplementation(() => ({
+      getTab: () => ({
+        getYasqe: () => fakeYasqe,
+        getYasr: () => ({ on: vi.fn() }),
+        setEndpoint: vi.fn(),
+        getRequestConfig: () => ({ endpoint: '/api/v1/sparql/content' }),
+      }),
+      destroy: vi.fn(),
+    })),
+  }))
+
+  vi.doMock('../hooks/useOntologies', () => ({
+    useOntologies: () => ({
+      ontologies: [
+        { id: 'O1', iri: 'https://w3id.org/ontostart/pizza/', shortname: 'pizza',
+          title: 'Pizza', created_at: '2024-01-01',
+          latest_version: { id: 'V2', ontology_id: 'O1', status: 'ready' } },
+      ],
+      isLoading: false,
+    }),
+  }))
+
+  // Mock api.ontologies.versions for the toolbar
+  vi.doMock('../lib/api', async () => {
+    const actual = await vi.importActual<any>('../lib/api')
+    return {
+      ...actual,
+      api: {
+        ...actual.api,
+        ontologies: {
+          ...actual.api.ontologies,
+          versions: vi.fn().mockResolvedValue({
+            versions: [
+              { id: 'V2', ontology_id: 'O1', status: 'ready', format: 'owl',
+                version_iri: 'pizza-2.0', sha256: '', triple_count: 0, download_url: '', created_at: '2026-05-20' },
+              { id: 'V1', ontology_id: 'O1', status: 'ready', format: 'owl',
+                version_iri: 'pizza-1.0', sha256: '', triple_count: 0, download_url: '', created_at: '2024-01-01' },
+            ],
+          }),
+        },
+      },
+    }
+  })
+
+  // Stub the global fetch to return two distinct binding sets for the two URLs
+  global.fetch = vi.fn().mockImplementation(async (url: string) => {
+    if (url.includes('urn%3Aontology%3AO1%3AV1')) {
+      return {
+        ok: true, status: 200,
+        json: async () => ({
+          head: { vars: ['x'] },
+          results: { bindings: [{ x: { type: 'uri', value: 'http://example.org/A' } }] },
+        }),
+      } as Response
+    }
+    if (url.includes('urn%3Aontology%3AO1%3AV2')) {
+      return {
+        ok: true, status: 200,
+        json: async () => ({
+          head: { vars: ['x'] },
+          results: { bindings: [{ x: { type: 'uri', value: 'http://example.org/B' } }] },
+        }),
+      } as Response
+    }
+    return { ok: false, status: 404, json: async () => ({}) } as Response
+  }) as any
+
+  const { default: SparqlFresh } = await import('./Sparql')
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter><SparqlFresh /></MemoryRouter>
+    </QueryClientProvider>,
+  )
+
+  // Switch to Diff mode
+  fireEvent.click(await screen.findByRole('button', { name: /^diff$/i }))
+
+  // Wait for query handler to be subscribed and diff scope to settle
+  await waitFor(() => expect(queryHandlers.length).toBeGreaterThan(0))
+
+  // Also wait for the diff scope to be fully resolved (versions fetched + scope set)
+  await waitFor(() => screen.getByText(/^From:/))
+
+  // Give the version-fetch promise a moment to resolve and update diffScopeRef
+  await waitFor(() => {
+    // The scope is ready when we have a non-null diffScope which is indicated
+    // by the From/To version selects being populated (not just "Pick version…" only)
+    const selects = screen.getAllByRole('combobox')
+    // At least one select should have an option beyond the placeholder
+    return selects.some(s => s.querySelectorAll('option').length > 1)
+  })
+
+  // Fire Yasqe's query event manually
+  const abortMock = vi.fn()
+  queryHandlers[0]({ abort: abortMock }, { endpoint: '/api/v1/sparql/content' })
+
+  // The default request should be aborted (preventDefault analogue)
+  expect(abortMock).toHaveBeenCalled()
+
+  // The two binding sets render as DiffQueryView's "Only From" and "Only To" rows
+  await waitFor(() => {
+    expect(screen.getByText('http://example.org/A')).toBeInTheDocument()
+    expect(screen.getByText('http://example.org/B')).toBeInTheDocument()
+  })
+})
+
 it('fetches and applies labels when the labels toggle is enabled', async () => {
   vi.resetModules()
   const setEndpointMock = vi.fn()
