@@ -94,12 +94,22 @@ def _find_one_justification(
     if not _entails(candidate, sub, sup):
         return None
 
-    # Greedy minimisation: try removing each axiom
+    # Greedy minimisation: try removing each axiom.
+    #
+    # Single-pass greedy can leave non-load-bearing axioms in the result
+    # when intermediate `minimal` states confuse the entailment check (we
+    # observed whelk returning False for "remove X" at certain candidate
+    # sizes even though X is post-hoc removable). Fixed-point loop catches
+    # those — re-walk the surviving set until a full pass makes no change.
     minimal = list(candidate)
-    for ax in list(candidate):
-        reduced = [a for a in minimal if a != ax]
-        if _entails(reduced, sub, sup):
-            minimal = reduced
+    while True:
+        before_size = len(minimal)
+        for ax in list(minimal):
+            reduced = [a for a in minimal if a != ax]
+            if _entails(reduced, sub, sup):
+                minimal = reduced
+        if len(minimal) == before_size:
+            break
 
     return minimal if minimal else None
 
