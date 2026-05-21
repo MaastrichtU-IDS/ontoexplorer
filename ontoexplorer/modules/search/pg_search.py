@@ -53,6 +53,10 @@ async def pg_entity_search(
 
     # Stage 1: prefix-on-primary-label. Uses the text_pattern_ops btree.
     # Filter to ready non-deprecated versions via the JOIN.
+    # Within tier-1 (prefix match), sort by label LENGTH then alphabetically so
+    # the label closest in length to the query wins. Without this, an unrelated
+    # short label that happens to be lex-earlier sorts above the obvious target:
+    # e.g. `membran` → "membrana tympaniformis" outranking "membrane".
     prefix_sql = text("""
         SELECT ei.iri, ei.primary_label, ei.short, ei.type,
                ei.version_id, ei.ontology_id, ei.source,
@@ -62,7 +66,7 @@ async def pg_entity_search(
         JOIN versions v ON v.id = ei.version_id
         WHERE v.status NOT IN ('pending','failed','deprecated')
           AND ei.primary_label_norm LIKE :prefix
-        ORDER BY tier, ei.primary_label_norm, ei.iri
+        ORDER BY tier, LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
         LIMIT :over
     """)
     over = limit * _OVERSAMPLE
@@ -143,6 +147,9 @@ async def pg_autocomplete_entities(
         ontology_filter_sql = "AND ei.ontology_id = ANY(:ontology_ids)"
 
     # Stage 1: btree text_pattern_ops prefix scan.
+    # Within tier-1, sort by label LENGTH so the label closest in size to the
+    # query wins over coincidentally-alphabetically-earlier but longer labels
+    # (e.g. `membran` → "membrane" beats "membrana tympaniformis").
     prefix_sql = text(f"""
         SELECT ei.iri, ei.primary_label, ei.short, ei.type,
                ei.version_id, ei.ontology_id, ei.primary_label_norm,
@@ -155,7 +162,7 @@ async def pg_autocomplete_entities(
           {type_filter_sql}
           {ontology_filter_sql}
         ORDER BY CASE WHEN ei.primary_label_norm = :norm THEN 0 ELSE 1 END,
-                 ei.primary_label_norm, ei.iri
+                 LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
         LIMIT :over
     """)
     params: dict = {"norm": norm, "prefix": norm + "%", "over": limit * _OVERSAMPLE}
