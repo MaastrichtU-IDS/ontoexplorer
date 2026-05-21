@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useClassTreeNodes, EntityType } from '../hooks/useClassTree'
 import { useInferredTreeNodes } from '../hooks/useInferredTree'
-import { Term, api } from '../lib/api'
+import { Term, api, parseTerm } from '../lib/api'
 import SourceBadge from './SourceBadge'
 
 type Mode = 'asserted' | 'inferred'
@@ -26,6 +26,17 @@ interface NodeProps {
 }
 
 function TreeNode({ ontologyId, versionId, term, depth, selectedIri, focusedIri, onSelect, entityType, mode, expandSet, hideInverse, hideObsolete, expandSignal, collapseSignal, lang }: NodeProps) {
+  const qc = useQueryClient()
+  // Prefetch term detail on hover so the click is served from the in-memory
+  // queryCache (or the backend's 5-min Redis response cache, whichever fires
+  // first). Same queryKey shape as useTerm.
+  function prefetchTerm() {
+    qc.prefetchQuery({
+      queryKey: ['term', ontologyId, versionId, term.iri, lang ?? null],
+      queryFn: async () => parseTerm(await api.ontologies.termDetail(ontologyId, versionId, term.iri, lang ?? undefined)),
+      staleTime: 60_000,
+    })
+  }
   const shouldExpand = expandSet.has(term.iri)
   const [expanded, setExpanded] = useState(shouldExpand)
 
@@ -104,7 +115,10 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, focusedIri,
           outline: isFocused && !isSelected ? '1px solid var(--accent)' : 'none',
           outlineOffset: -1,
         }}
-        onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}
+        onMouseEnter={e => {
+          if (!isSelected) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
+          prefetchTerm()
+        }}
         onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = '' }}
       >
         <span

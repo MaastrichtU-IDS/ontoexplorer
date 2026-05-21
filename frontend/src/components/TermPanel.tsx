@@ -545,6 +545,70 @@ function Section({ label, children }: { label: string; children: React.ReactNode
   )
 }
 
+/**
+ * Generic pager around a usage-style table — holds locally appended rows and
+ * renders a "Show more" button below the table when more pages are available.
+ * Each click hits the paginated /term-usage endpoint for the next slice.
+ */
+function UsagePager<T>({ initial, initialHasMore, fetchPage, children }: {
+  initial: T[]
+  initialHasMore: boolean
+  fetchPage: (offset: number) => Promise<{ items: T[]; has_more: boolean }>
+  children: (rows: T[]) => React.ReactNode
+}) {
+  const [rows, setRows] = useState<T[]>(initial)
+  const [hasMore, setHasMore] = useState(initialHasMore)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function loadMore() {
+    setLoading(true)
+    setError(null)
+    try {
+      const page = await fetchPage(rows.length)
+      setRows([...rows, ...page.items])
+      setHasMore(page.has_more)
+    } catch (e) {
+      setError((e as Error).message || 'Failed to load more')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <>
+      {children(rows)}
+      {hasMore && (
+        <div style={{ marginTop: 8, display: 'flex', justifyContent: 'center' }}>
+          <button
+            type="button"
+            onClick={loadMore}
+            disabled={loading}
+            style={{
+              padding: '5px 12px', fontSize: 12,
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-sm)',
+              color: loading ? 'var(--text-dim)' : 'var(--text)',
+              cursor: loading ? 'wait' : 'pointer',
+            }}
+            onMouseEnter={e => { if (!loading) (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)' }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)' }}
+          >
+            {loading ? 'Loading…' : `Show more (showing ${rows.length})`}
+          </button>
+        </div>
+      )}
+      {error && (
+        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--error, #e06c75)', textAlign: 'center' }}>
+          {error}
+        </div>
+      )}
+    </>
+  )
+}
+
+
 function UsageTable({ usage, propIri, propLabel, slug, vid }: {
   usage: PropertyUsage[]; propIri: string; propLabel: string; slug: string; vid: string
 }) {
@@ -749,9 +813,10 @@ function IndividualBody({ data, slug, versionId, lang }: {
   )
 }
 
-function PropertyBody({ data, slug, versionId, lang }: {
+function PropertyBody({ data, slug, ontologyId, versionId, lang }: {
   data: ReturnType<typeof useTerm>['data'] & {}
   slug: string
+  ontologyId: string
   versionId: string
   lang?: string | null
 }) {
@@ -845,14 +910,25 @@ function PropertyBody({ data, slug, versionId, lang }: {
         )
       })()}
 
-      <Section label={`Used in axioms${data.usage.length > 0 ? ` (${data.usage.length})` : ''}`}>
-        <UsageTable
-          usage={data.usage}
-          propIri={data.iri}
-          propLabel={data.label || data.iri.split(/[#/]/).pop() || data.iri}
-          slug={slug}
-          vid={versionId}
-        />
+      <Section label={`Used in axioms${data.usage.length > 0 ? ` (${data.usage.length}${data.usageHasMore ? '+' : ''})` : ''}`}>
+        <UsagePager<PropertyUsage>
+          initial={data.usage}
+          initialHasMore={!!data.usageHasMore}
+          fetchPage={async (offset) => {
+            const page = await api.ontologies.termUsagePage(ontologyId!, versionId, data.iri, offset)
+            return { items: page.items as PropertyUsage[], has_more: page.has_more }
+          }}
+        >
+          {(rows) => (
+            <UsageTable
+              usage={rows}
+              propIri={data.iri}
+              propLabel={data.label || data.iri.split(/[#/]/).pop() || data.iri}
+              slug={slug}
+              vid={versionId}
+            />
+          )}
+        </UsagePager>
       </Section>
     </div>
   )
@@ -901,7 +977,7 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
   if (isIndividual) {
     body = <IndividualBody data={data} slug={slug} versionId={versionId} lang={lang} />
   } else if (isProperty) {
-    body = <PropertyBody data={data} slug={slug} versionId={versionId} lang={lang} />
+    body = <PropertyBody data={data} slug={slug} ontologyId={ontologyId!} versionId={versionId} lang={lang} />
   } else {
     body = (
       <div style={{ flex: 1, padding: pad, overflow: 'auto' }}>
@@ -1003,14 +1079,25 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
         )}
 
         {data.classUsage.length > 0 && (
-          <Section label={`Used in axioms (${data.classUsage.length})`}>
-            <ClassUsageTable
-              usage={data.classUsage}
-              classIri={data.iri}
-              classLabel={data.label || data.iri.split(/[#/]/).pop() || data.iri}
-              slug={slug}
-              vid={versionId}
-            />
+          <Section label={`Used in axioms (${data.classUsage.length}${data.classUsageHasMore ? '+' : ''})`}>
+            <UsagePager<ClassUsageEntry>
+              initial={data.classUsage}
+              initialHasMore={!!data.classUsageHasMore}
+              fetchPage={async (offset) => {
+                const page = await api.ontologies.termUsagePage(ontologyId!, versionId, data.iri, offset)
+                return { items: page.items as ClassUsageEntry[], has_more: page.has_more }
+              }}
+            >
+              {(rows) => (
+                <ClassUsageTable
+                  usage={rows}
+                  classIri={data.iri}
+                  classLabel={data.label || data.iri.split(/[#/]/).pop() || data.iri}
+                  slug={slug}
+                  vid={versionId}
+                />
+              )}
+            </UsagePager>
           </Section>
         )}
       </div>

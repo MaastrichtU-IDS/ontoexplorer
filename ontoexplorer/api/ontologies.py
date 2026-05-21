@@ -1456,6 +1456,16 @@ async def get_term(
         properties.setdefault(pred, []).append(obj_val)
         properties_typed.setdefault(pred, []).append({"value": obj_val, "lang": lang_tag})
 
+    # Determine is_property up front — ELK only classifies classes, so for
+    # properties we skip both ELK calls (saves ~2-3 s wall-clock per property page).
+    _OWL_PROP_TYPES = {
+        "http://www.w3.org/2002/07/owl#ObjectProperty",
+        "http://www.w3.org/2002/07/owl#DatatypeProperty",
+        "http://www.w3.org/2002/07/owl#AnnotationProperty",
+    }
+    rdf_types = set(properties.get("http://www.w3.org/1999/02/22-rdf-syntax-ns#type", []))
+    is_property = bool(rdf_types & _OWL_PROP_TYPES)
+
     # Inferred sub/superclasses from ELK — run concurrently, ignore if not ready
     async def _elk_subclasses():
         try:
@@ -1473,9 +1483,12 @@ async def get_term(
         except Exception:
             return {}
 
-    elk_sub_result, elk_sup_result = await asyncio.gather(
-        _elk_subclasses(), _elk_superclasses()
-    )
+    if is_property:
+        elk_sub_result = elk_sup_result = {}
+    else:
+        elk_sub_result, elk_sup_result = await asyncio.gather(
+            _elk_subclasses(), _elk_superclasses()
+        )
 
     _OWL_THING = "http://www.w3.org/2002/07/owl#Thing"
     _OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing"
@@ -1553,16 +1566,6 @@ async def get_term(
 
     # All ancestors: asserted direct parents first, then ELK-inferred (ELK strips asserted parents from its output)
     _all_ancestor_iris: list[str] = list(dict.fromkeys(asserted_sup_iris + inferred_sup_iris))
-
-    # Determine is_property upfront so we can fan out the right SPARQL queries
-    # without waiting on the Oxigraph sync block.
-    _OWL_PROP_TYPES = {
-        "http://www.w3.org/2002/07/owl#ObjectProperty",
-        "http://www.w3.org/2002/07/owl#DatatypeProperty",
-        "http://www.w3.org/2002/07/owl#AnnotationProperty",
-    }
-    rdf_types = set(properties.get("http://www.w3.org/1999/02/22-rdf-syntax-ns#type", []))
-    is_property = bool(rdf_types & _OWL_PROP_TYPES)
 
     import pyoxigraph as _ox
     import json as _json_mod
@@ -1694,6 +1697,11 @@ async def get_term(
             "_adc_map": _adc_map,
         }
 
+    # Default page size for usage/class_usage tables. Frontend renders the first
+    # USAGE_PAGE_SIZE rows and offers a "Show more" button (separate endpoint).
+    USAGE_PAGE_SIZE = 10
+    USAGE_SQL_LIMIT = USAGE_PAGE_SIZE + 1  # +1 to detect has_more without a COUNT query
+
     # ── Per-query helpers ───────────────────────────────────────────────────
     # Each returns its raw rows; label resolution happens after the gather.
     def _run_usage_query(s) -> list[dict]:
@@ -1718,7 +1726,7 @@ async def get_term(
                 }}
             }}
             ORDER BY ?class ?relation ?restrictType
-            LIMIT 200
+            LIMIT {USAGE_SQL_LIMIT}
         """
         return _sparql_usage(s, q, _label)
 
@@ -1736,7 +1744,7 @@ async def get_term(
                 }}
             }}
             ORDER BY ?class ?relation ?prop
-            LIMIT 200
+            LIMIT {USAGE_SQL_LIMIT}
         """
         disj_q = f"""
             PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -1746,7 +1754,7 @@ async def get_term(
                 }}
             }}
             ORDER BY ?class
-            LIMIT 100
+            LIMIT {USAGE_SQL_LIMIT}
         """
         return _sparql_class_usage(s, cu_q, disj_q, _label, adc_map, term_iri)
 
@@ -1837,9 +1845,13 @@ async def get_term(
     usage: list[dict] = []
     schema_properties: list[dict] = []
     inherited_schema_properties: list[dict] = []
+    usage_has_more = False
+    class_usage_has_more = False
 
     if is_property:
-        usage = _results_1[2]
+        _usage_rows = _results_1[2]
+        usage_has_more = len(_usage_rows) > USAGE_PAGE_SIZE
+        usage = _usage_rows[:USAGE_PAGE_SIZE]
     else:
         _dp_rows = _results_1[2]
         _idp_rows = _results_1[3] if len(_results_1) > 3 else []
@@ -1876,7 +1888,9 @@ async def get_term(
     # Phase 2 — class_usage needs _adc_map (only run when this term is a class).
     class_usage: list[dict] = []
     if not is_property:
-        class_usage = await asyncio.to_thread(_run_class_usage_queries, store, _adc_map)
+        _cu_rows = await asyncio.to_thread(_run_class_usage_queries, store, _adc_map)
+        class_usage_has_more = len(_cu_rows) > USAGE_PAGE_SIZE
+        class_usage = _cu_rows[:USAGE_PAGE_SIZE]
 
     term_detail = r.hgetall(_iri_key(version_id, term_iri))
     source = term_detail.get("source", "") if term_detail else ""
@@ -1980,12 +1994,169 @@ async def get_term(
         "disjoint_union_of": disjoint_union_of,
         "general_class_axioms": general_class_axioms,
         "usage": usage,
+        "usage_has_more": usage_has_more,
         "class_usage": class_usage,
+        "class_usage_has_more": class_usage_has_more,
         "schema_properties": schema_properties,
         "inherited_schema_properties": inherited_schema_properties,
     }
     await asyncio.to_thread(_r_cache.set, _cache_key, _json_cache.dumps(_payload), _TERM_DETAIL_CACHE_TTL)
     return _payload
+
+
+@router.get(
+    "/{ontology_id}/{version_id}/term-usage/{term_iri:path}",
+    summary="Paginated usage / class_usage rows for a term (Show more)",
+)
+async def get_term_usage_page(
+    ontology_id: str,
+    version_id: str,
+    term_iri: str,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """Return a paginated slice of the usage rows for a term.
+
+    Routes to `usage` (property-onProperty restrictions) if the term is a property,
+    otherwise `class_usage` (axioms referencing the term as filler / disjoint).
+    Used by the frontend's "Show more" button on term-detail tables.
+    """
+    import asyncio
+    from ontoexplorer.clients.oxigraph import get_store, graph_iri
+    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
+
+    await _get_version_or_404(db, ontology_id, version_id)
+    store = get_store()
+    g_iri = graph_iri(ontology_id, version_id)
+    r = _get_redis()
+
+    _label_cache: dict[str, str] = {}
+
+    def _fallback(iri: str) -> str:
+        fragment = iri.rstrip("/")
+        return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
+
+    def _resolve_labels(iris) -> None:
+        missing = [i for i in dict.fromkeys(iris) if i and i not in _label_cache]
+        if not missing:
+            return
+        pipe = r.pipeline(transaction=False)
+        for i in missing:
+            pipe.hgetall(_iri_key(version_id, i))
+        for i, detail in zip(missing, pipe.execute()):
+            _label_cache[i] = (detail or {}).get("label") or _fallback(i)
+
+    def _label(iri: str) -> str:
+        cached = _label_cache.get(iri)
+        if cached is not None:
+            return cached
+        detail = r.hgetall(_iri_key(version_id, iri))
+        label = (detail or {}).get("label") or _fallback(iri)
+        _label_cache[iri] = label
+        return label
+
+    # Determine kind via the term's rdf:type. Cheap: one SPARQL ASK.
+    def _is_property(s) -> bool:
+        q = f"""
+            PREFIX owl: <http://www.w3.org/2002/07/owl#>
+            ASK {{
+              GRAPH <{g_iri}> {{
+                {{ <{term_iri}> a owl:ObjectProperty }}
+                UNION {{ <{term_iri}> a owl:DatatypeProperty }}
+                UNION {{ <{term_iri}> a owl:AnnotationProperty }}
+              }}
+            }}
+        """
+        return bool(s.query(q))
+
+    is_prop = await asyncio.to_thread(_is_property, store)
+
+    sql_offset = offset
+    sql_limit = limit + 1  # +1 to detect has_more
+
+    if is_prop:
+        q = f"""
+            PREFIX owl:  <http://www.w3.org/2002/07/owl#>
+            PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+            SELECT ?class ?relation ?restrictType ?filler WHERE {{
+                GRAPH <{g_iri}> {{
+                    {{ ?class rdfs:subClassOf ?r . BIND("subClassOf" AS ?relation) }}
+                    UNION {{ ?class owl:equivalentClass ?r . BIND("equivalentClass" AS ?relation) }}
+                    ?r owl:onProperty <{term_iri}> .
+                    FILTER(isIRI(?class))
+                    {{ ?r owl:someValuesFrom ?filler . BIND("some" AS ?restrictType) }}
+                    UNION {{ ?r owl:allValuesFrom ?filler . BIND("only" AS ?restrictType) }}
+                    UNION {{ ?r owl:hasValue ?filler . BIND("value" AS ?restrictType) }}
+                    UNION {{ ?r owl:minCardinality ?filler . BIND("min" AS ?restrictType) }}
+                    UNION {{ ?r owl:maxCardinality ?filler . BIND("max" AS ?restrictType) }}
+                    UNION {{ ?r owl:exactCardinality ?filler . BIND("exactly" AS ?restrictType) }}
+                    UNION {{ ?r owl:minQualifiedCardinality ?filler . BIND("min" AS ?restrictType) }}
+                    UNION {{ ?r owl:maxQualifiedCardinality ?filler . BIND("max" AS ?restrictType) }}
+                    UNION {{ ?r owl:exactQualifiedCardinality ?filler . BIND("exactly" AS ?restrictType) }}
+                }}
+            }}
+            ORDER BY ?class ?relation ?restrictType
+            OFFSET {sql_offset} LIMIT {sql_limit}
+        """
+        rows = await asyncio.to_thread(_sparql_usage, store, q, _label)
+        has_more = len(rows) > limit
+        return {"kind": "property", "offset": offset, "limit": limit,
+                "items": rows[:limit], "has_more": has_more}
+
+    # class_usage path needs _adc_map
+    import pyoxigraph as _ox
+    def _compute_adc_map(s):
+        _graph_node = _ox.NamedNode(g_iri)
+        _OWL_ADC_NODE     = _ox.NamedNode(_OWL + "AllDisjointClasses")
+        _OWL_MEMBERS_NODE = _ox.NamedNode(_OWL + "members")
+        _RDF_TYPE_NODE    = _ox.NamedNode(_RDF + "type")
+        adc: dict[str, list[str]] = {}
+        for q in s.quads_for_pattern(None, _RDF_TYPE_NODE, _OWL_ADC_NODE, _graph_node):
+            mem_qs = list(s.quads_for_pattern(q.subject, _OWL_MEMBERS_NODE, None, _graph_node))
+            if not mem_qs:
+                continue
+            miris = [
+                m.value for m in _rdf_list_items(s, _graph_node, mem_qs[0].object)
+                if isinstance(m, _ox.NamedNode)
+            ]
+            for miri in miris:
+                adc.setdefault(miri, []).extend(o for o in miris if o != miri)
+        return adc
+
+    cu_q = f"""
+        PREFIX owl:  <http://www.w3.org/2002/07/owl#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        SELECT DISTINCT ?class ?relation ?prop ?restrictType WHERE {{
+            GRAPH <{g_iri}> {{
+                {{ ?r owl:someValuesFrom <{term_iri}> . ?r owl:onProperty ?prop . BIND("some" AS ?restrictType) }}
+                UNION {{ ?r owl:allValuesFrom <{term_iri}> . ?r owl:onProperty ?prop . BIND("only" AS ?restrictType) }}
+                UNION {{ ?r owl:hasValue <{term_iri}> . ?r owl:onProperty ?prop . BIND("value" AS ?restrictType) }}
+                {{ ?class rdfs:subClassOf ?r . FILTER(isIRI(?class)) BIND("subClassOf" AS ?relation) }}
+                UNION {{ ?class owl:equivalentClass ?r . FILTER(isIRI(?class)) BIND("equivalentClass" AS ?relation) }}
+            }}
+        }}
+        ORDER BY ?class ?relation ?prop
+        OFFSET {sql_offset} LIMIT {sql_limit}
+    """
+    disj_q = f"""
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        SELECT ?class WHERE {{
+            GRAPH <{g_iri}> {{
+                ?class owl:disjointWith <{term_iri}> . FILTER(isIRI(?class))
+            }}
+        }}
+        ORDER BY ?class
+        OFFSET {sql_offset} LIMIT {sql_limit}
+    """
+    _adc_map = await asyncio.to_thread(_compute_adc_map, store)
+    rows = await asyncio.to_thread(
+        _sparql_class_usage, store, cu_q, disj_q, _label, _adc_map, term_iri
+    )
+    has_more = len(rows) > limit
+    return {"kind": "class", "offset": offset, "limit": limit,
+            "items": rows[:limit], "has_more": has_more}
 
 
 # ── Inferred axioms ────────────────────────────────────────────────────────────

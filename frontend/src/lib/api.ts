@@ -294,7 +294,9 @@ export interface RawTermDetail {
   disjoint_union_of?: ClassExprNode[][]
   general_class_axioms?: ClassExprNode[]
   usage: PropertyUsage[]
+  usage_has_more?: boolean
   class_usage?: ClassUsageEntry[]
+  class_usage_has_more?: boolean
   schema_properties?: SchemaProperty[]
   inherited_schema_properties?: InheritedSchemaProperty[]
 }
@@ -326,7 +328,9 @@ export interface ParsedTerm {
   characteristics: string[]
   inverseOf: string[]
   usage: PropertyUsage[]
+  usageHasMore?: boolean
   classUsage: ClassUsageEntry[]
+  classUsageHasMore?: boolean
   schemaProperties: SchemaProperty[]
   inheritedSchemaProperties: InheritedSchemaProperty[]
 }
@@ -1024,7 +1028,9 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
     characteristics,
     inverseOf:            getValues(P.inverseOf),
     usage:           raw.usage        ?? [],
+    usageHasMore:    raw.usage_has_more,
     classUsage:      raw.class_usage  ?? [],
+    classUsageHasMore: raw.class_usage_has_more,
     schemaProperties:          raw.schema_properties           ?? [],
     inheritedSchemaProperties: raw.inherited_schema_properties ?? [],
   }
@@ -1074,6 +1080,16 @@ export const api = {
     termDetail: (oid: string, vid: string, iri: string, lang?: string) =>
       request<RawTermDetail>(
         `/ontologies/${oid}/${vid}/terms/${encodeURIComponent(iri)}${lang ? `?lang=${lang}` : ''}`
+      ),
+    termUsagePage: (oid: string, vid: string, iri: string, offset: number, limit = 20) =>
+      request<{
+        kind: 'property' | 'class'
+        offset: number
+        limit: number
+        items: PropertyUsage[] | ClassUsageEntry[]
+        has_more: boolean
+      }>(
+        `/ontologies/${oid}/${vid}/term-usage/${encodeURIComponent(iri)}?offset=${offset}&limit=${limit}`
       ),
     search: (oid: string, vid: string, q: string, mode = 'auto', lang?: string, semantic = false, direct = false) =>
       request<{
