@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ontoexplorer.clients.reasoning import (
     ClassNotFoundError,
     ReasoningNotReadyError,
-    consistency as elk_consistency,
     request_justification as elk_request_justification,
     subclasses as elk_subclasses,
     superclasses as elk_superclasses,
@@ -2065,21 +2064,6 @@ async def term_ancestors(
 
     ancestors_out = await asyncio.to_thread(_run, store, query)
     return {"ancestors": ancestors_out}
-
-
-@router.get("/{ontology_id}/{version_id}/consistency", summary="Consistency check for a version")
-async def get_consistency(
-    ontology_id: str,
-    version_id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    await _get_version_or_404(db, ontology_id, version_id)
-    try:
-        return await elk_consistency(version_id)
-    except ReasoningNotReadyError:
-        raise HTTPException(409, "Reasoning not yet completed — trigger via POST .../reason")
-    except Exception:
-        raise HTTPException(503, "Reasoning service unavailable")
 
 
 class JustificationRequest(BaseModel):
