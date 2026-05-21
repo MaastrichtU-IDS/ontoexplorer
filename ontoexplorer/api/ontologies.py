@@ -779,6 +779,109 @@ _RDF_PROPERTY = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#Property>"
 _PROP_UNION = " UNION ".join(f"{{ ?entity a {t} }}" for t in _PROP_TYPES)
 _PROP_UNION = f"{_PROP_UNION} UNION {{ ?entity a {_RDF_PROPERTY} }}"
 
+# Protégé-style display of unsatisfiable classes — defined here (NOT near the
+# duplicates at line ~1903) so they're in scope of the class-tree decoration in
+# list_terms.
+_OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing"
+
+
+def _load_unsat_scopes(version_id: str) -> dict[str, list[str]]:
+    """Return {class_iri: [scope_name, ...]} for every unsat class across all scopes.
+
+    Reads Phase 2's consistency cache. Returns {} when the cache is missing or
+    the job hasn't completed yet — callers fall back to undecorated trees.
+    """
+    import json as _json
+    from ontoexplorer.modules.consistency.cache import consistency_cache_key
+    from ontoexplorer.modules.search.indexer import _get_redis
+
+    raw = _get_redis().get(consistency_cache_key(version_id))
+    if raw is None:
+        return {}
+    try:
+        data = _json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    if data.get("job_status") != "done":
+        return {}
+    out: dict[str, list[str]] = {}
+    for scope_name, scope_data in (data.get("scopes") or {}).items():
+        for uc in (scope_data or {}).get("unsatisfiable_classes", []):
+            iri = uc.get("iri")
+            if iri:
+                out.setdefault(iri, []).append(scope_name)
+    return out
+
+
+def _decorate_unsat_terms(terms: list[dict], unsat_map: dict[str, list[str]]) -> None:
+    """Tag each term in-place with is_unsatisfiable + unsat_scopes when applicable."""
+    for t in terms:
+        scopes = unsat_map.get(t.get("iri"))
+        if scopes:
+            t["is_unsatisfiable"] = True
+            t["unsat_scopes"] = scopes
+
+
+def _build_nothing_root_node(unsat_map: dict[str, list[str]]) -> dict:
+    """Synthesize a top-level owl:Nothing node when any classes are unsatisfiable.
+
+    The tree node is presented to the frontend as if it were a regular class with
+    children — clicking the expand chevron triggers a fresh /terms?parent=<owl:Nothing>
+    request, which returns the synthetic children list (see _build_unsat_children_payload).
+    """
+    return {
+        "iri": _OWL_NOTHING,
+        "label": "owl:Nothing",
+        "has_children": bool(unsat_map),
+        "source": "",
+        "is_unsatisfiable": False,   # the node itself is not a misbehaving class
+        "unsat_children_count": len(unsat_map),
+    }
+
+
+def _build_unsat_children_payload(
+    version_id: str,
+    unsat_map: dict[str, list[str]],
+    *,
+    limit: int,
+    offset: int,
+    lang: str | None,
+) -> list[dict]:
+    """Return all unsatisfiable classes as children of the synthetic owl:Nothing.
+
+    Labels resolved from the Redis search index for nice display. Each child is
+    flagged is_unsatisfiable + unsat_scopes so the same red-styling applies.
+    """
+    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
+
+    iris = sorted(unsat_map.keys())
+    page = iris[offset: offset + limit]
+    if not page:
+        return []
+
+    r = _get_redis()
+    pipe = r.pipeline(transaction=False)
+    for iri in page:
+        pipe.hgetall(_iri_key(version_id, iri))
+    raw_rows = pipe.execute()
+
+    out: list[dict] = []
+    for iri, raw in zip(page, raw_rows):
+        label = None
+        if isinstance(raw, dict) and raw:
+            # The search index stores labels under "label_en", "label", etc.
+            label = raw.get("label_en") or raw.get("label") or None
+        out.append({
+            "iri": iri,
+            "label": label,
+            "has_children": False,   # leaves in the synthetic view
+            "source": (raw.get("source") if isinstance(raw, dict) else "") or "",
+            "is_unsatisfiable": True,
+            "unsat_scopes": unsat_map[iri],
+        })
+    return out
+
+
 _PROP_SUBTYPE_FILTER = {
     # rdf:Property is the RDFS fallback used by vocabularies like Schema.org
     "object_property":     f"{{ ?entity a owl:ObjectProperty }} UNION {{ ?entity a {_RDF_PROPERTY} }}",
@@ -1158,6 +1261,28 @@ async def list_terms(
     except Exception:
         for t in terms:
             t.setdefault("source", "")
+
+    # Unsatisfiability decoration (Protégé-style red + synthetic owl:Nothing node).
+    # Only relevant for the class hierarchy; properties/individuals don't have an
+    # owl:Nothing equivalent.
+    if entity_type == "class":
+        try:
+            unsat_map = _load_unsat_scopes(version_id)
+        except Exception:
+            unsat_map = {}
+        if unsat_map:
+            if parent == _OWL_NOTHING:
+                # Synthetic expansion: return the union of unsatisfiable classes
+                # as children of owl:Nothing, with labels from the search index.
+                terms = _build_unsat_children_payload(
+                    version_id, unsat_map, limit=limit, offset=offset, lang=lang
+                )
+            else:
+                _decorate_unsat_terms(terms, unsat_map)
+                if is_root and offset == 0:
+                    # Inject the synthetic owl:Nothing node at the top so users
+                    # can navigate to the population of unsatisfiable classes.
+                    terms = [_build_nothing_root_node(unsat_map)] + terms
 
     response = {"terms": terms, "offset": offset, "limit": limit, "parent": parent}
 

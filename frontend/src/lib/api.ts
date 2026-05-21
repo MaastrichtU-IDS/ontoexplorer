@@ -218,6 +218,13 @@ export interface Term {
   has_children?: boolean
   source?: string
   lang?: string | null
+  /** True when Phase-2 consistency analysis flagged this class as unsatisfiable
+   *  in at least one reasoning scope. Frontend renders it in red. */
+  is_unsatisfiable?: boolean
+  /** Which consistency scopes flagged this class as unsatisfiable. */
+  unsat_scopes?: string[]
+  /** Only set on the synthetic owl:Nothing root node — the count of unsat classes. */
+  unsat_children_count?: number
 }
 
 export interface ClassRef {
@@ -1373,6 +1380,9 @@ export const api = {
         `/admin/reindex`,
         { method: 'POST' }
       ),
+
+    clearJobs: () =>
+      request<{ deleted: number }>(`/admin/jobs`, { method: 'DELETE' }),
 
     versions: (ontologyId: string) =>
       request<AdminVersionsResponse>(`/admin/ontologies/${ontologyId}/versions`),

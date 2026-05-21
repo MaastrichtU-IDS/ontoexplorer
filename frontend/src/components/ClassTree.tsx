@@ -60,6 +60,8 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, focusedIri,
 
   const isSelected = selectedIri === term.iri
   const isFocused = focusedIri === term.iri
+  const isUnsat = term.is_unsatisfiable === true
+  const isNothing = term.iri === 'http://www.w3.org/2002/07/owl#Nothing'
   const label = term.label ?? term.iri.split(/[#/]/).pop() ?? term.iri
   // has_children undefined means unknown (e.g. root before first load) — show toggle optimistically
   const canExpand = term.has_children !== false
@@ -69,6 +71,20 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, focusedIri,
     setExpanded(v => !v)
   }
 
+  // Protégé-style: unsat classes render in red. The synthetic owl:Nothing node
+  // gets a softer red (orange-ish) so users can distinguish "this is the holding
+  // pen for unsat classes" from "this class is itself unsatisfiable".
+  const unsatColor = isNothing ? '#e5c07b' : '#e06c75'
+  const nodeColor = isSelected
+    ? 'var(--accent)'
+    : (isUnsat || isNothing ? unsatColor : 'var(--text)')
+
+  const tooltip = isUnsat
+    ? `Unsatisfiable in: ${(term.unsat_scopes ?? []).join(', ') || 'unknown scope'}`
+    : isNothing
+      ? `owl:Nothing — synthetic root for ${term.unsat_children_count ?? 0} unsatisfiable class(es)`
+      : undefined
+
   return (
     <li>
       <div
@@ -76,13 +92,15 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, focusedIri,
         data-expandable={canExpand ? 'true' : 'false'}
         data-expanded={expanded ? 'true' : 'false'}
         onClick={() => onSelect(term.iri)}
+        title={tooltip}
         style={{
           display: 'flex', alignItems: 'center', gap: 4,
           padding: `4px 8px 4px ${8 + depth * 12}px`,
           cursor: 'pointer',
           background: isSelected ? 'var(--bg-hover)' : 'transparent',
           borderRadius: 'var(--radius-sm)',
-          color: isSelected ? 'var(--accent)' : 'var(--text)',
+          color: nodeColor,
+          fontWeight: isNothing ? 600 : undefined,
           outline: isFocused && !isSelected ? '1px solid var(--accent)' : 'none',
           outlineOffset: -1,
         }}
@@ -100,6 +118,11 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, focusedIri,
         <span style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, overflow: 'hidden', minWidth: 0 }}>
           <span style={{ fontSize: 'var(--font-size-sm)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {label}
+            {isNothing && term.unsat_children_count != null && (
+              <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-dim)' }}>
+                ({term.unsat_children_count})
+              </span>
+            )}
           </span>
           {term.lang && (
             <span style={{
