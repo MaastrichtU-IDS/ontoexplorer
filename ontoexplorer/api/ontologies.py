@@ -319,6 +319,7 @@ async def list_ontologies(
     group: str | None = Query(None, description="Filter by group tag (upper, obo, fair, biomedical)"),
     profile: str | None = Query(None, description="Filter by OWL 2 profile: el | rl | ql | dl"),
     reuses: str | None = Query(None, description="Filter: latest version reuses this prefix"),
+    consistency: str | None = Query(None, description="Filter: consistent | inconsistent"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -346,7 +347,7 @@ async def list_ontologies(
             stmt = stmt.where(func.jsonb_array_length(Ontology.groups) == 0)
         else:
             stmt = stmt.where(text("groups @> cast(:grp as jsonb)").bindparams(grp=_json_grp.dumps([group])))
-    if not q and not profile and not reuses:
+    if not q and not profile and not reuses and not consistency:
         stmt = stmt.offset(offset).limit(limit)
     result = await db.execute(stmt)
     ontologies = result.scalars().all()
@@ -486,6 +487,13 @@ async def list_ontologies(
         matching_ids = await filter_ontology_ids_by_reuse(db, all_ids, reuses.lower())
         rows = [r for r in rows if r["id"] in matching_ids]
 
+    # Consistency filter: keep only ontologies matching the requested consistency status
+    if consistency:
+        from ontoexplorer.api.consistency import filter_ontology_ids_by_consistency
+        all_ids = [r["id"] for r in rows]
+        matching_ids = await filter_ontology_ids_by_consistency(db, all_ids, consistency.lower())
+        rows = [r for r in rows if r["id"] in matching_ids]
+
     # Python-side filter + ranked sort when q is present.
     # Primary rank:
     #   0 → exact match on derived short name or IRI
@@ -517,8 +525,8 @@ async def list_ontologies(
         ranked = [(r, _rank_score(r)) for r in rows]
         rows = [r for r, score in sorted(ranked, key=lambda x: x[1]) if score[0] < 99]
         rows = rows[offset: offset + limit]
-    elif profile or reuses:
-        # Profile or reuse filter already applied above; now apply pagination
+    elif profile or reuses or consistency:
+        # Profile, reuse, or consistency filter already applied above; now apply pagination
         rows = rows[offset: offset + limit]
 
     return {"ontologies": rows, "offset": offset, "limit": limit}
