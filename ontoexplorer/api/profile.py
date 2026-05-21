@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import OntologyProfile, OntologyVersion
-from ontoexplorer.modules.auth.dependencies import require_auth
+from ontoexplorer.modules.auth.dependencies import get_current_user, require_auth
 from ontoexplorer.models.db import User
 
 router = APIRouter(prefix="/api/v1/ontologies", tags=["profile"])
@@ -53,7 +53,7 @@ async def get_profile(
     ontology_id: str,
     version_id: str,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_auth),
+    _user: User | None = Depends(get_current_user),
 ):
     profile = await _get_profile_or_404(version_id, db)
     return _profile_response(profile)

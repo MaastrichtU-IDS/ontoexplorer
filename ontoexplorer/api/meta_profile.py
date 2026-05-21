@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Ontology, OntologyMetaProfile, OntologyVersion, User
-from ontoexplorer.modules.auth.dependencies import require_auth
+from ontoexplorer.modules.auth.dependencies import get_current_user, require_auth
 from ontoexplorer.modules.meta_profile.registry import ALL_META_ROLES
 
 router = APIRouter(prefix="/api/v1", tags=["meta-profile"])
@@ -51,7 +51,7 @@ async def get_meta_profile(
     ontology_id: str,
     version_id: str,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_auth),
+    _user: User | None = Depends(get_current_user),
 ):
     return _meta_profile_response(await _get_meta_profile_or_404(version_id, db))
 

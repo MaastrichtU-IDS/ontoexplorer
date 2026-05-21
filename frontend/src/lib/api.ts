@@ -34,14 +34,19 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   let resp = await fetch(`${BASE}${path}`, { ...options, headers })
 
   if (resp.status === 401) {
-    const newToken = await refreshAccessToken()
-    if (newToken) {
-      headers['Authorization'] = `Bearer ${newToken}`
-      resp = await fetch(`${BASE}${path}`, { ...options, headers })
-    } else {
-      clearAccessToken()
-      window.location.href = '/login'
-      throw new ApiError('Session expired', 401, null)
+    // Only attempt refresh + redirect if we actually had a session.
+    // For anonymous users hitting an auth-required endpoint on a public page,
+    // surface the 401 to the caller instead of forcing a redirect to /login.
+    if (token) {
+      const newToken = await refreshAccessToken()
+      if (newToken) {
+        headers['Authorization'] = `Bearer ${newToken}`
+        resp = await fetch(`${BASE}${path}`, { ...options, headers })
+      } else {
+        clearAccessToken()
+        window.location.href = '/login'
+        throw new ApiError('Session expired', 401, null)
+      }
     }
   }
 
