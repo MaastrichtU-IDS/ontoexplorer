@@ -10,6 +10,15 @@ export function inferredGraphIri(ontologyId: string, versionId: string): string 
   return `urn:ontology:${ontologyId}:${versionId}:inferred`
 }
 
+/** The Phase-2 consistency detector writes its trivializing entailment
+ *  (`owl:Thing rdfs:subClassOf owl:Nothing` for globally inconsistent ontologies)
+ *  into a SEPARATE named graph that ELK never touches. The "inferred" reasoning
+ *  mode in the SPARQL UI needs to include both this graph AND the ELK :inferred
+ *  graph so queries see the full set of derived axioms. */
+export function consistencyInferredGraphIri(ontologyId: string, versionId: string): string {
+  return `urn:ontology:${ontologyId}:${versionId}:consistency-inferred`
+}
+
 export function selectedGraphIris(
   selected: Set<string>,
   mode: ReasoningMode,
@@ -25,6 +34,7 @@ export function selectedGraphIris(
     }
     if (mode === 'inferred' || mode === 'both') {
       out.push(inferredGraphIri(o.id, vid))
+      out.push(consistencyInferredGraphIri(o.id, vid))
     }
   }
   return out
@@ -59,6 +69,7 @@ export function endpointForVersion(version: OntologyVersion, mode: ReasoningMode
   }
   if (mode === 'inferred' || mode === 'both') {
     iris.push(inferredGraphIri(version.ontology_id, version.id))
+    iris.push(consistencyInferredGraphIri(version.ontology_id, version.id))
   }
   return buildScopedEndpoint('/api/v1/sparql/content', iris)
 }

@@ -179,10 +179,15 @@ def _render_justification(ntriples_list: list[str], label_fn) -> list[dict]:
 
     RDFS_SC = pyoxigraph.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
     OWL_EC  = pyoxigraph.NamedNode("http://www.w3.org/2002/07/owl#equivalentClass")
+    OWL_DW  = pyoxigraph.NamedNode("http://www.w3.org/2002/07/owl#disjointWith")
 
     axioms: list[dict] = []
     seen: set[str] = set()
-    for pred, rel in [(RDFS_SC, "subClassOf"), (OWL_EC, "equivalentClass")]:
+    # disjointWith is included because it's load-bearing for unsatisfiability
+    # justifications (e.g., for "C ⊑ Nothing" the disjointness of C's parents is
+    # often the cornerstone axiom). The frontend's JustificationAxiom type
+    # already supports rel="disjointWith".
+    for pred, rel in [(RDFS_SC, "subClassOf"), (OWL_EC, "equivalentClass"), (OWL_DW, "disjointWith")]:
         for quad in temp_store.quads_for_pattern(None, pred, None, JUST_GRAPH):
             s_key = quad.subject.value if isinstance(quad.subject, pyoxigraph.NamedNode) else str(quad.subject)
             o_key = quad.object.value  if isinstance(quad.object,  pyoxigraph.NamedNode) else str(quad.object)
@@ -2117,6 +2122,14 @@ async def inferred_children(
                     return detail["label"], None
             return None, None
 
+        # Pull Phase-2 consistency unsat info so we can decorate the inferred
+        # tree with the same Protégé-style red highlighting the asserted tree
+        # already has. Defensive — if Phase 2 hasn't run, just skip.
+        try:
+            unsat_map = _load_unsat_scopes(version_id)
+        except Exception:
+            unsat_map = {}
+
         terms = []
         for iri, detail in zip(child_iris, details_list):
             label, lang_tag = _label_and_lang(detail)
@@ -2126,6 +2139,14 @@ async def inferred_children(
             term: dict = {"iri": iri, "label": label, "has_children": bool(children_of.get(iri))}
             if lang_tag:
                 term["lang"] = lang_tag
+            scopes = unsat_map.get(iri)
+            if scopes:
+                term["is_unsatisfiable"] = True
+                term["unsat_scopes"] = scopes
+            # The synthetic owl:Nothing node — annotate so the frontend renders
+            # it with the same softer-red treatment as in the asserted tree.
+            if iri == _OWL_NOTHING:
+                term["unsat_children_count"] = len(nothing_children)
             terms.append(term)
 
         return {"terms": terms, "reasoning_available": True}

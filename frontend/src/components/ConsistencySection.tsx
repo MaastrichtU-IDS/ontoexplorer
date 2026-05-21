@@ -63,7 +63,9 @@ function UnsatJustification({
                 <span style={{ color: 'var(--text-dim)', marginRight: 4 }}>•</span>
                 <span style={{ color: 'var(--accent-blue)' }}>{exprLabel(ax.sub)}</span>
                 <span style={{ color: 'var(--text-dim)', margin: '0 4px' }}>
-                  {ax.rel === 'subClassOf' ? '⊑' : '≡'}
+                  {ax.rel === 'subClassOf' ? '⊑'
+                    : ax.rel === 'disjointWith' ? 'disjointWith'
+                    : '≡'}
                 </span>
                 <span style={{ color: 'var(--text)' }}>{exprLabel(ax.sup)}</span>
               </li>

@@ -43,14 +43,23 @@ describe('selectedGraphIris', () => {
       .toEqual(['urn:ontology:O1:V1'])
   })
 
-  it('returns inferred URI for mode=inferred', () => {
+  it('returns inferred + consistency-inferred URIs for mode=inferred', () => {
+    // Phase-2 consistency entailments live in a separate graph that must be
+    // included whenever the user asks for inferred axioms (see scopeUrls.ts).
     expect(selectedGraphIris(new Set(['O1']), 'inferred', ONTS))
-      .toEqual(['urn:ontology:O1:V1:inferred'])
+      .toEqual([
+        'urn:ontology:O1:V1:inferred',
+        'urn:ontology:O1:V1:consistency-inferred',
+      ])
   })
 
-  it('returns asserted then inferred for mode=both, per ontology', () => {
+  it('returns asserted then inferred + consistency-inferred for mode=both', () => {
     expect(selectedGraphIris(new Set(['O1']), 'both', ONTS))
-      .toEqual(['urn:ontology:O1:V1', 'urn:ontology:O1:V1:inferred'])
+      .toEqual([
+        'urn:ontology:O1:V1',
+        'urn:ontology:O1:V1:inferred',
+        'urn:ontology:O1:V1:consistency-inferred',
+      ])
   })
 
   it('preserves ontology order from the input list', () => {
@@ -129,11 +138,12 @@ describe('endpointForVersion', () => {
     expect(url).not.toContain(encodeURIComponent('urn:ontology:O1:V1&'))
   })
 
-  it('both mode emits four params (asserted + inferred)', () => {
+  it('both mode emits six params (asserted + inferred + consistency-inferred)', () => {
     const url = endpointForVersion(V1, 'both')
     expect(url).toContain(encodeURIComponent('urn:ontology:O1:V1'))
     expect(url).toContain(encodeURIComponent('urn:ontology:O1:V1:inferred'))
-    expect((url.match(/default-graph-uri=/g) ?? []).length).toBe(2)
-    expect((url.match(/named-graph-uri=/g) ?? []).length).toBe(2)
+    expect(url).toContain(encodeURIComponent('urn:ontology:O1:V1:consistency-inferred'))
+    expect((url.match(/default-graph-uri=/g) ?? []).length).toBe(3)
+    expect((url.match(/named-graph-uri=/g) ?? []).length).toBe(3)
   })
 })
