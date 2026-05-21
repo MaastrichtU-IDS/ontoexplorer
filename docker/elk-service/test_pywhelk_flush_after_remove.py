@@ -66,15 +66,11 @@ def test_flush_after_add_picks_up_new_axiom():
     )
 
 
-@pytest.mark.xfail(
-    reason="py-whelk 0.4.0 / whelk-rs: flush() does NOT invalidate cached "
-           "classification after remove_axiom. When this test starts passing, "
-           "the persistent-reasoner optimization in justification.py becomes "
-           "viable — see the note there.",
-    strict=False,
-)
 def test_flush_after_remove_picks_up_axiom_removal():
-    """The bug: flush after remove leaves is_entailed in stale True state."""
+    """Was xfail-marked under upstream py-whelk 0.4.0 (index_remove was a
+    no-op stub). Patched py-whelk records remove_axiom in a pending_remove
+    queue and flush() applies it before re-asserting. Now expected to pass;
+    the persistent-reasoner path in justification.py relies on this."""
     from pyhornedowl import model
     onto, reasoner, cls = _make_minimal_ontology()
     sco = model.SubClassOf(cls["A"], cls["B"])

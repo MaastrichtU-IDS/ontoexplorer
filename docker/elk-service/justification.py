@@ -54,19 +54,20 @@ def compute_justifications(
         if sup not in result.superclasses.get(sub, []) and sup not in result.direct_superclasses.get(sub, []):
             return []
 
-    # NOTE: tried a "persistent reasoner" optimization (one whelk reasoner
-    # kept alive across the greedy walk, mutate ontology in place + flush()
-    # instead of rebuilding from scratch). Empirically blocked by an
-    # upstream limitation in py-whelk 0.4.0 (and whelk-rs): `flush()` after
-    # `onto.remove_axiom(X)` does NOT invalidate the cached classification —
-    # the reasoner continues to report `is_entailed(X)` as True after X is
-    # removed. `flush()` works for add_axiom but not remove. Verified with
-    # a minimal A⊑B ontology: add+flush correctly turns on the entailment,
-    # remove+flush leaves the stale True in place.
-    #
-    # Until upstream is fixed we have to recreate the reasoner on every
-    # mutation, which is exactly what `_entails_via_whelk` already does.
-    # Worth revisiting if py-whelk gains incremental-remove support.
+    # Whelk persistent-reasoner fast path: build ontology + reasoner once,
+    # mutate via remove_axiom + flush across the entire greedy walk. The
+    # upstream bug that originally blocked this (py-whelk's index_remove was
+    # a no-op stub, so flush() never invalidated after remove) has been
+    # fixed in our patched py-whelk wheel; see test_pywhelk_flush_after_remove.
+    # Falls back to the per-call rebuild path if anything in the chain isn't
+    # available.
+    if _CLASSIFIER_BACKEND == "whelk" and sup != str(rdflib.OWL.Nothing):
+        try:
+            return _compute_justifications_persistent(
+                graph, sub, sup, max_justifications,
+            )
+        except _PersistentUnavailable:
+            pass  # fall through to the per-call path
 
     all_axioms = _extract_all_axioms(graph)
     if not all_axioms:
@@ -188,19 +189,203 @@ def _extract_all_axioms(graph: rdflib.Graph) -> list[str]:
     return [line.strip() for line in nt_text.splitlines() if line.strip()]
 
 
-# Persistent-reasoner experiment notes (kept here for the next person who
-# wonders the same thing): we tried keeping a single whelk reasoner alive
-# across the greedy walk and mutating the ontology in place. py-whelk
-# 0.4.0's `flush()` is a one-way invalidation — it picks up add_axiom but
-# does NOT invalidate after remove_axiom. Reproduced with a 2-class
-# ontology: add+flush correctly returns True for the new SubClassOf;
-# remove+flush leaves is_entailed at True for the just-removed axiom.
+# ── Persistent-reasoner fast path ─────────────────────────────────────────────
 #
-# Two paths forward if this gets revisited:
-#   1. Upstream patch in whelk-rs to handle remove invalidation properly.
-#   2. Drop down past py-whelk to whelk-rs's incremental classifier API
-#      (would require a small custom PyO3 binding).
+# Builds the whelk reasoner ONCE for the full input ontology, then mutates
+# in-place via onto.remove_axiom + reasoner.flush(). Skips the per-call
+# pyoxigraph + RDF/XML + horned-owl-load tax on every greedy step.
 #
-# Until then, _entails_via_whelk re-creates the reasoner per call. That's
-# already amortized down to ~10ms by pyoxigraph's Rust-speed parse path,
-# so the cost is bearable for ontologies up to pizza-scale.
+# Requires the patched py-whelk wheel (the upstream 0.4.0 release has a
+# broken index_remove that silently drops removes; flush() then re-asserts
+# the same ontology it already had, leaving is_entailed in a stale state).
+# Our patched wheel adds a pending_remove queue symmetric to pending_insert
+# and applies it in flush. See test_pywhelk_flush_after_remove.
+
+class _PersistentUnavailable(RuntimeError):
+    """Raised when this path can't be used (missing dep, parse failure, etc).
+    Caller falls back to the per-call rebuild path."""
+
+
+def _compute_justifications_persistent(
+    graph: rdflib.Graph,
+    sub: str,
+    sup: str,
+    max_justifications: int,
+) -> list[list[str]]:
+    try:
+        import io
+        import pyhornedowl
+        import pyoxigraph
+        import pywhelk
+        from pyhornedowl import model
+    except ImportError as exc:
+        raise _PersistentUnavailable(f"required modules missing: {exc}") from exc
+
+    nt_text = graph.serialize(format="nt")
+    nt_bytes = nt_text.encode("utf-8") if isinstance(nt_text, str) else nt_text
+    if not nt_bytes.strip():
+        return []
+
+    try:
+        triples_iter = pyoxigraph.parse(io.BytesIO(nt_bytes), format=pyoxigraph.RdfFormat.N_TRIPLES)
+        rdfxml_bytes = pyoxigraph.serialize(triples_iter, format=pyoxigraph.RdfFormat.RDF_XML)
+        onto = pyhornedowl.open_ontology_from_string(rdfxml_bytes.decode("utf-8"), serialization="rdf")
+        reasoner = pywhelk.create_reasoner(onto)
+    except Exception as exc:
+        raise _PersistentUnavailable(f"ontology load failed: {exc}") from exc
+
+    try:
+        sco_query = model.SubClassOf(onto.class_(sub), onto.class_(sup))
+    except Exception as exc:
+        raise _PersistentUnavailable(f"could not construct query axiom: {exc}") from exc
+
+    if not reasoner.is_entailed(sco_query):
+        return []
+
+    # Restrict candidates to axiom types that can carry EL inference paths.
+    # Class declarations and annotation assertions are skipped — they can't
+    # be load-bearing for SubClassOf(sub, sup).
+    _CONSIDERED = {
+        "SubClassOf", "EquivalentClasses", "DisjointClasses",
+        "SubObjectPropertyOf", "EquivalentObjectProperties",
+        "ObjectPropertyDomain", "ObjectPropertyRange",
+        "TransitiveObjectProperty",
+    }
+    candidates: list = []
+    for ax in onto.get_axioms():
+        if type(ax.component).__name__ in _CONSIDERED:
+            candidates.append(ax.component)
+
+    justifications: list[list[str]] = []
+    excluded_ids: list[set[int]] = []
+    limit = max_justifications if max_justifications > 0 else 999
+
+    while len(justifications) < limit:
+        survivors = _persistent_find_one(
+            onto, reasoner, candidates, sco_query, excluded_ids,
+        )
+        if survivors is None:
+            break
+        nt_lines = _axioms_to_nt(survivors, graph)
+        if not nt_lines:
+            break
+        justifications.append(nt_lines)
+        excluded_ids.append({id(ax) for ax in survivors})
+
+    return justifications
+
+
+def _persistent_find_one(onto, reasoner, candidates, sco_query, excluded_ids):
+    """One iteration of justification discovery using the persistent reasoner.
+
+    Each excluded set blocks supersets of a previously-found justification.
+    We enforce blocking by removing one excluded axiom from `onto` for the
+    duration of this attempt; restored at the end.
+    """
+    blocked_axioms = []
+    for ex_ids in excluded_ids:
+        for ax in candidates:
+            if id(ax) in ex_ids:
+                onto.remove_axiom(ax)
+                blocked_axioms.append(ax)
+                break  # only block ONE axiom per excluded set
+    reasoner.flush()
+    try:
+        if not reasoner.is_entailed(sco_query):
+            return None
+
+        # Fixed-point greedy shrink. Start from the (un-blocked) candidate set.
+        survivors = [ax for ax in candidates if ax not in blocked_axioms]
+        while True:
+            before = len(survivors)
+            idx = 0
+            while idx < len(survivors):
+                ax = survivors[idx]
+                try:
+                    onto.remove_axiom(ax)
+                except Exception:
+                    idx += 1
+                    continue
+                reasoner.flush()
+                if reasoner.is_entailed(sco_query):
+                    survivors.pop(idx)  # truly removable, leave out
+                else:
+                    onto.add_axiom(ax)
+                    reasoner.flush()
+                    idx += 1
+            if len(survivors) == before:
+                break
+        return survivors
+    finally:
+        # Restore all axioms we touched so the next outer iteration starts
+        # from a clean ontology state.
+        for ax in blocked_axioms:
+            try:
+                onto.add_axiom(ax)
+            except Exception:
+                pass
+        # Anything not in `survivors` (i.e. confirmed-removable) was removed
+        # during the walk; restore those too for the next iteration.
+        if "survivors" in locals():
+            for ax in candidates:
+                if ax not in survivors and ax not in blocked_axioms:
+                    try:
+                        onto.add_axiom(ax)
+                    except Exception:
+                        pass
+        reasoner.flush()
+
+
+def _axioms_to_nt(axioms: list, source_graph: rdflib.Graph) -> list[str]:
+    """Convert horned-owl axiom components back to N-Triple strings via
+    the source rdflib graph. Heuristic: find triples whose subjects are
+    named IRIs mentioned in any surviving axiom AND whose predicate is a
+    schema predicate the EL reasoner pays attention to."""
+    from rdflib.namespace import OWL, RDFS, RDF
+    schema_predicates = {
+        RDFS.subClassOf, OWL.equivalentClass, OWL.disjointWith,
+        RDFS.subPropertyOf, OWL.equivalentProperty,
+        RDFS.domain, RDFS.range,
+        OWL.intersectionOf, OWL.unionOf,
+        OWL.onProperty, OWL.someValuesFrom, OWL.allValuesFrom,
+        RDF.first, RDF.rest,
+    }
+    iris_of_interest: set[str] = set()
+    for ax in axioms:
+        iris_of_interest |= _extract_iris_from_axiom(ax)
+    out: list[str] = []
+    seen: set[tuple] = set()
+    for s, p, o in source_graph:
+        if isinstance(s, rdflib.URIRef) and str(s) in iris_of_interest and p in schema_predicates:
+            triple = (s, p, o)
+            if triple in seen:
+                continue
+            seen.add(triple)
+            g = rdflib.Graph()
+            g.add(triple)
+            out.append(g.serialize(format="nt").strip())
+    return out
+
+
+def _extract_iris_from_axiom(axiom) -> set[str]:
+    """Walk an axiom's component structure pulling named-class IRIs."""
+    found: set[str] = set()
+    seen_ids: set[int] = set()
+    stack = [axiom]
+    while stack:
+        node = stack.pop()
+        if id(node) in seen_ids:
+            continue
+        seen_ids.add(id(node))
+        # `Class.first` is an IRI when the class is named.
+        if hasattr(node, "first"):
+            iri_str = str(node.first)
+            if iri_str.startswith("http"):
+                found.add(iri_str)
+        for attr in ("sub", "sup", "operands", "members", "property",
+                     "filler", "object", "subject", "first", "rest"):
+            if hasattr(node, attr):
+                child = getattr(node, attr)
+                if child is not None and id(child) not in seen_ids:
+                    stack.append(child)
+    return found

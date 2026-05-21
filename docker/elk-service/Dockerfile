@@ -15,14 +15,21 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Patched py-whelk wheel (vendored locally). Adds remove-handling to the
+# index_remove stub so reasoner.flush() actually invalidates the cached
+# classification after onto.remove_axiom() — required by the persistent-
+# reasoner path in justification.py. Switch back to PyPI once the upstream
+# PR lands; see test_pywhelk_flush_after_remove.py for the regression.
+COPY wheels/ /tmp/wheels/
 RUN pip install --no-cache-dir \
     "fastapi==0.111.*" \
     "uvicorn[standard]" \
     "rdflib" \
     "redis>=5.0" \
     "py-horned-owl==1.4.*" \
-    "py-whelk==0.4.*" \
-    "pyoxigraph>=0.4"
+    /tmp/wheels/py_whelk-*.whl \
+    "pyoxigraph>=0.4" \
+ && rm -rf /tmp/wheels
 
 COPY main.py classifier.py whelk_classifier.py cache.py justification.py ./
 
