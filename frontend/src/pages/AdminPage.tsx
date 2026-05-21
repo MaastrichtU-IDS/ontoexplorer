@@ -7,6 +7,7 @@ import { api } from '../lib/api'
 import { JobsTable } from '../components/admin/JobsTable'
 import { OntologyTable } from '../components/admin/OntologyTable'
 import { WorkersPanel } from '../components/admin/WorkersPanel'
+import { StarterQueriesPanel } from '../components/admin/StarterQueriesPanel'
 import { SectionLabel, ServiceCard, UpdateState, ontologyDisplayName } from '../components/admin/shared'
 
 export default function AdminPage() {
@@ -207,6 +208,11 @@ export default function AdminPage() {
           versionIngestStates={versionIngestStates}
           onVersionIngest={handleVersionIngest}
         />
+      </div>
+
+      <SectionLabel>Starter Queries</SectionLabel>
+      <div style={{ marginBottom: 24 }}>
+        <StarterQueriesPanel />
       </div>
 
       <SectionLabel>Workers</SectionLabel>
