@@ -108,6 +108,23 @@ async def test_starters_list_ordered_by_category_then_name(client):
 
 
 @pytest.mark.anyio
+async def test_import_url_rejects_oversize_response(admin_client, monkeypatch):
+    """A response body exceeding 1 MB must be rejected (streaming hard cap)."""
+    async def fake_fetch(url: str) -> str:
+        raise ValueError(f"Response exceeded 1048576 byte cap")
+    monkeypatch.setattr(
+        "ontoexplorer.api.sparql_queries._fetch_starter_url",
+        fake_fetch,
+    )
+    resp = await admin_client.post(
+        "/api/v1/sparql/starters/import",
+        data={"source_url": "https://example.com/big.json"},
+    )
+    assert resp.status_code == 400
+    assert "exceeded" in resp.json()["detail"].lower() or "cap" in resp.json()["detail"].lower()
+
+
+@pytest.mark.anyio
 async def test_starters_not_in_public_listing(client):
     public = await client.get("/api/v1/sparql/queries/public")
     public_names = {q["name"] for q in public.json()["queries"]}

@@ -1358,11 +1358,10 @@ export const api = {
       } else {
         form.append('text', payload.text)
       }
-      return fetch('/api/v1/sparql/starters/import', { method: 'POST', body: form })
-        .then(async r => {
-          if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`)
-          return r.json() as Promise<ImportStartersResponse>
-        })
+      return request<ImportStartersResponse>('/sparql/starters/import', {
+        method: 'POST',
+        body: form,
+      })
     },
   },
 

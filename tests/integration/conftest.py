@@ -100,6 +100,8 @@ STARTERS = [
 @pytest.fixture(autouse=True, scope="session")
 async def seed_starters(engine):
     """Seed the system user and starter queries into the in-memory test DB."""
+    # NOTE: This is session-scoped + autouse and seeds 10 rows into saved_queries.
+    # Future tests that assert an empty saved_queries table should ignore is_starter=true rows.
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     async_session = async_sessionmaker(engine, expire_on_commit=False)
