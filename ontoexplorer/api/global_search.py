@@ -336,16 +336,13 @@ async def global_autocomplete(
 
     ctx = partial_parse(q, effective_cursor)
 
-    if ontology_ids:
-        gathered = await asyncio.gather(
-            *[_get_latest_version_or_404(db, oid) for oid in ontology_ids],
-            return_exceptions=True,
-        )
-        versions = [v for v in gathered if isinstance(v, OntologyVersion)]
-    else:
-        versions = await _latest_ingested_versions(db)
+    # Non-entity contexts return small constant lists — no Redis or Postgres
+    # query needed.
+    KEYWORDS_BOOLEAN = ["and", "or", "not", "(", ")"]
+    KEYWORDS_ENTITY_OPEN = ["not", "'"]
+    CARDINALITIES = ["1", "2", "3"]
 
-    if not versions:
+    def _empty_resp() -> dict:
         return {
             "completions": [],
             "context": ctx.token_type.lower(),
@@ -353,63 +350,64 @@ async def global_autocomplete(
             "replace_to": effective_cursor,
         }
 
-    # Load ontology shortnames for all versions in one query
-    ont_ids = list({str(v.ontology_id) for v in versions})
-    ont_rows = (await db.execute(
-        select(Ontology).where(Ontology.id.in_(ont_ids))
-    )).scalars().all()
+    def _kw_completion(kw: str) -> dict:
+        return {
+            "text": kw, "type": "keyword", "iri": None, "short": None,
+            "insert": kw + " ", "lang": None, "cross_language": False,
+            "ontology_shortname": "",
+        }
 
-    def _shortname(ont: Ontology) -> str:
-        if ont.shortname:
-            return ont.shortname
-        last = ont.iri.rstrip("/#").rsplit("/", 1)[-1].rsplit("#", 1)[-1]
-        return last
+    def _card_completion(n: str) -> dict:
+        return {
+            "text": n, "type": "cardinality", "iri": None, "short": None,
+            "insert": n + " ", "lang": None, "cross_language": False,
+            "ontology_shortname": "",
+        }
 
-    ont_by_id = {str(o.id): _shortname(o) for o in ont_rows}
-    # Map version_id → ontology_shortname
-    ver_shortname = {str(v.id): ont_by_id.get(str(v.ontology_id), "") for v in versions}
+    completions: list[dict] = []
 
-    all_nested = await asyncio.gather(*[
-        asyncio.to_thread(get_completions, q, effective_cursor, str(v.id), limit, lang)
-        for v in versions
-    ])
+    if ctx.token_type == "EXPECT_KEYWORD":
+        completions = [_kw_completion(k) for k in KEYWORDS_BOOLEAN]
+    elif ctx.token_type == "EXPECT_INT":
+        completions = [_card_completion(n) for n in CARDINALITIES]
+    elif ctx.token_type == "EXPECT_ENTITY" and not ctx.partial:
+        completions = [_kw_completion(k) for k in KEYWORDS_ENTITY_OPEN]
+    elif ctx.token_type in ("OPEN_QUOTE", "EXPECT_ENTITY"):
+        # Entity-prefix path: one SQL query over entity_index, joined with
+        # ontologies for shortname display. Replaces the 25-version Redis
+        # fan-out via get_completions.
+        from ontoexplorer.modules.search.pg_search import pg_autocomplete_entities
 
-    seen_iris: set[str] = set()
-    seen_kws: set[str] = set()
-    merged: list[tuple] = []  # (Completion, ontology_shortname)
-    for v, completions in zip(versions, all_nested):
-        sn = ver_shortname.get(str(v.id), "")
-        for c in completions:
-            if c.iri is None:
-                if c.text not in seen_kws:
-                    seen_kws.add(c.text)
-                    merged.append((c, None))
-            elif c.iri not in seen_iris:
-                seen_iris.add(c.iri)
-                merged.append((c, sn))
+        rows = await pg_autocomplete_entities(
+            db,
+            partial=ctx.partial,
+            limit=limit,
+            excluded_types=frozenset({"annotation_property"}),
+            ontology_ids=[oid for oid in ontology_ids] if ontology_ids else None,
+        )
 
-    norm_q = normalise_label(ctx.partial or "")
-
-    def _rank(item: tuple) -> tuple:
-        c, _ = item
-        if c.iri is None:
-            return (0, c.text)
-        lbl = normalise_label(c.text)
-        if lbl == norm_q:
-            return (1, lbl)
-        if lbl.startswith(norm_q):
-            return (2, lbl)
-        return (3, lbl)
-
-    merged.sort(key=_rank)
-    merged = merged[:limit]
+        bare_word_context = ctx.token_type == "EXPECT_ENTITY"
+        for r in rows:
+            label = r["label"]
+            if bare_word_context:
+                # Single-word labels insert bare; multi-word are quoted.
+                insert = label + " " if " " not in label else f"'{label}' "
+            else:
+                # OPEN_QUOTE: close the user's opening quote.
+                insert = f"{label}'"
+            completions.append({
+                "text": label,
+                "type": r["type"],
+                "iri": r["iri"],
+                "short": r["short"],
+                "insert": insert,
+                "lang": None,
+                "cross_language": False,
+                "ontology_shortname": r["ontology_shortname"],
+            })
 
     payload = {
-        "completions": [
-            {"text": c.text, "type": c.type, "iri": c.iri, "short": c.short, "insert": c.insert,
-             "lang": c.lang, "cross_language": c.cross_language, "ontology_shortname": sn}
-            for c, sn in merged
-        ],
+        "completions": completions,
         "context": ctx.token_type.lower(),
         "replace_from": ctx.token_start,
         "replace_to": effective_cursor,

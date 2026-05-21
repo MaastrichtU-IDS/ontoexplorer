@@ -109,6 +109,129 @@ async def pg_entity_search(
     return merged[:limit]
 
 
+async def pg_autocomplete_entities(
+    db: AsyncSession,
+    partial: str,
+    limit: int,
+    excluded_types: frozenset[str] | None = None,
+    ontology_ids: list[str] | None = None,
+) -> list[dict]:
+    """Cross-ontology entity autocomplete via Postgres entity_index.
+
+    Mirrors the pg_entity_search two-stage strategy (fast prefix → tsv fallback),
+    but also JOINs the `ontologies` table so the API can emit ontology_shortname
+    next to each completion. Deduplicates by IRI across ontologies; the surviving
+    row keeps the first-seen ontology's shortname.
+
+    Returns list of dicts: {iri, label, short, type, version_id, ontology_id,
+    ontology_shortname, primary_label_norm}. Caller is responsible for wrapping
+    each dict into a Completion with the correct `insert` text.
+    """
+    norm = normalise_label(partial) if partial else ""
+    # Single-letter prefixes match tens of thousands of rows (e.g. 'c' → ~22k);
+    # autocomplete on a single letter isn't useful and triggers a full table sort.
+    # Bail early — the frontend should debounce to ≥2 chars anyway.
+    if len(norm) < 2:
+        return []
+
+    type_filter_sql = ""
+    if excluded_types:
+        type_filter_sql = "AND ei.type <> ALL(:excluded)"
+
+    ontology_filter_sql = ""
+    if ontology_ids:
+        ontology_filter_sql = "AND ei.ontology_id = ANY(:ontology_ids)"
+
+    # Stage 1: btree text_pattern_ops prefix scan.
+    prefix_sql = text(f"""
+        SELECT ei.iri, ei.primary_label, ei.short, ei.type,
+               ei.version_id, ei.ontology_id, ei.primary_label_norm,
+               COALESCE(o.shortname, '') AS ontology_shortname
+        FROM entity_index ei
+        JOIN versions v ON v.id = ei.version_id
+        JOIN ontologies o ON o.id = ei.ontology_id
+        WHERE v.status NOT IN ('pending','failed','deprecated')
+          AND ei.primary_label_norm LIKE :prefix
+          {type_filter_sql}
+          {ontology_filter_sql}
+        ORDER BY CASE WHEN ei.primary_label_norm = :norm THEN 0 ELSE 1 END,
+                 ei.primary_label_norm, ei.iri
+        LIMIT :over
+    """)
+    params: dict = {"norm": norm, "prefix": norm + "%", "over": limit * _OVERSAMPLE}
+    if excluded_types:
+        params["excluded"] = list(excluded_types)
+    if ontology_ids:
+        params["ontology_ids"] = ontology_ids
+    result = await db.execute(prefix_sql, params)
+
+    seen_iris: set[str] = set()
+    out: list[dict] = []
+    for row in result.all():
+        if row.iri in seen_iris:
+            continue
+        seen_iris.add(row.iri)
+        out.append({
+            "iri": row.iri,
+            "label": row.primary_label,
+            "short": row.short,
+            "type": row.type,
+            "version_id": row.version_id,
+            "ontology_id": row.ontology_id,
+            "ontology_shortname": row.ontology_shortname,
+            "primary_label_norm": row.primary_label_norm,
+        })
+        if len(out) >= limit:
+            return out[:limit]
+
+    # Stage 2: tsv fallback for word-suffix matches (label or synonym contains
+    # `<norm>` as a non-leading token). Only invoked when prefix tier under-fills.
+    tsv_sql = text(f"""
+        SELECT ei.iri, ei.primary_label, ei.short, ei.type,
+               ei.version_id, ei.ontology_id, ei.primary_label_norm,
+               COALESCE(o.shortname, '') AS ontology_shortname
+        FROM entity_index ei
+        JOIN versions v ON v.id = ei.version_id
+        JOIN ontologies o ON o.id = ei.ontology_id
+        WHERE v.status NOT IN ('pending','failed','deprecated')
+          AND ei.search_tsv @@ to_tsquery('simple', :tsq)
+          AND ei.primary_label_norm NOT LIKE :prefix
+          {type_filter_sql}
+          {ontology_filter_sql}
+        ORDER BY ei.primary_label_norm, ei.iri
+        LIMIT :over
+    """)
+    params2: dict = {
+        "tsq": _tsquery_lexeme(norm) + ":*",
+        "prefix": norm + "%",
+        "over": limit * _OVERSAMPLE,
+    }
+    if excluded_types:
+        params2["excluded"] = list(excluded_types)
+    if ontology_ids:
+        params2["ontology_ids"] = ontology_ids
+    result = await db.execute(tsv_sql, params2)
+
+    for row in result.all():
+        if row.iri in seen_iris:
+            continue
+        seen_iris.add(row.iri)
+        out.append({
+            "iri": row.iri,
+            "label": row.primary_label,
+            "short": row.short,
+            "type": row.type,
+            "version_id": row.version_id,
+            "ontology_id": row.ontology_id,
+            "ontology_shortname": row.ontology_shortname,
+            "primary_label_norm": row.primary_label_norm,
+        })
+        if len(out) >= limit:
+            break
+
+    return out[:limit]
+
+
 def _tsquery_lexeme(norm: str) -> str:
     """Strip whitespace/operators so a multi-word query doesn't break to_tsquery.
 

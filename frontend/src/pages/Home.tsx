@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useQuery, useQueries } from '@tanstack/react-query'
 import { useOntologies } from '../hooks/useOntologies'
 import { useGlobalSearch } from '../hooks/useSearch'
+import { useDebounced } from '../hooks/useDebounced'
 import { slugFromIri, SearchResult, api } from '../lib/api'
 import SearchBar from '../components/SearchBar'
 import OntologyPicker from '../components/OntologyPicker'
@@ -110,16 +111,14 @@ function ResultList({ results, pathFor, ontologyNameFor }: {
 
 function KeywordSearch() {
   const [query, setQuery] = useState('')
-  const [submitted, setSubmitted] = useState('')
+  // Live search: fire after the user pauses for 200 ms. Reuses the existing
+  // 60s Redis response cache so refinements feel instant.
+  const debouncedQuery = useDebounced(query.trim(), 200)
+  const activeQuery = debouncedQuery.length >= 2 ? debouncedQuery : ''
   const { ontologies } = useOntologies()
-  const { data, isFetching } = useGlobalSearch(submitted, submitted.length >= 3)
+  const { data, isFetching } = useGlobalSearch(activeQuery, activeQuery.length >= 2)
   const results = data?.results ?? []
   const semanticResults = data?.semantic_results ?? []
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setSubmitted(query.trim())
-  }
 
   function pathFor(r: SearchResult): string | null {
     const ont = ontologies.find(o => o.id === r.ontology_id)
@@ -137,11 +136,12 @@ function KeywordSearch() {
 
   return (
     <>
-      <form onSubmit={handleSubmit} style={{ display: 'flex', gap: 8, marginBottom: '0.75rem' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: '0.75rem' }}>
         <input
           value={query}
           onChange={e => setQuery(e.target.value)}
           placeholder="Search classes, properties, individuals…"
+          autoFocus
           style={{
             flex: 1, padding: '10px 14px', fontSize: 15,
             background: 'var(--bg-secondary)', border: '1px solid var(--border)',
@@ -150,19 +150,26 @@ function KeywordSearch() {
           onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
           onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')}
         />
-        <button type="submit" style={{
-          padding: '10px 20px', background: 'var(--accent)', color: '#000',
-          border: 'none', borderRadius: 'var(--radius)', fontWeight: 600, fontSize: 14, cursor: 'pointer',
-        }}>
-          Search
-        </button>
-      </form>
+        {query && (
+          <button
+            type="button"
+            onClick={() => setQuery('')}
+            title="Clear"
+            style={{
+              padding: '10px 16px', background: 'var(--bg-secondary)', color: 'var(--text-dim)',
+              border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: 14, cursor: 'pointer',
+            }}
+          >
+            ✕
+          </button>
+        )}
+      </div>
 
-      {!submitted && (
+      {!activeQuery && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>Try:</span>
           {EXAMPLES.map(ex => (
-            <button key={ex} onClick={() => { setQuery(ex); setSubmitted(ex) }} style={{
+            <button key={ex} onClick={() => setQuery(ex)} style={{
               fontSize: 12, padding: '3px 10px', borderRadius: 12,
               background: 'var(--bg-secondary)', border: '1px solid var(--border)',
               color: 'var(--text-muted)', cursor: 'pointer',
@@ -174,14 +181,14 @@ function KeywordSearch() {
         </div>
       )}
 
-      {submitted && isFetching && results.length === 0 && (
+      {activeQuery && isFetching && results.length === 0 && (
         <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', textAlign: 'center', marginTop: '2rem' }}>
           Searching…
         </p>
       )}
-      {submitted && !isFetching && results.length === 0 && (
+      {activeQuery && !isFetching && results.length === 0 && (
         <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', textAlign: 'center', marginTop: '2rem' }}>
-          No results for "{submitted}"
+          No results for "{activeQuery}"
         </p>
       )}
       <ResultList results={results} pathFor={pathFor} ontologyNameFor={ontologyNameFor} />
