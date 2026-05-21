@@ -9,16 +9,27 @@ Algorithm:
 3. For multiple justifications, use the hitting-set approach:
    after finding one justification J, add a blocking constraint
    (exclude at least one axiom from J) and search again.
+
+The per-step entailment check (`_entails`) routes through the same backend
+the rest of the service uses: when CLASSIFIER_BACKEND=whelk (the default),
+it goes via whelk_classifier.classify_ntriples (Rust EL reasoner, ~100x
+faster than the legacy CR1–6 classifier on small inputs). This both
+matches semantics with the main /classify path and dramatically reduces
+the hitting-set wall time — the algorithm does O(N) entailment checks
+during greedy shrink.
 """
 from __future__ import annotations
 
 import io
 import itertools
+import os
 from typing import Sequence
 
 import rdflib
 
-from classifier import ClassificationResult, classify
+from classifier import ClassificationResult, classify as _rdflib_classify
+
+_CLASSIFIER_BACKEND = os.getenv("CLASSIFIER_BACKEND", "whelk").lower()
 
 
 def compute_justifications(
@@ -94,7 +105,38 @@ def _find_one_justification(
 
 
 def _entails(axioms: list[str], sub: str, sup: str) -> bool:
-    """Return True if the given axiom set entails sub ⊑ sup."""
+    """Return True if the given axiom set entails sub ⊑ sup.
+
+    Dispatches to the same classifier backend the service is using for the
+    main /classify path. The whelk path is the default and is dramatically
+    faster on small inputs (no JVM startup, no rdflib reparse) — important
+    because greedy-shrink calls _entails O(N) times.
+    """
+    if _CLASSIFIER_BACKEND == "whelk":
+        return _entails_via_whelk(axioms, sub, sup)
+    return _entails_via_rdflib(axioms, sub, sup)
+
+
+def _entails_via_whelk(axioms: list[str], sub: str, sup: str) -> bool:
+    """Whelk-backed entailment check. Cheapest path: join axioms back into
+    an N-Triples string and reuse `whelk_classifier.classify_ntriples`,
+    which is the same code path /classify takes."""
+    nt = "\n".join(axioms)
+    if not nt.strip():
+        return False
+    try:
+        from whelk_classifier import classify_ntriples
+        r = classify_ntriples(nt, "_check")
+    except Exception:
+        return False
+    if sup == str(rdflib.OWL.Nothing):
+        return sub in r.unsatisfiable
+    return (sup in r.superclasses.get(sub, []) or
+            sup in r.direct_superclasses.get(sub, []))
+
+
+def _entails_via_rdflib(axioms: list[str], sub: str, sup: str) -> bool:
+    """Legacy rdflib-based entailment check (CR1–6 classifier)."""
     g = rdflib.Graph()
     try:
         g.parse(data="\n".join(axioms), format="nt")
@@ -107,7 +149,7 @@ def _entails(axioms: list[str], sub: str, sup: str) -> bool:
     if len(g) == 0:
         return False
     try:
-        r = classify(g, "_check")
+        r = _rdflib_classify(g, "_check")
     except Exception:
         return False
     if sup == str(rdflib.OWL.Nothing):

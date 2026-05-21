@@ -15,8 +15,10 @@ from pydantic import BaseModel
 from cache import (
     invalidate_version,
     load_classification,
+    load_input_axioms,
     load_justification,
     store_classification,
+    store_input_axioms,
     store_justification,
 )
 from classifier import classify as _rdflib_classify
@@ -111,6 +113,10 @@ def run_classify(req: ClassifyRequest):
             else:
                 result = classify(graph_for_worker, version_id)
             store_classification(result)
+            # Persist the input axioms alongside the result so /justification
+            # can run its hitting-set algorithm without depending on
+            # proof_traces (which are empty under the whelk backend).
+            store_input_axioms(version_id, req.ntriples)
         except Exception:
             log.exception("classify_background_error", extra={"version_id": version_id})
         finally:
@@ -174,8 +180,11 @@ def compute_justification_endpoint(version_id: str, req: JustificationRequest):
     if cached:
         return cached
 
-    # Reconstruct graph from inferred + direct axioms stored in proof traces
-    g = _reconstruct_graph_from_traces(result)
+    # Justification needs the original asserted axioms. Prefer the input-axioms
+    # cache populated at classification time (works for any backend). Fall back
+    # to proof-trace reconstruction for older cache entries that pre-date the
+    # input_axioms key. If both miss, justifications will come back empty.
+    g = _load_input_graph(version_id) or _reconstruct_graph_from_traces(result)
 
     t0 = time.monotonic()
     timed_out = False
@@ -233,6 +242,25 @@ def _load_or_404(version_id: str):
             raise HTTPException(409, "Reasoning in progress — poll again shortly")
         raise HTTPException(409, "Reasoning not yet completed for this version — submit via POST /classify")
     return result
+
+
+def _load_input_graph(version_id: str) -> rdflib.Graph | None:
+    """Load the cached input N-Triples for a version and parse into an rdflib graph.
+
+    Returns None when no input-axioms cache entry exists (the version was
+    classified before this cache layer existed). Callers should fall back to
+    the legacy proof-trace reconstruction in that case.
+    """
+    ntriples = load_input_axioms(version_id)
+    if not ntriples:
+        return None
+    g = rdflib.Graph()
+    try:
+        g.parse(io.StringIO(ntriples), format="nt")
+    except Exception:
+        log.exception("input_axioms_parse_failed", extra={"version_id": version_id})
+        return None
+    return g
 
 
 def _reconstruct_graph_from_traces(result) -> rdflib.Graph:
