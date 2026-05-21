@@ -9,7 +9,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.database import get_db
-from ontoexplorer.models.db import Ontology, OntologyVersion
+from ontoexplorer.models.db import Ontology, OntologyVersion, User
+from ontoexplorer.modules.auth.dependencies import require_auth
 from ontoexplorer.modules.consistency.cache import consistency_cache_key
 from ontoexplorer.modules.search.indexer import _get_redis
 
@@ -33,10 +34,18 @@ async def get_version_consistency(ontology_id: str, version_id: str):
 
 @router.post(
     "/ontologies/{ontology_id}/{version_id}/consistency/refresh",
-    summary="Re-enqueue consistency check (admin/owner only)",
+    summary="Re-enqueue consistency check (authenticated users only)",
 )
-async def refresh_consistency(ontology_id: str, version_id: str):
-    """Re-run the Celery check_consistency task without re-indexing."""
+async def refresh_consistency(
+    ontology_id: str,
+    version_id: str,
+    user: User = Depends(require_auth),
+):
+    """Re-run the Celery check_consistency task without re-indexing.
+
+    Requires authentication to prevent unauthenticated users from spamming
+    the Celery queue. Admin/owner-only restriction is a future refinement.
+    """
     from ontoexplorer.modules.jobs.tasks import check_consistency
     check_consistency.delay(version_id, ontology_id)
     return {"status": "enqueued", "version_id": version_id}
