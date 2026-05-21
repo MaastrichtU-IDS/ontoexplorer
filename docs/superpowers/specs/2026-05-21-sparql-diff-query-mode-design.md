@@ -190,11 +190,8 @@ Click a pill to filter; default is `All` with the changes (`Only From` + `Only T
 
 ## Known deferred from v1
 
-- Sortable column headers (click-to-sort by any variable column). Default ordering
-  (changes first) ships but column-level sort is deferred.
-- Non-SELECT query → re-show Yasr native pane. v1 shows an in-DiffQueryView banner
-  instead because re-showing Yasr would require letting its bound fetch complete
-  rather than aborting it (different architecture). Documented for follow-up.
+(All v1 deferred items have shipped: sortable column headers and the non-SELECT
+spec-compliant path that re-shows Yasr's native pane.)
 
 ## Open questions
 
