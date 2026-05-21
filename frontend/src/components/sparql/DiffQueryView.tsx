@@ -3,6 +3,8 @@ import { BindingRow, BindingValue, diffBindings } from './diffBindings'
 
 type Status = 'onlyFrom' | 'onlyTo' | 'both'
 type Filter = 'all' | Status
+type SortKey = 'status' | string  // 'status' or a variable name
+type SortDir = 'asc' | 'desc'
 
 interface Props {
   from: BindingRow[]
@@ -21,6 +23,16 @@ const STATUS_COLOR: Record<Status, { bg: string; border: string; color: string }
   onlyFrom: { bg: 'rgba(248,81,73,0.10)',  border: 'rgba(248,81,73,0.35)',  color: '#f85149' },
   onlyTo:   { bg: 'rgba(63,185,80,0.10)',  border: 'rgba(63,185,80,0.35)',  color: '#3fb950' },
   both:     { bg: 'rgba(125,133,144,0.10)', border: 'rgba(125,133,144,0.35)', color: 'var(--text-dim)' },
+}
+
+// Order onlyFrom/onlyTo before both, so 'status asc' surfaces changes first.
+const STATUS_ORDER: Record<Status, number> = { onlyFrom: 0, onlyTo: 1, both: 2 }
+
+function compareValues(a: BindingValue | undefined, b: BindingValue | undefined): number {
+  if (!a && !b) return 0
+  if (!a) return -1
+  if (!b) return 1
+  return a.value.localeCompare(b.value)
 }
 
 function renderValue(v: BindingValue) {
@@ -42,6 +54,8 @@ function renderValue(v: BindingValue) {
 export function DiffQueryView({ from, to, fromError, toError }: Props) {
   const { onlyFrom, onlyTo, both, vars } = useMemo(() => diffBindings(from, to), [from, to])
   const [filter, setFilter] = useState<Filter>('all')
+  const [sortKey, setSortKey] = useState<SortKey>('status')
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
 
   const allRows: Array<{ status: Status; row: BindingRow }> = useMemo(() => {
     return [
@@ -52,9 +66,32 @@ export function DiffQueryView({ from, to, fromError, toError }: Props) {
   }, [onlyFrom, onlyTo, both])
 
   const visible = useMemo(() => {
-    if (filter === 'all') return allRows
-    return allRows.filter(r => r.status === filter)
-  }, [allRows, filter])
+    const filtered = filter === 'all' ? allRows : allRows.filter(r => r.status === filter)
+    const sorted = [...filtered].sort((a, b) => {
+      let cmp: number
+      if (sortKey === 'status') {
+        cmp = STATUS_ORDER[a.status] - STATUS_ORDER[b.status]
+      } else {
+        cmp = compareValues(a.row[sortKey], b.row[sortKey])
+      }
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+    return sorted
+  }, [allRows, filter, sortKey, sortDir])
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(key)
+      setSortDir('asc')
+    }
+  }
+
+  function sortArrow(key: SortKey): string {
+    if (sortKey !== key) return ''
+    return sortDir === 'asc' ? ' ▲' : ' ▼'
+  }
 
   const totalCount = allRows.length
   const empty = totalCount === 0 && !fromError && !toError
@@ -115,12 +152,29 @@ export function DiffQueryView({ from, to, fromError, toError }: Props) {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <th style={{ textAlign: 'left', padding: '4px 8px', color: 'var(--text-dim)', fontSize: 10, textTransform: 'uppercase' }}>
-                  Status
+                <th
+                  onClick={() => toggleSort('status')}
+                  style={{
+                    textAlign: 'left', padding: '4px 8px',
+                    color: sortKey === 'status' ? 'var(--text)' : 'var(--text-dim)',
+                    fontSize: 10, textTransform: 'uppercase', fontWeight: sortKey === 'status' ? 700 : 500,
+                    cursor: 'pointer', userSelect: 'none',
+                  }}
+                >
+                  Status{sortArrow('status')}
                 </th>
                 {vars.map(v => (
-                  <th key={v} style={{ textAlign: 'left', padding: '4px 8px', color: 'var(--text-dim)', fontSize: 10, textTransform: 'uppercase' }}>
-                    {v}
+                  <th
+                    key={v}
+                    onClick={() => toggleSort(v)}
+                    style={{
+                      textAlign: 'left', padding: '4px 8px',
+                      color: sortKey === v ? 'var(--text)' : 'var(--text-dim)',
+                      fontSize: 10, textTransform: 'uppercase', fontWeight: sortKey === v ? 700 : 500,
+                      cursor: 'pointer', userSelect: 'none',
+                    }}
+                  >
+                    {v}{sortArrow(v)}
                   </th>
                 ))}
               </tr>

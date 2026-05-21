@@ -52,4 +52,52 @@ describe('DiffQueryView', () => {
     expect(anchor).not.toBeNull()
     expect(anchor?.getAttribute('href')).toBe('http://example.org/X')
   })
+
+  it('clicking a column header sorts rows by that variable', () => {
+    // Three rows in the same status bucket so status-sort doesn't dominate.
+    const from: BindingRow[] = [
+      { x: uri('http://c') },
+      { x: uri('http://a') },
+      { x: uri('http://b') },
+    ]
+    const { container } = render(
+      <DiffQueryView from={from} to={[]} fromError={null} toError={null} />
+    )
+    // Default sort is status-asc — all three rows are Only From; their input
+    // order is preserved (c, a, b).
+    let cells = container.querySelectorAll('tbody tr a.iri')
+    expect(Array.from(cells).map(a => a.getAttribute('href'))).toEqual([
+      'http://c', 'http://a', 'http://b',
+    ])
+
+    // Click the `x` column header — sort ascending.
+    fireEvent.click(screen.getByText(/^x/))
+    cells = container.querySelectorAll('tbody tr a.iri')
+    expect(Array.from(cells).map(a => a.getAttribute('href'))).toEqual([
+      'http://a', 'http://b', 'http://c',
+    ])
+
+    // Click again — reverses to descending.
+    fireEvent.click(screen.getByText(/^x/))
+    cells = container.querySelectorAll('tbody tr a.iri')
+    expect(Array.from(cells).map(a => a.getAttribute('href'))).toEqual([
+      'http://c', 'http://b', 'http://a',
+    ])
+  })
+
+  it('default sort puts changes (onlyFrom/onlyTo) before Both', () => {
+    const from: BindingRow[] = [{ x: uri('http://a') }, { x: uri('http://shared') }]
+    const to:   BindingRow[] = [{ x: uri('http://b') }, { x: uri('http://shared') }]
+    const { container } = render(
+      <DiffQueryView from={from} to={to} fromError={null} toError={null} />
+    )
+    const statusBadges = Array.from(
+      container.querySelectorAll('tbody tr td:first-child span')
+    ).map(s => s.textContent)
+    // Onlyfrom + OnlyTo first (in some order), Both last.
+    expect(statusBadges[statusBadges.length - 1]).toBe('Both')
+    expect(statusBadges.slice(0, -1)).toEqual(
+      expect.arrayContaining(['Only From', 'Only To'])
+    )
+  })
 })
