@@ -327,11 +327,7 @@ it('runs two parallel fetches in Diff mode and renders DiffQueryView', async () 
   })
 
   // Fire Yasqe's query event manually
-  const abortMock = vi.fn()
-  queryHandlers[0]({ abort: abortMock }, { endpoint: '/api/v1/sparql/content' })
-
-  // The default request should be aborted (preventDefault analogue)
-  expect(abortMock).toHaveBeenCalled()
+  queryHandlers[0]({ abort: vi.fn() }, { endpoint: '/api/v1/sparql/content' })
 
   // The two binding sets render as DiffQueryView's "Only From" and "Only To" rows
   await waitFor(() => {

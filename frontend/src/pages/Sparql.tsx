@@ -54,6 +54,8 @@ export default function Sparql() {
     to: BindingRow[]
     fromError: string | null
     toError: string | null
+    fromIsSelect: boolean
+    toIsSelect: boolean
   } | null>(null)
   const diffAbortRef = useRef<AbortController | null>(null)
 
@@ -101,10 +103,12 @@ export default function Sparql() {
 
     const yasqeForQuery = yasguiRef.current?.getTab()?.getYasqe() as any
     if (yasqeForQuery && typeof yasqeForQuery.on === 'function') {
-      yasqeForQuery.on('query', (req: any) => {
+      yasqeForQuery.on('query', (_req: any) => {
         const scope = diffScopeRef.current
         if (!scope) return
-        try { req?.abort?.() } catch { /* superagent abort can be noisy */ }
+        // Don't abort Yasr's bound fetch — let it render the From-side
+        // response natively. We'll hide it via display:none if the diff is
+        // renderable; otherwise (non-SELECT, error) the user sees Yasr.
         void runDiffQuery(yasqeForQuery.getValue() ?? '', scope)
       })
     }
@@ -218,7 +222,7 @@ export default function Sparql() {
     const ac = new AbortController()
     diffAbortRef.current = ac
 
-    async function fetchSide(side: { version: OntologyVersion; mode: ReasoningMode }): Promise<{ bindings: BindingRow[]; error: string | null }> {
+    async function fetchSide(side: { version: OntologyVersion; mode: ReasoningMode }): Promise<{ bindings: BindingRow[]; error: string | null; isSelect: boolean }> {
       try {
         const resp = await fetch(endpointForVersion(side.version, side.mode), {
           method: 'POST',
@@ -229,15 +233,16 @@ export default function Sparql() {
           },
           body: `query=${encodeURIComponent(query)}`,
         })
-        if (!resp.ok) return { bindings: [], error: `HTTP ${resp.status}` }
+        if (!resp.ok) return { bindings: [], error: `HTTP ${resp.status}`, isSelect: false }
         const data = await resp.json()
+        // SELECT responses carry `head.vars`. CONSTRUCT / DESCRIBE / ASK do not.
         if (!data?.head?.vars) {
-          return { bindings: [], error: 'Diff mode supports SELECT queries only' }
+          return { bindings: [], error: null, isSelect: false }
         }
-        return { bindings: data.results?.bindings ?? [], error: null }
+        return { bindings: data.results?.bindings ?? [], error: null, isSelect: true }
       } catch (e) {
-        if ((e as Error).name === 'AbortError') return { bindings: [], error: 'aborted' }
-        return { bindings: [], error: e instanceof Error ? e.message : 'fetch failed' }
+        if ((e as Error).name === 'AbortError') return { bindings: [], error: 'aborted', isSelect: false }
+        return { bindings: [], error: e instanceof Error ? e.message : 'fetch failed', isSelect: false }
       }
     }
 
@@ -253,14 +258,25 @@ export default function Sparql() {
       to: toResp.bindings,
       fromError: fromResp.error,
       toError: toResp.error,
+      fromIsSelect: fromResp.isSelect,
+      toIsSelect: toResp.isSelect,
     })
   }, [])
 
-  // Hide the native Yasr pane when in diff mode.
+  // Hide the native Yasr pane only when a renderable diff is on screen
+  // (both sides returned SELECT bindings). In Diff mode with a non-SELECT
+  // response (or before any results are in), leave Yasr visible so the user
+  // sees the From-side query result natively.
+  const diffRenderable = !!(
+    diffScope &&
+    diffResult &&
+    diffResult.fromIsSelect &&
+    diffResult.toIsSelect
+  )
   useEffect(() => {
     const yasrEl = containerRef.current?.querySelector('.yasr') as HTMLElement | null
-    if (yasrEl) yasrEl.style.display = diffScope ? 'none' : ''
-  }, [diffScope])
+    if (yasrEl) yasrEl.style.display = diffRenderable ? 'none' : ''
+  }, [diffRenderable])
 
   // Clear stale diffResult when exiting diff mode.
   useEffect(() => {
@@ -307,7 +323,7 @@ export default function Sparql() {
           <div ref={containerRef} data-testid="yasgui-container" style={{
             height: '100%', overflowY: 'auto',
           }} />
-          {diffScope && diffResult && (
+          {diffRenderable && diffResult && (
             <div style={{
               position: 'absolute', left: 0, right: 0, bottom: 0,
               top: '50%',
@@ -320,6 +336,15 @@ export default function Sparql() {
                 fromError={diffResult.fromError}
                 toError={diffResult.toError}
               />
+            </div>
+          )}
+          {diffScope && diffResult && !diffRenderable && (
+            <div style={{
+              position: 'absolute', left: 0, right: 0, top: 0,
+              background: 'rgba(229,192,123,0.10)', borderBottom: '1px solid rgba(229,192,123,0.35)',
+              color: '#e5c07b', padding: '6px 12px', fontSize: 12, zIndex: 5,
+            }}>
+              Diff mode supports SELECT queries only. Showing the From-side response natively.
             </div>
           )}
         </div>

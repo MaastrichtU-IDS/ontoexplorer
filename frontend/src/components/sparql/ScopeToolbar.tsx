@@ -3,6 +3,7 @@ import { useOntologies } from '../../hooks/useOntologies'
 import {
   ReasoningMode,
   buildScopedEndpoint,
+  endpointForVersion,
   formatScopeAsFromClauses,
   selectedGraphIris,
 } from './scopeUrls'
@@ -69,14 +70,18 @@ export function ScopeToolbar({ onScopeChange, onCopy, onOntologyAdded, onSelecti
   const hasSelection = selected.size > 0
   const endpoint = useMemo(() => buildScopedEndpoint(BASE_ENDPOINT, graphIris), [graphIris])
 
-  // Notify the parent on any change to the computed endpoint.
+  // Notify the parent on any change to the computed endpoint. In Diff mode,
+  // emit the From-side endpoint so Yasr's bound native fetch renders the From-
+  // side response (used by the page's spec-compliant non-SELECT fallback). If
+  // the From side isn't complete yet, fall back to the bare base endpoint.
   useEffect(() => {
     if (toolbarMode === 'diff') {
-      onScopeChange(BASE_ENDPOINT)
+      const fromV = fromVersions.find(v => v.id === fromVersionId)
+      onScopeChange(fromV ? endpointForVersion(fromV, fromMode) : BASE_ENDPOINT)
       return
     }
     onScopeChange(endpoint)
-  }, [toolbarMode, endpoint, onScopeChange])
+  }, [toolbarMode, endpoint, onScopeChange, fromVersions, fromVersionId, fromMode])
 
   // Notify the parent whenever the selection set changes.
   useEffect(() => {
