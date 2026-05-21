@@ -4,6 +4,7 @@ import { canonicalRow, diffBindings, BindingRow, BindingValue } from './diffBind
 const uri = (v: string): BindingValue => ({ type: 'uri', value: v })
 const lit = (v: string, lang?: string, datatype?: string): BindingValue =>
   ({ type: 'literal', value: v, ...(lang ? { 'xml:lang': lang } : {}), ...(datatype ? { datatype } : {}) })
+const bnode = (v: string): BindingValue => ({ type: 'bnode', value: v })
 
 describe('canonicalRow', () => {
   it('produces the same string regardless of insertion order', () => {
@@ -27,6 +28,18 @@ describe('canonicalRow', () => {
 
   it('treats a missing variable as different from a present-but-empty one', () => {
     expect(canonicalRow({ x: uri('a') })).not.toBe(canonicalRow({ x: uri('a'), y: lit('') }))
+  })
+
+  it('collapses different bnode ids to the same canonical key', () => {
+    // Blank nodes have local identity; queries against two graphs will mint
+    // different ids for semantically equivalent anonymous expressions. The
+    // diff must not flag these as added/removed.
+    expect(canonicalRow({ x: bnode('e15fc5ca56b1') }))
+      .toBe(canonicalRow({ x: bnode('f23b1d7ae9c4') }))
+  })
+
+  it('still distinguishes a bnode from a URI with the same value', () => {
+    expect(canonicalRow({ x: bnode('x') })).not.toBe(canonicalRow({ x: uri('*') }))
   })
 })
 
@@ -73,5 +86,16 @@ describe('diffBindings', () => {
 
   it('handles empty sides', () => {
     expect(diffBindings([], [])).toEqual({ onlyFrom: [], onlyTo: [], both: [], vars: [] })
+  })
+
+  it('aggregates rows with different-id bnodes into Both', () => {
+    // Each side returns a single bnode row with a different auto-generated
+    // id — the canonical collapse treats them as the same row.
+    const from: BindingRow[] = [{ ancestor: bnode('e15fc5ca56b1') }]
+    const to:   BindingRow[] = [{ ancestor: bnode('f23b1d7ae9c4') }]
+    const result = diffBindings(from, to)
+    expect(result.onlyFrom).toEqual([])
+    expect(result.onlyTo).toEqual([])
+    expect(result.both).toHaveLength(1)
   })
 })

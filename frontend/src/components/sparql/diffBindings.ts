@@ -23,6 +23,15 @@ export interface DiffResult {
  *
  * Note: a missing variable is distinguishable from a present binding because
  * variable names are part of the canonical key.
+ *
+ * Blank nodes are collapsed to a single canonical sentinel (`*`): their auto-
+ * generated identifiers differ between independent queries (and between
+ * versions of the same store) for semantically equivalent anonymous
+ * expressions, so per-id comparison produces noise. With this collapse,
+ * bnode-only rows with no other distinguishing variables aggregate into the
+ * `Both` bucket — losing some precision but matching RDF's existential
+ * semantics for blank nodes. Rows with bnodes alongside other distinguishing
+ * values still partition correctly.
  */
 export function canonicalRow(row: BindingRow): string {
   const keys = Object.keys(row).sort()
@@ -30,7 +39,8 @@ export function canonicalRow(row: BindingRow): string {
     const v = row[k]
     const lang = v['xml:lang'] ?? ''
     const dt = v.datatype ?? ''
-    return `${k}\x01${v.type}\x02${v.value}\x03${lang}\x04${dt}`
+    const value = v.type === 'bnode' ? '*' : v.value
+    return `${k}\x01${v.type}\x02${value}\x03${lang}\x04${dt}`
   })
   return parts.join('\x1f')
 }
