@@ -103,6 +103,16 @@ services:
     depends_on:
       - redis
 
+  robot-service:
+    build: docker/robot-service
+    ports:
+      - "8002:8002"
+    environment:
+      # HermiT heap. Independent of the worker's cgroup so we can size DL
+      # reasoning generously without bloating the worker.
+      JAVA_OPTS: "-Xmx6g"
+    mem_limit: 7g
+
   prometheus:
     image: prom/prometheus
     ports:
