@@ -251,10 +251,23 @@ def _compute_justifications_persistent(
         "ObjectPropertyDomain", "ObjectPropertyRange",
         "TransitiveObjectProperty",
     }
-    candidates: list = []
+    all_candidates: list = []
     for ax in onto.get_axioms():
         if type(ax.component).__name__ in _CONSIDERED:
-            candidates.append(ax.component)
+            all_candidates.append(ax.component)
+
+    # IRI-connectivity pre-filter. Restrict to axioms whose named-entity
+    # footprint connects to {sub, sup} via transitive closure: an axiom is
+    # potentially load-bearing only if it shares at least one IRI with the
+    # accumulating "relevant" set, which in turn pulls in that axiom's other
+    # IRIs. Fixed-point until no growth. This is essentially a one-shot
+    # ⊥-module extraction restricted to EL — sound under EL semantics
+    # (axioms with disjoint IRI signature from sub/sup can never contribute
+    # to derivations reaching sub ⊑ sup).
+    #
+    # On ordo we observed this cuts the candidate set from ~28K to <100,
+    # turning a 10+ min greedy walk into seconds.
+    candidates = _filter_iri_connected(all_candidates, sub, sup)
 
     justifications: list[list[str]] = []
     excluded_ids: list[set[int]] = []
@@ -389,3 +402,30 @@ def _extract_iris_from_axiom(axiom) -> set[str]:
                 if child is not None and id(child) not in seen_ids:
                     stack.append(child)
     return found
+
+
+def _filter_iri_connected(candidates: list, sub: str, sup: str) -> list:
+    """Return the subset of `candidates` IRI-connected to {sub, sup}.
+
+    Iteratively grows a `relevant` IRI set: every axiom whose footprint
+    intersects the current set contributes its other IRIs, until no growth.
+    Axioms with footprints disjoint from the closure are dropped — they
+    cannot participate in any EL derivation that reaches sub ⊑ sup.
+
+    Mirrors the principle behind ⊥-module extraction (e.g. Cuenca-Grau et
+    al.) restricted to the EL fragment. Empirically reduces ordo's 28K
+    structural axioms down to <100 for typical inferences.
+    """
+    iris_per_ax: list[set[str]] = [_extract_iris_from_axiom(ax) for ax in candidates]
+    relevant: set[str] = {sub, sup}
+    # Fixed-point growth. Cheap because each iteration walks all axioms but
+    # does a tiny `set & relevant` per axiom; in practice converges in a
+    # few passes.
+    while True:
+        before = len(relevant)
+        for ax_iris in iris_per_ax:
+            if ax_iris & relevant:
+                relevant |= ax_iris
+        if len(relevant) == before:
+            break
+    return [ax for ax, ax_iris in zip(candidates, iris_per_ax) if ax_iris & relevant]
