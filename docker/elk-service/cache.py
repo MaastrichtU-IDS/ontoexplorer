@@ -25,6 +25,10 @@ def _input_axioms_key(version_id: str) -> str:
     return f"input_axioms:{version_id}"
 
 
+def _classification_error_key(version_id: str) -> str:
+    return f"classification_error:{version_id}"
+
+
 def _justification_key(version_id: str, sub: str, sup: str | None, max_j: int) -> str:
     import hashlib
     raw = f"{sub}|{sup}|{max_j}"
@@ -37,6 +41,8 @@ def store_classification(result: ClassificationResult) -> None:
     data = json.dumps(asdict(result)).encode()
     compressed = gzip.compress(data)
     _redis.setex(key, _CLASSIFICATION_TTL, compressed)
+    # A successful classification supersedes any prior error.
+    clear_classification_error(result.version_id)
 
 
 def load_classification(version_id: str) -> ClassificationResult | None:
@@ -83,11 +89,32 @@ def load_input_axioms(version_id: str) -> str | None:
     return gzip.decompress(raw).decode("utf-8")
 
 
+def store_classification_error(version_id: str, message: str) -> None:
+    """Mark a classification as failed. Surfaces via /classify GET as 500 with
+    the error message — without this, /classify stays at 409 forever for
+    inputs that raised inside the background _run task."""
+    key = _classification_error_key(version_id)
+    _redis.setex(key, _CLASSIFICATION_TTL, message.encode("utf-8"))
+
+
+def load_classification_error(version_id: str) -> str | None:
+    key = _classification_error_key(version_id)
+    raw = _redis.get(key)
+    return raw.decode("utf-8") if raw else None
+
+
+def clear_classification_error(version_id: str) -> None:
+    """Drop any prior error marker (called from store_classification so a
+    successful retry replaces the failed result)."""
+    _redis.delete(_classification_error_key(version_id))
+
+
 def invalidate_version(version_id: str) -> None:
     """Remove all cache entries for a version (called on deprecation)."""
     pattern = f"*:{version_id}:*"
     keys = list(_redis.scan_iter(pattern))
     keys.append(_classification_key(version_id).encode())
     keys.append(_input_axioms_key(version_id).encode())
+    keys.append(_classification_error_key(version_id).encode())
     if keys:
         _redis.delete(*keys)

@@ -15,9 +15,11 @@ from pydantic import BaseModel
 from cache import (
     invalidate_version,
     load_classification,
+    load_classification_error,
     load_input_axioms,
     load_justification,
     store_classification,
+    store_classification_error,
     store_input_axioms,
     store_justification,
 )
@@ -144,8 +146,13 @@ def run_classify(req: ClassifyRequest):
             # gets an empty input graph and returns no justifications.
             store_input_axioms(version_id, req.ntriples)
             store_classification(result)
-        except Exception:
+        except Exception as exc:
             log.exception("classify_background_error", extra={"version_id": version_id})
+            # Surface the failure via the cache so /classify GET can return
+            # 500 instead of staying at 409 forever (the previous behaviour).
+            store_classification_error(
+                version_id, f"{type(exc).__name__}: {exc}"[:1000],
+            )
         finally:
             _in_progress.discard(version_id)
 
@@ -273,11 +280,14 @@ def invalidate(version_id: str):
 
 def _load_or_404(version_id: str):
     result = load_classification(version_id)
-    if result is None:
-        if version_id in _in_progress:
-            raise HTTPException(409, "Reasoning in progress — poll again shortly")
-        raise HTTPException(409, "Reasoning not yet completed for this version — submit via POST /classify")
-    return result
+    if result is not None:
+        return result
+    err = load_classification_error(version_id)
+    if err is not None:
+        raise HTTPException(500, f"Classification failed: {err}")
+    if version_id in _in_progress:
+        raise HTTPException(409, "Reasoning in progress — poll again shortly")
+    raise HTTPException(409, "Reasoning not yet completed for this version — submit via POST /classify")
 
 
 def _load_input_graph(version_id: str) -> rdflib.Graph | None:
