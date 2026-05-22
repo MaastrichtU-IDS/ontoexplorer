@@ -25,12 +25,13 @@ function shortIri(iri: string): string {
   return CURATED_LABELS[iri] ?? iri.split(/[/#]/).pop() ?? iri
 }
 
-type TermRole = 'label_props' | 'definition_props' | 'synonym_props' | 'deprecated_props' | 'example_props'
+type TermRole = 'label_props' | 'definition_props' | 'elucidation_props' | 'synonym_props' | 'deprecated_props' | 'example_props'
 
 const ROLE_OPTIONS: { value: TermRole | ''; label: string }[] = [
   { value: '', label: '—' },
   { value: 'label_props', label: 'Label' },
   { value: 'definition_props', label: 'Definition' },
+  { value: 'elucidation_props', label: 'Elucidation' },
   { value: 'synonym_props', label: 'Synonym' },
   { value: 'deprecated_props', label: 'Deprecated' },
   { value: 'example_props', label: 'Example' },
@@ -48,6 +49,7 @@ function buildTermProps(profile: OntologyProfileData, cand: ProfileCandidates): 
   const roleMap = new Map<string, TermRole>()
   for (const iri of profile.label_props) roleMap.set(iri, 'label_props')
   for (const iri of profile.definition_props) roleMap.set(iri, 'definition_props')
+  for (const iri of (profile.elucidation_props ?? [])) roleMap.set(iri, 'elucidation_props')
   for (const iri of profile.synonym_props) roleMap.set(iri, 'synonym_props')
   for (const iri of profile.deprecated_props) roleMap.set(iri, 'deprecated_props')
   for (const iri of (profile.example_props ?? [])) roleMap.set(iri, 'example_props')
@@ -115,7 +117,7 @@ export default function ProfileEditor({ ontologyId, versionId }: {
   }
 
   function handleSave() {
-    const groups: Record<TermRole, string[]> = { label_props: [], definition_props: [], synonym_props: [], deprecated_props: [], example_props: [] }
+    const groups: Record<TermRole, string[]> = { label_props: [], definition_props: [], elucidation_props: [], synonym_props: [], deprecated_props: [], example_props: [] }
     for (const p of props) {
       const r = effectiveRole(p)
       if (r) groups[r].push(p.iri)

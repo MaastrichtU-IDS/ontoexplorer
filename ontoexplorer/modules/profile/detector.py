@@ -27,6 +27,7 @@ async def load_profile(db: AsyncSession, version_id: str) -> dict[str, list[str]
     return {
         "label_props": row.label_props or p["label_props"],
         "definition_props": row.definition_props or p["definition_props"],
+        "elucidation_props": row.elucidation_props or p["elucidation_props"],
         "synonym_props": row.synonym_props or p["synonym_props"],
         "deprecated_props": row.deprecated_props or p["deprecated_props"],
         "example_props": row.example_props or p["example_props"],
@@ -56,6 +57,7 @@ async def run_detection(db: AsyncSession, version_id: str, ontology_id: str = ""
     role_props: dict[str, list[str]] = {
         "label": _build_role_list(ALL_PROPS["label"], counts, mod_label),
         "definition": _build_role_list(ALL_PROPS["definition"], counts, mod_def),
+        "elucidation": _build_role_list(ALL_PROPS["elucidation"], counts, None),
         "synonym": _build_role_list(ALL_PROPS["synonym"], counts, None),
         "deprecated": _build_role_list(ALL_PROPS["deprecated"], counts, None),
         "example": _build_role_list(ALL_PROPS["example"], counts, None),
@@ -93,6 +95,7 @@ async def run_detection(db: AsyncSession, version_id: str, ontology_id: str = ""
     if existing:
         existing.label_props = role_props["label"]
         existing.definition_props = role_props["definition"]
+        existing.elucidation_props = role_props["elucidation"]
         existing.synonym_props = role_props["synonym"]
         existing.deprecated_props = role_props["deprecated"]
         existing.example_props = role_props["example"]
@@ -104,6 +107,7 @@ async def run_detection(db: AsyncSession, version_id: str, ontology_id: str = ""
             version_id=version_id,
             label_props=role_props["label"],
             definition_props=role_props["definition"],
+            elucidation_props=role_props["elucidation"],
             synonym_props=role_props["synonym"],
             deprecated_props=role_props["deprecated"],
             example_props=role_props["example"],

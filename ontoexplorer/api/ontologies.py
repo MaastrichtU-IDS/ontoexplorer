@@ -1390,7 +1390,8 @@ def _term_detail_cache_key(ontology_id: str, version_id: str, term_iri: str, lan
     import hashlib
     payload = f"{ontology_id}\x1f{version_id}\x1f{term_iri}\x1f{lang or ''}"
     h = hashlib.blake2b(payload.encode(), digest_size=16).hexdigest()
-    return f"search:term:{h}"
+    # v4: ClassRef items in term-detail now carry `source` for chip rendering.
+    return f"search:term:v4:{h}"
 
 
 @router.get("/{ontology_id}/{version_id}/terms/{term_iri:path}", summary="Term detail")
@@ -1517,6 +1518,9 @@ async def get_term(
     # per IRI (the dominant cost on the cold path for terms with many relationships).
     r = _get_redis()
     _label_cache: dict[str, str] = {}
+    # Map IRI → import-source short-name (e.g. 'bfo', 'iao'). Empty/missing
+    # means the IRI is native to this ontology — frontend renders no chip.
+    _source_cache: dict[str, str] = {}
 
     def _fallback(iri: str) -> str:
         fragment = iri.rstrip("/")
@@ -1532,6 +1536,8 @@ async def get_term(
             pipe.hgetall(_iri_key(version_id, i))
         for i, detail in zip(missing, pipe.execute()):
             _label_cache[i] = (detail or {}).get("label") or _fallback(i)
+            if detail and detail.get("source"):
+                _source_cache[i] = detail["source"]
 
     def _label(iri: str) -> str:
         cached = _label_cache.get(iri)
@@ -1541,11 +1547,16 @@ async def get_term(
         detail = r.hgetall(_iri_key(version_id, iri))
         label = (detail or {}).get("label") or _fallback(iri)
         _label_cache[iri] = label
+        if detail and detail.get("source"):
+            _source_cache[iri] = detail["source"]
         return label
 
     def _term_list(iris: list[str]) -> list[dict]:
         _resolve_labels(iris)
-        items = [{"iri": iri, "label": _label(iri)} for iri in iris]
+        items = [
+            {"iri": iri, "label": _label(iri), "source": _source_cache.get(iri, "")}
+            for iri in iris
+        ]
         items.sort(key=lambda t: (t["label"] or t["iri"]).lower())
         return items
 
@@ -1568,7 +1579,7 @@ async def get_term(
         _unique_pre = list(dict.fromkeys(_pre_iris))
         _pg_label_rows = (await db.execute(
             text("""
-                SELECT iri, primary_label
+                SELECT iri, primary_label, source
                 FROM entity_index
                 WHERE version_id = :vid AND iri = ANY(:iris)
             """),
@@ -1576,6 +1587,8 @@ async def get_term(
         )).all()
         for row in _pg_label_rows:
             _label_cache[row.iri] = row.primary_label
+            if row.source:
+                _source_cache[row.iri] = row.source
         # IRIs not in entity_index get the fragment fallback up-front so we
         # don't fall back to Redis on every miss.
         for _i in _unique_pre:
@@ -1872,6 +1885,12 @@ async def get_term(
         "http://www.w3.org/2004/02/skos/core#definition",
         "http://www.w3.org/2000/01/rdf-schema#comment",
     }
+    # IAO_0000600 — semi-formal description used by BFO/OBO for primitive
+    # entities that resist a closed-form definition. Surfaced as its own
+    # field so the UI can render it directly after the formal definition.
+    _ELUCIDATION_PREDS = {
+        "http://purl.obolibrary.org/obo/IAO_0000600",
+    }
     _SYNONYM_PREDS = {
         "http://www.geneontology.org/formats/oboInOwl#hasExactSynonym",
         "http://www.geneontology.org/formats/oboInOwl#hasRelatedSynonym",
@@ -1888,9 +1907,10 @@ async def get_term(
                 out.append(e)
         return out
 
-    term_labels      = _dedup_by_value([v for p in _LABEL_PREDS      for v in properties_typed.get(p, [])])
-    term_definitions = _dedup_by_value([v for p in _DEFINITION_PREDS  for v in properties_typed.get(p, [])])
-    term_synonyms    = _dedup_by_value([v for p in _SYNONYM_PREDS     for v in properties_typed.get(p, [])])
+    term_labels       = _dedup_by_value([v for p in _LABEL_PREDS       for v in properties_typed.get(p, [])])
+    term_definitions  = _dedup_by_value([v for p in _DEFINITION_PREDS  for v in properties_typed.get(p, [])])
+    term_elucidations = _dedup_by_value([v for p in _ELUCIDATION_PREDS for v in properties_typed.get(p, [])])
+    term_synonyms     = _dedup_by_value([v for p in _SYNONYM_PREDS     for v in properties_typed.get(p, [])])
 
     # Primary label: prefer effective_lang if set
     def _typed_primary_label(entries):
@@ -1920,15 +1940,34 @@ async def get_term(
     if "http://www.w3.org/2002/07/owl#NamedIndividual" in properties.get(_RDF_TYPE, []):
         type_of = _term_list([iri for iri in properties.get(_RDF_TYPE, []) if iri not in _OWL_META])
 
+    # Human-readable label for each predicate IRI used by this term — joined
+    # from entity_index (annotation properties in this same ontology version
+    # are themselves indexed entities). Frontend renders the predicate column
+    # using this map, falling back to a static well-known table and the IRI
+    # fragment.
+    from ontoexplorer.models.db import EntityIndex as _EntityIndex
+    _pred_iris = list(properties_typed.keys())
+    property_labels: dict[str, str] = {}
+    if _pred_iris:
+        _pl_rows = (await db.execute(
+            _select(_EntityIndex.iri, _EntityIndex.primary_label).where(
+                _EntityIndex.version_id == version_id,
+                _EntityIndex.iri.in_(_pred_iris),
+            )
+        )).all()
+        property_labels = {iri: label for iri, label in _pl_rows}
+
     _payload = {
         "iri": term_iri,
         "label": typed_label if term_labels else top_label,
         "labels": term_labels,
         "definitions": term_definitions,
+        "elucidations": term_elucidations,
         "synonyms": term_synonyms,
         "lang": effective_lang,
         "source": source,
         "properties": properties_typed,
+        "property_labels": property_labels,
         "type_of": type_of,
         "is_inverse_target": is_inverse_target,
         "superclasses": {
@@ -2604,6 +2643,9 @@ async def inferred_children(
                 fragment = iri.rstrip("/")
                 label = fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
             term: dict = {"iri": iri, "label": label, "has_children": bool(children_of.get(iri))}
+            source = (detail or {}).get("source")
+            if source:
+                term["source"] = source
             if lang_tag:
                 term["lang"] = lang_tag
             scopes = unsat_map.get(iri)

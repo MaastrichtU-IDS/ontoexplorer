@@ -1,8 +1,10 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useTerm, useTermExpanded } from '../hooks/useTerm'
-import { ClassRef, ClassExprNode, InferredExprEntry, JustificationAxiom, PropertyUsage, ClassUsageEntry, SchemaProperty, InheritedSchemaProperty, api } from '../lib/api'
+import { useOntologyProfile } from '../hooks/useOntologyProfile'
+import { useOntologyMeta } from '../hooks/useOntologyMeta'
+import { ClassRef, ClassExprNode, InferredExprEntry, JustificationAxiom, PropertyUsage, ClassUsageEntry, SchemaProperty, InheritedSchemaProperty, OntologyProfileData, OntologyMetaProfile, api } from '../lib/api'
 import SourceBadge from './SourceBadge'
 
 function CopyChip({ text, label, title }: { text: string; label?: string; title?: string }) {
@@ -70,6 +72,37 @@ function LangBadge({ lang }: { lang: string | null | undefined }) {
   )
 }
 
+// Standardized label-prefixed paragraph block — used for Definition,
+// Elucidation, and similar role-named annotations rendered above the
+// generic Annotations table. Renders nothing when values is empty.
+function LabeledTextBlock({ label, values, lang, fallback }: {
+  label: string
+  values: { value: string; lang: string | null }[]
+  lang?: string | null
+  fallback?: string | null
+}) {
+  const filtered = filterLangLabels(values, lang ?? null)
+  if (filtered.length === 0 && !fallback) return null
+  return (
+    <div style={{ marginBottom: 14 }}>
+      {filtered.length > 0 ? filtered.map((d, i) => (
+        <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: filtered.length > 1 ? 6 : 0 }}>
+          <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', lineHeight: 1.6, margin: 0, flex: 1 }}>
+            <span style={{ color: 'var(--text-dim)', fontWeight: 600 }}>{label}: </span>
+            {d.value}
+          </p>
+          {filtered.length > 1 && <LangBadge lang={d.lang} />}
+        </div>
+      )) : (
+        <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', lineHeight: 1.6, margin: 0 }}>
+          <span style={{ color: 'var(--text-dim)', fontWeight: 600 }}>{label}: </span>
+          {fallback}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function IriLink({ iri, label, slug, vid }: { iri: string; label: string; slug: string; vid: string }) {
   return (
     <Link
@@ -83,14 +116,17 @@ function IriLink({ iri, label, slug, vid }: { iri: string; label: string; slug: 
 
 function ClassBubble({ c, slug, vid }: { c: ClassRef; slug: string; vid: string }) {
   return (
-    <Link
-      to={`/ontologies/${slug}/${vid}?term=${encodeURIComponent(c.iri)}`}
-      style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}
-      onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
-      onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
-    >
-      {c.label}
-    </Link>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <Link
+        to={`/ontologies/${slug}/${vid}?term=${encodeURIComponent(c.iri)}`}
+        style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}
+        onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+        onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
+      >
+        {c.label}
+      </Link>
+      {c.source && <SourceBadge source={c.source} />}
+    </span>
   )
 }
 
@@ -534,11 +570,20 @@ function InheritedDomainPropertiesTable({ props: items, slug, vid }: { props: In
   )
 }
 
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
+function Section({ label, children, headerRight }: {
+  label: string
+  children: React.ReactNode
+  headerRight?: React.ReactNode
+}) {
   return (
     <div style={{ marginBottom: 16 }}>
-      <div style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>
-        {label}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1,
+        marginBottom: 6,
+      }}>
+        <span style={{ flex: 1 }}>{label}</span>
+        {headerRight}
       </div>
       {children}
     </div>
@@ -712,6 +757,7 @@ const HANDLED_PREDICATES = new Set([
   'http://www.w3.org/2000/01/rdf-schema#comment',
   'http://www.w3.org/2002/07/owl#deprecated',
   'http://purl.obolibrary.org/obo/IAO_0000115',  // definition
+  'http://purl.obolibrary.org/obo/IAO_0000600',  // elucidation
   'http://purl.obolibrary.org/obo/IAO_0000111',  // preferred label
 ])
 
@@ -730,42 +776,299 @@ const PRED_SHORT: Record<string, string> = {
   'http://purl.obolibrary.org/obo/IAO_0000119':                'definition source',
 }
 
-function predShort(iri: string): string {
-  if (PRED_SHORT[iri]) return PRED_SHORT[iri]
-  const frag = iri.replace(/[/#]+$/, '')
-  return frag.includes('#') ? frag.split('#').pop()! : frag.split('/').pop()!
+// Class body renders subClassOf / equivalent / disjoint / disjointUnion in
+// dedicated sections — skip those in the annotations table.
+const CLASS_HANDLED_PREDICATES = new Set([
+  ...HANDLED_PREDICATES,
+  'http://www.w3.org/2000/01/rdf-schema#subClassOf',
+  'http://www.w3.org/2002/07/owl#equivalentClass',
+  'http://www.w3.org/2002/07/owl#disjointWith',
+  'http://www.w3.org/2002/07/owl#disjointUnionOf',
+])
+
+// Property body renders domain / range / inverseOf / subPropertyOf /
+// propertyChainAxiom in dedicated sections.
+const PROPERTY_HANDLED_PREDICATES = new Set([
+  ...HANDLED_PREDICATES,
+  'http://www.w3.org/2000/01/rdf-schema#domain',
+  'http://www.w3.org/2000/01/rdf-schema#range',
+  'http://www.w3.org/2000/01/rdf-schema#subPropertyOf',
+  'http://www.w3.org/2002/07/owl#inverseOf',
+  'http://www.w3.org/2002/07/owl#propertyChainAxiom',
+  'http://www.w3.org/2002/07/owl#equivalentProperty',
+])
+
+// Toggle persisted across sessions. Default 'standardized' — same role name
+// across ontologies for label/definition/synonym/deprecated/example; the
+// long tail keeps the property's own rdfs:label. 'original' shows the
+// property's own label for every row (no profile role overlay).
+type LabelMode = 'standardized' | 'original'
+const LABEL_MODE_KEY = 'term-panel-label-mode'
+
+function useLabelMode(): [LabelMode, (m: LabelMode) => void] {
+  const [mode, setMode] = useState<LabelMode>(() => {
+    const stored = (typeof localStorage !== 'undefined' && localStorage.getItem(LABEL_MODE_KEY)) || ''
+    return stored === 'original' ? 'original' : 'standardized'
+  })
+  useEffect(() => {
+    function onStorage(e: StorageEvent) {
+      if (e.key === LABEL_MODE_KEY && e.newValue) {
+        setMode(e.newValue === 'original' ? 'original' : 'standardized')
+      }
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+  function update(m: LabelMode) {
+    localStorage.setItem(LABEL_MODE_KEY, m)
+    setMode(m)
+  }
+  return [mode, update]
 }
 
-function IndividualBody({ data, slug, versionId, lang }: {
-  data: ReturnType<typeof useTerm>['data'] & {}
+// Term-level roles from OntologyProfile (label/definition/synonym/...).
+const TERM_ROLE_NAME: Record<keyof Pick<OntologyProfileData,
+  'label_props' | 'definition_props' | 'elucidation_props' | 'synonym_props' | 'deprecated_props' | 'example_props'>, string> = {
+  label_props:       'Label',
+  definition_props:  'Definition',
+  elucidation_props: 'Elucidation',
+  synonym_props:     'Synonym',
+  deprecated_props:  'Deprecated',
+  example_props:     'Example',
+}
+
+// Ontology-document-level roles from OntologyMetaProfile (title/creator/...).
+// These IRIs can also appear on individual classes (e.g. dc:contributor on a
+// class), so we resolve them to the same standardized name in either context.
+const META_ROLE_NAME: Partial<Record<keyof OntologyMetaProfile, string>> = {
+  title_props:                'Title',
+  shortname_props:            'Shortname',
+  description_props:          'Description',
+  creator_props:              'Creator',
+  contributor_props:          'Contributor',
+  publisher_props:            'Publisher',
+  license_props:              'License',
+  homepage_props:             'Homepage',
+  version_info_props:         'Version Info',
+  version_iri_props:          'Version IRI',
+  prefix_props:               'Namespace Prefix',
+  namespace_uri_props:        'Namespace URI',
+  created_props:              'Created',
+  modified_props:             'Modified',
+  language_props:             'Language',
+  citation_props:             'Citation',
+  funding_props:              'Funding',
+  status_props:               'Status',
+  syntax_props:               'Syntax',
+  see_also_props:             'See Also',
+  is_defined_by_props:        'Defined By',
+  competency_question_props:  'Competency Question',
+  endorsed_by_props:          'Endorsed By',
+  relies_on_props:            'Relies On',
+  similar_props:              'Similar',
+  generalizes_props:          'Generalizes',
+  specializes_props:          'Specializes',
+  known_usage_props:          'Known Usage',
+  used_in_project_props:      'Used In Project',
+}
+
+function buildRoleMap(
+  profile: OntologyProfileData | undefined,
+  meta: OntologyMetaProfile | undefined,
+): Map<string, string> {
+  const m = new Map<string, string>()
+  // Term-level roles win on collision (more specific to the entity type).
+  if (profile) {
+    for (const key of Object.keys(TERM_ROLE_NAME) as (keyof typeof TERM_ROLE_NAME)[]) {
+      for (const iri of (profile[key] ?? [])) m.set(iri, TERM_ROLE_NAME[key])
+    }
+  }
+  if (meta) {
+    for (const key of Object.keys(META_ROLE_NAME) as (keyof typeof META_ROLE_NAME)[]) {
+      const iris = (meta[key] as string[] | undefined) ?? []
+      const name = META_ROLE_NAME[key]
+      if (!name) continue
+      for (const iri of iris) if (!m.has(iri)) m.set(iri, name)
+    }
+  }
+  return m
+}
+
+function resolvePredLabel(
+  pred: string,
+  mode: LabelMode,
+  propertyLabels: Record<string, string>,
+  roleMap: Map<string, string>,
+): string {
+  if (mode === 'standardized') {
+    const role = roleMap.get(pred)
+    if (role) return role
+  }
+  return propertyLabels[pred] || PRED_SHORT[pred] || (() => {
+    const frag = pred.replace(/[/#]+$/, '')
+    return frag.includes('#') ? frag.split('#').pop()! : frag.split('/').pop()!
+  })()
+}
+
+function LabelModeToggleLink({ mode, onChange }: { mode: LabelMode; onChange: (m: LabelMode) => void }) {
+  const next: LabelMode = mode === 'standardized' ? 'original' : 'standardized'
+  const text = next === 'original' ? 'View original annotations' : 'View standardized annotations'
+  return (
+    <button
+      onClick={() => onChange(next)}
+      style={{
+        background: 'none', border: 'none', cursor: 'pointer',
+        color: 'var(--accent)', fontSize: 11, padding: '6px 0 0 0',
+      }}
+      onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+      onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
+    >
+      {text} →
+    </button>
+  )
+}
+
+// Inline truncation for long literal values (typically `Example` paragraphs)
+// with a small "more…" / "less" toggle.
+function TruncatedLiteral({ value, max = 100 }: { value: string; max?: number }) {
+  const [expanded, setExpanded] = useState(false)
+  if (value.length <= max) return <span>{value}</span>
+  return (
+    <span>
+      {expanded ? value : value.slice(0, max).trimEnd() + '… '}
+      <button
+        onClick={() => setExpanded(v => !v)}
+        style={{
+          background: 'none', border: 'none', cursor: 'pointer',
+          color: 'var(--accent)', fontSize: 10, padding: 0, marginLeft: 2,
+        }}
+      >
+        {expanded ? 'less' : 'more…'}
+      </button>
+    </span>
+  )
+}
+
+// Display order for standardized roles in the Annotations table. The four
+// term-level roles come first (Label/Definition/Synonym/Example — Deprecated
+// is rendered as a header chip, not as a row), followed by ontology-document
+// roles in declaration order; anything outside this list sorts alphabetically
+// at the bottom.
+const STANDARDIZED_ORDER: string[] = [
+  'Label', 'Definition', 'Elucidation', 'Synonym', 'Example',
+  ...Object.values(META_ROLE_NAME).filter((s): s is string => !!s),
+]
+const STANDARDIZED_RANK = new Map(STANDARDIZED_ORDER.map((name, i) => [name, i]))
+
+function AnnotationsSection({
+  properties, propertyLabels, handled, roleMap, slug, versionId, lang,
+}: {
+  properties: Record<string, { value: string; lang: string | null }[]>
+  propertyLabels: Record<string, string>
+  handled: Set<string>
+  roleMap: Map<string, string>
   slug: string
   versionId: string
   lang?: string | null
 }) {
-  const annotations = Object.entries(data.rawProperties)
-    .filter(([pred]) => !HANDLED_PREDICATES.has(pred))
-    .sort(([a], [b]) => predShort(a).localeCompare(predShort(b)))
+  const [mode, setMode] = useLabelMode()
 
-  const filteredDefs = filterLangLabels(data.rawDefinitions, lang ?? null)
+  // Underlying pool: everything not already in a dedicated section and not
+  // deprecated (which becomes a header chip).
+  const allCandidates = Object.entries(properties)
+    .filter(([pred]) => !handled.has(pred))
+    .filter(([pred]) => roleMap.get(pred) !== 'Deprecated')
+
+  if (allCandidates.length === 0) return null
+
+  // STD shows only profile/meta-profile standardized annotations. ORIG reveals
+  // every predicate (so the long tail of ontology-supplied annotations is
+  // still reachable for users who want the full picture).
+  const visible = allCandidates
+    .filter(([pred]) => mode === 'original' || roleMap.has(pred))
+    .map(([pred, values]) => ({
+      pred,
+      values,
+      displayLabel: resolvePredLabel(pred, mode, propertyLabels, roleMap),
+    }))
+    .sort((a, b) => {
+      const ai = STANDARDIZED_RANK.get(a.displayLabel) ?? -1
+      const bi = STANDARDIZED_RANK.get(b.displayLabel) ?? -1
+      if (ai !== -1 && bi !== -1) return ai - bi
+      if (ai !== -1) return -1
+      if (bi !== -1) return 1
+      return a.displayLabel.localeCompare(b.displayLabel)
+    })
 
   return (
+    <div style={{ marginBottom: 16 }}>
+      {visible.length > 0 && (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-size-sm)' }}>
+          <tbody>
+            {visible.map(({ pred, values, displayLabel }) => {
+              const iris = values.filter(v => v.value.startsWith('http://') || v.value.startsWith('https://'))
+              const literals = values.filter(v => !v.value.startsWith('http://') && !v.value.startsWith('https://'))
+              const filteredLiterals = filterLangLabels(literals, lang ?? null)
+              const displayVals = [...iris, ...filteredLiterals]
+              return (
+                <tr key={pred} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', verticalAlign: 'top' }}>
+                  <td style={{ padding: '4px 10px 4px 0', color: 'var(--text-dim)', whiteSpace: 'nowrap', width: 1, fontSize: 11 }}
+                      title={pred}>
+                    {displayLabel}
+                  </td>
+                  <td style={{ padding: '4px 0', color: 'var(--text-muted)', wordBreak: 'break-word' }}>
+                    {displayVals.map((entry, i) => {
+                      const v = entry.value
+                      const isIri = v.startsWith('http://') || v.startsWith('https://')
+                      return (
+                        <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 2 }}>
+                          {isIri
+                            ? <IriLink iri={v} label={v.split(/[#/]/).pop() ?? v} slug={slug} vid={versionId} />
+                            : <TruncatedLiteral value={v} />}
+                          <LangBadge lang={entry.lang} />
+                        </div>
+                      )
+                    })}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
+      <LabelModeToggleLink mode={mode} onChange={setMode} />
+    </div>
+  )
+}
+
+function IndividualBody({ data, slug, roleMap, versionId, lang }: {
+  data: ReturnType<typeof useTerm>['data'] & {}
+  slug: string
+  roleMap: Map<string, string>
+  versionId: string
+  lang?: string | null
+}) {
+  return (
     <div style={{ flex: 1, padding: '10px 16px', overflow: 'auto' }}>
-      {filteredDefs.length > 0 ? (
-        <div style={{ marginBottom: 14 }}>
-          {filteredDefs.map((d, i) => (
-            <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: filteredDefs.length > 1 ? 6 : 0 }}>
-              <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', lineHeight: 1.6, margin: 0, flex: 1 }}>
-                {d.value}
-              </p>
-              {filteredDefs.length > 1 && <LangBadge lang={d.lang} />}
-            </div>
-          ))}
-        </div>
-      ) : data.definition ? (
-        <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: 14, lineHeight: 1.6 }}>
-          {data.definition}
-        </p>
-      ) : null}
+      <LabeledTextBlock
+        label="Definition"
+        values={data.rawDefinitions}
+        lang={lang}
+        fallback={data.rawDefinitions.length === 0 ? data.definition : null}
+      />
+      <LabeledTextBlock
+        label="Elucidation"
+        values={data.rawElucidations}
+        lang={lang}
+      />
+
+      <AnnotationsSection
+        properties={data.rawProperties}
+        propertyLabels={data.propertyLabels}
+        handled={HANDLED_PREDICATES}
+        roleMap={roleMap}
+        slug={slug} versionId={versionId} lang={lang}
+      />
 
       {data.typeOf.length > 0 && (
         <Section label="Instance of">
@@ -774,73 +1077,62 @@ function IndividualBody({ data, slug, versionId, lang }: {
           </div>
         </Section>
       )}
-
-      {annotations.length > 0 && (
-        <Section label="Annotations">
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-size-sm)' }}>
-            <tbody>
-              {annotations.map(([pred, values]) => {
-                const iris = values.filter(v => v.value.startsWith('http://') || v.value.startsWith('https://'))
-                const literals = values.filter(v => !v.value.startsWith('http://') && !v.value.startsWith('https://'))
-                const filteredLiterals = filterLangLabels(literals, lang ?? null)
-                const displayVals = [...iris, ...filteredLiterals]
-                return (
-                <tr key={pred} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', verticalAlign: 'top' }}>
-                  <td style={{ padding: '4px 10px 4px 0', color: 'var(--text-dim)', whiteSpace: 'nowrap', width: 1, fontSize: 11 }}>
-                    {predShort(pred)}
-                  </td>
-                  <td style={{ padding: '4px 0', color: 'var(--text-muted)', wordBreak: 'break-word' }}>
-                    {displayVals.map((entry, i) => {
-                      const v = entry.value
-                      return (
-                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
-                          {v.startsWith('http://') || v.startsWith('https://') ? (
-                            <IriLink iri={v} label={v.split(/[#/]/).pop() ?? v} slug={slug} vid={versionId} />
-                          ) : <span>{v}</span>}
-                          <LangBadge lang={entry.lang} />
-                        </div>
-                      )
-                    })}
-                  </td>
-                </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </Section>
-      )}
     </div>
   )
 }
 
-function PropertyBody({ data, slug, ontologyId, versionId, lang }: {
+function PropertyBody({ data, slug, ontologyId, roleMap, versionId, lang }: {
   data: ReturnType<typeof useTerm>['data'] & {}
   slug: string
   ontologyId: string
+  roleMap: Map<string, string>
   versionId: string
   lang?: string | null
 }) {
   const shortLabel = (iri: string) => iri.split(/[#/]/).pop() ?? iri
-  const filteredDefs = filterLangLabels(data.rawDefinitions, lang ?? null)
 
   return (
     <div style={{ flex: 1, padding: '10px 16px', overflow: 'auto' }}>
-      {filteredDefs.length > 0 ? (
-        <div style={{ marginBottom: 14 }}>
-          {filteredDefs.map((d, i) => (
-            <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: filteredDefs.length > 1 ? 6 : 0 }}>
-              <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', lineHeight: 1.6, margin: 0, flex: 1 }}>
-                {d.value}
-              </p>
-              {filteredDefs.length > 1 && <LangBadge lang={d.lang} />}
+      <LabeledTextBlock
+        label="Definition"
+        values={data.rawDefinitions}
+        lang={lang}
+        fallback={data.rawDefinitions.length === 0 ? data.definition : null}
+      />
+      <LabeledTextBlock
+        label="Elucidation"
+        values={data.rawElucidations}
+        lang={lang}
+      />
+
+      {(data.rawSynonyms.length > 0 || data.synonyms.exact.length > 0 || data.synonyms.related.length > 0) && (() => {
+        const filteredSyns = filterLangLabels(data.rawSynonyms, lang ?? null)
+        return (
+        <Section label="Synonyms">
+          {filteredSyns.length > 0 ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {filteredSyns.map((s, i) => (
+                <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}>
+                  {s.value}{filteredSyns.length > 1 && <LangBadge lang={s.lang} />}
+                </span>
+              ))}
             </div>
-          ))}
-        </div>
-      ) : data.definition ? (
-        <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: 14, lineHeight: 1.6 }}>
-          {data.definition}
-        </p>
-      ) : null}
+          ) : (
+            <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>
+              {[...data.synonyms.exact, ...data.synonyms.related].join(' · ')}
+            </div>
+          )}
+        </Section>
+        )
+      })()}
+
+      <AnnotationsSection
+        properties={data.rawProperties}
+        propertyLabels={data.propertyLabels}
+        handled={PROPERTY_HANDLED_PREDICATES}
+        roleMap={roleMap}
+        slug={slug} versionId={versionId} lang={lang}
+      />
 
       {data.characteristics.length > 0 && (
         <Section label="Characteristics">
@@ -889,27 +1181,6 @@ function PropertyBody({ data, slug, ontologyId, versionId, lang }: {
         </Section>
       )}
 
-      {(data.rawSynonyms.length > 0 || data.synonyms.exact.length > 0 || data.synonyms.related.length > 0) && (() => {
-        const filteredSyns = filterLangLabels(data.rawSynonyms, lang ?? null)
-        return (
-        <Section label="Synonyms">
-          {filteredSyns.length > 0 ? (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {filteredSyns.map((s, i) => (
-                <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}>
-                  {s.value}{filteredSyns.length > 1 && <LangBadge lang={s.lang} />}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <div style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>
-              {[...data.synonyms.exact, ...data.synonyms.related].join(' · ')}
-            </div>
-          )}
-        </Section>
-        )
-      })()}
-
       <Section label={`Used in axioms${data.usage.length > 0 ? ` (${data.usage.length}${data.usageHasMore ? '+' : ''})` : ''}`}>
         <UsagePager<PropertyUsage>
           initial={data.usage}
@@ -939,6 +1210,11 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
   // Lazy fetch of the three expensive sections deferred by the backend. Merged
   // into `data` once it arrives so the rendering below doesn't need to branch.
   const { data: expanded } = useTermExpanded(ontologyId, versionId, termIri, lang)
+  // Profile + meta fetched at the panel level so the role map can be shared
+  // between the header (deprecation chip) and the Annotations section.
+  const { data: profile } = useOntologyProfile(ontologyId ?? undefined, versionId)
+  const { data: meta }    = useOntologyMeta(ontologyId ?? undefined, versionId)
+  const roleMap = buildRoleMap(profile, meta)
 
   if (isLoading) return <div style={{ padding: '1rem', color: 'var(--text-dim)' }}>Loading…</div>
   if (error || !baseData) return <div style={{ padding: '1rem', color: 'var(--text-dim)' }}>Term not found</div>
@@ -968,6 +1244,18 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
     : isIndividual ? 'individual'
     : data.entityType
 
+  const isDeprecated = (() => {
+    const truthy = (s: string) => /^true$/i.test(s) || s === '1' || /^obsolete$/i.test(s)
+    // owl:deprecated true is the canonical signal.
+    const owlDep = data.rawProperties['http://www.w3.org/2002/07/owl#deprecated'] ?? []
+    if (owlDep.some(v => truthy(v.value))) return true
+    // Any predicate the profile assigns to the Deprecated role with a truthy value.
+    for (const [pred, values] of Object.entries(data.rawProperties)) {
+      if (roleMap.get(pred) === 'Deprecated' && values.some(v => truthy(v.value))) return true
+    }
+    return false
+  })()
+
   const hasNamedSuperclasses = data.superclasses.asserted.length > 0 || data.superclasses.inferred.length > 0
   const hasSubClassOf = hasNamedSuperclasses
     || (data.superclassExpressions?.length ?? 0) > 0
@@ -983,32 +1271,26 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
 
   let body: React.ReactNode
 
-  const classDefsFiltered = filterLangLabels(data.rawDefinitions, lang ?? null)
   const classSynsFiltered = filterLangLabels(data.rawSynonyms, lang ?? null)
 
   if (isIndividual) {
-    body = <IndividualBody data={data} slug={slug} versionId={versionId} lang={lang} />
+    body = <IndividualBody data={data} slug={slug} roleMap={roleMap} versionId={versionId} lang={lang} />
   } else if (isProperty) {
-    body = <PropertyBody data={data} slug={slug} ontologyId={ontologyId!} versionId={versionId} lang={lang} />
+    body = <PropertyBody data={data} slug={slug} ontologyId={ontologyId!} roleMap={roleMap} versionId={versionId} lang={lang} />
   } else {
     body = (
       <div style={{ flex: 1, padding: pad, overflow: 'auto' }}>
-        {classDefsFiltered.length > 0 ? (
-          <div style={{ marginBottom: 14 }}>
-            {classDefsFiltered.map((d, i) => (
-              <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: classDefsFiltered.length > 1 ? 6 : 0 }}>
-                <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', lineHeight: 1.6, margin: 0, flex: 1 }}>
-                  {d.value}
-                </p>
-                {classDefsFiltered.length > 1 && <LangBadge lang={d.lang} />}
-              </div>
-            ))}
-          </div>
-        ) : data.definition ? (
-          <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: 14, lineHeight: 1.6 }}>
-            {data.definition}
-          </p>
-        ) : null}
+        <LabeledTextBlock
+          label="Definition"
+          values={data.rawDefinitions}
+          lang={lang}
+          fallback={data.rawDefinitions.length === 0 ? data.definition : null}
+        />
+        <LabeledTextBlock
+          label="Elucidation"
+          values={data.rawElucidations}
+          lang={lang}
+        />
 
         {(classSynsFiltered.length > 0 || data.synonyms.exact.length > 0 || data.synonyms.related.length > 0 ||
           data.synonyms.broad.length > 0 || data.synonyms.narrow.length > 0) && (
@@ -1029,6 +1311,14 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
             )}
           </Section>
         )}
+
+        <AnnotationsSection
+          properties={data.rawProperties}
+          propertyLabels={data.propertyLabels}
+          handled={CLASS_HANDLED_PREDICATES}
+          roleMap={roleMap}
+          slug={slug} versionId={versionId} lang={lang}
+        />
 
         {hasSubClassOf && (
           <Section label="Superclass">
@@ -1136,15 +1426,25 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
           fontSize: 10, background: 'var(--bg)', color: typeColor,
           borderRadius: 3, padding: '1px 5px', textTransform: 'uppercase', flexShrink: 0,
         }}>{typeLabel}</span>
+        {isDeprecated && (
+          <span
+            title="This term is deprecated"
+            style={{
+              fontSize: 10,
+              background: 'rgba(224,108,117,0.12)',
+              border: '1px solid rgba(224,108,117,0.4)',
+              color: '#e06c75',
+              borderRadius: 3, padding: '1px 5px',
+              textTransform: 'uppercase', letterSpacing: 0.5,
+              fontWeight: 700, flexShrink: 0,
+            }}
+          >
+            Deprecated
+          </span>
+        )}
         {data.source && <SourceBadge source={data.source} />}
         <CopyChip text={data.iri.split(/[#/]/).pop() ?? data.iri} title={data.iri} />
         <CopyChip text={window.location.href} label="¶" title="Copy permalink" />
-        <Link
-          to={`/ontologies/${slug}/${versionId}?term=${encodeURIComponent(data.iri)}`}
-          style={{ color: 'var(--text-dim)', fontSize: 11, flexShrink: 0 }}
-        >
-          Open full page ↗
-        </Link>
       </div>
       {body}
     </div>

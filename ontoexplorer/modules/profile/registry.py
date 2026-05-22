@@ -15,6 +15,13 @@ DEFINITION_PROPS: list[str] = [
     "http://purl.org/dc/terms/description",
 ]
 
+# IAO_0000600 — semi-formal description used by BFO/OBO for primitive
+# entities (kept distinct from `definition` so the UI can render it on its
+# own line under the formal definition).
+ELUCIDATION_PROPS: list[str] = [
+    "http://purl.obolibrary.org/obo/IAO_0000600",
+]
+
 SYNONYM_PROPS: list[str] = [
     "http://www.w3.org/2004/02/skos/core#altLabel",
     "http://www.geneontology.org/formats/oboInOwl#hasExactSynonym",
@@ -34,6 +41,7 @@ EXAMPLE_PROPS: list[str] = [
 ALL_PROPS: dict[str, list[str]] = {
     "label": LABEL_PROPS,
     "definition": DEFINITION_PROPS,
+    "elucidation": ELUCIDATION_PROPS,
     "synonym": SYNONYM_PROPS,
     "deprecated": DEPRECATED_PROPS,
     "example": EXAMPLE_PROPS,
@@ -54,6 +62,7 @@ def default_profile() -> dict[str, list[str]]:
     return {
         "label_props": LABEL_PROPS[:],
         "definition_props": DEFINITION_PROPS[:],
+        "elucidation_props": ELUCIDATION_PROPS[:],
         "synonym_props": SYNONYM_PROPS[:],
         "deprecated_props": DEPRECATED_PROPS[:],
         "example_props": EXAMPLE_PROPS[:],

@@ -40,6 +40,7 @@ def _profile_response(p: OntologyProfile) -> dict:
         "version_id": p.version_id,
         "label_props": p.label_props,
         "definition_props": p.definition_props,
+        "elucidation_props": p.elucidation_props,
         "synonym_props": p.synonym_props,
         "deprecated_props": p.deprecated_props,
         "example_props": p.example_props,
@@ -62,6 +63,7 @@ async def get_profile(
 class ProfilePatch(BaseModel):
     label_props: list[str] | None = None
     definition_props: list[str] | None = None
+    elucidation_props: list[str] | None = None
     synonym_props: list[str] | None = None
     deprecated_props: list[str] | None = None
     example_props: list[str] | None = None
@@ -81,6 +83,8 @@ async def patch_profile(
         profile.label_props = body.label_props
     if body.definition_props is not None:
         profile.definition_props = body.definition_props
+    if body.elucidation_props is not None:
+        profile.elucidation_props = body.elucidation_props
     if body.synonym_props is not None:
         profile.synonym_props = body.synonym_props
     if body.deprecated_props is not None:

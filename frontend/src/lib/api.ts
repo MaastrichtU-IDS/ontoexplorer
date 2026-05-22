@@ -235,6 +235,9 @@ export interface Term {
 export interface ClassRef {
   iri: string
   label: string
+  /** Imported-from source short-name (e.g. 'bfo', 'iao') when the term
+   *  originates outside the host ontology. Empty for native terms. */
+  source?: string
 }
 
 export interface PropertyUsage {
@@ -278,8 +281,13 @@ export interface RawTermDetail {
   label: string
   source?: string
   properties: Record<string, LangLabel[]>
+  /** Human-readable label for each predicate IRI used by this term —
+   *  joined from entity_index. Empty/missing entries fall back to a
+   *  well-known static table, then to the IRI fragment. */
+  property_labels?: Record<string, string>
   labels?: LangLabel[]
   definitions?: LangLabel[]
+  elucidations?: LangLabel[]
   synonyms?: LangLabel[]
   lang?: string | null
   type_of?: ClassRef[]
@@ -310,8 +318,10 @@ export interface ParsedTerm {
   isInverseTarget: boolean
   typeOf: ClassRef[]
   rawProperties: Record<string, LangLabel[]>
+  propertyLabels: Record<string, string>
   rawLabels: LangLabel[]
   rawDefinitions: LangLabel[]
+  rawElucidations: LangLabel[]
   rawSynonyms: LangLabel[]
   synonyms: { exact: string[]; related: string[]; broad: string[]; narrow: string[] }
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
@@ -483,6 +493,7 @@ export interface OntologyProfileData {
   version_id: string
   label_props: string[]
   definition_props: string[]
+  elucidation_props: string[]
   synonym_props: string[]
   deprecated_props: string[]
   example_props: string[]
@@ -516,6 +527,7 @@ export interface ProfileCandidates {
 export interface ProfilePatch {
   label_props?: string[]
   definition_props?: string[]
+  elucidation_props?: string[]
   synonym_props?: string[]
   deprecated_props?: string[]
   example_props?: string[]
@@ -1005,8 +1017,10 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
     isInverseTarget: raw.is_inverse_target ?? false,
     typeOf: raw.type_of ?? [],
     rawProperties: raw.properties,
+    propertyLabels: raw.property_labels ?? {},
     rawLabels: raw.labels ?? [],
     rawDefinitions: raw.definitions ?? [],
+    rawElucidations: raw.elucidations ?? [],
     rawSynonyms: raw.synonyms ?? [],
     synonyms: {
       exact:   getValues(P.exactSyn),

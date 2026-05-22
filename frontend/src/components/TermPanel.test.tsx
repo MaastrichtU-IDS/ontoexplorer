@@ -11,8 +11,10 @@ const mockTerm = {
   isInverseTarget: false,
   typeOf: [],
   rawProperties: {},
+  propertyLabels: {},
   rawLabels: [],
   rawDefinitions: [],
+  rawElucidations: [],
   rawSynonyms: [],
   synonyms: { exact: ['cell killing'], related: [], broad: [], narrow: [] },
   superclasses: {
@@ -74,11 +76,6 @@ test('shows term label and definition', () => {
 test('shows synonyms', () => {
   wrap(<TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" slug="go" />)
   expect(screen.getByText(/cell killing/)).toBeInTheDocument()
-})
-
-test('shows open full page link', () => {
-  wrap(<TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" slug="go" />)
-  expect(screen.getByText('Open full page ↗')).toBeInTheDocument()
 })
 
 test('shows superclasses', () => {

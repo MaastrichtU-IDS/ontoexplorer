@@ -208,6 +208,7 @@ class OntologyProfile(Base):
     )
     label_props: Mapped[list] = mapped_column(JSON, default=list)
     definition_props: Mapped[list] = mapped_column(JSON, default=list)
+    elucidation_props: Mapped[list] = mapped_column(JSON, default=list)
     synonym_props: Mapped[list] = mapped_column(JSON, default=list)
     deprecated_props: Mapped[list] = mapped_column(JSON, default=list)
     example_props: Mapped[list] = mapped_column(JSON, default=list)
