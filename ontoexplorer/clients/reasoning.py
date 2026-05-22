@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json as _json
 import time
 import httpx
 import rdflib
@@ -16,9 +18,25 @@ _CLASSIFICATION_CACHE: dict[str, tuple[float, dict]] = {}
 _CLASSIFICATION_LOCKS: dict[str, asyncio.Lock] = {}
 _CLASSIFICATION_TTL = 600.0  # seconds
 
+# Per-IRI ELK sub/superclass results are also immutable for the lifetime of the
+# version, so we cache them in Redis with a long TTL. Invalidated whenever
+# `invalidate_cache(version_id)` runs (i.e. on deprecation / re-ingest).
+_ELK_SUBSUP_TTL = 24 * 3600  # 24 hours
+
 
 def _elk_url(path: str) -> str:
     return f"{get_settings().elk_service_url}{path}"
+
+
+def _elk_cache_key(kind: str, version_id: str, class_iri: str, direct: bool) -> str:
+    h = hashlib.blake2b(class_iri.encode(), digest_size=10).hexdigest()
+    return f"elk:{kind}:{version_id}:{int(direct)}:{h}"
+
+
+def _get_redis_client():
+    # Lazy import to avoid a hard dependency cycle (indexer also imports from here).
+    from ontoexplorer.modules.search.indexer import _get_redis
+    return _get_redis()
 
 
 async def classify_v2(graph: rdflib.Graph, version_id: str) -> dict:
@@ -73,7 +91,18 @@ async def classify_v2(graph: rdflib.Graph, version_id: str) -> dict:
 
 
 async def superclasses(version_id: str, class_iri: str, direct: bool = False) -> dict:
-    """Return all (or direct-only) inferred superclasses of class_iri."""
+    """Return all (or direct-only) inferred superclasses of class_iri.
+
+    Cached in Redis under `elk:super:{version_id}:…` with a 24-hour TTL.
+    Per-IRI inferred sets are immutable for the lifetime of a version, so any
+    repeat lookup within a browsing session is served from cache.
+    """
+    r = _get_redis_client()
+    key = _elk_cache_key("super", version_id, class_iri, direct)
+    cached = await asyncio.to_thread(r.get, key)
+    if cached:
+        return _json.loads(cached)
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(
             _elk_url(f"/classify/{version_id}/superclasses"),
@@ -84,11 +113,22 @@ async def superclasses(version_id: str, class_iri: str, direct: bool = False) ->
         if resp.status_code == 404:
             raise ClassNotFoundError(class_iri)
         resp.raise_for_status()
-    return resp.json()
+    data = resp.json()
+    await asyncio.to_thread(r.set, key, _json.dumps(data), _ELK_SUBSUP_TTL)
+    return data
 
 
 async def subclasses(version_id: str, class_iri: str, direct: bool = False) -> dict:
-    """Return all (or direct-only) inferred subclasses of class_iri."""
+    """Return all (or direct-only) inferred subclasses of class_iri.
+
+    Cached identically to `superclasses` — see that docstring.
+    """
+    r = _get_redis_client()
+    key = _elk_cache_key("sub", version_id, class_iri, direct)
+    cached = await asyncio.to_thread(r.get, key)
+    if cached:
+        return _json.loads(cached)
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(
             _elk_url(f"/classify/{version_id}/subclasses"),
@@ -99,7 +139,9 @@ async def subclasses(version_id: str, class_iri: str, direct: bool = False) -> d
         if resp.status_code == 404:
             raise ClassNotFoundError(class_iri)
         resp.raise_for_status()
-    return resp.json()
+    data = resp.json()
+    await asyncio.to_thread(r.set, key, _json.dumps(data), _ELK_SUBSUP_TTL)
+    return data
 
 
 async def consistency(version_id: str) -> dict:
@@ -141,9 +183,19 @@ async def request_justification(
 
 
 async def invalidate_cache(version_id: str) -> None:
-    """Invalidate ELK Redis cache and in-process cache for a version."""
+    """Invalidate ELK in-process cache, Redis sub/super cache, and ELK-side cache."""
     _CLASSIFICATION_CACHE.pop(version_id, None)
     _CLASSIFICATION_LOCKS.pop(version_id, None)
+
+    # Drop the per-IRI sub/super Redis cache for this version.
+    def _drop_elk_keys() -> None:
+        r = _get_redis_client()
+        for kind in ("sub", "super"):
+            for k in r.scan_iter(f"elk:{kind}:{version_id}:*", count=500):
+                r.delete(k)
+
+    await asyncio.to_thread(_drop_elk_keys)
+
     async with httpx.AsyncClient(timeout=10.0) as client:
         await client.delete(_elk_url(f"/classify/{version_id}"))
 
