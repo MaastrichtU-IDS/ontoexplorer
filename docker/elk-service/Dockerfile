@@ -26,6 +26,7 @@ RUN pip install --no-cache-dir \
     "uvicorn[standard]" \
     "rdflib" \
     "redis>=5.0" \
+    "requests>=2.31" \
     "py-horned-owl==1.4.*" \
     /tmp/wheels/py_whelk-*.whl \
     "pyoxigraph>=0.4" \

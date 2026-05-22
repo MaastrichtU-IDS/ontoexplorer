@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import io
 import itertools
+import logging
 import os
 from typing import Sequence
 
@@ -29,6 +30,7 @@ import rdflib
 
 from classifier import ClassificationResult, classify as _rdflib_classify
 
+log = logging.getLogger("elk-service.justification")
 _CLASSIFIER_BACKEND = os.getenv("CLASSIFIER_BACKEND", "whelk").lower()
 
 
@@ -206,6 +208,59 @@ class _PersistentUnavailable(RuntimeError):
     Caller falls back to the per-call rebuild path."""
 
 
+_ROBOT_SERVICE_URL = os.getenv("ROBOT_SERVICE_URL", "http://robot-service:8002")
+_ROBOT_EXTRACT_MIN_BYTES = int(os.getenv("ROBOT_EXTRACT_MIN_BYTES", "5000000"))  # 5 MB
+_ROBOT_EXTRACT_TIMEOUT_S = int(os.getenv("ROBOT_EXTRACT_TIMEOUT_S", "120"))
+
+
+def _try_robot_bot_extract(nt_bytes: bytes, sub: str, sup: str) -> bytes | None:
+    """Ask robot-service for a BOT-locality module covering {sub, sup}.
+
+    Returns the module's RDF/XML serialization on success, or None to fall
+    back to the IRI-walk path (which is fast for small ontologies).
+
+    BOT is the OWL-API bottom-locality module: it preserves all entailments
+    OF THE FORM `term SubClassOf term` over the supplied terms. Using it as
+    the reasoner's input ontology is sound for justification — any chain
+    proven in the module is also provable in the full ontology — and
+    typically tiny (e.g. 80 MB → 25 KB on ordo, 1500x).
+    """
+    if len(nt_bytes) < _ROBOT_EXTRACT_MIN_BYTES:
+        return None
+    try:
+        import requests
+    except ImportError:
+        return None
+    try:
+        log.info("robot_extract: requesting BOT module nt_bytes=%d", len(nt_bytes))
+        import time as _time
+        t0 = _time.monotonic()
+        resp = requests.post(
+            f"{_ROBOT_SERVICE_URL}/extract",
+            files={"file": ("input.nt", nt_bytes, "application/n-triples")},
+            # RDF/XML output — pyhornedowl reads it natively. (ROBOT's
+            # `extract` doesn't emit N-Triples; .owl gives us RDF/XML.)
+            data={"term": [sub, sup], "method": "BOT", "output_format": "owl"},
+            timeout=_ROBOT_EXTRACT_TIMEOUT_S,
+        )
+        elapsed = _time.monotonic() - t0
+        if resp.status_code != 200:
+            log.warning("robot_extract: failed status=%d body=%s",
+                        resp.status_code, resp.text[:200])
+            return None
+        body = resp.json()
+        if body.get("status") != "ok":
+            log.warning("robot_extract: crashed: %s", body.get("crash_reason"))
+            return None
+        log.info("robot_extract: module_bytes=%d triples~%d server_elapsed=%.1fs total=%.1fs",
+                 body.get("module_size_bytes"), body.get("module_triple_count"),
+                 body.get("elapsed_seconds"), elapsed)
+        return body["module"].encode("utf-8")
+    except Exception as exc:
+        log.warning("robot_extract: exception: %s", exc)
+        return None
+
+
 def _compute_justifications_persistent(
     graph: rdflib.Graph,
     sub: str,
@@ -226,10 +281,22 @@ def _compute_justifications_persistent(
     if not nt_bytes.strip():
         return []
 
+    # Try ROBOT BOT-locality module extraction first for large ontologies.
+    # The module is sound for any sub ⊑ sup query over the supplied terms,
+    # but orders of magnitude smaller than the full ontology for hub-laden
+    # graphs (Orphanet, etc.). The greedy walk then runs on the module.
+    module_rdfxml = _try_robot_bot_extract(nt_bytes, sub, sup)
+
     try:
-        triples_iter = pyoxigraph.parse(io.BytesIO(nt_bytes), format=pyoxigraph.RdfFormat.N_TRIPLES)
-        rdfxml_bytes = pyoxigraph.serialize(triples_iter, format=pyoxigraph.RdfFormat.RDF_XML)
-        onto = pyhornedowl.open_ontology_from_string(rdfxml_bytes.decode("utf-8"), serialization="rdf")
+        if module_rdfxml is not None:
+            # Module already in RDF/XML — feed straight to pyhornedowl.
+            onto = pyhornedowl.open_ontology_from_string(
+                module_rdfxml.decode("utf-8"), serialization="rdf",
+            )
+        else:
+            triples_iter = pyoxigraph.parse(io.BytesIO(nt_bytes), format=pyoxigraph.RdfFormat.N_TRIPLES)
+            rdfxml_bytes = pyoxigraph.serialize(triples_iter, format=pyoxigraph.RdfFormat.RDF_XML)
+            onto = pyhornedowl.open_ontology_from_string(rdfxml_bytes.decode("utf-8"), serialization="rdf")
         reasoner = pywhelk.create_reasoner(onto)
     except Exception as exc:
         raise _PersistentUnavailable(f"ontology load failed: {exc}") from exc
