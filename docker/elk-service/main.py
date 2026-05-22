@@ -108,8 +108,30 @@ def run_classify(req: ClassifyRequest):
 
     def _run(version_id: str) -> None:
         try:
+            result = None
             if _whelk_classify_nt is not None and ntriples_for_worker is not None:
-                result = _whelk_classify_nt(ntriples_for_worker, version_id)
+                try:
+                    result = _whelk_classify_nt(ntriples_for_worker, version_id)
+                except Exception as exc:
+                    # horned-owl is strict about OWL property-type discipline
+                    # (a property can be ObjectProperty XOR DataProperty XOR
+                    # AnnotationProperty). Some widely-used metadata vocabs
+                    # (dcterms, dcat) play loose with this and conflate
+                    # dcterms:creator ≡ foaf:maker across type boundaries —
+                    # the parser raises ValidityError and we'd otherwise stay
+                    # stuck at 409 forever. Fall back to the legacy rdflib
+                    # classifier which is forgiving of these patterns.
+                    log.warning(
+                        "whelk_parse_failed; falling back to rdflib backend "
+                        "(vid=%s, error=%s)", version_id, exc,
+                    )
+                    if graph_for_worker is None:
+                        # Whelk path skipped the rdflib parse — do it now for fallback.
+                        graph_for_worker_local = rdflib.Graph()
+                        graph_for_worker_local.parse(io.StringIO(req.ntriples), format="nt")
+                        result = _rdflib_classify(graph_for_worker_local, version_id)
+                    else:
+                        result = _rdflib_classify(graph_for_worker, version_id)
             else:
                 result = classify(graph_for_worker, version_id)
             # IMPORTANT: store input_axioms BEFORE classification. GET /classify/
