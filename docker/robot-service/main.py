@@ -79,6 +79,118 @@ def health() -> dict[str, str | bool]:
     return {"status": "ok", "robot_jar_exists": Path(_ROBOT_JAR).exists()}
 
 
+class ExtractResponse(BaseModel):
+    status: Literal["ok", "crashed"] = "ok"
+    module_size_bytes: int
+    module_triple_count: int
+    elapsed_seconds: float
+    robot_returncode: int
+    stderr_tail: str
+    crash_reason: str | None = None
+    # The extracted module body (RDF/XML or Turtle, format echoed from request).
+    module: str = ""
+
+
+@app.post("/extract", response_model=ExtractResponse)
+def extract(
+    file: UploadFile = File(...),
+    term: list[str] = Form(...),
+    method: Literal["BOT", "TOP", "STAR", "MIREOT"] = Form("BOT"),
+    timeout_seconds: int = Form(600),
+    output_format: Literal["ttl", "nt", "owl"] = Form("ttl"),
+) -> ExtractResponse:
+    """Extract a logical-locality module via `robot extract`.
+
+    BOT (the default) is the OWL-API bottom-locality module: contains every
+    axiom that could possibly affect entailments OVER the given terms in any
+    extension of the module. Strongest soundness guarantee for justification
+    use-cases — entailments of `term` SubClassOf `term` are preserved in the
+    module iff they hold in the full ontology. Use BOT (not STAR/TOP) when
+    the goal is to find justifications, since BOT is the smallest module
+    that preserves all the subsumptions you'll query.
+
+    For ordo Orphanet_121633 ⊑ Orphanet_C010 the BOT module shrinks the
+    606K-triple input down to ~390 triples (~1500x), letting the downstream
+    greedy walk run on the module rather than the full ontology.
+    """
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in _KNOWN_EXTS:
+        suffix = ".ttl"
+
+    job_id = uuid.uuid4().hex[:12]
+    input_path = _WORK_DIR / f"{job_id}{suffix}"
+    output_path = _WORK_DIR / f"{job_id}.module.{output_format}"
+    try:
+        data = file.file.read()
+        input_path.write_bytes(data)
+
+        cmd = [
+            "java", *_JAVA_OPTS, "-jar", _ROBOT_JAR,
+            "extract",
+            "--method", method,
+            "--input", str(input_path),
+            "--output", str(output_path),
+        ]
+        for t in term:
+            cmd.extend(["--term", t])
+
+        t0 = time.monotonic()
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True,
+                timeout=timeout_seconds, check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise HTTPException(504, f"ROBOT extract exceeded {timeout_seconds}s timeout")
+        elapsed = time.monotonic() - t0
+
+        stderr = proc.stderr or ""
+        stdout = proc.stdout or ""
+        combined = stderr + "\n" + stdout
+
+        crash_match = next(
+            (p.search(combined) for p in _CRASH_PATTERNS if p.search(combined)),
+            None,
+        )
+        if crash_match is not None:
+            return ExtractResponse(
+                status="crashed",
+                module_size_bytes=0, module_triple_count=0,
+                elapsed_seconds=elapsed, robot_returncode=proc.returncode,
+                stderr_tail=stderr[-2000:],
+                crash_reason=crash_match.group(0),
+            )
+
+        if not output_path.exists():
+            # ROBOT didn't write the module — surface the stderr so the
+            # caller can diagnose.
+            raise HTTPException(500, f"ROBOT extract did not produce output. stderr: {stderr[-500:]}")
+
+        module_bytes = output_path.read_bytes()
+        module_text = module_bytes.decode("utf-8", errors="replace")
+        # Coarse triple count; works for nt and is approximately right for ttl.
+        triple_count = sum(1 for ln in module_text.splitlines() if ln.strip() and not ln.lstrip().startswith(("#", "@")))
+
+        log.info(
+            "robot_extract_done id=%s method=%s terms=%d module_bytes=%d triples~%d elapsed=%.2fs",
+            job_id, method, len(term), len(module_bytes), triple_count, elapsed,
+        )
+        return ExtractResponse(
+            module_size_bytes=len(module_bytes),
+            module_triple_count=triple_count,
+            elapsed_seconds=elapsed,
+            robot_returncode=proc.returncode,
+            stderr_tail=stderr[-2000:],
+            module=module_text,
+        )
+    finally:
+        for p in (input_path, output_path):
+            try:
+                p.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
 @app.post("/consistency", response_model=ConsistencyResponse)
 def consistency(
     file: UploadFile = File(...),
