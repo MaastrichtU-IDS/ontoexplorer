@@ -27,7 +27,6 @@ from ontoexplorer.clients.robot import (
 # Konclude wrapper kept around for emergency fallback / comparison runs;
 # the active reasoning path now goes through the robot-service HTTP API.
 from ontoexplorer.modules.consistency.konclude import (
-    KoncludeCrashed,
     KoncludeResult,
     KoncludeTimeout,
     KoncludeUnavailable,
@@ -194,14 +193,9 @@ def _run_one_scope(
         result.error_message = f"HTTP timeout calling robot-service: {exc}"
         result.elapsed_seconds = time.monotonic() - t0
         return result
-    except KoncludeCrashed as exc:
-        # Konclude crashed (e.g. OOM-kill on SROIQ precomputation for a large DL
-        # ontology). Surfacing as `error` rather than `inconsistent` prevents the
-        # prior false-positive bug where missing verdict was misread as inconsistent.
-        result.status = "error"
-        result.error_message = str(exc)
-        result.elapsed_seconds = time.monotonic() - t0
-        return result
+    # Note: KoncludeCrashed is no longer raised here because run_konclude_consistency
+    # is not in the active path. The exception class is still defined in
+    # konclude.py for emergency fallback / tests.
 
     # ROBOT explain ONCE per scope — bulk mode, all unsats explained in one JVM start.
     # Still routed through ROBOT's local subprocess (not the service) for now;
