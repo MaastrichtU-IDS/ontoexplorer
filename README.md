@@ -836,7 +836,53 @@ See `.env.example` for the full list.
 
 ### Development bypass
 
-Set `AUTH_BYPASS=true` to skip OAuth entirely. The API will create a `dev@localhost` user and treat every request as authenticated. **Never use this in production.**
+Set `AUTH_BYPASS=true` to skip OAuth entirely. The API will create a `dev@localhost` user and treat every request as authenticated. **Never use this in production.** (`ENVIRONMENT=production` refuses to boot when this is set — see `Settings.validate_production` in [ontoexplorer/config.py](ontoexplorer/config.py).)
+
+## Deploying a Tagged Release
+
+Push a semver tag on `main` (`0.2.0`, `v0.2.1`, etc.) and the `release.yml` workflow builds + publishes two images to GHCR:
+
+- `ghcr.io/maastrichtu-ids/ontoexplorer-api:<tag>` — used by `api`, `worker`, `beat`.
+- `ghcr.io/maastrichtu-ids/ontoexplorer-elk-service:<tag>` — the EL reasoner sidecar.
+
+Each release publishes three tags per image: the exact version (`:0.2.0`), the floating minor (`:0.2`), and `:latest`.
+
+### On the target machine
+
+Only docker + docker compose v2 are required — no source tree, no Python toolchain.
+
+```bash
+# Fetch the two compose files (or git clone for the convenience of versioning your .env alongside)
+curl -fsSLO https://raw.githubusercontent.com/MaastrichtU-IDS/ontoexplorer/0.2.0/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/MaastrichtU-IDS/ontoexplorer/0.2.0/docker-compose.prod.yml
+
+# Populate .env (copy from .env.example; set ENVIRONMENT=production,
+# a real JWT_SECRET_KEY, real OAuth client IDs, etc.)
+cp .env.example .env && $EDITOR .env
+
+# Pull the images, then bring the stack up
+IMAGE_TAG=0.2.0 docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+IMAGE_TAG=0.2.0 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+# Apply database migrations
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api uv run alembic upgrade head
+```
+
+The prod overlay sets `pull_policy: always` and drops the dev-only source-tree bind mounts and `--reload` flag.
+
+### Upgrading
+
+```bash
+IMAGE_TAG=0.3.0 docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+IMAGE_TAG=0.3.0 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api uv run alembic upgrade head
+```
+
+To roll back, set `IMAGE_TAG=` to the previous version and rerun `pull && up -d`. Note that alembic downgrades are not routinely tested — backward-incompatible schema changes are flagged in release notes.
+
+### One-time GHCR setup
+
+The first release of a package requires that the GitHub repo's "Package settings" allow `GITHUB_TOKEN` to write to GHCR. This is on by default for new repos, but for existing repos: **Settings → Actions → General → Workflow permissions → Read and write permissions**.
 
 ## License
 

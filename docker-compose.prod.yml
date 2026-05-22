@@ -1,0 +1,49 @@
+# Production overlay — pulls pre-built images from GHCR instead of building
+# locally, and drops dev conveniences (--reload, source-tree bind mounts).
+#
+#   IMAGE_TAG=0.2.0 docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+#   IMAGE_TAG=0.2.0 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# The target host needs:
+#   - docker + docker compose v2
+#   - a populated .env (copy from .env.example, set ENVIRONMENT=production,
+#     a real JWT_SECRET_KEY, real OAuth client IDs, etc.)
+#   - no source tree, no Python toolchain, no Node.
+#
+# IMAGE_TAG defaults to `latest` if unset — pin to an exact release in prod.
+
+services:
+  api:
+    image: ghcr.io/maastrichtu-ids/ontoexplorer-api:${IMAGE_TAG:-latest}
+    build: !reset null
+    command: uvicorn ontoexplorer.main:create_app --factory --host 0.0.0.0 --port 8000
+    # No source bind-mount in prod — the image carries a frozen copy of
+    # ontoexplorer/ and alembic/.
+    volumes: !override
+      - oxigraph-data:/data/oxigraph
+      - fastembed-cache:/root/.cache/fastembed
+    pull_policy: always
+    restart: unless-stopped
+
+  worker:
+    image: ghcr.io/maastrichtu-ids/ontoexplorer-api:${IMAGE_TAG:-latest}
+    build: !reset null
+    volumes: !override
+      - oxigraph-data:/data/oxigraph
+      - fastembed-cache:/root/.cache/fastembed
+    pull_policy: always
+    restart: unless-stopped
+
+  beat:
+    image: ghcr.io/maastrichtu-ids/ontoexplorer-api:${IMAGE_TAG:-latest}
+    build: !reset null
+    volumes: !override
+      - oxigraph-data:/data/oxigraph
+    pull_policy: always
+    restart: unless-stopped
+
+  elk-service:
+    image: ghcr.io/maastrichtu-ids/ontoexplorer-elk-service:${IMAGE_TAG:-latest}
+    build: !reset null
+    pull_policy: always
+    restart: unless-stopped
