@@ -849,30 +849,41 @@ Each release publishes three tags per image: the exact version (`:0.2.0`), the f
 
 ### On the target machine
 
-Only docker + docker compose v2 are required — no source tree, no Python toolchain.
+The target host needs docker + docker compose v2, plus a way to fetch the compose files at the release tag. The image runtimes are self-contained — no Python toolchain or source tree needed at runtime.
+
+Because the repo is private, the compose files (and the GHCR images) both require GitHub authentication on the target. The two-step setup is:
 
 ```bash
-# Fetch the two compose files (or git clone for the convenience of versioning your .env alongside)
-curl -fsSLO https://raw.githubusercontent.com/MaastrichtU-IDS/ontoexplorer/0.2.0/docker-compose.yml
-curl -fsSLO https://raw.githubusercontent.com/MaastrichtU-IDS/ontoexplorer/0.2.0/docker-compose.prod.yml
+# 1. One-time: log docker into GHCR with a PAT that has `read:packages`
+echo "$GHCR_PAT" | docker login ghcr.io -u <your-gh-username> --password-stdin
 
-# Populate .env (copy from .env.example; set ENVIRONMENT=production,
-# a real JWT_SECRET_KEY, real OAuth client IDs, etc.)
+# 2. Shallow-clone the repo at the release tag (only docker-compose*.yml and
+#    .env.example are read at runtime; everything else is for development)
+git clone --depth 1 --branch 0.2.1 git@github.com:MaastrichtU-IDS/ontoexplorer.git
+cd ontoexplorer
+
+# Populate .env from the checked-in example. Set ENVIRONMENT=production,
+# a real JWT_SECRET_KEY (any long random string), and real OAuth client IDs.
 cp .env.example .env && $EDITOR .env
 
-# Pull the images, then bring the stack up
-IMAGE_TAG=0.2.0 docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
-IMAGE_TAG=0.2.0 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Pull the images and bring the stack up
+IMAGE_TAG=0.2.1 docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+IMAGE_TAG=0.2.1 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 # Apply database migrations
 docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api uv run alembic upgrade head
 ```
+
+If you make the GHCR packages public (Org → Packages → package settings → Change visibility) you can skip the `docker login ghcr.io` step.
 
 The prod overlay sets `pull_policy: always` and drops the dev-only source-tree bind mounts and `--reload` flag.
 
 ### Upgrading
 
 ```bash
+# Pull the new release tag's compose files (in case docker-compose.{,prod}.yml changed)
+git fetch --tags && git checkout 0.3.0
+
 IMAGE_TAG=0.3.0 docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
 IMAGE_TAG=0.3.0 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api uv run alembic upgrade head
