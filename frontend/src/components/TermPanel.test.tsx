@@ -46,6 +46,7 @@ vi.mock('../hooks/useTerm', () => ({
     isLoading: false,
     error: null,
   }),
+  useTermExpanded: () => ({ data: undefined, isLoading: false, error: null }),
 }))
 
 vi.mock('../hooks/useClassTree', () => ({

@@ -1081,6 +1081,14 @@ export const api = {
       request<RawTermDetail>(
         `/ontologies/${oid}/${vid}/terms/${encodeURIComponent(iri)}${lang ? `?lang=${lang}` : ''}`
       ),
+    termExpanded: (oid: string, vid: string, iri: string, lang?: string) =>
+      request<{
+        inferred_superclass_expressions: InferredExprEntry[]
+        inferred_disjoint_with: InferredExprEntry[]
+        inherited_schema_properties: InheritedSchemaProperty[]
+      }>(
+        `/ontologies/${oid}/${vid}/term-expanded/${encodeURIComponent(iri)}${lang ? `?lang=${lang}` : ''}`
+      ),
     termUsagePage: (oid: string, vid: string, iri: string, offset: number, limit = 20) =>
       request<{
         kind: 'property' | 'class'

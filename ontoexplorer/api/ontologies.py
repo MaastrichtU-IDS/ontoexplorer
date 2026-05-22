@@ -1549,20 +1549,37 @@ async def get_term(
         items.sort(key=lambda t: (t["label"] or t["iri"]).lower())
         return items
 
-    # Prefetch labels for everything we already know we'll need — one Redis pipeline
-    # roundtrip instead of N. The recursive _build_class_expr path falls back to
-    # single HGETALL only for IRIs discovered late.
+    # Prefetch labels for everything we already know we'll need. Postgres
+    # `entity_index` is the source of truth for the search/keyword stack and now
+    # for label lookups too — one SQL round-trip serves any number of IRIs.
+    # IRIs not in entity_index (blank-node-derived expressions discovered late
+    # in `_build_class_expr`) fall back to a Redis HGETALL in `_label()` below.
     _pre_iris: list[str] = []
     _pre_iris.extend(asserted_sub_iris)
     _pre_iris.extend(inferred_sub_iris)
     _pre_iris.extend(asserted_sup_iris)
     _pre_iris.extend(inferred_sup_iris)
-    # Object-value IRIs from the term's properties (rdf:type, rdfs:subClassOf, etc.)
     for _vals in properties.values():
         for _v in _vals:
             if isinstance(_v, str) and _v.startswith(("http://", "https://", "urn:")):
                 _pre_iris.append(_v)
-    _resolve_labels(_pre_iris)
+
+    if _pre_iris:
+        _unique_pre = list(dict.fromkeys(_pre_iris))
+        _pg_label_rows = (await db.execute(
+            text("""
+                SELECT iri, primary_label
+                FROM entity_index
+                WHERE version_id = :vid AND iri = ANY(:iris)
+            """),
+            {"vid": version_id, "iris": _unique_pre},
+        )).all()
+        for row in _pg_label_rows:
+            _label_cache[row.iri] = row.primary_label
+        # IRIs not in entity_index get the fragment fallback up-front so we
+        # don't fall back to Redis on every miss.
+        for _i in _unique_pre:
+            _label_cache.setdefault(_i, _fallback(_i))
 
     # All ancestors: asserted direct parents first, then ELK-inferred (ELK strips asserted parents from its output)
     _all_ancestor_iris: list[str] = list(dict.fromkeys(asserted_sup_iris + inferred_sup_iris))
@@ -1592,25 +1609,8 @@ async def get_term(
                 if _expr.get("type") != "unknown":
                     superclass_expressions.append(_expr)
 
-        # Inferred superclass expressions — anonymous subClassOf expressions inherited via named superclasses
-        _seen_expr_keys: set[str] = {_json_mod.dumps(_e, sort_keys=True) for _e in superclass_expressions}
-        inferred_superclass_expressions: list[dict] = []
-        for _sup_iri in _all_ancestor_iris[:20]:
-            _sup_node = _ox.NamedNode(_sup_iri)
-            for _quad in store.quads_for_pattern(_sup_node, _RDFS_SC_NODE, None, _graph_node):
-                if isinstance(_quad.object, _ox.BlankNode):
-                    _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
-                    if _expr.get("type") != "unknown":
-                        _key = _json_mod.dumps(_expr, sort_keys=True)
-                        if _key not in _seen_expr_keys:
-                            _seen_expr_keys.add(_key)
-                            inferred_superclass_expressions.append({
-                                "expr": _expr,
-                                "from_iri": _sup_iri,
-                                "from_label": _label(_sup_iri),
-                            })
-            if len(inferred_superclass_expressions) >= 50:
-                break
+        # NOTE: inferred_superclass_expressions and inferred_disjoint_with —
+        # both ancestor-walking loops — moved to the lazy /expanded endpoint.
 
         # Equivalent classes (owl:equivalentClass)
         equivalent_to: list[dict] = []
@@ -1639,34 +1639,7 @@ async def get_term(
             for _miri in _miris:
                 _adc_map.setdefault(_miri, []).extend(o for o in _miris if o != _miri)
 
-        # Bulk-prefetch partner IRIs for the inferred-disjoint walk.
-        _partner_iris: list[str] = []
-        for _anc in _all_ancestor_iris:
-            _partner_iris.extend(_adc_map.get(_anc, []))
-        _resolve_labels(_partner_iris)
-
-        # Inferred disjoint-with — walk ALL ancestors; pairwise + AllDisjointClasses
-        _seen_disjoint_keys: set[str] = {_json_mod.dumps(_e, sort_keys=True) for _e in disjoint_with}
-        inferred_disjoint_with: list[dict] = []
-        for _sup_iri in _all_ancestor_iris:
-            _sup_node = _ox.NamedNode(_sup_iri)
-            for _quad in store.quads_for_pattern(_sup_node, _OWL_DISJOINT_NODE, None, _graph_node):
-                _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
-                if _expr.get("type") != "unknown":
-                    _key = _json_mod.dumps(_expr, sort_keys=True)
-                    if _key not in _seen_disjoint_keys:
-                        _seen_disjoint_keys.add(_key)
-                        inferred_disjoint_with.append({
-                            "expr": _expr, "from_iri": _sup_iri, "from_label": _label(_sup_iri),
-                        })
-            for _partner_iri in _adc_map.get(_sup_iri, []):
-                _expr = {"type": "named", "iri": _partner_iri, "label": _label(_partner_iri)}
-                _key = _json_mod.dumps(_expr, sort_keys=True)
-                if _key not in _seen_disjoint_keys:
-                    _seen_disjoint_keys.add(_key)
-                    inferred_disjoint_with.append({
-                        "expr": _expr, "from_iri": _sup_iri, "from_label": _label(_sup_iri),
-                    })
+        # NOTE: inferred_disjoint_with moved to /expanded endpoint.
 
         # Disjoint union of (owl:disjointUnionOf) — each value is an rdf:List
         disjoint_union_of: list[list[dict]] = []
@@ -1688,10 +1661,8 @@ async def get_term(
 
         return {
             "superclass_expressions": superclass_expressions,
-            "inferred_superclass_expressions": inferred_superclass_expressions,
             "equivalent_to": equivalent_to,
             "disjoint_with": disjoint_with,
-            "inferred_disjoint_with": inferred_disjoint_with,
             "disjoint_union_of": disjoint_union_of,
             "general_class_axioms": general_class_axioms,
             "_adc_map": _adc_map,
@@ -1817,8 +1788,9 @@ async def get_term(
         return bool(s.query(q))
 
     # ── Run everything concurrently ──────────────────────────────────────────
-    # Phase 1 (Oxigraph sync block + the SPARQL queries that DON'T need _adc_map)
-    _anc_iris = _all_ancestor_iris[:30]
+    # Phase 1 (Oxigraph sync block + direct schema_properties / usage / inverse-target).
+    # `inherited_schema_properties` is deferred to the /expanded endpoint because the
+    # 30-ancestor VALUES SPARQL is the next slowest piece after ELK.
     _phase1 = [
         asyncio.to_thread(_compute_oxigraph_block),       # 0: includes _adc_map
         asyncio.to_thread(_check_is_inverse_target, store),  # 1
@@ -1827,24 +1799,24 @@ async def get_term(
         _phase1.append(asyncio.to_thread(_run_usage_query, store))         # 2
     else:
         _phase1.append(asyncio.to_thread(_run_schema_props_query, store))  # 2
-        _phase1.append(asyncio.to_thread(_run_inh_schema_props_query, store, _anc_iris))  # 3
 
     _results_1 = await asyncio.gather(*_phase1)
     _ox_result = _results_1[0]
     is_inverse_target = _results_1[1]
 
     superclass_expressions          = _ox_result["superclass_expressions"]
-    inferred_superclass_expressions = _ox_result["inferred_superclass_expressions"]
     equivalent_to                   = _ox_result["equivalent_to"]
     disjoint_with                   = _ox_result["disjoint_with"]
-    inferred_disjoint_with          = _ox_result["inferred_disjoint_with"]
     disjoint_union_of               = _ox_result["disjoint_union_of"]
     general_class_axioms            = _ox_result["general_class_axioms"]
     _adc_map                        = _ox_result["_adc_map"]
+    # Deferred to /expanded — empty in the main response.
+    inferred_superclass_expressions: list[dict] = []
+    inferred_disjoint_with: list[dict] = []
+    inherited_schema_properties: list[dict] = []
 
     usage: list[dict] = []
     schema_properties: list[dict] = []
-    inherited_schema_properties: list[dict] = []
     usage_has_more = False
     class_usage_has_more = False
 
@@ -1854,14 +1826,9 @@ async def get_term(
         usage = _usage_rows[:USAGE_PAGE_SIZE]
     else:
         _dp_rows = _results_1[2]
-        _idp_rows = _results_1[3] if len(_results_1) > 3 else []
-        # Bulk-resolve labels for all IRIs we'll need to render these rows.
         _resolve_labels(
             [r["prop_iri"] for r in _dp_rows]
             + [r["range_iri"] for r in _dp_rows if r["range_iri"]]
-            + [r["prop_iri"] for r in _idp_rows]
-            + [r["range_iri"] for r in _idp_rows if r["range_iri"]]
-            + [r["from_iri"] for r in _idp_rows]
         )
         for row in _dp_rows:
             schema_properties.append({
@@ -1870,20 +1837,6 @@ async def get_term(
                 "range_iri": row["range_iri"],
                 "range_label": _label(row["range_iri"]) if row["range_iri"] else None,
             })
-        _direct_iris = {sp["prop_iri"] for sp in schema_properties}
-        _seen_inh: set[tuple] = set()
-        for row in _idp_rows:
-            key = (row["prop_iri"], row["from_iri"])
-            if key not in _seen_inh and row["prop_iri"] not in _direct_iris:
-                _seen_inh.add(key)
-                inherited_schema_properties.append({
-                    "prop_iri": row["prop_iri"],
-                    "prop_label": _label(row["prop_iri"]),
-                    "range_iri": row["range_iri"],
-                    "range_label": _label(row["range_iri"]) if row["range_iri"] else None,
-                    "from_iri": row["from_iri"],
-                    "from_label": _label(row["from_iri"]),
-                })
 
     # Phase 2 — class_usage needs _adc_map (only run when this term is a class).
     class_usage: list[dict] = []
@@ -2157,6 +2110,267 @@ async def get_term_usage_page(
     has_more = len(rows) > limit
     return {"kind": "class", "offset": offset, "limit": limit,
             "items": rows[:limit], "has_more": has_more}
+
+
+# ── Term detail (expanded) ───────────────────────────────────────────────────
+
+_TERM_EXPANDED_CACHE_TTL = 300
+
+
+def _term_expanded_cache_key(ontology_id: str, version_id: str, term_iri: str, lang: str | None) -> str:
+    import hashlib
+    payload = f"{ontology_id}\x1f{version_id}\x1fexp\x1f{term_iri}\x1f{lang or ''}"
+    h = hashlib.blake2b(payload.encode(), digest_size=16).hexdigest()
+    return f"search:term:{h}"
+
+
+@router.get(
+    "/{ontology_id}/{version_id}/term-expanded/{term_iri:path}",
+    summary="Lazy-loaded heavy sections of a term — inferred superclass expressions, "
+            "inferred disjoint-with, inherited schema_properties",
+)
+async def get_term_expanded(
+    ontology_id: str,
+    version_id: str,
+    term_iri: str,
+    lang: str | None = Query(None, description="BCP-47 language tag (currently unused; reserved)"),
+    db: AsyncSession = Depends(get_db),
+    _user=Depends(get_current_user),
+):
+    """The three sections lifted off the main /terms/{iri} response.
+
+    The main endpoint now returns ~1 s cold because these expensive
+    ancestor-walking sections defer here. Frontend fetches this asynchronously
+    after the main panel renders, so the user sees most data immediately and
+    the inferred-walk results fill in shortly after.
+    """
+    import asyncio
+    import json as _json_cache
+    from ontoexplorer.clients.oxigraph import get_store, graph_iri
+    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
+
+    await _get_version_or_404(db, ontology_id, version_id)
+
+    _r_cache = _get_redis()
+    _cache_key = _term_expanded_cache_key(ontology_id, version_id, term_iri, lang)
+    _cached = await asyncio.to_thread(_r_cache.get, _cache_key)
+    if _cached:
+        return _json_cache.loads(_cached)
+
+    store = get_store()
+    g_iri = graph_iri(ontology_id, version_id)
+    r = _get_redis()
+
+    # Reconstruct the label cache locally (handler-scoped, same as /terms/{iri}).
+    _label_cache: dict[str, str] = {}
+
+    def _fallback(iri: str) -> str:
+        fragment = iri.rstrip("/")
+        return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
+
+    def _resolve_labels(iris) -> None:
+        missing = [i for i in dict.fromkeys(iris) if i and i not in _label_cache]
+        if not missing:
+            return
+        pipe = r.pipeline(transaction=False)
+        for i in missing:
+            pipe.hgetall(_iri_key(version_id, i))
+        for i, detail in zip(missing, pipe.execute()):
+            _label_cache[i] = (detail or {}).get("label") or _fallback(i)
+
+    def _label(iri: str) -> str:
+        cached = _label_cache.get(iri)
+        if cached is not None:
+            return cached
+        detail = r.hgetall(_iri_key(version_id, iri))
+        label = (detail or {}).get("label") or _fallback(iri)
+        _label_cache[iri] = label
+        return label
+
+    # Resolve ancestors via ELK (cached). Skip ELK for properties — empty result.
+    rdf_types_q = f"""
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        SELECT ?t WHERE {{ GRAPH <{g_iri}> {{ <{term_iri}> rdf:type ?t . FILTER(isIRI(?t)) }} }}
+    """
+    def _get_types(s):
+        return [row["t"].value for row in s.query(rdf_types_q)]
+
+    rdf_types = set(await asyncio.to_thread(_get_types, store))
+    _PROP_TYPES = {
+        "http://www.w3.org/2002/07/owl#ObjectProperty",
+        "http://www.w3.org/2002/07/owl#DatatypeProperty",
+        "http://www.w3.org/2002/07/owl#AnnotationProperty",
+    }
+    is_property = bool(rdf_types & _PROP_TYPES)
+
+    asserted_sup_q = f"""
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        SELECT ?sup WHERE {{
+            GRAPH <{g_iri}> {{ <{term_iri}> rdfs:subClassOf ?sup . FILTER(isIRI(?sup)) }}
+        }}
+    """
+    def _get_asserted_sups(s):
+        return [row["sup"].value for row in s.query(asserted_sup_q)]
+
+    asserted_sup_iris = await asyncio.to_thread(_get_asserted_sups, store)
+
+    if not is_property:
+        try:
+            sup_result = await elk_superclasses(version_id, term_iri, direct=False)
+        except Exception:
+            sup_result = {}
+        _OWL_THING = "http://www.w3.org/2002/07/owl#Thing"
+        inferred_sup_iris = [s for s in sup_result.get("superclasses", []) if s != _OWL_THING]
+    else:
+        inferred_sup_iris = []
+
+    _all_ancestor_iris = list(dict.fromkeys(asserted_sup_iris + inferred_sup_iris))
+
+    # Sync Oxigraph block for the two ancestor-walking sections.
+    import pyoxigraph as _ox
+    import json as _json_mod
+
+    def _compute_expanded_ox() -> dict:
+        _graph_node   = _ox.NamedNode(g_iri)
+        _RDFS_SC_NODE = _ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
+        _OWL_DISJOINT_NODE = _ox.NamedNode(_OWL + "disjointWith")
+        _OWL_ADC_NODE      = _ox.NamedNode(_OWL + "AllDisjointClasses")
+        _OWL_MEMBERS_NODE  = _ox.NamedNode(_OWL + "members")
+        _RDF_TYPE_NODE     = _ox.NamedNode(_RDF + "type")
+
+        # inferred_superclass_expressions
+        inferred_superclass_expressions: list[dict] = []
+        _seen_expr_keys: set[str] = set()
+        for _sup_iri in _all_ancestor_iris[:20]:
+            _sup_node = _ox.NamedNode(_sup_iri)
+            for _quad in store.quads_for_pattern(_sup_node, _RDFS_SC_NODE, None, _graph_node):
+                if isinstance(_quad.object, _ox.BlankNode):
+                    _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
+                    if _expr.get("type") != "unknown":
+                        _key = _json_mod.dumps(_expr, sort_keys=True)
+                        if _key not in _seen_expr_keys:
+                            _seen_expr_keys.add(_key)
+                            inferred_superclass_expressions.append({
+                                "expr": _expr,
+                                "from_iri": _sup_iri,
+                                "from_label": _label(_sup_iri),
+                            })
+            if len(inferred_superclass_expressions) >= 50:
+                break
+
+        # _adc_map (full graph scan; isolated to this endpoint now)
+        _adc_map: dict[str, list[str]] = {}
+        for _q in store.quads_for_pattern(None, _RDF_TYPE_NODE, _OWL_ADC_NODE, _graph_node):
+            _mem_qs = list(store.quads_for_pattern(_q.subject, _OWL_MEMBERS_NODE, None, _graph_node))
+            if not _mem_qs:
+                continue
+            _miris = [
+                m.value for m in _rdf_list_items(store, _graph_node, _mem_qs[0].object)
+                if isinstance(m, _ox.NamedNode)
+            ]
+            for _miri in _miris:
+                _adc_map.setdefault(_miri, []).extend(o for o in _miris if o != _miri)
+
+        # Prefetch partner labels in one pipeline
+        partner_iris: list[str] = []
+        for _anc in _all_ancestor_iris:
+            partner_iris.extend(_adc_map.get(_anc, []))
+        _resolve_labels(partner_iris)
+
+        # inferred_disjoint_with — walk ancestors; pairwise + AllDisjointClasses
+        inferred_disjoint_with: list[dict] = []
+        _seen_disjoint_keys: set[str] = set()
+        for _sup_iri in _all_ancestor_iris:
+            _sup_node = _ox.NamedNode(_sup_iri)
+            for _quad in store.quads_for_pattern(_sup_node, _OWL_DISJOINT_NODE, None, _graph_node):
+                _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
+                if _expr.get("type") != "unknown":
+                    _key = _json_mod.dumps(_expr, sort_keys=True)
+                    if _key not in _seen_disjoint_keys:
+                        _seen_disjoint_keys.add(_key)
+                        inferred_disjoint_with.append({
+                            "expr": _expr, "from_iri": _sup_iri, "from_label": _label(_sup_iri),
+                        })
+            for _partner_iri in _adc_map.get(_sup_iri, []):
+                _expr = {"type": "named", "iri": _partner_iri, "label": _label(_partner_iri)}
+                _key = _json_mod.dumps(_expr, sort_keys=True)
+                if _key not in _seen_disjoint_keys:
+                    _seen_disjoint_keys.add(_key)
+                    inferred_disjoint_with.append({
+                        "expr": _expr, "from_iri": _sup_iri, "from_label": _label(_sup_iri),
+                    })
+
+        return {
+            "inferred_superclass_expressions": inferred_superclass_expressions,
+            "inferred_disjoint_with": inferred_disjoint_with,
+        }
+
+    # inherited_schema_properties (only meaningful for classes with ancestors)
+    def _run_inh_schema(s):
+        _anc_iris = _all_ancestor_iris[:30]
+        if not _anc_iris:
+            return []
+        anc_values = " ".join(f"<{iri}>" for iri in _anc_iris)
+        q = f"""
+            PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+            SELECT DISTINCT ?prop ?range ?ancestor WHERE {{
+                GRAPH <{g_iri}> {{
+                    {{ ?prop rdfs:domain ?ancestor }}
+                    UNION {{ ?prop <https://schema.org/domainIncludes> ?ancestor }}
+                    OPTIONAL {{
+                        {{ ?prop rdfs:range ?range }} UNION {{ ?prop <https://schema.org/rangeIncludes> ?range }}
+                        FILTER(isIRI(?range))
+                    }}
+                    FILTER(isIRI(?prop))
+                    VALUES ?ancestor {{ {anc_values} }}
+                }}
+            }}
+            ORDER BY ?ancestor ?prop
+            LIMIT 500
+        """
+        return [
+            {"prop_iri": row["prop"].value,
+             "range_iri": row["range"].value if row["range"] is not None else None,
+             "from_iri": row["ancestor"].value}
+            for row in s.query(q)
+        ]
+
+    if is_property:
+        ox_result, idp_rows = await asyncio.gather(
+            asyncio.to_thread(_compute_expanded_ox),
+            asyncio.to_thread(lambda s: [], store),  # no-op, keeps result tuple shape
+        )
+    else:
+        ox_result, idp_rows = await asyncio.gather(
+            asyncio.to_thread(_compute_expanded_ox),
+            asyncio.to_thread(_run_inh_schema, store),
+        )
+
+    # Bulk-resolve labels for inherited_schema_properties rows.
+    _resolve_labels(
+        [r["prop_iri"] for r in idp_rows]
+        + [r["range_iri"] for r in idp_rows if r["range_iri"]]
+        + [r["from_iri"] for r in idp_rows]
+    )
+    inherited_schema_properties = [
+        {
+            "prop_iri": r["prop_iri"],
+            "prop_label": _label(r["prop_iri"]),
+            "range_iri": r["range_iri"],
+            "range_label": _label(r["range_iri"]) if r["range_iri"] else None,
+            "from_iri": r["from_iri"],
+            "from_label": _label(r["from_iri"]),
+        }
+        for r in idp_rows
+    ]
+
+    payload = {
+        "inferred_superclass_expressions": ox_result["inferred_superclass_expressions"],
+        "inferred_disjoint_with":          ox_result["inferred_disjoint_with"],
+        "inherited_schema_properties":     inherited_schema_properties,
+    }
+    await asyncio.to_thread(_r_cache.set, _cache_key, _json_cache.dumps(payload), _TERM_EXPANDED_CACHE_TTL)
+    return payload
 
 
 # ── Inferred axioms ────────────────────────────────────────────────────────────

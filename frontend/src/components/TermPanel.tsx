@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { useTerm } from '../hooks/useTerm'
+import { useTerm, useTermExpanded } from '../hooks/useTerm'
 import { ClassRef, ClassExprNode, InferredExprEntry, JustificationAxiom, PropertyUsage, ClassUsageEntry, SchemaProperty, InheritedSchemaProperty, api } from '../lib/api'
 import SourceBadge from './SourceBadge'
 
@@ -935,10 +935,22 @@ function PropertyBody({ data, slug, ontologyId, versionId, lang }: {
 }
 
 export default function TermPanel({ ontologyId, versionId, termIri, slug, singlePane = false, lang }: Props) {
-  const { data, isLoading, error } = useTerm(ontologyId, versionId, termIri, lang)
+  const { data: baseData, isLoading, error } = useTerm(ontologyId, versionId, termIri, lang)
+  // Lazy fetch of the three expensive sections deferred by the backend. Merged
+  // into `data` once it arrives so the rendering below doesn't need to branch.
+  const { data: expanded } = useTermExpanded(ontologyId, versionId, termIri, lang)
 
   if (isLoading) return <div style={{ padding: '1rem', color: 'var(--text-dim)' }}>Loading…</div>
-  if (error || !data) return <div style={{ padding: '1rem', color: 'var(--text-dim)' }}>Term not found</div>
+  if (error || !baseData) return <div style={{ padding: '1rem', color: 'var(--text-dim)' }}>Term not found</div>
+
+  const data = expanded
+    ? {
+        ...baseData,
+        inferredSuperclassExpressions: expanded.inferredSuperclassExpressions,
+        inferredDisjointWith: expanded.inferredDisjointWith,
+        inheritedSchemaProperties: expanded.inheritedSchemaProperties,
+      }
+    : baseData
 
   const isProperty = data.entityType === 'object_property' || data.entityType === 'data_property'
     || data.entityType === 'annotation_property' || data.entityType === 'property'
