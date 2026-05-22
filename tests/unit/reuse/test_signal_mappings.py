@@ -1,6 +1,6 @@
 import pyoxigraph
 
-from ontoexplorer.modules.reuse.signals.mappings import MappingEntry, extract_mappings
+from ontoexplorer.modules.reuse.signals.mappings import extract_mappings
 
 
 GRAPH = "urn:test:graph"

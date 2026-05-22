@@ -3,7 +3,6 @@
 import sys
 import os
 
-import pytest
 
 # Import the ELK service module directly from the docker directory
 _ELK_DIR = os.path.join(os.path.dirname(__file__), "../../docker/elk-service")

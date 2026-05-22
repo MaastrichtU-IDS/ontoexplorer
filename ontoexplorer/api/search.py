@@ -16,7 +16,7 @@ from ontoexplorer.modules.search.autocomplete import get_completions
 from ontoexplorer.modules.search.evaluator import AmbiguousLabelError, evaluate
 from ontoexplorer.modules.search.indexer import entity_lookup
 from ontoexplorer.modules.search.lang import resolve_lang
-from ontoexplorer.modules.search.mos_parser import ParseError, parse, NamedClass, And, Or, Not
+from ontoexplorer.modules.search.mos_parser import ParseError, parse, NamedClass
 from ontoexplorer.modules.search.semantic import semantic_search
 
 router = APIRouter(

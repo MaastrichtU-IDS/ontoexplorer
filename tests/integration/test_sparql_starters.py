@@ -111,7 +111,7 @@ async def test_starters_list_ordered_by_category_then_name(client):
 async def test_import_url_rejects_oversize_response(admin_client, monkeypatch):
     """A response body exceeding 1 MB must be rejected (streaming hard cap)."""
     async def fake_fetch(url: str) -> str:
-        raise ValueError(f"Response exceeded 1048576 byte cap")
+        raise ValueError("Response exceeded 1048576 byte cap")
     monkeypatch.setattr(
         "ontoexplorer.api.sparql_queries._fetch_starter_url",
         fake_fetch,

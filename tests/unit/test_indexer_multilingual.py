@@ -1,4 +1,4 @@
-from ontoexplorer.modules.search.indexer import _langs_key, _meta_key, _prefix_key
+from ontoexplorer.modules.search.indexer import _langs_key
 
 
 def test_langs_key_format():

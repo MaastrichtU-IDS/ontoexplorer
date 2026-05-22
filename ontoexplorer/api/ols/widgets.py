@@ -12,16 +12,15 @@ are included after that catch-all the literal suffixes "jstree" and "graph"
 would be consumed by it and return 404.
 """
 import asyncio
-import json
 from collections import deque
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.api.ols._common import get_latest_version_or_404, get_ontology_or_404
 from ontoexplorer.api.ols._iri import double_decode_iri
 from ontoexplorer.database import get_db
-from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _type_key
+from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
 
 # Re-use asserted hierarchy fetchers from terms.py (already tested there).
 from ontoexplorer.api.ols.terms import (

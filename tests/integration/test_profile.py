@@ -19,8 +19,7 @@ def test_ontology_profile_model_fields():
 
 
 from ontoexplorer.modules.profile.registry import (
-    LABEL_PROPS, DEFINITION_PROPS, SYNONYM_PROPS, DEPRECATED_PROPS,
-    IRI_TO_ROLE, MOD_PREF_LABEL, MOD_DEFINITION, default_profile,
+    LABEL_PROPS, IRI_TO_ROLE, default_profile,
 )
 
 
@@ -45,7 +44,6 @@ def test_default_profile_returns_all_roles():
 
 from ontoexplorer.modules.profile.detector import (
     _count_property_usage,
-    _count_classes,
     _build_role_list,
     load_profile,
 )

@@ -8,7 +8,6 @@ must extract them (URL query and/or POST form body) and forward them as
 from urllib.parse import urlencode
 
 import pytest
-from starlette.datastructures import FormData
 from starlette.requests import Request
 
 

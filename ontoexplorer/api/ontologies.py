@@ -1,10 +1,9 @@
 """Ontologies REST API — submit, list, metadata, versions, terms, download, deprecate."""
 
 import asyncio
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +18,7 @@ from ontoexplorer.clients.reasoning import (
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Ontology, OntologyVersion, User
 from ontoexplorer.modules.auth.dependencies import get_current_user, require_auth
-from ontoexplorer.modules.storage.minio_client import fetch_ontology, ontology_download_url
+from ontoexplorer.modules.storage.minio_client import fetch_ontology
 
 router = APIRouter(prefix="/api/v1/ontologies", tags=["ontologies"])
 
@@ -825,7 +824,7 @@ async def list_terms(
             'FILTER NOT EXISTS { ?entity owl:deprecated ?_d . FILTER(str(?_d) = "true") }'
             if hide_obsolete else ""
         )
-        _lang_filter = f"lang(?label) = '' || lang(?label) = 'en'" + (f" || lang(?label) = '{lang}'" if lang and lang != "en" else "")
+        _lang_filter = "lang(?label) = '' || lang(?label) = 'en'" + (f" || lang(?label) = '{lang}'" if lang and lang != "en" else "")
         if is_root:
             ind_q = f"""
                 PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -1468,7 +1467,6 @@ async def get_term(
     _all_ancestor_iris: list[str] = list(dict.fromkeys(asserted_sup_iris + inferred_sup_iris))
 
     import pyoxigraph as _ox
-    import json as _json_mod
 
     # ── Sync Oxigraph block ──────────────────────────────────────────────────
     # All blank-node / quad-pattern walks bundled into one threaded function so
@@ -2815,7 +2813,7 @@ def _negotiate_response(request: Request, data: dict, subject_iri: str | None = 
     if "text/turtle" in accept or "application/rdf+xml" in accept:
         import rdflib
         from rdflib import Literal, URIRef
-        from rdflib.namespace import DCTERMS, RDF
+        from rdflib.namespace import DCTERMS
         g = rdflib.Graph()
         subj = URIRef(subject_iri or data.get("iri", "urn:unknown"))
         for k, v in data.items():

@@ -56,7 +56,7 @@ const NOT_FOUND_ERR = Object.assign(new Error('Not found'), { status: 404 })
 const versionFn = vi.fn(() => Promise.resolve(RECORD))
 
 vi.mock('../lib/api', () => ({
-  api: { owl_profile: { version: (...args: unknown[]) => versionFn(...args) } },
+  api: { owl_profile: { version: (...args: unknown[]) => (versionFn as any)(...args) } },
 }))
 
 function wrap(ui: React.ReactElement) {

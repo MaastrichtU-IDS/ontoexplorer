@@ -4,7 +4,6 @@ Each test builds a minimal in-memory pyoxigraph.Store with a single named
 graph and exercises one renderer function directly.
 """
 import pyoxigraph as ox
-import pytest
 
 # Re-exported constants/helpers will be imported as tasks land.
 

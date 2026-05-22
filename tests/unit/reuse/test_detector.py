@@ -14,7 +14,7 @@ def _make_store(turtle: str) -> pyoxigraph.Store:
 
 
 def test_report_has_all_four_signal_sections():
-    store = _make_store(f"""
+    store = _make_store("""
         @prefix owl: <http://www.w3.org/2002/07/owl#> .
         @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
         <http://example.org/host#A> a owl:Class .

@@ -32,30 +32,26 @@ from ontoexplorer.api.ols._envelope import v2_page
 from ontoexplorer.api.ols._iri import double_decode_iri
 from ontoexplorer.api.ols._shapes import entity_to_v2, entity_to_v2_class
 # TODO: factor hierarchy fetchers to _common.py if patterns crystallize
-from ontoexplorer.api.ols.terms import (  # noqa: private helpers imported by convention
+from ontoexplorer.api.ols.terms import (  # noqa: F401
     _load_entity as _load_class_entity,
     _redis_scard,
     _redis_smembers_sorted,
     _inferred_children_fetcher,
     _inferred_ancestors_fetcher,
     _inferred_descendants_fetcher,
-    _hierarchical_parents_fetcher,
     _hierarchical_ancestors_fetcher,
     _hierarchical_descendants_fetcher,
     _asserted_children_sync,
 )
-from ontoexplorer.api.ols.properties import (  # noqa: private helpers imported by convention
+from ontoexplorer.api.ols.properties import (  # noqa: F401
     _load_entity as _load_prop_entity,
     _all_property_iris_sorted,
     _total_property_count,
-    _prop_parents_fetcher,
     _prop_children_fetcher,
     _prop_ancestors_fetcher,
-    _prop_descendants_fetcher,
 )
-from ontoexplorer.api.ols.individuals import (  # noqa: private helpers imported by convention
+from ontoexplorer.api.ols.individuals import (  # noqa: F401
     _load_entity as _load_ind_entity,
-    _individual_types_sync,
 )
 from ontoexplorer.database import get_db
 from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _meta_key, _type_key
@@ -497,8 +493,7 @@ async def v2_class_hierarchical_children(
     """Asserted direct children only (rdfs:subClassOf, no reasoner)."""
     page, size = page_size
     iri = double_decode_iri(iri_path)
-    version  = await get_latest_version_or_404(db, ontology_id)
-    vid = str(version.id)
+    await get_latest_version_or_404(db, ontology_id)
 
     async def _hierarchical_children_fetcher(ontology_id: str, vid: str, iri: str) -> list[str]:
         return await asyncio.to_thread(_asserted_children_sync, ontology_id, vid, iri)

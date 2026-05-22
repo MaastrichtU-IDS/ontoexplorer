@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock
 from ontoexplorer.api.ols._shapes import (
-    entity_to_v1_term, entity_to_v2_class, ontology_to_v1, derive_obo_id,
+    entity_to_v1_term, ontology_to_v1, derive_obo_id,
 )
 
 

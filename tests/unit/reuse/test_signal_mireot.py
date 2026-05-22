@@ -36,7 +36,7 @@ def test_mireot_term_detected_when_minimally_axiomatized():
 
 
 def test_no_mireot_when_source_is_imported():
-    store = _make_store(f"""
+    store = _make_store("""
         @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
         @prefix owl:  <http://www.w3.org/2002/07/owl#> .
         <http://purl.obolibrary.org/obo/IAO_0000115> a owl:AnnotationProperty ;

@@ -8,16 +8,14 @@ All responses use the flat v2 envelope:
 with no ``_links`` or ``_embedded`` keys.
 """
 import json
-import uuid
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 
-from ontoexplorer.models.db import Ontology, OntologyVersion
+from ontoexplorer.models.db import OntologyVersion
 from ontoexplorer.modules.search.indexer import (
     _iri_key,
-    _meta_key,
     _prefix_key,
     _type_key,
     normalise_label,

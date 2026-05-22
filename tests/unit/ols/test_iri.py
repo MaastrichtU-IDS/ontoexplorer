@@ -1,4 +1,3 @@
-import pytest
 from ontoexplorer.api.ols._iri import double_decode_iri, encode_iri_for_ols_path
 
 

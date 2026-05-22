@@ -13,8 +13,6 @@ import uuid
 
 import pytest
 from httpx import AsyncClient
-from unittest.mock import patch
-from sqlalchemy import select
 
 from ontoexplorer.api.ols._iri import encode_iri_for_ols_path
 from ontoexplorer.models.db import Ontology, OntologyVersion
@@ -288,7 +286,7 @@ async def test_hierarchy_paginated(client: AsyncClient, db_session, fake_redis):
                  "indexed_at": "2025-01-01T00:00:00+00:00"},
     )
 
-    parent_iri = f"http://example.org/pagingonto#Parent"
+    parent_iri = "http://example.org/pagingonto#Parent"
     child_iris = [f"http://example.org/pagingonto#Child{i}" for i in range(5)]
 
     # Seed parent

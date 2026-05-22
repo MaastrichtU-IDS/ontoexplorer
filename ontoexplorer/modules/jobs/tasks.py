@@ -382,11 +382,10 @@ async def _run_reasoning(db, version_id: str) -> dict:
     """Async body of the reasoning task."""
     from sqlalchemy import select
 
-    from rdflib.namespace import RDFS
 
     from ontoexplorer.clients import reasoning as reasoning_client
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
-    from ontoexplorer.models.db import Job, OntologyVersion
+    from ontoexplorer.models.db import OntologyVersion
     from ontoexplorer.modules.jobs import tracker
     from ontoexplorer.modules.webhooks.delivery import broadcast_event
 
@@ -1012,13 +1011,12 @@ def refresh_reuse(version_id: str, ontology_id: str) -> dict:
 
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
     from ontoexplorer.database import make_celery_db_session
-    from ontoexplorer.models.db import Ontology, OntologyImport, OntologyVersion
+    from ontoexplorer.models.db import Ontology, OntologyImport
     from ontoexplorer.modules.reuse.cache import reuse_cache_key
     from ontoexplorer.modules.reuse.detector import detect_reuse
     from ontoexplorer.modules.search.indexer import (
         _get_redis,
         _SEARCH_TTL,
-        _iri_key,
         _type_key,
     )
 

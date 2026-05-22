@@ -336,7 +336,7 @@ export default function OwlProfileSection({
   if (!data) return null
 
   const record = data as OwlProfileRecord
-  const profiles: Array<keyof typeof PROFILE_LABELS> = ['dl', 'el', 'ql', 'rl']
+  const profiles = ['dl', 'el', 'ql', 'rl'] as const
 
   return (
     <section id="owl-profile" style={{ padding: '1rem' }}>

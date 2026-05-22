@@ -3,6 +3,7 @@ import json
 from unittest.mock import patch
 
 import fakeredis
+import pytest
 
 from ontoexplorer.modules.search.coverage import coverage_cache_key
 from ontoexplorer.modules.search.indexer import build_index
@@ -15,6 +16,7 @@ def _patch_query(rows):
     return _fake
 
 
+@pytest.mark.slow
 def test_build_index_writes_coverage_cache(monkeypatch):
     """Stub out SPARQL so build_index runs and emits a coverage cache key."""
     r = fakeredis.FakeRedis(decode_responses=True)

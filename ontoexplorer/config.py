@@ -10,6 +10,11 @@ class Settings(BaseSettings):
     app_url: AnyHttpUrl = "http://localhost:8000"  # type: ignore[assignment]
     frontend_url: str = "http://localhost:5173"
     debug: bool = False
+    # Deployment environment. Settings.validate_production() refuses to boot
+    # when this is "production" and any insecure default is still in place
+    # (JWT key, AUTH_BYPASS, etc.). Accepted values:
+    #   development | staging | production
+    environment: str = "development"
 
     # Postgres
     database_url: str = "postgresql+asyncpg://ontoexplorer:ontoexplorer@localhost:5432/ontoexplorer"
@@ -93,6 +98,29 @@ class Settings(BaseSettings):
         if not v.startswith("postgresql"):
             raise ValueError("database_url must be a PostgreSQL URL")
         return v
+
+    def validate_production(self) -> list[str]:
+        """Return a list of human-readable failure reasons when running in
+        production with insecure defaults. Empty list = safe to boot.
+
+        Called once at app startup; if any failure is reported, the process
+        refuses to start instead of silently shipping with the default JWT
+        secret or auth bypass enabled.
+        """
+        if self.environment != "production":
+            return []
+        problems: list[str] = []
+        if self.jwt_secret_key == "change-me-in-production":
+            problems.append(
+                "JWT_SECRET_KEY is the placeholder default — set a long random "
+                "value in the environment before booting in production."
+            )
+        if self.auth_bypass:
+            problems.append(
+                "AUTH_BYPASS=true is incompatible with ENVIRONMENT=production "
+                "(every request would silently be treated as the dev user)."
+            )
+        return problems
 
 
 def is_admin(user) -> bool:

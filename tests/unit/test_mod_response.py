@@ -1,6 +1,5 @@
 # tests/unit/test_mod_response.py
 import json
-import pytest
 from rdflib import Graph, URIRef, Literal
 from rdflib.namespace import DCTERMS
 

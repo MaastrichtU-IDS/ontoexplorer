@@ -1,11 +1,9 @@
 """Integration tests for OLS4-compat term endpoints."""
-import json
 
 import pytest
 from httpx import AsyncClient
 
 from ontoexplorer.api.ols._iri import encode_iri_for_ols_path
-from ontoexplorer.modules.search.indexer import _iri_key, _type_key
 
 
 # ---------------------------------------------------------------------------

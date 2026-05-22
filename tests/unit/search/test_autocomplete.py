@@ -2,7 +2,7 @@
 import fakeredis
 from unittest.mock import patch
 
-from ontoexplorer.modules.search.autocomplete import get_completions, Completion
+from ontoexplorer.modules.search.autocomplete import get_completions
 from ontoexplorer.modules.search.indexer import _prefix_key, _iri_key
 
 

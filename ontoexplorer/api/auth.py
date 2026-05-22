@@ -89,7 +89,6 @@ async def oauth_callback(
 
     jwt_access, refresh_token = await create_session(db, user.id)
 
-    from ontoexplorer.config import get_settings
     frontend = get_settings().frontend_url.rstrip('/')
     resp = RedirectResponse(url=f"{frontend}/dashboard")
     resp.set_cookie("refresh_token", refresh_token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)

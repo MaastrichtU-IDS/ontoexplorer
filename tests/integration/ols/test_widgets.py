@@ -12,7 +12,6 @@ import uuid
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
 
 from ontoexplorer.api.ols._iri import encode_iri_for_ols_path
 from ontoexplorer.models.db import Ontology, OntologyVersion

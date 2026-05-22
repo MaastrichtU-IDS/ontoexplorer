@@ -1,4 +1,3 @@
-from datetime import UTC, datetime
 from typing import Any
 
 from rdflib import Graph, Literal, Namespace, URIRef

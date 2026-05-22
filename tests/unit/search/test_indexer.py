@@ -112,6 +112,7 @@ def _make_sparql_rows(rows):
     return [FakeRow(r) for r in rows]
 
 
+@pytest.mark.slow
 def test_build_index_populates_prefix_set():
     r = _make_redis()
 
@@ -144,6 +145,7 @@ def test_build_index_populates_prefix_set():
     assert any("celldeath" in m or "cell death" in m for m in members)
 
 
+@pytest.mark.slow
 def test_build_index_writes_entity_hash():
     r = _make_redis()
     entity_rows = _make_sparql_rows([{"entity": "http://ex.org/Cell"}])

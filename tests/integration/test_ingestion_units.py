@@ -1,6 +1,5 @@
 """Unit tests for ingestion pipeline components (no external services needed)."""
 
-import pytest
 
 _OWL_XML = b"""<?xml version="1.0"?>
 <Ontology xmlns="http://www.w3.org/2002/07/owl#"

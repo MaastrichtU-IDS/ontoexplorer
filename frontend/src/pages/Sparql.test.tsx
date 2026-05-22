@@ -403,7 +403,7 @@ it('intercepts IRI clicks inside DiffQueryView and navigates in-app', async () =
       },
     }
   })
-  global.fetch = vi.fn().mockImplementation(async (url: string) => {
+  global.fetch = vi.fn().mockImplementation(async (_url: string) => {
     return {
       ok: true, status: 200,
       json: async () => ({

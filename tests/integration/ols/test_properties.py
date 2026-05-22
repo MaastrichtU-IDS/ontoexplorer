@@ -4,16 +4,11 @@ Mirrors the structure of test_terms.py and test_terms_hierarchy.py,
 but scoped to the /properties surface and property entity types
 (object_property, data_property, annotation_property).
 """
-import json
-import uuid
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
 
 from ontoexplorer.api.ols._iri import encode_iri_for_ols_path
-from ontoexplorer.models.db import Ontology, OntologyVersion
-from ontoexplorer.modules.search.indexer import _iri_key, _meta_key, _type_key
 
 
 def _enc(iri: str) -> str:

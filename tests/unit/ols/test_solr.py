@@ -1,5 +1,4 @@
 """Unit tests for the Solr-style response envelope helper (_solr.py)."""
-import pytest
 
 from ontoexplorer.api.ols._solr import solr_envelope
 

@@ -12,7 +12,6 @@ while keeping the common path fast.
 """
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from sqlalchemy import text

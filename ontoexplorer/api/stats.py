@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.config import get_settings
 from ontoexplorer.database import get_db
-from ontoexplorer.models.db import Job, Ontology, OntologyVersion, User
+from ontoexplorer.models.db import Ontology, OntologyVersion, User
 from ontoexplorer.modules.auth.dependencies import require_auth
 
 

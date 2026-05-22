@@ -93,10 +93,24 @@ def create_app() -> FastAPI:
     app.include_router(mod_router)
     app.include_router(ols_router)
 
+    # Production safety latch — refuse to boot when ENVIRONMENT=production
+    # and any insecure default is still in place.
+    problems = settings.validate_production()
+    if problems:
+        for p in problems:
+            log.error("startup_blocked", reason=p)
+        raise RuntimeError(
+            "Refusing to start in production with insecure defaults: "
+            + " | ".join(problems)
+        )
+    # Outside of production, surface the same checks as warnings so devs
+    # see them before deploying.
     if settings.jwt_secret_key == "change-me-in-production":
-        log.warning("SECURITY: jwt_secret_key is set to the default value — set JWT_SECRET_KEY in production")
+        log.warning("SECURITY: jwt_secret_key is the default value — set JWT_SECRET_KEY before going to production")
+    if settings.auth_bypass:
+        log.warning("SECURITY: auth_bypass=true — every request is silently dev@localhost (do not ship)")
 
-    log.info("OntoExplorer API ready", version="0.1.0")
+    log.info("OntoExplorer API ready", version="0.2.0", environment=settings.environment)
     return app
 
 

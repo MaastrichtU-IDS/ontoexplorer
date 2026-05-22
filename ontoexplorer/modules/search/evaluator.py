@@ -4,11 +4,10 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import re
-import urllib.parse
 from dataclasses import dataclass
 
 from ontoexplorer.clients.oxigraph import graph_iri as _graph_iri, sparql_query
-from ontoexplorer.clients.reasoning import ReasoningNotReadyError, get_classification
+from ontoexplorer.clients.reasoning import get_classification
 from ontoexplorer.modules.search.indexer import (
     _get_redis,
     _iri_key,

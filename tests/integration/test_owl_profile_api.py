@@ -173,14 +173,13 @@ async def test_fleet_rollup_skips_missing_cache(client, db_session):
 
 @pytest.mark.anyio
 async def test_list_ontologies_with_profile_filter_includes_only_matching(client, db_session):
-    uid = "pf5"
-    ont_el = Ontology(iri=f"http://example.org/pf5-el.owl", shortname=f"pf5el", title="PF5 EL")
-    ont_noel = Ontology(iri=f"http://example.org/pf5-noel.owl", shortname=f"pf5noel", title="PF5 No EL")
+    ont_el = Ontology(iri="http://example.org/pf5-el.owl", shortname="pf5el", title="PF5 EL")
+    ont_noel = Ontology(iri="http://example.org/pf5-noel.owl", shortname="pf5noel", title="PF5 No EL")
     db_session.add_all([ont_el, ont_noel])
     await db_session.flush()
 
-    ver_el   = OntologyVersion(ontology_id=ont_el.id,   minio_key=f"pf5el.ttl",   sha256=f"pf5el001",   format="turtle", status="ready")
-    ver_noel = OntologyVersion(ontology_id=ont_noel.id, minio_key=f"pf5noel.ttl", sha256=f"pf5noel001", format="turtle", status="ready")
+    ver_el   = OntologyVersion(ontology_id=ont_el.id,   minio_key="pf5el.ttl",   sha256="pf5el001",   format="turtle", status="ready")
+    ver_noel = OntologyVersion(ontology_id=ont_noel.id, minio_key="pf5noel.ttl", sha256="pf5noel001", format="turtle", status="ready")
     db_session.add_all([ver_el, ver_noel])
     await db_session.commit()
 
@@ -222,9 +221,8 @@ async def test_list_ontologies_profile_filter_invalid_value_returns_422(client, 
 
 @pytest.mark.anyio
 async def test_ols_v1_list_with_profile_filter(client, db_session):
-    uid = "olspf"
-    ont_el   = Ontology(iri=f"http://example.org/ols-el.owl",   shortname=f"olsel",   title="OLS EL")
-    ont_noel = Ontology(iri=f"http://example.org/ols-noel.owl", shortname=f"olsnoel", title="OLS No EL")
+    ont_el   = Ontology(iri="http://example.org/ols-el.owl",   shortname="olsel",   title="OLS EL")
+    ont_noel = Ontology(iri="http://example.org/ols-noel.owl", shortname="olsnoel", title="OLS No EL")
     db_session.add_all([ont_el, ont_noel])
     await db_session.flush()
 

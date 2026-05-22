@@ -1,6 +1,5 @@
 from datetime import datetime, UTC
 from types import SimpleNamespace
-import pytest
 from rdflib import URIRef
 from rdflib.namespace import DCTERMS, OWL, RDF
 
@@ -9,9 +8,7 @@ from ontoexplorer.modules.mod.builder import (
     build_artefact_graph,
     build_artefacts_list_graph,
     build_record_graph,
-    build_records_list_graph,
     build_distribution_graph,
-    build_distributions_list_graph,
     build_resources_summary_graph,
     build_resource_list_graph,
     build_search_results_graph,
@@ -88,14 +85,12 @@ def test_artefact_graph_type_and_id():
 
 def test_artefact_graph_acronym():
     g = build_artefact_graph(ontology=_ontology(), version=_version(), meta=_meta(), stats=_stats(), base_url=BASE)
-    artefact = URIRef("http://purl.obolibrary.org/obo/go.owl")
     acronyms = [str(o) for _, p, o in g if str(p) == str(MOD.acronym)]
     assert "go" in acronyms
 
 
 def test_artefact_graph_stats():
     g = build_artefact_graph(ontology=_ontology(), version=_version(), meta=_meta(), stats=_stats(), base_url=BASE)
-    artefact = URIRef("http://purl.obolibrary.org/obo/go.owl")
     classes = [str(o) for _, p, o in g if str(p) == str(MOD.numberOfClasses)]
     assert classes == ["5000"]
 

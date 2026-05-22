@@ -1,6 +1,6 @@
 from dataclasses import asdict
 
-from ontoexplorer.modules.reuse.signals.imports import ImportEdge, build_closure
+from ontoexplorer.modules.reuse.signals.imports import build_closure
 
 
 def test_single_import_resolves_prefix():

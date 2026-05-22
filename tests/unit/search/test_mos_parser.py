@@ -113,7 +113,7 @@ def test_parse_error_unclosed_quote():
         parse("'cell death")
 
 
-from ontoexplorer.modules.search.mos_parser import partial_parse, PartialParseResult
+from ontoexplorer.modules.search.mos_parser import partial_parse
 
 
 def test_partial_parse_open_quote_at_start():

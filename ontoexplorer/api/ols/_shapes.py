@@ -308,7 +308,6 @@ def ontology_to_v2(
     ])
     synonym_props = list(getattr(profile, "synonym_props", None) or [])
 
-    version_iri = getattr(version, "version_iri", None) or ""
     loaded_at = (
         version.created_at.isoformat()
         if hasattr(version.created_at, "isoformat")

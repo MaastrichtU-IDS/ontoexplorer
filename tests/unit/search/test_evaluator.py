@@ -5,13 +5,12 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 from ontoexplorer.modules.search.mos_parser import (
     NamedClass, And, Or, Not,
-    SomeValuesFrom, AllValuesFrom, HasValue, HasSelf,
+    SomeValuesFrom, HasValue, HasSelf,
     MinCardinality, MaxCardinality, ExactCardinality,
 )
 from ontoexplorer.modules.search.evaluator import (
     AmbiguousLabelError,
     evaluate,
-    SearchResult,
 )
 from ontoexplorer.modules.search.indexer import _prefix_key, _iri_key
 

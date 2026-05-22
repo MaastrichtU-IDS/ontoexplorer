@@ -11,7 +11,6 @@ import uuid
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
 
 from ontoexplorer.models.db import Ontology, OntologyVersion
 from ontoexplorer.modules.search.indexer import (
@@ -257,7 +256,7 @@ async def test_search_local_filter(client: AsyncClient, db_session, fake_redis):
     )
 
     local_iri = f"http://example.org/localonto#{uid}#LocalTerm"
-    imported_iri = f"http://example.org/externalonto#ImportedTerm"
+    imported_iri = "http://example.org/externalonto#ImportedTerm"
 
     # Seed a local entity (source == ontology.id)
     fake_redis.hset(

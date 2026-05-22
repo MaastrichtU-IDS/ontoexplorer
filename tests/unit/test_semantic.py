@@ -33,6 +33,7 @@ async def test_semantic_search_returns_empty_on_db_error(monkeypatch):
     assert result == []
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_semantic_search_deduplicates_iris(monkeypatch):
     """Results with the same IRI from different versions appear only once."""

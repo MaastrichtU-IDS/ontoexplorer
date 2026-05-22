@@ -1,4 +1,3 @@
-import asyncio
 
 import httpx
 from fastapi import APIRouter, status
