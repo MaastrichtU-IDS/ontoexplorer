@@ -404,7 +404,11 @@ def _extract_iris_from_axiom(axiom) -> set[str]:
     return found
 
 
-def _filter_iri_connected(candidates: list, sub: str, sup: str) -> list:
+_HUB_CUTOFF_DEFAULT = int(os.getenv("JUSTIFICATION_HUB_CUTOFF", "500"))
+
+
+def _filter_iri_connected(candidates: list, sub: str, sup: str,
+                          hub_cutoff: int | None = None) -> list:
     """Return the subset of `candidates` IRI-connected to {sub, sup}.
 
     Iteratively grows a `relevant` IRI set: every axiom whose footprint
@@ -412,20 +416,43 @@ def _filter_iri_connected(candidates: list, sub: str, sup: str) -> list:
     Axioms with footprints disjoint from the closure are dropped — they
     cannot participate in any EL derivation that reaches sub ⊑ sup.
 
-    Mirrors the principle behind ⊥-module extraction (e.g. Cuenca-Grau et
-    al.) restricted to the EL fragment. Empirically reduces ordo's 28K
-    structural axioms down to <100 for typical inferences.
+    `hub_cutoff` (default: env JUSTIFICATION_HUB_CUTOFF, fallback 500) is
+    a hub-skip heuristic: any IRI mentioned in more than `hub_cutoff`
+    candidates is treated as a "hub" and excluded from the propagation set.
+    Axioms mentioning a hub still get included (the hub is allowed in
+    relevant via its co-mentioned axiom), but the walk doesn't fan out
+    through it. This caps the closure size for ontologies like Orphanet
+    where a few top-level classification classes are children of thousands.
+    On ordo this drops the candidate set from 17K to ~280; on smaller
+    ontologies (pizza, ro) it has no effect because no IRI exceeds the
+    cutoff. Set `hub_cutoff=0` to disable.
+
+    Mirrors the principle behind ⊥-module extraction (Cuenca-Grau et al.)
+    restricted to the EL fragment.
     """
+    if hub_cutoff is None:
+        hub_cutoff = _HUB_CUTOFF_DEFAULT
     iris_per_ax: list[set[str]] = [_extract_iris_from_axiom(ax) for ax in candidates]
+    # Build hub set (IRIs that appear in >= hub_cutoff candidates).
+    hubs: set[str] = set()
+    if hub_cutoff > 0:
+        from collections import Counter
+        freq = Counter()
+        for ax_iris in iris_per_ax:
+            freq.update(ax_iris)
+        hubs = {iri for iri, n in freq.items() if n >= hub_cutoff}
+    # sub/sup must never be treated as hubs even if they happen to be
+    # frequent — otherwise we'd drop the chain immediately.
+    hubs.discard(sub)
+    hubs.discard(sup)
     relevant: set[str] = {sub, sup}
-    # Fixed-point growth. Cheap because each iteration walks all axioms but
-    # does a tiny `set & relevant` per axiom; in practice converges in a
-    # few passes.
     while True:
         before = len(relevant)
         for ax_iris in iris_per_ax:
             if ax_iris & relevant:
-                relevant |= ax_iris
+                # Propagate non-hub IRIs; hubs are bridged but the walk
+                # doesn't fan out via them.
+                relevant |= (ax_iris - hubs)
         if len(relevant) == before:
             break
     return [ax for ax, ax_iris in zip(candidates, iris_per_ax) if ax_iris & relevant]
