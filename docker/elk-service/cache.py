@@ -21,6 +21,10 @@ def _classification_key(version_id: str) -> str:
     return f"classification:{version_id}"
 
 
+def _input_axioms_key(version_id: str) -> str:
+    return f"input_axioms:{version_id}"
+
+
 def _justification_key(version_id: str, sub: str, sup: str | None, max_j: int) -> str:
     import hashlib
     raw = f"{sub}|{sup}|{max_j}"
@@ -55,10 +59,35 @@ def load_justification(version_id: str, sub: str, sup: str | None, max_j: int) -
     return json.loads(raw) if raw else None
 
 
+def store_input_axioms(version_id: str, ntriples: str) -> None:
+    """Persist the input N-Triples body of a classification submission.
+
+    The justification endpoint needs the original asserted axioms to run its
+    hitting-set algorithm; under the rdflib backend the algorithm could
+    reconstruct them from proof_traces, but the whelk backend emits no
+    traces. Storing the raw body lets justifications work uniformly across
+    backends and removes the dependency on proof_traces entirely.
+
+    Same TTL as the classification result so the two stay in lockstep.
+    """
+    key = _input_axioms_key(version_id)
+    compressed = gzip.compress(ntriples.encode("utf-8"))
+    _redis.setex(key, _CLASSIFICATION_TTL, compressed)
+
+
+def load_input_axioms(version_id: str) -> str | None:
+    key = _input_axioms_key(version_id)
+    raw = _redis.get(key)
+    if raw is None:
+        return None
+    return gzip.decompress(raw).decode("utf-8")
+
+
 def invalidate_version(version_id: str) -> None:
     """Remove all cache entries for a version (called on deprecation)."""
     pattern = f"*:{version_id}:*"
     keys = list(_redis.scan_iter(pattern))
     keys.append(_classification_key(version_id).encode())
+    keys.append(_input_axioms_key(version_id).encode())
     if keys:
         _redis.delete(*keys)

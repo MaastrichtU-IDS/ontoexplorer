@@ -15,15 +15,31 @@ from pydantic import BaseModel
 from cache import (
     invalidate_version,
     load_classification,
+    load_input_axioms,
     load_justification,
     store_classification,
+    store_input_axioms,
     store_justification,
 )
-from classifier import classify
+from classifier import classify as _rdflib_classify
 from justification import compute_justifications
+
+# Backend switch: "whelk" (default, py-whelk/whelk-rs) or "rdflib" (legacy).
+# When CLASSIFIER_BACKEND=rdflib we keep the old CR1–CR6 classifier — useful
+# for regression testing and as a fallback while proof-trace-driven
+# justifications haven't been migrated yet.
+_CLASSIFIER_BACKEND = os.getenv("CLASSIFIER_BACKEND", "whelk").lower()
+if _CLASSIFIER_BACKEND == "whelk":
+    from whelk_classifier import classify as _whelk_classify
+    from whelk_classifier import classify_ntriples as _whelk_classify_nt
+    classify = _whelk_classify
+else:
+    classify = _rdflib_classify
+    _whelk_classify_nt = None
 
 log = logging.getLogger("elk-service")
 logging.basicConfig(level=logging.INFO)
+log.info("classifier_backend_selected backend=%s", _CLASSIFIER_BACKEND)
 
 _JUSTIFICATION_TIME_LIMIT = int(os.getenv("JUSTIFICATION_TIME_LIMIT_SECONDS", "300"))
 
@@ -73,24 +89,45 @@ def run_classify(req: ClassifyRequest):
     if req.version_id in _in_progress:
         return {"version_id": req.version_id, "status": "running"}
 
-    try:
-        g = rdflib.Graph()
-        g.parse(io.StringIO(req.ntriples), format="nt")
-    except Exception as exc:
-        raise HTTPException(422, f"Failed to parse N-Triples: {exc}")
+    # For the whelk backend we skip the rdflib parse here — it would be
+    # redundant since whelk_classifier.classify_ntriples uses pyoxigraph
+    # (Rust) to convert NT → RDF/XML directly. On ordo this saves ~10s.
+    # The rdflib backend still needs the parsed graph upfront.
+    if _whelk_classify_nt is not None:
+        ntriples_for_worker: str | None = req.ntriples
+        graph_for_worker: rdflib.Graph | None = None
+    else:
+        try:
+            graph_for_worker = rdflib.Graph()
+            graph_for_worker.parse(io.StringIO(req.ntriples), format="nt")
+        except Exception as exc:
+            raise HTTPException(422, f"Failed to parse N-Triples: {exc}")
+        ntriples_for_worker = None
 
     _in_progress.add(req.version_id)
 
-    def _run(graph: rdflib.Graph, version_id: str) -> None:
+    def _run(version_id: str) -> None:
         try:
-            result = classify(graph, version_id)
+            if _whelk_classify_nt is not None and ntriples_for_worker is not None:
+                result = _whelk_classify_nt(ntriples_for_worker, version_id)
+            else:
+                result = classify(graph_for_worker, version_id)
+            # IMPORTANT: store input_axioms BEFORE classification. GET /classify/
+            # {vid} returns 200 as soon as the classification cache key exists
+            # (it doesn't gate on _in_progress when the result is already in
+            # Redis). If we wrote classification first, a follow-up
+            # /justification call could race ahead of the input_axioms write
+            # — which is exactly what bit ordo: 80 MB gzip takes ~5 s, leaving
+            # a window where the inference looks "done" but justification
+            # gets an empty input graph and returns no justifications.
+            store_input_axioms(version_id, req.ntriples)
             store_classification(result)
         except Exception:
             log.exception("classify_background_error", extra={"version_id": version_id})
         finally:
             _in_progress.discard(version_id)
 
-    _classifier_pool.submit(_run, g, req.version_id)
+    _classifier_pool.submit(_run, req.version_id)
     return {"version_id": req.version_id, "status": "running"}
 
 
@@ -148,23 +185,35 @@ def compute_justification_endpoint(version_id: str, req: JustificationRequest):
     if cached:
         return cached
 
-    # Reconstruct graph from inferred + direct axioms stored in proof traces
-    g = _reconstruct_graph_from_traces(result)
+    # Justification needs the original asserted axioms. Prefer the input-axioms
+    # cache populated at classification time (works for any backend). Fall back
+    # to proof-trace reconstruction for older cache entries that pre-date the
+    # input_axioms key. If both miss, justifications will come back empty.
+    g_loaded = _load_input_graph(version_id)
+    if g_loaded is not None and len(g_loaded) > 0:
+        g = g_loaded
+    else:
+        # Pre-input-axioms-cache classifications (proof-trace backend or old
+        # cached results) — reconstruct from proof_traces.
+        g = _reconstruct_graph_from_traces(result)
 
     t0 = time.monotonic()
     timed_out = False
-    import concurrent.futures
+    # Direct call (no ThreadPoolExecutor): py-whelk + pyhornedowl rely on
+    # PyO3 objects whose lifetimes/handles don't transfer cleanly to a
+    # worker thread. The previous executor-based timeout was found to
+    # return empty results in ~1ms for some ontologies (e.g. ordo) when
+    # the executor's worker couldn't initialise the reasoner state.
+    # The trade-off: we lose the per-request internal timeout. Uvicorn's
+    # request lifetime is still bounded by the client's HTTP timeout, and
+    # the per-step is_entailed calls are bounded by ontology size.
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
-            _fut = _ex.submit(compute_justifications, g, result, req.sub, sup, req.max_justifications)
-            try:
-                justs = _fut.result(timeout=_JUSTIFICATION_TIME_LIMIT)
-            except concurrent.futures.TimeoutError:
-                timed_out = True
-                justs = []
+        justs = compute_justifications(g, result, req.sub, sup, req.max_justifications)
     except Exception:
-        timed_out = False
         justs = []
+        log.exception("justification_compute_failed", extra={
+            "version_id": version_id, "sub": req.sub, "sup": sup,
+        })
 
     elapsed_ms = round((time.monotonic() - t0) * 1000, 1)
     justification_id = str(uuid.uuid4())
@@ -207,6 +256,25 @@ def _load_or_404(version_id: str):
             raise HTTPException(409, "Reasoning in progress — poll again shortly")
         raise HTTPException(409, "Reasoning not yet completed for this version — submit via POST /classify")
     return result
+
+
+def _load_input_graph(version_id: str) -> rdflib.Graph | None:
+    """Load the cached input N-Triples for a version and parse into an rdflib graph.
+
+    Returns None when no input-axioms cache entry exists (the version was
+    classified before this cache layer existed). Callers should fall back to
+    the legacy proof-trace reconstruction in that case.
+    """
+    ntriples = load_input_axioms(version_id)
+    if not ntriples:
+        return None
+    g = rdflib.Graph()
+    try:
+        g.parse(io.StringIO(ntriples), format="nt")
+    except Exception:
+        log.exception("input_axioms_parse_failed", extra={"version_id": version_id})
+        return None
+    return g
 
 
 def _reconstruct_graph_from_traces(result) -> rdflib.Graph:
