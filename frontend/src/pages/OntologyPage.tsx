@@ -4,7 +4,6 @@ import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-quer
 import { useOntologies } from '../hooks/useOntologies'
 import { useVersions } from '../hooks/useVersions'
 import { useTerm } from '../hooks/useTerm'
-import { useOntologyProfile } from '../hooks/useOntologyProfile'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { slugFromIri, OntologyVersion, OntologyMetadataEntry, SearchResult, Term, api } from '../lib/api'
 import ClassTree from '../components/ClassTree'
@@ -18,7 +17,6 @@ import OwlProfileSection from '../components/OwlProfileSection'
 import { ReuseSection } from '../components/ReuseSection'
 import { ConsistencySection } from '../components/ConsistencySection'
 import SearchBar from '../components/SearchBar'
-import { useOntologyMeta } from '../hooks/useOntologyMeta'
 import { useLang } from '../hooks/useLang'
 import { useOntologyLanguages } from '../hooks/useOntologyLanguages'
 
@@ -337,102 +335,12 @@ function OntologyDocMeta({ ontologyId, versionId, lang }: { ontologyId: string; 
 
 // ── Profile banner ────────────────────────────────────────────────────────────
 
-function ProfileBanner({ ontologyId, versionId, onReview }: {
-  ontologyId: string
-  versionId: string
-  onReview: () => void
-}) {
-  const { data: profile, isLoading } = useOntologyProfile(ontologyId, versionId)
-
-  if (isLoading || !profile) return null
-
-  const hasUnknown = Array.isArray((profile as any).candidates_data?.unknown) && (profile as any).candidates_data.unknown.length > 0
-  const isConfirmed = profile.status === 'user_confirmed'
-
-  if (isConfirmed) {
-    return (
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: '6px 12px', marginBottom: 12,
-        background: 'rgba(63,185,80,0.06)', border: '1px solid rgba(63,185,80,0.2)',
-        borderRadius: 6, fontSize: 11,
-      }}>
-        <span style={{ color: '#3fb950' }}>● Profile confirmed</span>
-        <button
-          onClick={onReview}
-          style={{ marginLeft: 'auto', color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11 }}
-        >
-          Edit
-        </button>
-      </div>
-    )
-  }
-
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 8,
-      padding: '6px 12px', marginBottom: 12,
-      background: hasUnknown ? 'rgba(210,153,34,0.08)' : 'rgba(88,166,255,0.06)',
-      border: `1px solid ${hasUnknown ? 'rgba(210,153,34,0.3)' : 'rgba(88,166,255,0.2)'}`,
-      borderRadius: 6, fontSize: 11,
-    }}>
-      <span style={{ color: hasUnknown ? '#d29922' : 'var(--accent)' }}>
-        {hasUnknown
-          ? `⚠ Profile auto-detected · unknown properties need role assignment`
-          : `Profile auto-detected · labels: ${profile.label_props[0]?.split(/[/#]/).pop() ?? '?'}`}
-      </span>
-      <button
-        onClick={onReview}
-        style={{ marginLeft: 'auto', color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11 }}
-      >
-        Review →
-      </button>
-    </div>
-  )
-}
-
-// ── Metadata banner ───────────────────────────────────────────────────────────
-
-function MetaBanner({ ontologyId, versionId, onReview }: {
-  ontologyId: string
-  versionId: string
-  onReview: () => void
-}) {
-  const { data: meta, isLoading } = useOntologyMeta(ontologyId, versionId)
-  if (isLoading || !meta) return null
-
-  const isConfirmed = meta.status === 'user_confirmed'
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 8,
-      padding: '6px 12px', marginBottom: 8,
-      background: isConfirmed ? 'rgba(63,185,80,0.06)' : 'rgba(88,166,255,0.06)',
-      border: `1px solid ${isConfirmed ? 'rgba(63,185,80,0.2)' : 'rgba(88,166,255,0.2)'}`,
-      borderRadius: 6, fontSize: 11,
-    }}>
-      <span style={{ color: isConfirmed ? '#3fb950' : 'var(--accent)' }}>
-        {isConfirmed
-          ? `● Metadata confirmed · ${meta.resolved?.title ?? ''}`
-          : `Metadata auto-detected · title: ${meta.resolved?.title ?? '?'}`}
-      </span>
-      <button
-        onClick={onReview}
-        style={{ marginLeft: 'auto', color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 11 }}
-      >
-        {isConfirmed ? 'Edit' : 'Review →'}
-      </button>
-    </div>
-  )
-}
-
 // ── Metadata + stats panel ────────────────────────────────────────────────────
 
-function OntologyMeta({ iri, version, lang, onProfileReview, onMetaReview }: {
+function OntologyMeta({ iri, version, lang }: {
   iri: string
   version: OntologyVersion | undefined
   lang?: string | null
-  onProfileReview?: () => void
-  onMetaReview?: () => void
 }) {
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['version-stats', version?.ontology_id, version?.id],
@@ -473,35 +381,14 @@ function OntologyMeta({ iri, version, lang, onProfileReview, onMetaReview }: {
         </div>
       ) : null}
 
-      {/* ── Metadata banner ── */}
-        {onMetaReview && version && (
-          <MetaBanner
-            ontologyId={version.ontology_id}
-            versionId={version.id}
-            onReview={onMetaReview}
-          />
-        )}
-
-      {/* ── Profile banner ── */}
-        {onProfileReview && version && (
-          <ProfileBanner
-            ontologyId={version.ontology_id}
-            versionId={version.id}
-            onReview={onProfileReview}
-          />
-        )}
-
       {/* ── Document metadata ── */}
-      <h3 style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
-        Document Metadata
-      </h3>
       <div style={{ marginBottom: 28 }}>
         <OntologyDocMeta ontologyId={version.ontology_id} versionId={version.id} lang={lang} />
       </div>
 
       {/* ── Repository metadata ── */}
       <h3 style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
-        Repository
+        Repository Metadata
       </h3>
       <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 28 }}>
         <tbody>
@@ -1230,8 +1117,6 @@ export default function OntologyPage() {
                 iri={ontology?.iri ?? ''}
                 version={activeVersion}
                 lang={effectiveLang}
-                onProfileReview={() => setDetailTab('profile')}
-                onMetaReview={() => setDetailTab('profile')}
               />
             ) : detailTab === 'history' ? (
               oid && activeVid && versions.length > 1
