@@ -91,7 +91,7 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, focusedIri,
     : (isUnsat || isNothing ? unsatColor : 'var(--text)')
 
   const tooltip = isUnsat
-    ? `Unsatisfiable in: ${(term.unsat_scopes ?? []).join(', ') || 'unknown scope'}`
+    ? 'Unsatisfiable'
     : isNothing
       ? `owl:Nothing — synthetic root for ${term.unsat_children_count ?? 0} unsatisfiable class(es)`
       : undefined

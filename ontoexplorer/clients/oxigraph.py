@@ -50,17 +50,6 @@ def graph_iri(ontology_id: str, version_id: str, inferred: bool = False) -> str:
     return f"{base}:inferred" if inferred else base
 
 
-def consistency_inferred_graph_iri(ontology_id: str, version_id: str) -> str:
-    """Named graph owned by the Phase 2 consistency detector.
-
-    Distinct from the ELK reasoning task's `:inferred` graph (which the reasoner
-    fully replaces on each run via `remove_graph + bulk_load`). Keeping the
-    consistency-detector's entailments in a separate graph means re-running ELK
-    reasoning does NOT clobber them.
-    """
-    return f"urn:ontology:{ontology_id}:{version_id}:consistency-inferred"
-
-
 def load_graph(ontology_id: str, version_id: str, graph: rdflib.Graph) -> int:
     """
     Load an rdflib Graph into a named Oxigraph graph.

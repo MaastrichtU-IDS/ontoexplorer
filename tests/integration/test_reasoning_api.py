@@ -68,25 +68,6 @@ async def test_superclasses_success(client, user_and_key):
 
 
 @pytest.mark.anyio
-async def test_consistency_success(client, user_and_key):
-    _, raw_key = user_and_key
-    auth = {"Authorization": f"Bearer {raw_key}"}
-
-    mock_result = {"version_id": "v1", "consistent": True,
-                   "unsatisfiable_classes": [], "unsatisfiable_count": 0}
-
-    with patch("ontoexplorer.api.ontologies._get_version_or_404", new=_MOCK_VERSION), \
-         patch("ontoexplorer.api.ontologies.elk_consistency",
-               new=AsyncMock(return_value=mock_result)):
-        resp = await client.get(
-            "/api/v1/ontologies/fake-oid/fake-vid/consistency",
-            headers=auth,
-        )
-    assert resp.status_code == 200
-    assert resp.json()["consistent"] is True
-
-
-@pytest.mark.anyio
 async def test_justification_queues_job(client, user_and_key):
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}

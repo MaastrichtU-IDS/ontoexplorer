@@ -9,17 +9,15 @@ import Coverage from './Coverage'
 import OwlProfile from './OwlProfile'
 import Compare from './Compare'
 import { Reuse } from './Reuse'
-import { Consistency } from './Consistency'
 
-type Tab = 'list' | 'coverage' | 'profiles' | 'compare' | 'reuse' | 'consistency'
-const TAB_VALUES: Tab[] = ['list', 'coverage', 'profiles', 'compare', 'reuse', 'consistency']
+type Tab = 'list' | 'coverage' | 'profiles' | 'compare' | 'reuse'
+const TAB_VALUES: Tab[] = ['list', 'coverage', 'profiles', 'compare', 'reuse']
 const TAB_LABELS: Record<Tab, string> = {
   list:        'List',
   coverage:    'Coverage',
   profiles:    'OWL Profile',
   compare:     'Compare',
   reuse:       'Reuse',
-  consistency: 'Consistency',
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -362,7 +360,6 @@ export default function Ontologies() {
       {tab === 'profiles' && <OwlProfile />}
       {tab === 'compare' && <Compare />}
       {tab === 'reuse' && <Reuse />}
-      {tab === 'consistency' && <Consistency />}
       {tab === 'list' && <>
       {/* Group filter chips */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.6rem' }}>

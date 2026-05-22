@@ -616,7 +616,6 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
     )
     _populate_owl_profile_cache(version_id, ontology_id, r)
     _populate_reuse_cache(version_id, ontology_id, entities, r)
-    _enqueue_consistency_check(version_id, ontology_id, r)
 
     return IndexStats(
         version_id=version_id,
@@ -979,40 +978,6 @@ def _populate_reuse_cache(
     r.setex(reuse_cache_key(version_id), _SEARCH_TTL, _json.dumps(payload))
 
 
-def _enqueue_consistency_check(
-    version_id: str,
-    ontology_id: str,
-    r: "redis.Redis",
-) -> None:
-    """Enqueue the async consistency check and write a pending placeholder to Redis."""
-    import json as _json
-
-    from ontoexplorer.modules.consistency.cache import consistency_cache_key
-
-    # Placeholder so the API returns pending instead of 404 while Celery picks up
-    placeholder = {
-        "version_id": version_id,
-        "host_iri": "",
-        "scopes": {},
-        "job_status": "pending",
-        "started_at": None,
-        "finished_at": None,
-    }
-    r.setex(consistency_cache_key(version_id), _SEARCH_TTL, _json.dumps(placeholder))
-
-    # Enqueue Celery task (don't await — runs async)
-    try:
-        from ontoexplorer.modules.jobs.tasks import check_consistency
-        check_consistency.delay(version_id, ontology_id)
-    except Exception as exc:
-        # Don't fail indexing if the broker is unreachable; the user can retry later via
-        # POST /api/v1/ontologies/{id}/{vid}/consistency/refresh
-        import structlog
-        structlog.get_logger(__name__).warning(
-            "consistency_enqueue_failed", version_id=version_id, error=str(exc)
-        )
-
-
 def invalidate_index(version_id: str) -> None:
     """Delete all search index keys for a version."""
     r = _get_redis()
@@ -1031,8 +996,6 @@ def invalidate_index(version_id: str) -> None:
     to_delete.append(owl_profile_cache_key(version_id))
     from ontoexplorer.modules.reuse.cache import reuse_cache_key
     to_delete.append(reuse_cache_key(version_id))
-    from ontoexplorer.modules.consistency.cache import consistency_cache_key
-    to_delete.append(consistency_cache_key(version_id))
     keys_present = [k for k in to_delete if r.exists(k)]
     if keys_present:
         r.delete(*keys_present)

@@ -323,7 +323,6 @@ async def list_ontologies(
     group: str | None = Query(None, description="Filter by group tag (upper, obo, fair, biomedical)"),
     profile: str | None = Query(None, description="Filter by OWL 2 profile: el | rl | ql | dl"),
     reuses: str | None = Query(None, description="Filter: latest version reuses this prefix"),
-    consistency: str | None = Query(None, description="Filter: consistent | inconsistent"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -351,7 +350,7 @@ async def list_ontologies(
             stmt = stmt.where(func.jsonb_array_length(Ontology.groups) == 0)
         else:
             stmt = stmt.where(text("groups @> cast(:grp as jsonb)").bindparams(grp=_json_grp.dumps([group])))
-    if not q and not profile and not reuses and not consistency:
+    if not q and not profile and not reuses:
         stmt = stmt.offset(offset).limit(limit)
     result = await db.execute(stmt)
     ontologies = result.scalars().all()
@@ -491,13 +490,6 @@ async def list_ontologies(
         matching_ids = await filter_ontology_ids_by_reuse(db, all_ids, reuses.lower())
         rows = [r for r in rows if r["id"] in matching_ids]
 
-    # Consistency filter: keep only ontologies matching the requested consistency status
-    if consistency:
-        from ontoexplorer.api.consistency import filter_ontology_ids_by_consistency
-        all_ids = [r["id"] for r in rows]
-        matching_ids = await filter_ontology_ids_by_consistency(db, all_ids, consistency.lower())
-        rows = [r for r in rows if r["id"] in matching_ids]
-
     # Python-side filter + ranked sort when q is present.
     # Primary rank:
     #   0 → exact match on derived short name or IRI
@@ -529,8 +521,8 @@ async def list_ontologies(
         ranked = [(r, _rank_score(r)) for r in rows]
         rows = [r for r, score in sorted(ranked, key=lambda x: x[1]) if score[0] < 99]
         rows = rows[offset: offset + limit]
-    elif profile or reuses or consistency:
-        # Profile, reuse, or consistency filter already applied above; now apply pagination
+    elif profile or reuses:
+        # Profile or reuse filter already applied above; now apply pagination
         rows = rows[offset: offset + limit]
 
     return {"ontologies": rows, "offset": offset, "limit": limit}
@@ -784,107 +776,7 @@ _RDF_PROPERTY = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#Property>"
 _PROP_UNION = " UNION ".join(f"{{ ?entity a {t} }}" for t in _PROP_TYPES)
 _PROP_UNION = f"{_PROP_UNION} UNION {{ ?entity a {_RDF_PROPERTY} }}"
 
-# Protégé-style display of unsatisfiable classes — defined here (NOT near the
-# duplicates at line ~1903) so they're in scope of the class-tree decoration in
-# list_terms.
 _OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing"
-
-
-def _load_unsat_scopes(version_id: str) -> dict[str, list[str]]:
-    """Return {class_iri: [scope_name, ...]} for every unsat class across all scopes.
-
-    Reads Phase 2's consistency cache. Returns {} when the cache is missing or
-    the job hasn't completed yet — callers fall back to undecorated trees.
-    """
-    import json as _json
-    from ontoexplorer.modules.consistency.cache import consistency_cache_key
-    from ontoexplorer.modules.search.indexer import _get_redis
-
-    raw = _get_redis().get(consistency_cache_key(version_id))
-    if raw is None:
-        return {}
-    try:
-        data = _json.loads(raw)
-    except (ValueError, TypeError):
-        return {}
-    if data.get("job_status") != "done":
-        return {}
-    out: dict[str, list[str]] = {}
-    for scope_name, scope_data in (data.get("scopes") or {}).items():
-        for uc in (scope_data or {}).get("unsatisfiable_classes", []):
-            iri = uc.get("iri")
-            if iri:
-                out.setdefault(iri, []).append(scope_name)
-    return out
-
-
-def _decorate_unsat_terms(terms: list[dict], unsat_map: dict[str, list[str]]) -> None:
-    """Tag each term in-place with is_unsatisfiable + unsat_scopes when applicable."""
-    for t in terms:
-        scopes = unsat_map.get(t.get("iri"))
-        if scopes:
-            t["is_unsatisfiable"] = True
-            t["unsat_scopes"] = scopes
-
-
-def _build_nothing_root_node(unsat_map: dict[str, list[str]]) -> dict:
-    """Synthesize a top-level owl:Nothing node when any classes are unsatisfiable.
-
-    The tree node is presented to the frontend as if it were a regular class with
-    children — clicking the expand chevron triggers a fresh /terms?parent=<owl:Nothing>
-    request, which returns the synthetic children list (see _build_unsat_children_payload).
-    """
-    return {
-        "iri": _OWL_NOTHING,
-        "label": "owl:Nothing",
-        "has_children": bool(unsat_map),
-        "source": "",
-        "is_unsatisfiable": False,   # the node itself is not a misbehaving class
-        "unsat_children_count": len(unsat_map),
-    }
-
-
-def _build_unsat_children_payload(
-    version_id: str,
-    unsat_map: dict[str, list[str]],
-    *,
-    limit: int,
-    offset: int,
-    lang: str | None,
-) -> list[dict]:
-    """Return all unsatisfiable classes as children of the synthetic owl:Nothing.
-
-    Labels resolved from the Redis search index for nice display. Each child is
-    flagged is_unsatisfiable + unsat_scopes so the same red-styling applies.
-    """
-    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
-
-    iris = sorted(unsat_map.keys())
-    page = iris[offset: offset + limit]
-    if not page:
-        return []
-
-    r = _get_redis()
-    pipe = r.pipeline(transaction=False)
-    for iri in page:
-        pipe.hgetall(_iri_key(version_id, iri))
-    raw_rows = pipe.execute()
-
-    out: list[dict] = []
-    for iri, raw in zip(page, raw_rows):
-        label = None
-        if isinstance(raw, dict) and raw:
-            # The search index stores labels under "label_en", "label", etc.
-            label = raw.get("label_en") or raw.get("label") or None
-        out.append({
-            "iri": iri,
-            "label": label,
-            "has_children": False,   # leaves in the synthetic view
-            "source": (raw.get("source") if isinstance(raw, dict) else "") or "",
-            "is_unsatisfiable": True,
-            "unsat_scopes": unsat_map[iri],
-        })
-    return out
 
 
 _PROP_SUBTYPE_FILTER = {
@@ -1266,28 +1158,6 @@ async def list_terms(
     except Exception:
         for t in terms:
             t.setdefault("source", "")
-
-    # Unsatisfiability decoration (Protégé-style red + synthetic owl:Nothing node).
-    # Only relevant for the class hierarchy; properties/individuals don't have an
-    # owl:Nothing equivalent.
-    if entity_type == "class":
-        try:
-            unsat_map = _load_unsat_scopes(version_id)
-        except Exception:
-            unsat_map = {}
-        if unsat_map:
-            if parent == _OWL_NOTHING:
-                # Synthetic expansion: return the union of unsatisfiable classes
-                # as children of owl:Nothing, with labels from the search index.
-                terms = _build_unsat_children_payload(
-                    version_id, unsat_map, limit=limit, offset=offset, lang=lang
-                )
-            else:
-                _decorate_unsat_terms(terms, unsat_map)
-                if is_root and offset == 0:
-                    # Inject the synthetic owl:Nothing node at the top so users
-                    # can navigate to the population of unsatisfiable classes.
-                    terms = [_build_nothing_root_node(unsat_map)] + terms
 
     response = {"terms": terms, "offset": offset, "limit": limit, "parent": parent}
 
@@ -2428,23 +2298,16 @@ async def list_inferred(
     Returns 404 if reasoning has not yet completed.
     """
     await _get_version_or_404(db, ontology_id, version_id)
-    from ontoexplorer.clients.oxigraph import consistency_inferred_graph_iri, get_store, graph_iri
+    from ontoexplorer.clients.oxigraph import get_store, graph_iri
 
     store = get_store()
     inferred_iri = graph_iri(ontology_id, version_id, inferred=True)
-    consistency_iri = consistency_inferred_graph_iri(ontology_id, version_id)
 
-    # Union ELK's inferred graph with the consistency-detector's separate graph
-    # so callers see the trivializing `owl:Thing ⊑ owl:Nothing` entailment alongside
-    # ELK's subclass inferences. The two graphs are kept separate so re-running ELK
-    # doesn't clobber consistency entries (ELK does `remove_graph + bulk_load`).
     query = f"""
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
         SELECT ?sub ?sup WHERE {{
-            {{ GRAPH <{inferred_iri}>    {{ ?sub rdfs:subClassOf ?sup . FILTER(isIRI(?sub) && isIRI(?sup)) }} }}
-            UNION
-            {{ GRAPH <{consistency_iri}> {{ ?sub rdfs:subClassOf ?sup . FILTER(isIRI(?sub) && isIRI(?sup)) }} }}
+            GRAPH <{inferred_iri}> {{ ?sub rdfs:subClassOf ?sup . FILTER(isIRI(?sub) && isIRI(?sup)) }}
         }}
         ORDER BY ?sub ?sup
         LIMIT {limit} OFFSET {offset}
@@ -2459,7 +2322,6 @@ async def list_inferred(
         "version_id": version_id,
         "ontology_id": ontology_id,
         "inferred_graph": inferred_iri,
-        "consistency_inferred_graph": consistency_iri,
         "axioms": axioms,
         "offset": offset,
         "limit": limit,
@@ -2538,20 +2400,6 @@ async def inferred_children(
     r = _get_redis()
     deprecated_iris: set[str] = r.smembers(_deprecated_key(version_id)) if hide_obsolete else set()
 
-    # Union ELK's unsat list with the Phase-2 consistency cache. Two cases
-    # this fixes:
-    #   - Globally inconsistent ontologies: Konclude flags owl:Thing as unsat
-    #     (our detector materializes a synthetic entry in the cache); ELK never
-    #     reports owl:Thing as unsat because it only does TBox classification.
-    #     Without this union the inferred tree won't show Thing under Nothing.
-    #   - Classes Konclude can prove unsat but ELK's structural EL classifier
-    #     can't (e.g., existential-restriction-over-unsat). They appear in the
-    #     consistency cache but not in ELK's classification.unsatisfiable.
-    try:
-        consistency_unsat_iris: set[str] = set(_load_unsat_scopes(version_id).keys())
-    except Exception:
-        consistency_unsat_iris = set()
-
     def _compute() -> dict:
         elk_direct: dict[str, list[str]] = classification.get("direct_superclasses", {})
         elk_all:    dict[str, list[str]] = classification.get("superclasses", {})
@@ -2559,12 +2407,7 @@ async def inferred_children(
         # classes — they need to be looked up from the separate `unsatisfiable`
         # list. Treat that list as if those classes had owl:Nothing as a direct
         # parent so the inferred tree can place them under it.
-        # Union with the consistency cache picks up classes ELK couldn't prove
-        # (see the block above _compute() for the rationale).
-        unsat_iris: set[str] = (
-            set(classification.get("unsatisfiable", []))
-            | consistency_unsat_iris
-        )
+        unsat_iris: set[str] = set(classification.get("unsatisfiable", []))
         # owl:Thing is filtered (it's the universal root; every class trivially
         # subclasses it — noise). owl:Nothing is KEPT as a navigable parent so
         # unsatisfiable classes appear under it (Protégé-style "broken corner").
@@ -2628,14 +2471,6 @@ async def inferred_children(
                     return detail["label"], None
             return None, None
 
-        # Pull Phase-2 consistency unsat info so we can decorate the inferred
-        # tree with the same Protégé-style red highlighting the asserted tree
-        # already has. Defensive — if Phase 2 hasn't run, just skip.
-        try:
-            unsat_map = _load_unsat_scopes(version_id)
-        except Exception:
-            unsat_map = {}
-
         terms = []
         for iri, detail in zip(child_iris, details_list):
             label, lang_tag = _label_and_lang(detail)
@@ -2648,10 +2483,9 @@ async def inferred_children(
                 term["source"] = source
             if lang_tag:
                 term["lang"] = lang_tag
-            scopes = unsat_map.get(iri)
-            if scopes:
+            # ELK-detected unsat classes get the red `is_unsatisfiable` flag.
+            if iri in unsat_iris:
                 term["is_unsatisfiable"] = True
-                term["unsat_scopes"] = scopes
             # The synthetic owl:Nothing node — annotate so the frontend renders
             # it with the same softer-red treatment as in the asserted tree.
             if iri == _OWL_NOTHING:

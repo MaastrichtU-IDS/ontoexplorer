@@ -15,7 +15,6 @@ import HistoryTab from '../components/HistoryTab'
 import CoverageSection from '../components/CoverageSection'
 import OwlProfileSection from '../components/OwlProfileSection'
 import { ReuseSection } from '../components/ReuseSection'
-import { ConsistencySection } from '../components/ConsistencySection'
 import SearchBar from '../components/SearchBar'
 import { useLang } from '../hooks/useLang'
 import { useOntologyLanguages } from '../hooks/useOntologyLanguages'
@@ -768,7 +767,7 @@ export default function OntologyPage() {
 
   const [classMode, setClassMode] = useState<HierarchyMode>('asserted')
   const [mobilePane, setMobilePane] = useState<'tree' | 'detail'>('tree')
-  const [detailTab, setDetailTab] = useState<'info' | 'profile' | 'history' | 'coverage' | 'owl-profile' | 'reuse' | 'consistency'>('info')
+  const [detailTab, setDetailTab] = useState<'info' | 'profile' | 'history' | 'coverage' | 'owl-profile' | 'reuse'>('info')
   const location = useLocation()
   useEffect(() => {
     if (location.hash === '#owl-profile') {
@@ -777,8 +776,6 @@ export default function OntologyPage() {
       setDetailTab('coverage')
     } else if (location.hash === '#reuse') {
       setDetailTab('reuse')
-    } else if (location.hash === '#consistency') {
-      setDetailTab('consistency')
     }
   }, [location.hash])
   const [leftTab, setLeftTab] = useState<'browse' | 'query'>('browse')
@@ -1093,7 +1090,7 @@ export default function OntologyPage() {
             display: 'flex', borderBottom: '1px solid var(--border)',
             background: 'var(--bg-secondary)', flexShrink: 0,
           }}>
-            {(['info', 'profile', 'history', 'coverage', 'owl-profile', 'reuse', 'consistency'] as const).map(tab => (
+            {(['info', 'profile', 'history', 'coverage', 'owl-profile', 'reuse'] as const).map(tab => (
               <button
                 key={tab}
                 onClick={() => setDetailTab(tab)}
@@ -1106,7 +1103,7 @@ export default function OntologyPage() {
                   whiteSpace: 'nowrap',
                 }}
               >
-                {tab === 'owl-profile' ? 'OWL Profile' : tab === 'reuse' ? 'Reuse' : tab === 'consistency' ? 'Consistency' : tab}
+                {tab === 'owl-profile' ? 'OWL Profile' : tab === 'reuse' ? 'Reuse' : tab}
               </button>
             ))}
           </div>
@@ -1144,12 +1141,6 @@ export default function OntologyPage() {
             ) : detailTab === 'reuse' ? (
               oid && activeVid
                 ? <ReuseSection ontologyId={oid} versionId={activeVid} />
-                : <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 12 }}>
-                    No version available.
-                  </div>
-            ) : detailTab === 'consistency' ? (
-              oid && activeVid
-                ? <ConsistencySection ontologyId={oid} versionId={activeVid} />
                 : <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 12 }}>
                     No version available.
                   </div>

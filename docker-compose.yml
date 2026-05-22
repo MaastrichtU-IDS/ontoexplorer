@@ -27,12 +27,7 @@ services:
       FASTEMBED_CACHE_PATH: /root/.cache/fastembed
       OMP_NUM_THREADS: "2"
       ONNXRUNTIME_NUM_THREADS: "2"
-    # Bumped from 3g → 8g so Konclude can complete SROIQ DL precomputation on
-    # large biomedical ontologies (CL ~777K, HP ~900K, UBERON ~1.2M, MP ~1.3M,
-    # GO ~1.4M, MONDO ~3M triples). At 3g, Konclude was being SIGKILLed mid-
-    # precomputation and the resulting truncated stdout was misparsed as
-    # "inconsistent" by the verdict parser (now fixed; see konclude.py).
-    mem_limit: 8g
+    mem_limit: 3g
     depends_on:
       - postgres
       - redis
@@ -109,21 +104,10 @@ services:
     # or the justification greedy walk on the cl-scale module) get killed by
     # the container's cgroup and restart cleanly via docker — rather than
     # invoking Linux OOM-killer at the host level (which on a 15 GB box has
-    # killed elk-service and brought down other services with it). 6g leaves
-    # headroom for api + worker + robot-service.
+    # killed elk-service and brought down other services with it).
     mem_limit: 6g
     depends_on:
       - redis
-
-  robot-service:
-    build: docker/robot-service
-    ports:
-      - "8002:8002"
-    environment:
-      # HermiT heap. Independent of the worker's cgroup so we can size DL
-      # reasoning generously without bloating the worker.
-      JAVA_OPTS: "-Xmx6g"
-    mem_limit: 7g
 
   prometheus:
     image: prom/prometheus

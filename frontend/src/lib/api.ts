@@ -223,11 +223,9 @@ export interface Term {
   has_children?: boolean
   source?: string
   lang?: string | null
-  /** True when Phase-2 consistency analysis flagged this class as unsatisfiable
-   *  in at least one reasoning scope. Frontend renders it in red. */
+  /** True when ELK classified this class as unsatisfiable. Frontend
+   *  renders it in red (Protégé-style "broken corner"). */
   is_unsatisfiable?: boolean
-  /** Which consistency scopes flagged this class as unsatisfiable. */
-  unsat_scopes?: string[]
   /** Only set on the synthetic owl:Nothing root node — the count of unsat classes. */
   unsat_children_count?: number
 }
@@ -756,68 +754,6 @@ export type ReuseFleet = {
   top_reused_sources: { prefix: string; reusers_count: number }[]
 }
 
-// ── Consistency types ─────────────────────────────────────────────────────────
-
-export type JustificationAxiomConsistency = {
-  manchester: ManchesterToken[]
-  source_ontology_iri: string | null
-}
-
-export type UnsatisfiableClass = {
-  iri: string
-  label: string | null
-  justification: JustificationAxiomConsistency[]
-}
-
-export type ConsistencyScopeName =
-  | 'host_only'
-  | 'host_plus_imports'
-  | 'host_plus_imports_plus_mireot'
-
-export type ConsistencyScopeStatus =
-  | 'consistent' | 'inconsistent' | 'partial' | 'timeout' | 'error'
-
-export type ScopeResult = {
-  scope: ConsistencyScopeName
-  status: ConsistencyScopeStatus
-  unsatisfiable_classes: UnsatisfiableClass[]
-  mireot_sources_fetched: string[]
-  mireot_sources_skipped: string[]
-  elapsed_seconds: number
-  error_message: string | null
-}
-
-export type ConsistencyReport = {
-  version_id: string
-  host_iri: string
-  scopes: Partial<Record<ConsistencyScopeName, ScopeResult>>
-  job_status: 'pending' | 'running' | 'done' | 'failed'
-  started_at: string | null
-  finished_at: string | null
-}
-
-export type ConsistencyFleetEntry = {
-  id: string
-  shortname: string
-  title: string
-  version_id: string
-  job_status: string
-  host_only: ConsistencyScopeStatus | null
-  host_plus_imports: ConsistencyScopeStatus | null
-  host_plus_imports_plus_mireot: ConsistencyScopeStatus | null
-  total_unsat?: number
-}
-
-export type ConsistencyFleet = {
-  ontologies: ConsistencyFleetEntry[]
-  totals: {
-    fleet_size: number
-    pending_or_running: number
-    consistent_all_scopes: number
-    inconsistent_any_scope: number
-  }
-}
-
 // ── Coverage types ────────────────────────────────────────────────────────────
 
 export type CoverageEntityType =
@@ -1241,14 +1177,6 @@ export const api = {
 
     reuse: (ontologyId: string, versionId: string) =>
       request<ReuseReport>(`/ontologies/${ontologyId}/${versionId}/reuse`),
-
-    consistency: (ontologyId: string, versionId: string) =>
-      request<ConsistencyReport>(`/ontologies/${ontologyId}/${versionId}/consistency`),
-    refreshConsistency: (ontologyId: string, versionId: string) =>
-      request<{ status: string; version_id: string }>(
-        `/ontologies/${ontologyId}/${versionId}/consistency/refresh`,
-        { method: 'POST' },
-      ),
   },
 
   globalSearch: {
@@ -1354,10 +1282,6 @@ export const api = {
 
   reuse: {
     fleet: () => request<ReuseFleet>('/reuse/fleet'),
-  },
-
-  consistency: {
-    fleet: () => request<ConsistencyFleet>('/consistency/fleet'),
   },
 
   stats: {
