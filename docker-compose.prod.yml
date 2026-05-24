@@ -13,6 +13,18 @@
 # IMAGE_TAG defaults to `latest` if unset — pin to an exact release in prod.
 
 services:
+  migrate:
+    image: ghcr.io/maastrichtu-ids/ontoexplorer-api:${IMAGE_TAG:-latest}
+    build: !reset null
+    command: /app/.venv/bin/alembic upgrade head
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ontoexplorer:ontoexplorer@postgres:5432/ontoexplorer
+    depends_on:
+      - postgres
+    pull_policy: always
+    restart: "no"
+
   api:
     image: ghcr.io/maastrichtu-ids/ontoexplorer-api:${IMAGE_TAG:-latest}
     build: !reset null
@@ -22,6 +34,22 @@ services:
     volumes: !override
       - oxigraph-data:/data/oxigraph
       - fastembed-cache:/root/.cache/fastembed
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ontoexplorer:ontoexplorer@postgres:5432/ontoexplorer
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+      fuseki:
+        condition: service_started
     pull_policy: always
     restart: unless-stopped
 
@@ -31,6 +59,20 @@ services:
     volumes: !override
       - oxigraph-data:/data/oxigraph
       - fastembed-cache:/root/.cache/fastembed
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ontoexplorer:ontoexplorer@postgres:5432/ontoexplorer
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
     pull_policy: always
     restart: unless-stopped
 
@@ -39,11 +81,40 @@ services:
     build: !reset null
     volumes: !override
       - oxigraph-data:/data/oxigraph
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ontoexplorer:ontoexplorer@postgres:5432/ontoexplorer
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
     pull_policy: always
     restart: unless-stopped
 
   elk-service:
     image: ghcr.io/maastrichtu-ids/ontoexplorer-elk-service:${IMAGE_TAG:-latest}
     build: !reset null
+    pull_policy: always
+    restart: unless-stopped
+
+  minio:
+    environment:
+      MINIO_SERVER_URL: "https://minio.ontoexplorer.137.120.31.148.nip.io"
+
+  frontend:
+    image: ghcr.io/maastrichtu-ids/ontoexplorer-frontend:${IMAGE_TAG:-latest}
+    build: !reset null
+    ports: !override []
+    environment:
+      VIRTUAL_HOST: ontoexplorer.137.120.31.148.nip.io
+      LETSENCRYPT_HOST: ontoexplorer.137.120.31.148.nip.io
+      VIRTUAL_PORT: "80"
+    depends_on:
+      - api
     pull_policy: always
     restart: unless-stopped

@@ -102,7 +102,7 @@ async def search(
                 "candidates": exc.candidates,
             },
         )
-    except (ReasoningNotReadyError, httpx.TimeoutException):
+    except (ReasoningNotReadyError, httpx.TimeoutException, httpx.ConnectError):
         return JSONResponse(
             status_code=503,
             content={"error": "not_classified"},

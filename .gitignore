@@ -63,6 +63,9 @@ Thumbs.db
 .env.*.local
 !.env.example
 
+# Local Docker overrides (machine-specific, not for version control)
+docker-compose.override.yml
+
 # Alembic
 alembic/versions/*.pyc
 
