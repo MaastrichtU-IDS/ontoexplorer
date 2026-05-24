@@ -8,6 +8,7 @@
 #   - docker + docker compose v2
 #   - a populated .env (copy from .env.example, set ENVIRONMENT=production,
 #     a real JWT_SECRET_KEY, real OAuth client IDs, etc.)
+#   - FRONTEND_HOST, MINIO_HOST set to the public hostnames for this deployment
 #   - no source tree, no Python toolchain, no Node.
 #
 # IMAGE_TAG defaults to `latest` if unset — pin to an exact release in prod.
@@ -21,7 +22,8 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://ontoexplorer:ontoexplorer@postgres:5432/ontoexplorer
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     pull_policy: always
     restart: "no"
 
@@ -39,16 +41,20 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+      MINIO_PUBLIC_ENDPOINT: "${MINIO_HOST}"
+      MINIO_PUBLIC_SECURE: "true"
     depends_on:
       migrate:
         condition: service_completed_successfully
       postgres:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_started
       minio:
         condition: service_started
       fuseki:
+        condition: service_started
+      elk-service:
         condition: service_started
     pull_policy: always
     restart: unless-stopped
@@ -64,11 +70,13 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+      MINIO_PUBLIC_ENDPOINT: "${MINIO_HOST}"
+      MINIO_PUBLIC_SECURE: "true"
     depends_on:
       migrate:
         condition: service_completed_successfully
       postgres:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_started
       minio:
@@ -90,7 +98,7 @@ services:
       migrate:
         condition: service_completed_successfully
       postgres:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_started
     pull_policy: always
@@ -104,15 +112,15 @@ services:
 
   minio:
     environment:
-      MINIO_SERVER_URL: "https://minio.ontoexplorer.137.120.31.148.nip.io"
+      MINIO_SERVER_URL: "https://${MINIO_HOST}"
 
   frontend:
     image: ghcr.io/maastrichtu-ids/ontoexplorer-frontend:${IMAGE_TAG:-latest}
     build: !reset null
     ports: !override []
     environment:
-      VIRTUAL_HOST: ontoexplorer.137.120.31.148.nip.io
-      LETSENCRYPT_HOST: ontoexplorer.137.120.31.148.nip.io
+      VIRTUAL_HOST: "${FRONTEND_HOST}"
+      LETSENCRYPT_HOST: "${FRONTEND_HOST}"
       VIRTUAL_PORT: "80"
     depends_on:
       - api
