@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     minio_secure: bool = False
     minio_ontologies_bucket: str = "ontologies"
     minio_imports_bucket: str = "imports"
+    # Public-facing endpoint used only for presigned URL generation.
+    # Defaults to minio_endpoint so local dev works without extra config.
+    # In prod set to the externally reachable hostname (e.g. minio.example.com).
+    minio_public_endpoint: str = ""
+    minio_public_secure: bool = False
 
     # SPARQL metadata store (Jena Fuseki)
     fuseki_endpoint: str = "http://localhost:7001"

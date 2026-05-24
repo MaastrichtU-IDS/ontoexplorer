@@ -39,6 +39,10 @@ jobs:
           - image: ontoexplorer-elk-service
             context: docker/elk-service
             dockerfile: docker/elk-service/Dockerfile
+          # Context is repo root so docker/frontend/nginx.conf is reachable.
+          - image: ontoexplorer-frontend
+            context: .
+            dockerfile: docker/frontend/Dockerfile
     steps:
       - uses: actions/checkout@v6
 

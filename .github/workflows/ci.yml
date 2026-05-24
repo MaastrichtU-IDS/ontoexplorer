@@ -70,9 +70,19 @@ jobs:
         run: npm run test:run
 
   docker-build:
-    name: Docker build (api image)
+    name: Docker build (${{ matrix.image }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ontoexplorer-api
+            context: .
+            dockerfile: Dockerfile
+          - image: ontoexplorer-frontend
+            context: .
+            dockerfile: docker/frontend/Dockerfile
     steps:
       - uses: actions/checkout@v6
 
@@ -81,12 +91,13 @@ jobs:
 
       # No push — this job only proves the Dockerfile still resolves.
       # Layer cache speeds up reruns on the same branch.
-      - name: Build api image
+      - name: Build ${{ matrix.image }} image
         uses: docker/build-push-action@v7
         with:
-          context: .
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
           push: false
           load: false
-          tags: ontoexplorer-api:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ matrix.image }}:ci
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
