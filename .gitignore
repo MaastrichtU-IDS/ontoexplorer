@@ -59,8 +59,7 @@ Thumbs.db
 
 # Environment
 .env
-.env.local
-.env.*.local
+.env.*
 !.env.example
 
 # Local Docker overrides (machine-specific, not for version control)
