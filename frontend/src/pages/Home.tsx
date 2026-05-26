@@ -381,20 +381,22 @@ function MOSQuery({ typeFilters, onTypeFiltersChange }: {
   }
 
   // Deduplicate by IRI — same class can appear in multiple ontologies.
-  // MOS evaluator doesn't tag results with `type`; treat untyped as 'class'
-  // since MOS expressions resolve to classes (a `not` / `some` / `only` expression
-  // can't yield a property or individual).
+  // The backend now tags MOS expression results with type:'class' explicitly
+  // (MOS class expressions can only yield classes), so this filter is a plain
+  // membership check.
   const dedupedResults: SearchResult[] = []
   const _seenIris = new Set<string>()
   for (const r of allResults) {
     if (_seenIris.has(r.iri)) continue
     _seenIris.add(r.iri)
-    if (typeFilters.length > 0) {
-      const effectiveType = r.type || 'class'
-      if (!typeFilters.includes(effectiveType as EntityTypeFilter)) continue
-    }
+    if (typeFilters.length > 0 && r.type && !typeFilters.includes(r.type as EntityTypeFilter)) continue
     dedupedResults.push(r)
   }
+
+  // When the user has narrowed to non-class types in MOS mode, the evaluator
+  // can't satisfy them — surface that explicitly rather than rendering a bare
+  // "No results" string that looks like a query problem.
+  const mosTypesMismatch = typeFilters.length > 0 && !typeFilters.includes('class')
 
   const isSearching = mosQuery.length >= 2 && searchResults.some(r => r.isFetching)
 
@@ -473,7 +475,9 @@ function MOSQuery({ typeFilters, onTypeFiltersChange }: {
       )}
       {mosQuery && !errorMsg && !isSearching && dedupedResults.length === 0 && (
         <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', textAlign: 'center', marginTop: '2rem' }}>
-          No results for "{mosQuery}"
+          {mosTypesMismatch
+            ? 'Structured queries return classes only — switch to Keyword Search to find properties or individuals.'
+            : `No results for "${mosQuery}"`}
         </p>
       )}
       <ResultList results={dedupedResults} pathFor={pathFor} ontologyNameFor={ontologyNameFor} />

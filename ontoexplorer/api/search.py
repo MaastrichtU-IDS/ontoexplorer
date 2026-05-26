@@ -116,12 +116,17 @@ async def search(
     trimmed = search_results[:limit]
     from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
     _r = _get_redis()
+    # MOS class expressions always evaluate to classes (the evaluator only
+    # produces named classes from `and`/`or`/`some`/`only`/etc). Tag them so
+    # the UI can render a CLASS badge and the chip filter on the homepage
+    # compares like-for-like instead of falling back to an implicit default.
     return {
         "mode": "expression",
         "query": q,
         "results": [
             {
                 "iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type,
+                "type": "class",
                 "source": (_r.hget(_iri_key(version_id, r.iri), "source") or ""),
                 "lang": r.lang,
                 "cross_language": r.cross_language,

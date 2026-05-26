@@ -221,8 +221,11 @@ async def global_search(
     async def search_one_expression(v: OntologyVersion) -> list[dict]:
         try:
             results = await evaluate(ast, str(v.id), str(v.ontology_id), lang=effective_lang)
+            # MOS class expressions always yield classes — tag explicitly so the
+            # UI badge renders and the chip filter compares like-for-like.
             return [
                 {"iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type,
+                 "type": "class",
                  "version_id": str(v.id), "ontology_id": str(v.ontology_id),
                  "lang": r.lang, "cross_language": r.cross_language}
                 for r in results
@@ -323,6 +326,7 @@ async def ontology_search(
         "mode": "expression", "query": q, "version_id": version_id,
         "results": [
             {"iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type,
+             "type": "class",
              "lang": r.lang, "cross_language": r.cross_language}
             for r in trimmed
         ],
