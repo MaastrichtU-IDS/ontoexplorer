@@ -60,7 +60,7 @@ function TypeChips({ selected, onChange }: {
     cursor: 'pointer', fontWeight: active ? 600 : 400,
   })
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: '0.75rem' }}>
       <button type="button" onClick={() => onChange([])} style={chipStyle(isAll)}>All</button>
       {TYPE_FILTERS.map(f => (
         <button key={f.value} type="button" onClick={() => toggle(f.value)} style={chipStyle(selected.includes(f.value))}>
@@ -190,6 +190,8 @@ function KeywordSearch({ typeFilters, onTypeFiltersChange }: {
 
   return (
     <>
+      <TypeChips selected={typeFilters} onChange={onTypeFiltersChange} />
+
       <div style={{ display: 'flex', gap: 8, marginBottom: '0.75rem' }}>
         <input
           value={query}
@@ -218,8 +220,6 @@ function KeywordSearch({ typeFilters, onTypeFiltersChange }: {
           </button>
         )}
       </div>
-
-      <TypeChips selected={typeFilters} onChange={onTypeFiltersChange} />
 
       {!activeQuery && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -423,6 +423,8 @@ function MOSQuery({ typeFilters, onTypeFiltersChange }: {
 
   return (
     <>
+      <TypeChips selected={typeFilters} onChange={onTypeFiltersChange} />
+
       <div style={{ marginBottom: 8 }}>
         <OntologyPicker
           value={selectedOids}
@@ -438,10 +440,6 @@ function MOSQuery({ typeFilters, onTypeFiltersChange }: {
         placeholder="MOS expression, e.g. cell, 'cell death', GO:0008150"
         scopeOntologyIds={selectedOids}
       />
-
-      <div style={{ marginTop: 8 }}>
-        <TypeChips selected={typeFilters} onChange={onTypeFiltersChange} />
-      </div>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6, marginBottom: 8 }}>
         <p style={{ color: 'var(--text-dim)', fontSize: 11, margin: 0 }}>
