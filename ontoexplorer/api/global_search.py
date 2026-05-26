@@ -29,8 +29,12 @@ _SEARCH_CACHE_TTL = 60  # seconds
 _AUTOCOMPLETE_CACHE_TTL = 60  # seconds
 
 
-def _search_cache_key(q: str, limit: int, lang: str | None, semantic: bool, backend: str = "redis") -> str:
-    payload = f"{q}\x1f{limit}\x1f{lang or ''}\x1f{int(semantic)}\x1f{backend}"
+def _search_cache_key(
+    q: str, limit: int, lang: str | None, semantic: bool, backend: str = "redis",
+    types: list[str] | None = None,
+) -> str:
+    types_part = ",".join(sorted(types)) if types else ""
+    payload = f"{q}\x1f{limit}\x1f{lang or ''}\x1f{int(semantic)}\x1f{backend}\x1f{types_part}"
     h = hashlib.blake2b(payload.encode(), digest_size=16).hexdigest()
     return f"search:result:{h}"
 
@@ -87,14 +91,21 @@ async def global_search(
     lang: str | None = Query(None, description="BCP-47 language tag for preferred results"),
     semantic: bool = Query(False, description="Include vector semantic results"),
     backend: str = Query("pg", description="Search backend: pg (default, Postgres entity_index) | redis (legacy)"),
+    types: list[str] = Query(
+        default=[],
+        description="Filter by entity_index type: class | object_property | data_property | annotation_property | individual. Empty = all.",
+    ),
     _user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     effective_lang = lang or (getattr(_user, 'preferred_lang', None) if isinstance(_user, User) else None)
+    # Drop unknown values so we never silently pass-through and return nothing.
+    _ALLOWED_TYPES = {"class", "object_property", "data_property", "annotation_property", "individual"}
+    types = [t for t in types if t in _ALLOWED_TYPES]
 
     # Short-TTL response cache for entity-mode queries (the hot path from the homepage).
     # MOS-expression queries are not cached — they depend on reasoning state.
-    cache_key = _search_cache_key(q, limit, effective_lang, semantic, backend)
+    cache_key = _search_cache_key(q, limit, effective_lang, semantic, backend, types=types)
     from ontoexplorer.modules.search.indexer import _get_redis
     _r = _get_redis()
     cached = await asyncio.to_thread(_r.get, cache_key)
@@ -130,7 +141,9 @@ async def global_search(
         if backend == "pg":
             # Postgres-backed path: one SQL query over entity_index, no fan-out.
             from ontoexplorer.modules.search.pg_search import pg_entity_search, rrf_merge
-            kw_results = await pg_entity_search(db, q, limit * 2 if semantic else limit)
+            kw_results = await pg_entity_search(
+                db, q, limit * 2 if semantic else limit, types=types or None
+            )
 
             if semantic and len(q) >= 3:
                 version_id_strs = [str(v.id) for v in versions]
@@ -178,6 +191,8 @@ async def global_search(
                 return (2, lbl)
 
             merged.sort(key=_global_rank)
+            if types:
+                merged = [r for r in merged if r.get("type") in types]
             merged = merged[:limit]
 
         sem_results: list[dict] = []

@@ -1180,9 +1180,10 @@ export const api = {
   },
 
   globalSearch: {
-    search: (q: string, limit = 20, semantic = false) => {
+    search: (q: string, limit = 20, semantic = false, types: string[] = []) => {
       const params = new URLSearchParams({ q, limit: String(limit) })
       if (semantic) params.set('semantic', 'true')
+      types.forEach(t => params.append('types', t))
       return fetch(`/api/v1/search?${params}`)
         .then(r => r.json()) as Promise<{
           results: SearchResult[]

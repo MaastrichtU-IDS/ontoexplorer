@@ -13,6 +13,64 @@ const EXAMPLES = ['cell death', 'apoptosis', 'protein binding', 'nucleus', 'memb
 
 type Mode = 'search' | 'query'
 
+type EntityTypeFilter = 'class' | 'object_property' | 'data_property' | 'individual'
+
+const TYPE_FILTERS: { value: EntityTypeFilter; label: string }[] = [
+  { value: 'class', label: 'Class' },
+  { value: 'object_property', label: 'Object Property' },
+  { value: 'data_property', label: 'Data Property' },
+  { value: 'individual', label: 'Individual' },
+]
+
+const TYPE_BADGE: Record<string, string> = {
+  class: 'CLASS',
+  object_property: 'OP',
+  data_property: 'DP',
+  annotation_property: 'AP',
+  individual: 'IND',
+}
+
+function TypeBadge({ type }: { type?: string }) {
+  if (!type) return null
+  const label = TYPE_BADGE[type]
+  if (!label) return null
+  return (
+    <span style={{
+      fontSize: 9, padding: '1px 5px', borderRadius: 3,
+      background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+      color: 'var(--text-dim)', flexShrink: 0, fontWeight: 600, letterSpacing: 0.3,
+    }}>{label}</span>
+  )
+}
+
+function TypeChips({ selected, onChange }: {
+  selected: EntityTypeFilter[]
+  onChange: (next: EntityTypeFilter[]) => void
+}) {
+  const isAll = selected.length === 0
+  function toggle(v: EntityTypeFilter) {
+    if (selected.includes(v)) onChange(selected.filter(s => s !== v))
+    else onChange([...selected, v])
+  }
+  const chipStyle = (active: boolean): React.CSSProperties => ({
+    fontSize: 12, padding: '3px 10px', borderRadius: 12,
+    background: active ? 'var(--accent)' : 'var(--bg-secondary)',
+    border: '1px solid ' + (active ? 'var(--accent)' : 'var(--border)'),
+    color: active ? '#000' : 'var(--text-muted)',
+    cursor: 'pointer', fontWeight: active ? 600 : 400,
+  })
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+      <button type="button" onClick={() => onChange([])} style={chipStyle(isAll)}>All</button>
+      {TYPE_FILTERS.map(f => (
+        <button key={f.value} type="button" onClick={() => toggle(f.value)} style={chipStyle(selected.includes(f.value))}>
+          {f.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function StatCard({ label, value, subtitle, to }: { label: string; value: number | string; subtitle?: string; to?: string }) {
   const inner = (
     <>
@@ -57,18 +115,11 @@ function ResultList({ results, pathFor, ontologyNameFor }: {
     <ul style={{ listStyle: 'none', marginTop: '0.5rem' }}>
       {results.map(r => {
         const path = pathFor(r)
-        const isInd = r.type === 'individual'
         const ontName = ontologyNameFor?.(r) ?? null
         const inner = (
           <>
             <span style={{ color: 'var(--accent)', fontWeight: 500, flexShrink: 0 }}>{r.label}</span>
-            {isInd && (
-              <span style={{
-                fontSize: 9, padding: '1px 5px', borderRadius: 3,
-                background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-                color: 'var(--accent-blue, #61afef)', flexShrink: 0, fontWeight: 600,
-              }}>ind</span>
-            )}
+            <TypeBadge type={r.type} />
             {r.source && <SourceBadge source={r.source} />}
             <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{r.short}</span>
             {ontName && (
@@ -109,14 +160,17 @@ function ResultList({ results, pathFor, ontologyNameFor }: {
 
 // ── Search tab ────────────────────────────────────────────────────────────────
 
-function KeywordSearch() {
+function KeywordSearch({ typeFilters, onTypeFiltersChange }: {
+  typeFilters: EntityTypeFilter[]
+  onTypeFiltersChange: (next: EntityTypeFilter[]) => void
+}) {
   const [query, setQuery] = useState('')
   // Live search: fire after the user pauses for 200 ms. Reuses the existing
   // 60s Redis response cache so refinements feel instant.
   const debouncedQuery = useDebounced(query.trim(), 200)
   const activeQuery = debouncedQuery.length >= 2 ? debouncedQuery : ''
   const { ontologies } = useOntologies()
-  const { data, isFetching } = useGlobalSearch(activeQuery, activeQuery.length >= 2)
+  const { data, isFetching } = useGlobalSearch(activeQuery, activeQuery.length >= 2, typeFilters)
   const results = data?.results ?? []
   const semanticResults = data?.semantic_results ?? []
 
@@ -164,6 +218,8 @@ function KeywordSearch() {
           </button>
         )}
       </div>
+
+      <TypeChips selected={typeFilters} onChange={onTypeFiltersChange} />
 
       {!activeQuery && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -214,6 +270,7 @@ function KeywordSearch() {
                     color: alreadyInResults ? 'var(--text-dim)' : 'var(--accent)',
                     fontWeight: 500, flexShrink: 0,
                   }}>{r.label}</span>
+                  <TypeBadge type={r.type} />
                   {r.source && <SourceBadge source={r.source} />}
                   <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{r.short}</span>
                   {semOntName && (
@@ -269,7 +326,10 @@ function useMOSFanout(pairs: { oid: string; vid: string }[], query: string, dire
   })
 }
 
-function MOSQuery() {
+function MOSQuery({ typeFilters, onTypeFiltersChange }: {
+  typeFilters: EntityTypeFilter[]
+  onTypeFiltersChange: (next: EntityTypeFilter[]) => void
+}) {
   const { ontologies } = useOntologies()
   const [selectedOids, setSelectedOids] = useState<string[]>([])
   const [mosQuery, setMosQuery] = useState('')
@@ -320,14 +380,20 @@ function MOSQuery() {
     })
   }
 
-  // Deduplicate by IRI — same class can appear in multiple ontologies
+  // Deduplicate by IRI — same class can appear in multiple ontologies.
+  // MOS evaluator doesn't tag results with `type`; treat untyped as 'class'
+  // since MOS expressions resolve to classes (a `not` / `some` / `only` expression
+  // can't yield a property or individual).
   const dedupedResults: SearchResult[] = []
   const _seenIris = new Set<string>()
   for (const r of allResults) {
-    if (!_seenIris.has(r.iri)) {
-      _seenIris.add(r.iri)
-      dedupedResults.push(r)
+    if (_seenIris.has(r.iri)) continue
+    _seenIris.add(r.iri)
+    if (typeFilters.length > 0) {
+      const effectiveType = r.type || 'class'
+      if (!typeFilters.includes(effectiveType as EntityTypeFilter)) continue
     }
+    dedupedResults.push(r)
   }
 
   const isSearching = mosQuery.length >= 2 && searchResults.some(r => r.isFetching)
@@ -373,6 +439,10 @@ function MOSQuery() {
         scopeOntologyIds={selectedOids}
       />
 
+      <div style={{ marginTop: 8 }}>
+        <TypeChips selected={typeFilters} onChange={onTypeFiltersChange} />
+      </div>
+
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6, marginBottom: 8 }}>
         <p style={{ color: 'var(--text-dim)', fontSize: 11, margin: 0 }}>
           Use <code>and</code>, <code>or</code>, <code>not</code>, <code>some</code>, <code>only</code> · quote multi-word names: <code>'cell death'</code> ·{' '}
@@ -417,6 +487,7 @@ function MOSQuery() {
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>('search')
+  const [typeFilters, setTypeFilters] = useState<EntityTypeFilter[]>([])
 
   const { data: publicStats } = useQuery({
     queryKey: ['public-stats'],
@@ -486,8 +557,8 @@ export default function Home() {
       </div>
 
       {mode === 'search'
-        ? <KeywordSearch />
-        : <MOSQuery />
+        ? <KeywordSearch typeFilters={typeFilters} onTypeFiltersChange={setTypeFilters} />
+        : <MOSQuery typeFilters={typeFilters} onTypeFiltersChange={setTypeFilters} />
       }
     </div>
   )

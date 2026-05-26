@@ -43,10 +43,11 @@ export function useGlobalAutocomplete(
   })
 }
 
-export function useGlobalSearch(query: string, semantic = false) {
+export function useGlobalSearch(query: string, semantic = false, types: string[] = []) {
+  const typesKey = [...types].sort().join(',')
   return useQuery({
-    queryKey: ['global-search', query, semantic],
-    queryFn: () => api.globalSearch.search(query, 20, semantic),
+    queryKey: ['global-search', query, semantic, typesKey],
+    queryFn: () => api.globalSearch.search(query, 20, semantic, types),
     enabled: query.length >= 2,
     staleTime: 10_000,
   })

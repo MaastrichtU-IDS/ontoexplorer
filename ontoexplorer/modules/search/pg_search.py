@@ -40,11 +40,15 @@ async def pg_entity_search(
     db: AsyncSession,
     q: str,
     limit: int,
+    types: list[str] | None = None,
 ) -> list[dict]:
     """Cross-ontology entity search via Postgres `entity_index`.
 
     Deduplicates by IRI (first-seen-wins across ontologies). Result list is already
     globally tier-ranked: exact label match first, then prefix, then word-suffix.
+
+    `types`, if given, restricts to those entity_index.type values
+    (e.g. ['class', 'object_property']). None or empty = no type filter.
     """
     from ontoexplorer.modules.search.pg_indexer import split_compound_labels
     # Decamelize the query so `PizzaSauce` and `pizza sauce` normalize alike.
@@ -52,13 +56,15 @@ async def pg_entity_search(
     if not norm:
         return []
 
+    type_filter_sql = "AND ei.type = ANY(:types)" if types else ""
+
     # Stage 1: prefix-on-primary-label. Uses the text_pattern_ops btree.
     # Filter to ready non-deprecated versions via the JOIN.
     # Within tier-1 (prefix match), sort by label LENGTH then alphabetically so
     # the label closest in length to the query wins. Without this, an unrelated
     # short label that happens to be lex-earlier sorts above the obvious target:
     # e.g. `membran` → "membrana tympaniformis" outranking "membrane".
-    prefix_sql = text("""
+    prefix_sql = text(f"""
         SELECT ei.iri, ei.primary_label, ei.short, ei.type,
                ei.version_id, ei.ontology_id, ei.source,
                ei.primary_label_norm,
@@ -67,11 +73,15 @@ async def pg_entity_search(
         JOIN versions v ON v.id = ei.version_id
         WHERE v.status NOT IN ('pending','failed','deprecated')
           AND ei.primary_label_norm LIKE :prefix
+          {type_filter_sql}
         ORDER BY tier, LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
         LIMIT :over
     """)
     over = limit * _OVERSAMPLE
-    result = await db.execute(prefix_sql, {"norm": norm, "prefix": norm + "%", "over": over})
+    params: dict = {"norm": norm, "prefix": norm + "%", "over": over}
+    if types:
+        params["types"] = list(types)
+    result = await db.execute(prefix_sql, params)
     prefix_rows = result.all()
 
     seen_iris: set[str] = set()
@@ -88,7 +98,7 @@ async def pg_entity_search(
     # Multi-word queries are AND'd; the last token is prefix-matched (user may
     # still be typing it).
     if len(merged) < limit:
-        tsv_sql = text("""
+        tsv_sql = text(f"""
             SELECT ei.iri, ei.primary_label, ei.short, ei.type,
                    ei.version_id, ei.ontology_id, ei.source,
                    ei.primary_label_norm
@@ -97,13 +107,14 @@ async def pg_entity_search(
             WHERE v.status NOT IN ('pending','failed','deprecated')
               AND ei.search_tsv @@ to_tsquery('simple', :tsq)
               AND ei.primary_label_norm NOT LIKE :prefix
+              {type_filter_sql}
             ORDER BY LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
             LIMIT :over
         """)
-        result = await db.execute(
-            tsv_sql,
-            {"tsq": _build_tsquery(norm), "prefix": norm + "%", "over": over},
-        )
+        params2: dict = {"tsq": _build_tsquery(norm), "prefix": norm + "%", "over": over}
+        if types:
+            params2["types"] = list(types)
+        result = await db.execute(tsv_sql, params2)
         for row in result.all():
             if row.iri in seen_iris:
                 continue
