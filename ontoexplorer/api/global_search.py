@@ -148,6 +148,11 @@ async def global_search(
             if semantic and len(q) >= 3:
                 version_id_strs = [str(v.id) for v in versions]
                 sem_results = await semantic_search(q, db, version_id_strs, limit=limit * 2)
+                # semantic_search doesn't know about entity_index types, so apply
+                # the type filter post-hoc — otherwise unfiltered semantic hits
+                # leak past the user's chip selection during RRF fusion.
+                if types:
+                    sem_results = [r for r in sem_results if r.get("type") in types]
                 # Hybrid mode: RRF-fuse keyword + semantic, return a single ranked list.
                 merged = rrf_merge(kw_results, sem_results, limit)
                 payload = {
@@ -199,6 +204,8 @@ async def global_search(
         if semantic and len(q) >= 3:
             version_id_strs = [str(v.id) for v in versions]
             sem_results = await semantic_search(q, db, version_id_strs, limit=10)
+            if types:
+                sem_results = [r for r in sem_results if r.get("type") in types]
 
         payload = {
             "mode": "entity", "query": q, "results": merged,
