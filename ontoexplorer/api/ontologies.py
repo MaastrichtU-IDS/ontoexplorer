@@ -2424,7 +2424,15 @@ async def inferred_children(
                 parents.append(_OWL_NOTHING)
             return parents
 
+        # Include classes that appear only as parents (values) — ELK omits
+        # owl:Thing as a superclass, so single-root ontologies like SULO have
+        # their root only in the values, never as a key.
         all_classes = set(elk_direct.keys()) | set(elk_all.keys()) | unsat_iris
+        for parents in elk_direct.values():
+            all_classes.update(parents)
+        for parents in elk_all.values():
+            all_classes.update(parents)
+        all_classes -= {_OWL_THING}
         if hide_obsolete:
             all_classes -= deprecated_iris
 
