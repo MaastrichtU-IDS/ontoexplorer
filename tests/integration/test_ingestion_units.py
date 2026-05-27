@@ -37,6 +37,17 @@ def test_parse_turtle():
     assert len(graph) >= 3
 
 
+def test_parse_ontology_rejects_manchester():
+    """Manchester Syntax has no parser in the stack; reject with a clear, actionable error."""
+    import pytest
+
+    from ontoexplorer.modules.ingestion.format_detect import OntologyFormat
+    from ontoexplorer.modules.ingestion.parser import parse_ontology
+
+    with pytest.raises(ValueError, match="not supported"):
+        parse_ontology(b"Class: Pizza", OntologyFormat.MANCHESTER)
+
+
 def test_compute_sha256_stable():
     """Same graph content always produces the same SHA-256."""
     from ontoexplorer.modules.ingestion.format_detect import OntologyFormat
@@ -97,11 +108,8 @@ def test_dcat_build():
         version_id="ver-id",
         ontology_iri="http://example.org/test",
         version_iri=None,
-        format_str="turtle",
-        sha256="abc123",
-        triple_count=stats.triple_count,
-        download_url="http://localhost/download",
-        source_url=None,
+        minio_download_url="http://localhost/download",
+        format_ext="ttl",
         void_stats=stats,
     )
     assert isinstance(dcat, rdflib.Graph)
@@ -115,13 +123,12 @@ def test_prov_build():
     from ontoexplorer.modules.metadata.prov import build_ingestion_activity
 
     prov = build_ingestion_activity(
-        ontology_id="test-id",
         version_id="ver-id",
         ontology_iri="http://example.org/test",
         source_url="http://example.org/test.ttl",
+        mode="url",
         sha256="abc123",
         triple_count=3,
-        format_str="turtle",
     )
     assert isinstance(prov, rdflib.Graph)
     assert len(prov) > 0
