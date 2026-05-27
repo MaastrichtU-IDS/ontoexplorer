@@ -13,7 +13,11 @@ from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Ontology, User
 from ontoexplorer.modules.auth.dependencies import get_current_user
 from ontoexplorer.modules.search.autocomplete import get_completions
-from ontoexplorer.modules.search.evaluator import AmbiguousLabelError, evaluate
+from ontoexplorer.modules.search.evaluator import (
+    AmbiguousLabelError,
+    RelationRequiresNamedClassError,
+    evaluate_relation,
+)
 from ontoexplorer.modules.search.indexer import entity_lookup
 from ontoexplorer.modules.search.lang import resolve_lang
 from ontoexplorer.modules.search.mos_parser import ParseError, parse, NamedClass
@@ -41,6 +45,11 @@ async def search(
     limit: int = Query(20, ge=1, le=200),
     lang: str | None = Query(None, description="BCP-47 language tag for preferred results"),
     semantic: bool = Query(False, description="Include vector semantic results"),
+    direct: bool = Query(False, description="Direct relationship only (no transitive expansion)"),
+    relation: str = Query(
+        "subclasses",
+        description="Expression-mode relationship: subclasses | superclasses | equivalent",
+    ),
     _user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -92,7 +101,15 @@ async def search(
 
     # Expression mode
     try:
-        search_results = await evaluate(ast, version_id, ontology_id, lang=effective_lang)
+        search_results = await evaluate_relation(
+            ast, version_id, ontology_id,
+            relation=relation, lang=effective_lang, direct=direct,
+        )
+    except RelationRequiresNamedClassError:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "relation_requires_named_class", "relation": relation},
+        )
     except AmbiguousLabelError as exc:
         return JSONResponse(
             status_code=422,

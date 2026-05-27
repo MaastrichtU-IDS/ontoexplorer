@@ -448,3 +448,111 @@ async def test_evaluate_and_named_class_with_restriction():
     iris = {r.iri for r in results}
     # Cell subclasses ∩ has-part-some-nucleus asserters = {EUKARYOTE}
     assert iris == {EUKARYOTE}
+
+
+# ── evaluate_relation: superclasses / equivalent ───────────────────────────────
+
+def _make_classification_super(direct_superclasses: dict) -> dict:
+    """Classification with a direct_superclasses edge set (the trustworthy index)."""
+    return {
+        "version_id": "v1",
+        "classified_at": "2026-01-01T00:00:00+00:00",
+        "class_count": 0,
+        "superclasses": {},        # deliberately empty — must not be relied upon
+        "subclasses": {},
+        "direct_superclasses": direct_superclasses,
+        "direct_subclasses": {},
+        "unsatisfiable": [],
+        "proof_traces": {},
+        "duration_ms": 1.0,
+    }
+
+
+@pytest.mark.anyio
+async def test_evaluate_relation_superclasses_walks_ancestors():
+    from ontoexplorer.modules.search.evaluator import evaluate_relation
+    # Eukaryote ⊑ Cell ⊑ Thing  → ancestors(Eukaryote) = {Cell}
+    r = _make_redis_with_entity("v1", "Eukaryote", EUKARYOTE)
+    classification = _make_classification_super({
+        EUKARYOTE: [CELL],
+        CELL: ["http://www.w3.org/2002/07/owl#Thing"],
+    })
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)):
+        results = await evaluate_relation(
+            NamedClass("Eukaryote", None), "v1", "ont1", relation="superclasses",
+        )
+    iris = {x.iri for x in results}
+    assert iris == {CELL}  # owl:Thing and self excluded
+
+
+@pytest.mark.anyio
+async def test_evaluate_relation_superclasses_direct_is_one_hop():
+    from ontoexplorer.modules.search.evaluator import evaluate_relation
+    # Grandchild ⊑ Eukaryote ⊑ Cell ; direct parents of Grandchild = {Eukaryote}
+    GRAND = "http://ex.org/Grandchild"
+    r = _make_redis_with_entity("v1", "Grandchild", GRAND)
+    classification = _make_classification_super({
+        GRAND: [EUKARYOTE],
+        EUKARYOTE: [CELL],
+    })
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)):
+        direct = await evaluate_relation(
+            NamedClass("Grandchild", None), "v1", "ont1", relation="superclasses", direct=True,
+        )
+        allsup = await evaluate_relation(
+            NamedClass("Grandchild", None), "v1", "ont1", relation="superclasses", direct=False,
+        )
+    assert {x.iri for x in direct} == {EUKARYOTE}
+    assert {x.iri for x in allsup} == {EUKARYOTE, CELL}
+
+
+@pytest.mark.anyio
+async def test_evaluate_relation_equivalent_detects_cycle():
+    from ontoexplorer.modules.search.evaluator import evaluate_relation
+    # A ≡ B represented as mutual direct-superclass edges.
+    A = "http://ex.org/A"
+    B = "http://ex.org/B"
+    r = _make_redis_multi("v1", [("A", A, "class"), ("B", B, "class")])
+    classification = _make_classification_super({A: [B], B: [A]})
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)):
+        results = await evaluate_relation(
+            NamedClass("A", None), "v1", "ont1", relation="equivalent",
+        )
+    assert {x.iri for x in results} == {B}
+
+
+@pytest.mark.anyio
+async def test_evaluate_relation_superclasses_rejects_complex_expression():
+    from ontoexplorer.modules.search.evaluator import (
+        evaluate_relation, RelationRequiresNamedClassError,
+    )
+    r = _make_redis_with_entity("v1", "Cell", CELL)
+    classification = _make_classification_super({})
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)):
+        with pytest.raises(RelationRequiresNamedClassError):
+            await evaluate_relation(
+                Not(NamedClass("Cell", None)), "v1", "ont1", relation="superclasses",
+            )
+
+
+@pytest.mark.anyio
+async def test_evaluate_relation_subclasses_delegates_to_evaluate():
+    from ontoexplorer.modules.search.evaluator import evaluate_relation
+    r = _make_redis_with_entity("v1", "Cell", CELL)
+    classification = _make_classification({CELL: [EUKARYOTE, PROK]})
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)):
+        results = await evaluate_relation(
+            NamedClass("Cell", None), "v1", "ont1", relation="subclasses",
+        )
+    iris = {x.iri for x in results}
+    assert EUKARYOTE in iris and PROK in iris

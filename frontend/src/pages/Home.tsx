@@ -43,6 +43,59 @@ function TypeBadge({ type }: { type?: string }) {
   )
 }
 
+type MosRelation = 'subclasses' | 'superclasses' | 'equivalent'
+
+const RELATION_FACETS: { value: MosRelation; label: string; namedClassOnly: boolean }[] = [
+  { value: 'subclasses', label: 'Subclasses', namedClassOnly: false },
+  { value: 'superclasses', label: 'Superclasses', namedClassOnly: true },
+  { value: 'equivalent', label: 'Equivalent', namedClassOnly: true },
+]
+
+// A MOS query is a single named class (so super/equivalent are answerable) when
+// it's one bare token (word or CURIE) or a single quoted phrase — i.e. no
+// boolean/restriction operators. Anything with whitespace outside quotes is a
+// complex expression.
+function isNamedClassQuery(q: string): boolean {
+  const t = q.trim()
+  if (!t) return false
+  if (/^'[^']*'$/.test(t)) return true
+  return !/\s/.test(t)
+}
+
+function RelationChips({ selected, onChange, namedClass }: {
+  selected: MosRelation
+  onChange: (next: MosRelation) => void
+  namedClass: boolean
+}) {
+  const chipStyle = (active: boolean, disabled: boolean): React.CSSProperties => ({
+    fontSize: 12, padding: '3px 10px', borderRadius: 12,
+    background: active ? 'var(--accent)' : 'var(--bg-secondary)',
+    border: '1px solid ' + (active ? 'var(--accent)' : 'var(--border)'),
+    color: disabled ? 'var(--text-dim)' : active ? '#000' : 'var(--text-muted)',
+    cursor: disabled ? 'not-allowed' : 'pointer', fontWeight: active ? 600 : 400,
+    opacity: disabled ? 0.45 : 1,
+  })
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+      {RELATION_FACETS.map(f => {
+        const disabled = f.namedClassOnly && !namedClass
+        return (
+          <button
+            key={f.value}
+            type="button"
+            disabled={disabled}
+            title={disabled ? 'Available for a single named class' : undefined}
+            onClick={() => !disabled && onChange(f.value)}
+            style={chipStyle(selected === f.value, disabled)}
+          >
+            {f.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 function TypeChips({ selected, onChange }: {
   selected: EntityTypeFilter[]
   onChange: (next: EntityTypeFilter[]) => void
@@ -314,11 +367,11 @@ function KeywordSearch({ typeFilters, onTypeFiltersChange }: {
 
 // ── Query tab (MOS) ───────────────────────────────────────────────────────────
 
-function useMOSFanout(pairs: { oid: string; vid: string }[], query: string, direct: boolean) {
+function useMOSFanout(pairs: { oid: string; vid: string }[], query: string, direct: boolean, relation: MosRelation) {
   return useQueries({
     queries: pairs.map(({ oid, vid }) => ({
-      queryKey: ['mos-search', oid, vid, query, direct],
-      queryFn: () => api.ontologies.search(oid, vid, query, 'expression', undefined, false, direct),
+      queryKey: ['mos-search', oid, vid, query, direct, relation],
+      queryFn: () => api.ontologies.search(oid, vid, query, 'expression', undefined, false, direct, relation),
       staleTime: 10_000,
       enabled: query.length >= 2,
       retry: false,
@@ -326,14 +379,20 @@ function useMOSFanout(pairs: { oid: string; vid: string }[], query: string, dire
   })
 }
 
-function MOSQuery({ typeFilters, onTypeFiltersChange }: {
-  typeFilters: EntityTypeFilter[]
-  onTypeFiltersChange: (next: EntityTypeFilter[]) => void
+function MOSQuery({ relation, onRelationChange }: {
+  relation: MosRelation
+  onRelationChange: (next: MosRelation) => void
 }) {
   const { ontologies } = useOntologies()
   const [selectedOids, setSelectedOids] = useState<string[]>([])
   const [mosQuery, setMosQuery] = useState('')
   const [direct, setDirect] = useState(false)
+
+  // Super/equivalent are only answerable for a single named class. When the
+  // query is a complex expression, force the relation back to subclasses
+  // (the chips for the others render disabled).
+  const namedClass = isNamedClassQuery(mosQuery)
+  const effectiveRelation: MosRelation = namedClass ? relation : 'subclasses'
 
   // latest_version is now returned inline by the list endpoint — no extra calls needed
   const allPairs: { oid: string; vid: string }[] = ontologies.flatMap(o => {
@@ -347,7 +406,7 @@ function MOSQuery({ typeFilters, onTypeFiltersChange }: {
     : allPairs
 
   // Fan-out MOS search across scoped ontologies
-  const searchResults = useMOSFanout(scopePairs, mosQuery, direct)
+  const searchResults = useMOSFanout(scopePairs, mosQuery, direct, effectiveRelation)
   // Tag each result with the oid/vid of the ontology it came from
   const allResults: SearchResult[] = searchResults.flatMap((r, i) =>
     (r.data?.results ?? []).map(res => ({
@@ -380,23 +439,16 @@ function MOSQuery({ typeFilters, onTypeFiltersChange }: {
     })
   }
 
-  // Deduplicate by IRI — same class can appear in multiple ontologies.
-  // The backend now tags MOS expression results with type:'class' explicitly
-  // (MOS class expressions can only yield classes), so this filter is a plain
-  // membership check.
+  // Deduplicate by IRI — same class can appear in multiple ontologies. The
+  // relationship facet is chosen server-side via `relation`, so no client-side
+  // type filtering is needed here.
   const dedupedResults: SearchResult[] = []
   const _seenIris = new Set<string>()
   for (const r of allResults) {
     if (_seenIris.has(r.iri)) continue
     _seenIris.add(r.iri)
-    if (typeFilters.length > 0 && r.type && !typeFilters.includes(r.type as EntityTypeFilter)) continue
     dedupedResults.push(r)
   }
-
-  // When the user has narrowed to non-class types in MOS mode, the evaluator
-  // can't satisfy them — surface that explicitly rather than rendering a bare
-  // "No results" string that looks like a query problem.
-  const mosTypesMismatch = typeFilters.length > 0 && !typeFilters.includes('class')
 
   const isSearching = mosQuery.length >= 2 && searchResults.some(r => r.isFetching)
 
@@ -425,7 +477,7 @@ function MOSQuery({ typeFilters, onTypeFiltersChange }: {
 
   return (
     <>
-      <TypeChips selected={typeFilters} onChange={onTypeFiltersChange} />
+      <RelationChips selected={effectiveRelation} onChange={onRelationChange} namedClass={namedClass} />
 
       <div style={{ marginBottom: 8 }}>
         <OntologyPicker
@@ -450,17 +502,19 @@ function MOSQuery({ typeFilters, onTypeFiltersChange }: {
             ? `searching ${selectedOids.length} selected ontolog${selectedOids.length > 1 ? 'ies' : 'y'}`
             : 'searching all ontologies'}
         </p>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', flexShrink: 0, marginLeft: 12 }}>
-          <input
-            type="checkbox"
-            checked={direct}
-            onChange={e => setDirect(e.target.checked)}
-            style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
-          />
-          <span style={{ fontSize: 11, color: direct ? 'var(--text)' : 'var(--text-dim)', whiteSpace: 'nowrap' }}>
-            Direct only
-          </span>
-        </label>
+        {effectiveRelation !== 'equivalent' && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', flexShrink: 0, marginLeft: 12 }}>
+            <input
+              type="checkbox"
+              checked={direct}
+              onChange={e => setDirect(e.target.checked)}
+              style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
+            />
+            <span style={{ fontSize: 11, color: direct ? 'var(--text)' : 'var(--text-dim)', whiteSpace: 'nowrap' }}>
+              {effectiveRelation === 'superclasses' ? 'Direct parents only' : 'Direct only'}
+            </span>
+          </label>
+        )}
       </div>
 
       {mosQuery && errorMsg && (
@@ -475,9 +529,11 @@ function MOSQuery({ typeFilters, onTypeFiltersChange }: {
       )}
       {mosQuery && !errorMsg && !isSearching && dedupedResults.length === 0 && (
         <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', textAlign: 'center', marginTop: '2rem' }}>
-          {mosTypesMismatch
-            ? 'Structured queries return classes only — switch to Keyword Search to find properties or individuals.'
-            : `No results for "${mosQuery}"`}
+          {effectiveRelation === 'equivalent'
+            ? `No classes equivalent to "${mosQuery}"`
+            : effectiveRelation === 'superclasses'
+              ? `No superclasses for "${mosQuery}"`
+              : `No results for "${mosQuery}"`}
         </p>
       )}
       <ResultList results={dedupedResults} pathFor={pathFor} ontologyNameFor={ontologyNameFor} />
@@ -490,6 +546,7 @@ function MOSQuery({ typeFilters, onTypeFiltersChange }: {
 export default function Home() {
   const [mode, setMode] = useState<Mode>('search')
   const [typeFilters, setTypeFilters] = useState<EntityTypeFilter[]>([])
+  const [mosRelation, setMosRelation] = useState<MosRelation>('subclasses')
 
   const { data: publicStats } = useQuery({
     queryKey: ['public-stats'],
@@ -560,7 +617,7 @@ export default function Home() {
 
       {mode === 'search'
         ? <KeywordSearch typeFilters={typeFilters} onTypeFiltersChange={setTypeFilters} />
-        : <MOSQuery typeFilters={typeFilters} onTypeFiltersChange={setTypeFilters} />
+        : <MOSQuery relation={mosRelation} onRelationChange={setMosRelation} />
       }
     </div>
   )

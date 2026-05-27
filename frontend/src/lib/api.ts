@@ -1049,7 +1049,7 @@ export const api = {
       }>(
         `/ontologies/${oid}/${vid}/term-usage/${encodeURIComponent(iri)}?offset=${offset}&limit=${limit}`
       ),
-    search: (oid: string, vid: string, q: string, mode = 'auto', lang?: string, semantic = false, direct = false) =>
+    search: (oid: string, vid: string, q: string, mode = 'auto', lang?: string, semantic = false, direct = false, relation = 'subclasses') =>
       request<{
         mode: string
         results: SearchResult[]
@@ -1057,7 +1057,7 @@ export const api = {
         truncated: boolean
         semantic_results?: SearchResult[]
       }>(
-        `/ontologies/${oid}/${vid}/search?q=${encodeURIComponent(q)}&mode=${mode}${lang ? `&lang=${lang}` : ''}${semantic ? '&semantic=true' : ''}${direct ? '&direct=true' : ''}`
+        `/ontologies/${oid}/${vid}/search?q=${encodeURIComponent(q)}&mode=${mode}${lang ? `&lang=${lang}` : ''}${semantic ? '&semantic=true' : ''}${direct ? '&direct=true' : ''}${relation !== 'subclasses' ? `&relation=${relation}` : ''}`
       ),
     autocomplete: (oid: string, vid: string, q: string, cursor = -1, lang?: string) =>
       request<AutocompleteResponse>(

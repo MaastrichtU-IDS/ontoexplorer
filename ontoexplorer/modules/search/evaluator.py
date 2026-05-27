@@ -275,7 +275,16 @@ async def evaluate(
 
     iris = await _eval(node)
 
-    # Build results with labels
+    match_type = "elk" if not isinstance(node, (SomeValuesFrom, AllValuesFrom, HasValue,
+                                                  HasSelf, MinCardinality, MaxCardinality,
+                                                  ExactCardinality)) else "sparql"
+    return _build_results(iris, version_id, lang, r, match_type)
+
+
+def _build_results(
+    iris, version_id: str, lang: str | None, r, match_type: str
+) -> list[SearchResult]:
+    """Resolve a set of class IRIs to labelled SearchResults via the Redis index."""
     results: list[SearchResult] = []
     for iri in iris:
         detail = r.hgetall(_iri_key(version_id, iri))
@@ -286,9 +295,6 @@ async def evaluate(
         else:
             label, result_lang, cross_language = iri.split("/")[-1], None, False
             short = ""
-        match_type = "elk" if not isinstance(node, (SomeValuesFrom, AllValuesFrom, HasValue,
-                                                      HasSelf, MinCardinality, MaxCardinality,
-                                                      ExactCardinality)) else "sparql"
         results.append(SearchResult(
             iri=iri,
             label=label,
@@ -297,8 +303,90 @@ async def evaluate(
             lang=result_lang,
             cross_language=cross_language,
         ))
-
     return results
+
+
+class RelationRequiresNamedClassError(ValueError):
+    """Raised when superclasses/equivalent is requested for a complex expression."""
+
+
+async def evaluate_relation(
+    node,
+    version_id: str,
+    ontology_id: str,
+    relation: str = "subclasses",
+    lang: str | None = None,
+    direct: bool = False,
+) -> list[SearchResult]:
+    """Evaluate a MOS AST node for a given relationship to the expression.
+
+    relation:
+      - "subclasses"   — subclass closure (delegates to evaluate(); any expression)
+      - "superclasses" — ancestors of a single named class (direct vs all)
+      - "equivalent"   — classes equivalent to a single named class
+
+    Superclasses and equivalent are only defined for a single NamedClass; a
+    complex expression raises RelationRequiresNamedClassError.
+    """
+    if relation == "subclasses":
+        return await evaluate(node, version_id, ontology_id, lang=lang, direct=direct)
+
+    if relation not in ("superclasses", "equivalent"):
+        raise ValueError(f"Unknown relation: {relation!r}")
+
+    if not isinstance(node, NamedClass):
+        raise RelationRequiresNamedClassError(relation)
+
+    r = _get_redis()
+    classification = await get_classification(version_id)
+    # ELK's transitive `superclasses` index is unreliable on some ontologies
+    # (entries missing, or inconsistent with direct_superclasses — e.g. SULO).
+    # `direct_superclasses` is the trustworthy edge set; derive everything from it.
+    direct_superclasses: dict[str, list[str]] = classification.get("direct_superclasses") or {}
+
+    iri = _resolve_label(r, version_id, node)
+
+    def _direct_parents(c: str) -> list[str]:
+        return [p for p in direct_superclasses.get(c, []) if p != _OWL_THING]
+
+    if relation == "superclasses":
+        if direct:
+            supers = {p for p in _direct_parents(iri) if p != iri}
+        else:
+            # Walk the direct-superclass DAG upward to collect all ancestors.
+            supers = set()
+            stack = list(_direct_parents(iri))
+            while stack:
+                cur = stack.pop()
+                if cur in supers or cur == iri:
+                    continue
+                supers.add(cur)
+                stack.extend(_direct_parents(cur))
+        return _build_results(supers, version_id, lang, r, "elk")
+
+    # relation == "equivalent": A ≡ B iff each is an ancestor of the other.
+    # An equivalence shows up as a cycle in the direct-superclass graph, so a
+    # class B is equivalent to A when B is reachable upward from A *and* A is
+    # reachable upward from B.
+    _ancestor_memo: dict[str, set[str]] = {}
+
+    def _ancestors(start: str) -> set[str]:
+        if start in _ancestor_memo:
+            return _ancestor_memo[start]
+        seen: set[str] = set()
+        stack = list(_direct_parents(start))
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            stack.extend(_direct_parents(cur))
+        _ancestor_memo[start] = seen
+        return seen
+
+    a_ancestors = _ancestors(iri)
+    equivalents = {b for b in a_ancestors if b != iri and iri in _ancestors(b)}
+    return _build_results(equivalents, version_id, lang, r, "elk")
 
 
 def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:

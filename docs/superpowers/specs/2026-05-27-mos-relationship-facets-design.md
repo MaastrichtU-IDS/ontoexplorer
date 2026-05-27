@@ -63,9 +63,9 @@ evaluator so the subclass path is untouched.
 - `ontoexplorer/modules/search/evaluator.py` — relation-aware entry point;
   superclass/equivalent computation for the NamedClass case.
 - `ontoexplorer/api/search.py` — `relation` param + named-class guard
-  (per-version endpoint used by the MOS tab fan-out).
-- `ontoexplorer/api/global_search.py` — same param for the cross-ontology
-  expression path (kept consistent; MOS tab uses the per-version endpoint).
+  (per-version endpoint used by the MOS tab fan-out). Also adds the `direct`
+  param, which the frontend was already sending but the endpoint silently
+  ignored (the MOS "Direct only" checkbox was a no-op until now).
 - `frontend/src/lib/api.ts` — `relation` arg on `ontologies.search`.
 - `frontend/src/pages/Home.tsx` — split chip state between tabs; relationship
   chips with disabled logic for complex expressions in the MOS tab.
@@ -75,3 +75,6 @@ evaluator so the subclass path is untouched.
 - Individuals / instance retrieval.
 - Superclass/equivalent for complex (anonymous) expressions.
 - Any change to Keyword Search chips.
+- The cross-ontology expression path (`global_search.py`) — the MOS tab fans
+  out over the per-version endpoint, so the global path keeps its default
+  subclass behavior and gains no `relation` param.
