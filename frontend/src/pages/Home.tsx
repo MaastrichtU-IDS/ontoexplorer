@@ -118,8 +118,8 @@ function ResultList({ results, pathFor, ontologyNameFor }: {
         const ontName = ontologyNameFor?.(r) ?? null
         const inner = (
           <>
-            <span style={{ color: 'var(--accent)', fontWeight: 500, flexShrink: 0 }}>{r.label}</span>
             <TypeBadge type={r.type} />
+            <span style={{ color: 'var(--accent)', fontWeight: 500, flexShrink: 0 }}>{r.label}</span>
             {r.source && <SourceBadge source={r.source} />}
             <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{r.short}</span>
             {ontName && (
@@ -266,11 +266,11 @@ function KeywordSearch({ typeFilters, onTypeFiltersChange }: {
               const semOntName = ontologyNameFor(r)
               const inner = (
                 <>
+                  <TypeBadge type={r.type} />
                   <span style={{
                     color: alreadyInResults ? 'var(--text-dim)' : 'var(--accent)',
                     fontWeight: 500, flexShrink: 0,
                   }}>{r.label}</span>
-                  <TypeBadge type={r.type} />
                   {r.source && <SourceBadge source={r.source} />}
                   <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{r.short}</span>
                   {semOntName && (
