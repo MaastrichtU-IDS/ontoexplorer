@@ -80,6 +80,10 @@ cp .env.example .env
 docker compose up -d
 ```
 
+This brings up the backend services **and** a production-style nginx build of
+the frontend (see step 4) — on first run it builds the frontend image, so it may
+take a minute.
+
 ### 3. Run database migrations
 
 ```bash
@@ -98,6 +102,7 @@ Backend services:
 
 | Service       | URL                        | Purpose                      |
 |---------------|----------------------------|------------------------------|
+| Frontend      | http://localhost:3001      | React SPA (nginx, production build) |
 | API           | http://localhost:8000      | FastAPI backend              |
 | API Docs      | http://localhost:8000/api/docs | Swagger UI               |
 | MinIO Console | http://localhost:9001      | Object storage (minioadmin/minioadmin) |
@@ -106,9 +111,18 @@ Backend services:
 | Grafana       | http://localhost:3000      | Dashboards                   |
 | Loki          | http://localhost:3100      | Log aggregation              |
 
-### 4. Start the frontend dev server
+### 4. Frontend: two modes
 
-The React SPA is not served by Docker — run it locally with Vite:
+The frontend runs in one of two forms depending on what you're doing.
+
+**Production-style nginx build (default — started by step 2).** `docker compose
+up -d` builds the SPA and serves it via **nginx at http://localhost:3001**,
+identical to production. nginx also reverse-proxies `/api`, `/auth`, and `/ols`
+to the API, so nothing else is needed. Use this to run the app, or to test the
+real production frontend locally.
+
+**Vite dev server (hot reload — for active frontend work).** When editing the
+SPA, run Vite natively for instant hot-module reload:
 
 ```bash
 cd frontend
@@ -116,7 +130,15 @@ npm install   # first time only
 npm run dev
 ```
 
-Open **http://localhost:5173**. The Vite dev server proxies `/api`, `/auth`, and `/sparql` to the FastAPI backend at `localhost:8000`, so no CORS configuration is needed.
+Open **http://localhost:5173**. The Vite dev server proxies `/api` and `/auth`
+to the API at `localhost:8000`, so no CORS configuration is needed. The nginx
+frontend on 3001 can keep running alongside it, or stop it with
+`docker compose stop frontend`.
+
+> The two modes mirror the dev/prod split: **dev** = Vite dev server (live
+> reload, bind-mounted source); **prod** = the nginx-built image. For a real
+> production deployment (GHCR images, TLS, auto-migrations), see
+> [Deploying a Tagged Release](#deploying-a-tagged-release).
 
 ### 5. Run tests
 
