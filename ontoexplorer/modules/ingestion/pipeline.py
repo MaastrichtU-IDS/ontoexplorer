@@ -156,7 +156,7 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
         log.info("bulk_loaded_bytes", fmt=fmt.value, mime=mime, triples=triple_count)
         graph = None
     else:
-        # Slow path: OBO / Manchester need rdflib first
+        # Slow path: OBO needs rdflib first (Manchester is rejected by parse_ontology)
         graph = parse_ontology(source.data, fmt)
         log.info("parsed_triples", count=len(graph))
         triple_count = load_graph(ontology_id, version_id, graph)
@@ -474,7 +474,7 @@ def _extract_ontology_iri_by_parsing(data: bytes, fmt: OntologyFormat) -> str | 
     """
     mime = _DIRECT_MIME.get(fmt)
     if not mime:
-        return None  # OBO/Manchester are parsed by rdflib later; can't do it cheaply here
+        return None  # OBO is parsed by rdflib later; can't do it cheaply here
     try:
         tmp = pyoxigraph.Store()
         tmp.bulk_load(io.BytesIO(data), mime)

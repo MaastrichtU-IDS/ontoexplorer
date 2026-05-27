@@ -479,7 +479,6 @@ const FORMATS = [
   { value: 'n-triples',   label: 'N-Triples (.nt)' },
   { value: 'json-ld',     label: 'JSON-LD (.jsonld)' },
   { value: 'obo',         label: 'OBO (.obo)' },
-  { value: 'manchester',  label: 'Manchester (.omn)' },
 ]
 
 function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
@@ -575,7 +574,7 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <input
               type="file"
-              accept=".owl,.ttl,.rdf,.nt,.obo,.jsonld,.omn,.xml"
+              accept=".owl,.ttl,.rdf,.nt,.obo,.jsonld,.xml"
               onChange={e => setFile(e.target.files?.[0] ?? null)}
               style={{ flex: 1, fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}
               required

@@ -4,14 +4,14 @@ from enum import StrEnum
 
 
 class OntologyFormat(StrEnum):
-    OWL_XML = "owl"          # OWL/XML  → py_horned_owl
-    RDF_XML = "rdf"          # RDF/XML  → py_horned_owl or rdflib
+    OWL_XML = "owl"          # OWL/XML  → loaded as RDF/XML (bulk-load fast path)
+    RDF_XML = "rdf"          # RDF/XML  → rdflib / bulk-load
     TURTLE = "ttl"           # Turtle   → rdflib
     N_TRIPLES = "nt"         # N-Triples → rdflib
     N_QUADS = "nq"           # N-Quads  → rdflib
     JSON_LD = "jsonld"       # JSON-LD  → rdflib
     OBO = "obo"              # OBO flat file → rdflib (via plugin)
-    MANCHESTER = "omn"       # Manchester Syntax → py_horned_owl
+    MANCHESTER = "omn"       # Manchester Syntax → detected but unsupported (no parser)
     TRIG = "trig"            # TriG → rdflib
 
 
@@ -53,7 +53,6 @@ _SIGNATURES: list[tuple[bytes, OntologyFormat]] = [
     (b"@base", OntologyFormat.TURTLE),
     (b"PREFIX", OntologyFormat.TURTLE),
     (b"format-version:", OntologyFormat.OBO),
-    (b"[", OntologyFormat.MANCHESTER),    # Manchester starts with ontology declaration
     (b"{", OntologyFormat.JSON_LD),
 ]
 
@@ -116,11 +115,5 @@ def format_to_rdflib_format(fmt: OntologyFormat) -> str:
         OntologyFormat.N_QUADS: "nquads",
         OntologyFormat.JSON_LD: "json-ld",
         OntologyFormat.OBO: "obo",
-        OntologyFormat.MANCHESTER: "manchester",  # requires rdflib-manchester plugin
         OntologyFormat.TRIG: "trig",
     }[fmt]
-
-
-def uses_horned_owl(fmt: OntologyFormat) -> bool:
-    """True if this format should be parsed via py_horned_owl."""
-    return fmt in (OntologyFormat.OWL_XML, OntologyFormat.MANCHESTER)
