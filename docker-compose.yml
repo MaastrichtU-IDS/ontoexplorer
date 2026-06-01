@@ -8,6 +8,9 @@ services:
     environment:
       OXIGRAPH_READ_ONLY: "true"
       FASTEMBED_CACHE_PATH: /root/.cache/fastembed
+    # Defensive cap so a runaway query can't blow the host. The api itself
+    # holds little resident memory; 8 GB is a generous ceiling.
+    mem_limit: 8g
     depends_on:
       - postgres
       - redis
@@ -20,15 +23,40 @@ services:
       - oxigraph-data:/data/oxigraph
       - fastembed-cache:/root/.cache/fastembed
 
-  worker:
+  # Split-pool celery workers — replaces the previous single `worker` service.
+  # Heavy queue runs reasoning / diff / justification (single ontology dominates
+  # the box for minutes-to-hours), light queue runs ingest orchestration /
+  # metadata / embedding / indexing (many small parallel tasks). Splitting
+  # avoids head-of-line blocking when a long reason job sits in front of many
+  # small ones. Routing is configured in
+  # ontoexplorer/modules/jobs/tasks.py via celery `task_routes`.
+  worker-heavy:
     build: .
-    command: celery -A ontoexplorer.modules.jobs.tasks worker --loglevel=info --concurrency=1
+    command: celery -A ontoexplorer.modules.jobs.tasks worker --loglevel=info -Q heavy --concurrency=2 -n heavy@%h
+    env_file: .env
+    environment:
+      FASTEMBED_CACHE_PATH: /root/.cache/fastembed
+      OMP_NUM_THREADS: "4"
+      ONNXRUNTIME_NUM_THREADS: "4"
+    mem_limit: 24g
+    depends_on:
+      - postgres
+      - redis
+      - minio
+    volumes:
+      - ./ontoexplorer:/app/ontoexplorer
+      - oxigraph-data:/data/oxigraph
+      - fastembed-cache:/root/.cache/fastembed
+
+  worker-light:
+    build: .
+    command: celery -A ontoexplorer.modules.jobs.tasks worker --loglevel=info -Q light --concurrency=12 -n light@%h
     env_file: .env
     environment:
       FASTEMBED_CACHE_PATH: /root/.cache/fastembed
       OMP_NUM_THREADS: "2"
       ONNXRUNTIME_NUM_THREADS: "2"
-    mem_limit: 3g
+    mem_limit: 16g
     depends_on:
       - postgres
       - redis
@@ -118,9 +146,10 @@ services:
     # Mem cap so OOMs inside the reasoner (whelk on 1M+ triple ontologies,
     # or the justification greedy walk on the cl-scale module) get killed by
     # the container's cgroup and restart cleanly via docker — rather than
-    # invoking Linux OOM-killer at the host level (which on a 15 GB box has
-    # killed elk-service and brought down other services with it).
-    mem_limit: 6g
+    # invoking Linux OOM-killer at the host level. Raised from 6 GB to 48 GB
+    # on the new 251 GB host so FMA / Mondo / HP / Uberon classify without
+    # OOM-kills; ELK is JVM-bound so this is just headroom, not commitment.
+    mem_limit: 48g
     depends_on:
       - redis
 

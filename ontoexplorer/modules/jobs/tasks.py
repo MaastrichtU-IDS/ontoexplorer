@@ -28,6 +28,22 @@ celery_app.conf.update(
     task_acks_late=True,
     worker_prefetch_multiplier=1,
     task_ignore_result=True,  # use Postgres jobs table for status; avoid blocking on Redis result backend
+    task_default_queue="light",
+    # Two-queue split — see docker-compose.yml `worker-heavy` / `worker-light`.
+    # Heavy: a single ontology can pin the box for minutes-to-hours (reasoning,
+    # diff, justification, big-graph import fetches). Light: many small parallel
+    # tasks (ingest orchestration, metadata, embedding, indexing). Splitting
+    # avoids a long reason job head-of-line-blocking a queue of small ones.
+    # Unrouted tasks fall back to `light` via task_default_queue.
+    task_routes={
+        "ontoexplorer.reason_ontology": {"queue": "heavy"},
+        "ontoexplorer.compute_diff": {"queue": "heavy"},
+        "ontoexplorer.compute_ontology_comparison": {"queue": "heavy"},
+        "ontoexplorer.compute_justification": {"queue": "heavy"},
+        "ontoexplorer.load_imports": {"queue": "heavy"},
+        "ontoexplorer.refresh_stale_inferred_diffs": {"queue": "heavy"},
+        "ontoexplorer.refresh_owl_profile": {"queue": "heavy"},
+    },
     beat_schedule={
         "poll-for-updates-hourly": {
             "task": "ontoexplorer.poll_for_updates",
