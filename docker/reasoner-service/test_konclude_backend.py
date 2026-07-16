@@ -3,6 +3,12 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import pytest
 
+# NOTE: this whole module skips on hosts without the Konclude binary (e.g. this
+# macOS dev machine). Task 8 (container-based integration test, run where the
+# binary is actually present) should additionally assert that
+# owl:Nothing does NOT appear as a value in *any* class's `subclasses` list —
+# regression coverage for the owl:Nothing-as-subject leak fixed in
+# KoncludeBackend.classify_ntriples (see su == OWL_NOTHING guard).
 if shutil.which("Konclude") is None:
     pytest.skip("Konclude binary not on PATH", allow_module_level=True)
 pytest.importorskip("pyhornedowl")

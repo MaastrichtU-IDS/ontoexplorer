@@ -61,6 +61,7 @@ class KoncludeBackend:
 
         # Collect asserted subClassOf from the input store.
         RDFS_SUB_NN = pyoxigraph.NamedNode(str(RDFS_SUB))
+        OWL_EQUIV = pyoxigraph.NamedNode("http://www.w3.org/2002/07/owl#equivalentClass")
         direct_sup: dict[str, list[str]] = defaultdict(list)
         for q in store.quads_for_pattern(None, RDFS_SUB_NN, None, None):
             if isinstance(q.subject, pyoxigraph.NamedNode) and isinstance(q.object, pyoxigraph.NamedNode):
@@ -68,6 +69,19 @@ class KoncludeBackend:
                 if q.subject.value != q.object.value:
                     asserted.add((q.subject.value, q.object.value))
                     direct_sup[q.subject.value].append(q.object.value)
+
+        # Asserted owl:equivalentClass pairs are also asserted subsumption in
+        # both directions — exclude them from `superclasses` and surface the
+        # partner in `direct_superclasses` (mirrors rustdl_backend.py /
+        # whelk_classifier._project_finalize).
+        for q in store.quads_for_pattern(None, OWL_EQUIV, None, None):
+            if isinstance(q.subject, pyoxigraph.NamedNode) and isinstance(q.object, pyoxigraph.NamedNode):
+                s, o = q.subject.value, q.object.value
+                if s != o:
+                    asserted.add((s, o))
+                    asserted.add((o, s))
+                    if o not in direct_sup[s]:
+                        direct_sup[s].append(o)
 
         superclasses: dict[str, list[str]] = defaultdict(list)
         unsatisfiable: list[str] = []
@@ -79,7 +93,7 @@ class KoncludeBackend:
                 if su not in unsatisfiable:
                     unsatisfiable.append(su)
                 continue
-            if su == ob or ob == OWL_THING or (su, ob) in asserted:
+            if su == ob or su == OWL_NOTHING or ob == OWL_THING or (su, ob) in asserted:
                 continue
             superclasses[su].append(ob)
 
