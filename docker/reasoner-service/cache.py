@@ -50,17 +50,19 @@ def load_classification(version_id: str, reasoner: str) -> ClassificationResult 
     return ClassificationResult(**json.loads(gzip.decompress(raw)))
 
 
-def store_justification(version_id, sub, sup, max_j, reasoner, result: dict) -> None:
+def store_justification(version_id: str, sub: str, sup: str | None, max_j: int, reasoner: str, result: dict) -> None:
     _redis.setex(_justification_key(version_id, sub, sup, max_j, reasoner),
                  _JUSTIFICATION_TTL, json.dumps(result).encode())
 
 
-def load_justification(version_id, sub, sup, max_j, reasoner) -> dict | None:
+def load_justification(version_id: str, sub: str, sup: str | None, max_j: int, reasoner: str) -> dict | None:
     raw = _redis.get(_justification_key(version_id, sub, sup, max_j, reasoner))
     return json.loads(raw) if raw else None
 
 
 def store_input_axioms(version_id: str, ntriples: str, reasoner: str) -> None:
+    """Persist raw input N-Triples so justification works uniformly across backends (whelk emits no proof traces).
+    Uses same TTL as classification to keep them in lockstep."""
     _redis.setex(_input_axioms_key(version_id, reasoner),
                  _CLASSIFICATION_TTL, gzip.compress(ntriples.encode("utf-8")))
 
@@ -71,6 +73,7 @@ def load_input_axioms(version_id: str, reasoner: str) -> str | None:
 
 
 def store_classification_error(version_id: str, message: str, reasoner: str) -> None:
+    """Surface a failed classification as a 500 via the GET endpoint instead of a permanent 409."""
     _redis.setex(_classification_error_key(version_id, reasoner),
                  _CLASSIFICATION_TTL, message.encode("utf-8"))
 
@@ -85,7 +88,7 @@ def clear_classification_error(version_id: str, reasoner: str) -> None:
 
 
 def invalidate_version(version_id: str) -> None:
-    """Remove ALL cache entries for a version across every reasoner variant."""
+    """Remove ALL cache entries for a version across every reasoner variant. Called on version deprecation."""
     keys = set()
     for pat in (f"classification:{version_id}:*", f"input_axioms:{version_id}:*",
                 f"classification_error:{version_id}:*", f"justification:{version_id}:*"):

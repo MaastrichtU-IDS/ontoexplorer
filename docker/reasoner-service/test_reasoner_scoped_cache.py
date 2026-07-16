@@ -35,10 +35,14 @@ def test_invalidate_clears_all_reasoner_variants():
     cache_mod.store_classification(_result("v1"), "whelk")
     cache_mod.store_classification(_result("v1"), "rustdl")
     cache_mod.store_input_axioms("v1", "<a> <b> <c> .", "whelk")
+    cache_mod.store_classification_error("v1", "boom", "whelk")
+    cache_mod.store_justification("v1", "sub", "sup", 3, "rustdl", {"ok": True})
     cache_mod.invalidate_version("v1")
     assert cache_mod.load_classification("v1", "whelk") is None
     assert cache_mod.load_classification("v1", "rustdl") is None
     assert cache_mod.load_input_axioms("v1", "whelk") is None
+    assert cache_mod.load_classification_error("v1", "whelk") is None
+    assert cache_mod.load_justification("v1", "sub", "sup", 3, "rustdl") is None
 
 
 def test_justification_scoped_by_reasoner():
