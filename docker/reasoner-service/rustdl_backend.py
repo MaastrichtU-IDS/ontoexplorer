@@ -14,7 +14,7 @@ class RustdlBackend:
     )
 
     def classify_ntriples(self, ntriples: str, version_id: str) -> ClassificationResult:
-        import io, time, os
+        import io, time, os, logging
         from collections import defaultdict
         from datetime import datetime, timezone
         import pyoxigraph
@@ -41,6 +41,7 @@ class RustdlBackend:
 
         # Asserted subClassOf pairs (to exclude from the inferred `superclasses`).
         RDFS_SUB = pyoxigraph.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
+        OWL_EQUIV = pyoxigraph.NamedNode("http://www.w3.org/2002/07/owl#equivalentClass")
         asserted: set[tuple[str, str]] = set()
         direct_sup: dict[str, list[str]] = defaultdict(list)
         for q in store.quads_for_pattern(None, RDFS_SUB, None, None):
@@ -48,6 +49,18 @@ class RustdlBackend:
                 if q.subject.value != q.object.value:
                     asserted.add((q.subject.value, q.object.value))
                     direct_sup[q.subject.value].append(q.object.value)
+
+        # Asserted owl:equivalentClass pairs are also asserted subsumption in
+        # both directions — exclude them from `superclasses` and surface the
+        # partner in `direct_superclasses` (mirrors whelk_classifier._project_finalize).
+        for q in store.quads_for_pattern(None, OWL_EQUIV, None, None):
+            if isinstance(q.subject, pyoxigraph.NamedNode) and isinstance(q.object, pyoxigraph.NamedNode):
+                s, o = q.subject.value, q.object.value
+                if s != o:
+                    asserted.add((s, o))
+                    asserted.add((o, s))
+                    if o not in direct_sup[s]:
+                        direct_sup[s].append(o)
 
         classes = [c for c in cls.classes if c not in (OWL_THING, OWL_NOTHING)]
         superclasses: dict[str, list[str]] = {}
@@ -68,7 +81,6 @@ class RustdlBackend:
                 direct_subs[s].append(c)
 
         if not cls.complete:
-            import logging
             logging.getLogger("reasoner-service").warning(
                 "rustdl_incomplete version_id=%s timed_out_pairs=%s",
                 version_id, cls.timed_out_pairs)

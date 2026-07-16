@@ -32,3 +32,28 @@ def test_result_has_frozen_field_shape():
                   "unsatisfiable", "proof_traces", "duration_ms"):
         assert hasattr(r, field)
     assert r.proof_traces == {}
+
+
+NT_EQUIV = f"""\
+<{EX}A> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<{EX}B> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<{EX}C> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<{EX}D> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<{EX}A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <{EX}B> .
+<{EX}B> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <{EX}C> .
+<{EX}A> <http://www.w3.org/2002/07/owl#equivalentClass> <{EX}D> .
+"""
+
+
+def test_equivalent_class_excluded_from_inferred_superclasses():
+    r = RustdlBackend().classify_ntriples(NT_EQUIV, "v-test")
+    sups_a = r.superclasses.get(f"{EX}A", [])
+    # D is asserted equivalent to A, not an inferred superclass in either direction.
+    assert f"{EX}D" not in sups_a
+    sups_d = r.superclasses.get(f"{EX}D", [])
+    assert f"{EX}A" not in sups_d
+    # The equivalence partner is asserted, so it shows up in direct_superclasses.
+    assert f"{EX}D" in r.direct_superclasses.get(f"{EX}A", [])
+    # Existing transitive inference (A -> C via B) still holds.
+    assert f"{EX}C" in sups_a
+    assert f"{EX}B" not in sups_a
