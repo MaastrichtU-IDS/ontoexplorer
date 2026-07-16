@@ -49,12 +49,16 @@ own HTTP API, with no dependency on app or UI work. SP2 (app plumbing) and SP3
    reasoner registry**.
 3. Add a **`rustdl`** backend (classify + justify) via the `owl-dl-py` PyO3 binding.
 4. Add a **`konclude`** backend (classify + consistency, no justify) via a CLI
-   subprocess, with Konclude **built from source** for a native-arch image.
+   subprocess, using the **prebuilt Konclude binary** (from the
+   `konclude/konclude` image, as rustdl's own harness does), run emulated on
+   Apple Silicon. Native-from-source is deferred (see Risks).
 5. Make the HTTP contract reasoner-aware and backward-compatible; add
    `GET /reasoners` for capability discovery.
-6. Build a fully native `reasoner-service` image (rustdl via maturin, Konclude
-   from source, whelk/horned-owl from source — the arm64 path the override
-   already uses).
+6. Extend the existing **amd64** `reasoner-service` image: add a maturin-built
+   rustdl wheel and the bundled Konclude binary alongside the existing whelk
+   wheel. Everything runs emulated on Apple Silicon, native on the Linux host.
+   (A future follow-up builds a native-arch image — rustdl/whelk from source +
+   Konclude from source — but that is out of SP1 scope.)
 
 ## Non-goals (SP1)
 
@@ -119,10 +123,13 @@ The existing `whelk`/`rdflib` code moves behind the registry unchanged in behavi
   still returned (sound superset), matching rustdl's contract.
 - **Justify:** `rustdl.justify(path, ["subclass", sub, sup])` (and `["unsat", c]`
   when `sup == owl:Nothing`). It takes a **file path**, so materialize the cached
-  input N-Triples to a temp `.rdf` (RDF/XML) file per call and clean up. Map the
-  returned Manchester axiom strings into the justification response's
-  `justifications` field. `proof_traces` is left `[]` for rustdl in SP1 (rustdl's
-  `prove` step-tree is deferred to a later SP).
+  input N-Triples to a temp `.rdf` (RDF/XML) file per call and clean up. It
+  returns **Manchester** axiom strings, whereas whelk/rdflib return **N-Triple**
+  axiom strings. The justification response therefore gains a `format` field
+  (`"ntriples"` | `"manchester"`) so the app can render each correctly; SP1
+  populates it, SP2 teaches the app renderer to handle `"manchester"`.
+  `proof_traces` is left `[]` for rustdl in SP1 (rustdl's `prove` step-tree is
+  deferred to a later SP).
 - **Timeouts:** expose `per_pair_timeout_ms` / `global_deadline_ms` via env
   (`RUSTDL_PER_PAIR_TIMEOUT_MS`, `RUSTDL_GLOBAL_DEADLINE_MS`) with sane defaults.
 
@@ -149,7 +156,8 @@ The existing `whelk`/`rdflib` code moves behind the registry unchanged in behavi
 - `POST /classify/{version_id}/justification` request gains `reasoner: str`.
   If that reasoner lacks the `justify` capability, respond **HTTP 422** with
   `{"detail": "reasoner '<name>' does not support justifications"}` (empty
-  justifications, not a 500).
+  justifications, not a 500). The success response gains a `format` field
+  (`"ntriples"` | `"manchester"`) describing the axiom-string encoding.
 - **New `GET /reasoners`** → `[{name, profile, capabilities, available}]`.
   `available` is computed at startup: rustdl importable? Konclude binary on PATH?
   SP3's dropdown consumes this; SP1 just exposes it and tests it.
@@ -177,21 +185,23 @@ the service and its client wiring; it does not touch data model or UI.
 
 ## Packaging
 
-Single native image built via the `Dockerfile.arm64` path (already compiles
-py-whelk / horned-owl from source; generalise it as the default multi-arch build):
+Extend the existing **amd64** `Dockerfile` (python:3.12-slim, vendored whelk
+wheel) — one image, everything emulated on Apple Silicon and native on the Linux
+host:
 
-- **rustdl:** `pip install maturin`, build `owl-dl-py` from the `~/code/rustdl`
-  checkout (vendored into the build context or fetched by pinned git ref) →
-  native wheel. No wheel-arch pain (Rust builds for the host arch).
-- **Konclude:** build from source (native arch). **Risk:** Konclude's build pulls
-  Qt and a custom build script — non-trivial and slow. Mitigation: a dedicated
-  builder stage that is cached; if the source build proves too costly, the
-  fallback is the prebuilt x86_64 binary run emulated (explicitly rejected for
-  now per the design decision, but documented as the escape hatch).
-- **whelk/horned-owl:** unchanged from the existing arm64 build.
+- **rustdl:** a `rust` builder stage clones the rustdl repo at a pinned git ref
+  and runs `maturin build --release` on `crates/owl-dl-py` → a wheel; the final
+  stage `pip install`s it. Builds for the image arch (amd64).
+- **Konclude:** copy the prebuilt `Konclude` binary out of the
+  `konclude/konclude` image (`COPY --from=konclude/konclude:<tag>`), invoked as a
+  subprocess (`Konclude classification -w AUTO -i in.owx -o out.owx`). Konclude
+  wants **OWL/XML** input — the backend serialises via pyoxigraph/pyhornedowl
+  (NT → OWL/XML) before the call. Runs emulated on Apple Silicon like the whelk
+  wheel does today.
+- **whelk/horned-owl:** unchanged (existing vendored wheel + py-horned-owl).
 
-The base `platform: linux/amd64` pin on the service can be dropped once all three
-reasoners build native.
+The base `platform: linux/amd64` pin stays for SP1. A native-arch image (rustdl
++ whelk from source, Konclude from source) is a documented follow-up, not SP1.
 
 ## Testing
 
@@ -210,7 +220,13 @@ reasoners build native.
 
 ## Risks / open items
 
-- **Konclude source build weight** (Qt + custom build). Mitigation above.
+- **Konclude native-from-source is deferred.** No from-source recipe exists in
+  either repo (rustdl consumes the prebuilt `konclude/konclude` image); a Qt/qmake
+  arm64 build is an unbounded spike. SP1 ships the prebuilt binary emulated; a
+  native build is a scoped follow-up.
+- **Konclude binary path inside `konclude/konclude`** must be confirmed at build
+  time (a one-line `docker run … which Konclude` discovery step in the packaging
+  task) rather than assumed.
 - **rustdl completeness is partial** (sound, near-complete, not provably complete
   in general). SP1 surfaces `.complete`/`.timed_out_pairs` in logs; deciding how
   to present "possibly incomplete" to users is an SP3 concern.
@@ -226,7 +242,9 @@ reasoners build native.
 - **SP2 — app plumbing:** `reasoner` column on the version (Alembic),
   `DEFAULT_REASONER` app config, `POST /api/v1/ontologies` accepts `reasoner`,
   `reason_ontology` task sends it, justification lookup routes by the version's
-  reasoner + capability check.
+  reasoner + capability check, and the app justification renderer
+  (`_render_justification`) learns to handle the `format="manchester"` case for
+  rustdl (today it only parses N-Triples).
 - **SP3 — admin/UI:** reasoner dropdown at add-ontology time (populated from
   `GET /reasoners`), reasoner shown on the ontology detail, explain feature
   enabled/disabled by capability, "possibly incomplete" surfacing.
