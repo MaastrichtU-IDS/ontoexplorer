@@ -169,8 +169,8 @@ def test_cache_round_trip(tmp_path, monkeypatch):
     ex:B a owl:Class .
     """
     result = classify(g(ttl), "test-version")
-    cache_mod.store_classification(result)
-    loaded = cache_mod.load_classification("test-version")
+    cache_mod.store_classification(result, "rdflib")
+    loaded = cache_mod.load_classification("test-version", "rdflib")
     assert loaded is not None
     assert loaded.class_count == result.class_count
     assert loaded.superclasses == result.superclasses
@@ -181,7 +181,7 @@ def test_cache_miss_returns_none(monkeypatch):
     import cache as cache_mod
     r = fakeredis.FakeRedis()
     monkeypatch.setattr(cache_mod, "_redis", r)
-    assert cache_mod.load_classification("no-such-version") is None
+    assert cache_mod.load_classification("no-such-version", "rdflib") is None
 
 
 def test_justification_simple():

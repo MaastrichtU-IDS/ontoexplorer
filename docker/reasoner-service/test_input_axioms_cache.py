@@ -24,8 +24,8 @@ def test_input_axioms_round_trip(monkeypatch):
         '<http://example.org/A> <http://www.w3.org/2000/01/rdf-schema#subClassOf> '
         '<http://example.org/B> .\n'
     )
-    cache_mod.store_input_axioms("v-test", nt)
-    loaded = cache_mod.load_input_axioms("v-test")
+    cache_mod.store_input_axioms("v-test", nt, "whelk")
+    loaded = cache_mod.load_input_axioms("v-test", "whelk")
     assert loaded == nt
 
 
@@ -34,7 +34,7 @@ def test_input_axioms_miss_returns_none(monkeypatch):
     import cache as cache_mod
     r = fakeredis.FakeRedis()
     monkeypatch.setattr(cache_mod, "_redis", r)
-    assert cache_mod.load_input_axioms("never-seen") is None
+    assert cache_mod.load_input_axioms("never-seen", "whelk") is None
 
 
 def test_invalidate_version_removes_input_axioms(monkeypatch):
@@ -45,7 +45,7 @@ def test_invalidate_version_removes_input_axioms(monkeypatch):
     r = fakeredis.FakeRedis()
     monkeypatch.setattr(cache_mod, "_redis", r)
 
-    cache_mod.store_input_axioms("v-gone", "<a> <b> <c> .\n")
-    assert cache_mod.load_input_axioms("v-gone") is not None
+    cache_mod.store_input_axioms("v-gone", "<a> <b> <c> .\n", "whelk")
+    assert cache_mod.load_input_axioms("v-gone", "whelk") is not None
     cache_mod.invalidate_version("v-gone")
-    assert cache_mod.load_input_axioms("v-gone") is None
+    assert cache_mod.load_input_axioms("v-gone", "whelk") is None
