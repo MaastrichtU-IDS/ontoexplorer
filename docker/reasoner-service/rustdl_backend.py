@@ -98,5 +98,32 @@ class RustdlBackend:
             duration_ms=round((time.monotonic() - t0) * 1000, 1),
         )
 
-    def justify(self, ntriples, sub, sup, max_justifications):
-        raise NotImplementedError  # Task 5
+    def justify(self, ntriples: str, sub: str, sup: str,
+                max_justifications: int) -> tuple[list[list[str]], str]:
+        import io, os, tempfile
+        import pyoxigraph
+        import rustdl
+
+        OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing"
+
+        # rustdl.justify takes a file path; materialise the NT as RDF/XML (.rdf).
+        store = pyoxigraph.Store()
+        store.bulk_load(io.BytesIO(ntriples.encode("utf-8")),
+                        format=pyoxigraph.RdfFormat.N_TRIPLES)
+        rdfxml = pyoxigraph.serialize(
+            (q.triple for q in store.quads_for_pattern(None, None, None, None)),
+            format=pyoxigraph.RdfFormat.RDF_XML,
+        )
+        fd, path = tempfile.mkstemp(suffix=".rdf")
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(rdfxml)
+            query = ["unsat", sub] if sup == OWL_NOTHING else ["subclass", sub, sup]
+            if max_justifications == 1:
+                one = rustdl.justify(path, query)
+                sets = [one] if one else []
+            else:
+                sets = rustdl.justify_all(path, query, max_justifications)
+            return sets, "manchester"
+        finally:
+            os.unlink(path)

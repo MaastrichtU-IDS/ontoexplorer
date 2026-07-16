@@ -57,3 +57,12 @@ def test_equivalent_class_excluded_from_inferred_superclasses():
     # Existing transitive inference (A -> C via B) still holds.
     assert f"{EX}C" in sups_a
     assert f"{EX}B" not in sups_a
+
+
+def test_justify_returns_manchester_axiom_set():
+    sets, fmt = RustdlBackend().justify(NT, f"{EX}A", f"{EX}C", 1)
+    assert fmt == "manchester"
+    assert len(sets) >= 1
+    joined = " ".join(sets[0])
+    # The A⊑B, B⊑C axioms are the responsible set for A⊑C.
+    assert "A" in joined and "B" in joined and "C" in joined
