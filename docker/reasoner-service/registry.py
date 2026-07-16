@@ -35,14 +35,6 @@ class Backend(Protocol):
                 max_justifications: int) -> tuple[list[list[str]], str]: ...
 
 
-def _empty_result(version_id: str) -> ClassificationResult:
-    return ClassificationResult(
-        version_id=version_id, classified_at="", class_count=0,
-        superclasses={}, subclasses={}, direct_superclasses={},
-        direct_subclasses={}, unsatisfiable=[], proof_traces={}, duration_ms=0.0,
-    )
-
-
 def _import_ok(mod: str) -> bool:
     import importlib.util
     return importlib.util.find_spec(mod) is not None
@@ -64,11 +56,15 @@ class _WhelkBackend:
         from justification import compute_justifications
         g = rdflib.Graph()
         g.parse(io.StringIO(ntriples), format="nt")
-        # compute_justifications needs the ClassificationResult only for its
-        # proof_traces fallback; a minimal result with the input graph suffices
-        # because the greedy walk re-derives entailment from the graph itself.
-        empty = _empty_result(version_id="_justify")
-        sets = compute_justifications(g, empty, sub, sup, max_justifications)
+        # compute_justifications has an entry guard that checks the PASSED-IN
+        # result's unsatisfiable/superclasses/direct_superclasses to confirm
+        # the inference actually holds before doing any work — an empty
+        # result always fails that guard and silently returns []. So we must
+        # classify first and pass the REAL result, mirroring the main.py
+        # /classify/{version_id}/justification call site (result = the
+        # cached classification, g = the input graph).
+        result = self.classify_ntriples(ntriples, "_justify")
+        sets = compute_justifications(g, result, sub, sup, max_justifications)
         return sets, "ntriples"
 
 
