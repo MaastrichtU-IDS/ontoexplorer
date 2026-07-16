@@ -50,7 +50,7 @@ async def _reasoning_status(version_id: str) -> str:
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(
-                f"{get_settings().elk_service_url}/classify/{version_id}"
+                f"{get_settings().reasoner_service_url}/classify/{version_id}"
             )
         if resp.status_code == 200:
             return "ready"

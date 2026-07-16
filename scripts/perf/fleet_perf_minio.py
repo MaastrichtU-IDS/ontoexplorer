@@ -14,8 +14,8 @@ import pyoxigraph
 
 SAFE_JUSTIFY_TRIPLES = 700_000  # cl-scale and above → skip /justification
 
-# Talk to elk-service via the docker network from inside worker.
-ELK = "http://elk-service:8001"
+# Talk to reasoner-service via the docker network from inside worker.
+ELK = "http://reasoner-service:8001"
 API = "http://api:8000"
 
 def fetch_blob(oid: str, vid: str, sha: str, ext: str) -> bytes:

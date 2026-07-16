@@ -1,4 +1,6 @@
-from pydantic import AnyHttpUrl, field_validator
+from functools import lru_cache
+
+from pydantic import AliasChoices, AnyHttpUrl, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -49,9 +51,15 @@ class Settings(BaseSettings):
 
     sparql_query_timeout_seconds: int = 30
 
-    # ELK reasoning service
-    elk_service_url: str = "http://localhost:8001"
-    elk_service_timeout: int = 3600  # seconds — large ontologies (GO) can take >10 min
+    # Reasoning service (currently runs whelk; ELK_SERVICE_* kept as deprecated aliases)
+    reasoner_service_url: str = Field(
+        default="http://localhost:8001",
+        validation_alias=AliasChoices("REASONER_SERVICE_URL", "ELK_SERVICE_URL"),
+    )
+    reasoner_service_timeout: int = Field(
+        default=3600,  # seconds — large ontologies (GO) can take >10 min
+        validation_alias=AliasChoices("REASONER_SERVICE_TIMEOUT", "ELK_SERVICE_TIMEOUT"),
+    )
 
     # Anthropic
     anthropic_api_key: str = ""
@@ -134,11 +142,6 @@ def is_admin(user) -> bool:
     return bool(user.email and user.email.lower() in emails)
 
 
-_settings: Settings | None = None
-
-
+@lru_cache
 def get_settings() -> Settings:
-    global _settings
-    if _settings is None:
-        _settings = Settings()
-    return _settings
+    return Settings()

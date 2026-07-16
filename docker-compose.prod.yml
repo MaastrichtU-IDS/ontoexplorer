@@ -54,7 +54,7 @@ services:
         condition: service_started
       fuseki:
         condition: service_started
-      elk-service:
+      reasoner-service:
         condition: service_started
     pull_policy: always
     restart: unless-stopped
@@ -104,8 +104,8 @@ services:
     pull_policy: always
     restart: unless-stopped
 
-  elk-service:
-    image: ghcr.io/maastrichtu-ids/ontoexplorer-elk-service:${IMAGE_TAG:-latest}
+  reasoner-service:
+    image: ghcr.io/maastrichtu-ids/ontoexplorer-reasoner-service:${IMAGE_TAG:-latest}
     build: !reset null
     pull_policy: always
     restart: unless-stopped

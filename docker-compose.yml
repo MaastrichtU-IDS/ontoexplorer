@@ -16,7 +16,7 @@ services:
       - redis
       - minio
       - fuseki
-      - elk-service
+      - reasoner-service
     volumes:
       - ./ontoexplorer:/app/ontoexplorer
       - ./alembic:/app/alembic
@@ -134,8 +134,8 @@ services:
     volumes:
       - redis-data:/data
 
-  elk-service:
-    build: docker/elk-service
+  reasoner-service:
+    build: docker/reasoner-service
     ports:
       - "8001:8001"
     environment:
