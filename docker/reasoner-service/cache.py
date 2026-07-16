@@ -17,104 +17,78 @@ _REDIS_URL          = os.getenv("REDIS_URL", "redis://localhost:6379/2")
 _redis: redis.Redis = redis.from_url(_REDIS_URL, decode_responses=False)
 
 
-def _classification_key(version_id: str) -> str:
-    return f"classification:{version_id}"
+def _classification_key(version_id: str, reasoner: str) -> str:
+    return f"classification:{version_id}:{reasoner}"
 
 
-def _input_axioms_key(version_id: str) -> str:
-    return f"input_axioms:{version_id}"
+def _input_axioms_key(version_id: str, reasoner: str) -> str:
+    return f"input_axioms:{version_id}:{reasoner}"
 
 
-def _classification_error_key(version_id: str) -> str:
-    return f"classification_error:{version_id}"
+def _classification_error_key(version_id: str, reasoner: str) -> str:
+    return f"classification_error:{version_id}:{reasoner}"
 
 
-def _justification_key(version_id: str, sub: str, sup: str | None, max_j: int) -> str:
+def _justification_key(version_id: str, sub: str, sup: str | None, max_j: int, reasoner: str) -> str:
     import hashlib
     raw = f"{sub}|{sup}|{max_j}"
     h = hashlib.sha256(raw.encode()).hexdigest()[:16]
-    return f"justification:{version_id}:{h}"
+    return f"justification:{version_id}:{reasoner}:{h}"
 
 
-def store_classification(result: ClassificationResult) -> None:
-    key = _classification_key(result.version_id)
+def store_classification(result: ClassificationResult, reasoner: str) -> None:
+    key = _classification_key(result.version_id, reasoner)
     data = json.dumps(asdict(result)).encode()
-    compressed = gzip.compress(data)
-    _redis.setex(key, _CLASSIFICATION_TTL, compressed)
-    # A successful classification supersedes any prior error.
-    clear_classification_error(result.version_id)
+    _redis.setex(key, _CLASSIFICATION_TTL, gzip.compress(data))
+    clear_classification_error(result.version_id, reasoner)
 
 
-def load_classification(version_id: str) -> ClassificationResult | None:
-    key = _classification_key(version_id)
-    raw = _redis.get(key)
+def load_classification(version_id: str, reasoner: str) -> ClassificationResult | None:
+    raw = _redis.get(_classification_key(version_id, reasoner))
     if raw is None:
         return None
-    data = json.loads(gzip.decompress(raw))
-    return ClassificationResult(**data)
+    return ClassificationResult(**json.loads(gzip.decompress(raw)))
 
 
-def store_justification(version_id: str, sub: str, sup: str | None, max_j: int, result: dict) -> None:
-    key = _justification_key(version_id, sub, sup, max_j)
-    _redis.setex(key, _JUSTIFICATION_TTL, json.dumps(result).encode())
+def store_justification(version_id, sub, sup, max_j, reasoner, result: dict) -> None:
+    _redis.setex(_justification_key(version_id, sub, sup, max_j, reasoner),
+                 _JUSTIFICATION_TTL, json.dumps(result).encode())
 
 
-def load_justification(version_id: str, sub: str, sup: str | None, max_j: int) -> dict | None:
-    key = _justification_key(version_id, sub, sup, max_j)
-    raw = _redis.get(key)
+def load_justification(version_id, sub, sup, max_j, reasoner) -> dict | None:
+    raw = _redis.get(_justification_key(version_id, sub, sup, max_j, reasoner))
     return json.loads(raw) if raw else None
 
 
-def store_input_axioms(version_id: str, ntriples: str) -> None:
-    """Persist the input N-Triples body of a classification submission.
-
-    The justification endpoint needs the original asserted axioms to run its
-    hitting-set algorithm; under the rdflib backend the algorithm could
-    reconstruct them from proof_traces, but the whelk backend emits no
-    traces. Storing the raw body lets justifications work uniformly across
-    backends and removes the dependency on proof_traces entirely.
-
-    Same TTL as the classification result so the two stay in lockstep.
-    """
-    key = _input_axioms_key(version_id)
-    compressed = gzip.compress(ntriples.encode("utf-8"))
-    _redis.setex(key, _CLASSIFICATION_TTL, compressed)
+def store_input_axioms(version_id: str, ntriples: str, reasoner: str) -> None:
+    _redis.setex(_input_axioms_key(version_id, reasoner),
+                 _CLASSIFICATION_TTL, gzip.compress(ntriples.encode("utf-8")))
 
 
-def load_input_axioms(version_id: str) -> str | None:
-    key = _input_axioms_key(version_id)
-    raw = _redis.get(key)
-    if raw is None:
-        return None
-    return gzip.decompress(raw).decode("utf-8")
+def load_input_axioms(version_id: str, reasoner: str) -> str | None:
+    raw = _redis.get(_input_axioms_key(version_id, reasoner))
+    return gzip.decompress(raw).decode("utf-8") if raw is not None else None
 
 
-def store_classification_error(version_id: str, message: str) -> None:
-    """Mark a classification as failed. Surfaces via /classify GET as 500 with
-    the error message — without this, /classify stays at 409 forever for
-    inputs that raised inside the background _run task."""
-    key = _classification_error_key(version_id)
-    _redis.setex(key, _CLASSIFICATION_TTL, message.encode("utf-8"))
+def store_classification_error(version_id: str, message: str, reasoner: str) -> None:
+    _redis.setex(_classification_error_key(version_id, reasoner),
+                 _CLASSIFICATION_TTL, message.encode("utf-8"))
 
 
-def load_classification_error(version_id: str) -> str | None:
-    key = _classification_error_key(version_id)
-    raw = _redis.get(key)
+def load_classification_error(version_id: str, reasoner: str) -> str | None:
+    raw = _redis.get(_classification_error_key(version_id, reasoner))
     return raw.decode("utf-8") if raw else None
 
 
-def clear_classification_error(version_id: str) -> None:
-    """Drop any prior error marker (called from store_classification so a
-    successful retry replaces the failed result)."""
-    _redis.delete(_classification_error_key(version_id))
+def clear_classification_error(version_id: str, reasoner: str) -> None:
+    _redis.delete(_classification_error_key(version_id, reasoner))
 
 
 def invalidate_version(version_id: str) -> None:
-    """Remove all cache entries for a version (called on deprecation)."""
-    pattern = f"*:{version_id}:*"
-    keys = list(_redis.scan_iter(pattern))
-    keys.append(_classification_key(version_id).encode())
-    keys.append(_input_axioms_key(version_id).encode())
-    keys.append(_classification_error_key(version_id).encode())
+    """Remove ALL cache entries for a version across every reasoner variant."""
+    keys = set()
+    for pat in (f"classification:{version_id}:*", f"input_axioms:{version_id}:*",
+                f"classification_error:{version_id}:*", f"justification:{version_id}:*"):
+        keys.update(_redis.scan_iter(pat))
     if keys:
         _redis.delete(*keys)
