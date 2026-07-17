@@ -2650,7 +2650,7 @@ async def get_justification(
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
     from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
 
-    await _get_version_or_404(db, ontology_id, version_id)
+    version = await _get_version_or_404(db, ontology_id, version_id)
 
     r = _get_redis()
 
@@ -2665,9 +2665,24 @@ async def get_justification(
     rendered: list[list[dict]] = []
     try:
         elk_result = await asyncio.wait_for(
-            elk_request_justification(version_id, sub, sup, max_justifications),
+            elk_request_justification(
+                version_id, sub, sup, max_justifications, reasoner=version.reasoner
+            ),
             timeout=60.0,
         )
+        if elk_result.get("reasoning_available") is False:
+            return {
+                "justifications": [],
+                "reasoning_available": False,
+                "reason": elk_result.get("reason", "reasoner has no explanations"),
+            }
+        if elk_result.get("format") == "manchester":
+            return {
+                "justifications": elk_result.get("justifications", []),
+                "format": "manchester",
+                "timed_out": bool(elk_result.get("timed_out")),
+                "reasoning_available": True,
+            }
         if elk_result.get("timed_out"):
             return {"justifications": [], "timed_out": True, "reasoning_available": True}
         rendered = [

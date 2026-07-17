@@ -689,8 +689,11 @@ def compute_justification(
     """
 
     async def _run():
+        from sqlalchemy import select
+
         from ontoexplorer.clients import reasoning as reasoning_client
         from ontoexplorer.database import make_celery_db_session
+        from ontoexplorer.models.db import OntologyVersion
         from ontoexplorer.modules.jobs import tracker
         from ontoexplorer.modules.webhooks.delivery import broadcast_event
 
@@ -698,8 +701,13 @@ def compute_justification(
             job = await tracker.create_job(db, version_id=version_id, job_type="justification")
             await tracker.mark_running(db, job.id)
             try:
+                version_result = await db.execute(
+                    select(OntologyVersion).where(OntologyVersion.id == version_id)
+                )
+                version = version_result.scalar_one_or_none()
+                reasoner = version.reasoner if version else "whelk"
                 result = await reasoning_client.request_justification(
-                    version_id, sub, sup, max_justifications
+                    version_id, sub, sup, max_justifications, reasoner=reasoner
                 )
                 await tracker.mark_done(db, job.id)
                 await broadcast_event(db, "justification.completed", {
