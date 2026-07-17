@@ -219,13 +219,40 @@ async def submit_ontology(
     db: AsyncSession = Depends(get_db),
 ):
     import asyncio
+    from ontoexplorer.clients import reasoning as _reasoning
+    from ontoexplorer.config import get_settings as _get_settings
     from ontoexplorer.modules.jobs.tasks import ingest_ontology
 
     content_type = request.headers.get("content-type", "")
     owner_id = user.id if user else None
     loop = asyncio.get_event_loop()
 
-    if "multipart/form-data" in content_type and file:
+    is_multipart = "multipart/form-data" in content_type and file
+
+    # Read the request body exactly once (the ASGI stream can't be re-read),
+    # then reuse it for both reasoner resolution and the iri/url/content branches.
+    form = None
+    body: dict = {}
+    if is_multipart:
+        form = await request.form()
+    else:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+    # Reasoner: from body/form, else app default; validate against the service.
+    req_reasoner = form.get("reasoner") if form is not None else body.get("reasoner")
+    chosen_reasoner = req_reasoner or _get_settings().default_reasoner
+    available = await _reasoning.available_reasoner_names()
+    if chosen_reasoner not in available:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown or unavailable reasoner '{chosen_reasoner}'; available: {sorted(available)}",
+        )
+    reasoner = chosen_reasoner
+
+    if is_multipart:
         raw = await file.read()
         task = await loop.run_in_executor(
             None,
@@ -234,16 +261,22 @@ async def submit_ontology(
                 filename=file.filename,
                 content_type=file.content_type,
                 owner_id=owner_id,
+                reasoner=reasoner,
             ),
         )
         return {"task_id": task.id, "status": "queued"}
 
-    body = await request.json()
     groups = [g for g in (body.get("groups") or []) if g] or None
     if "iri" in body:
-        task = await loop.run_in_executor(None, lambda: ingest_ontology.delay(iri=body["iri"], owner_id=owner_id, groups=groups))
+        task = await loop.run_in_executor(
+            None,
+            lambda: ingest_ontology.delay(iri=body["iri"], owner_id=owner_id, groups=groups, reasoner=reasoner),
+        )
     elif "url" in body:
-        task = await loop.run_in_executor(None, lambda: ingest_ontology.delay(url=body["url"], owner_id=owner_id, groups=groups))
+        task = await loop.run_in_executor(
+            None,
+            lambda: ingest_ontology.delay(url=body["url"], owner_id=owner_id, groups=groups, reasoner=reasoner),
+        )
     elif "content" in body:
         raw = body["content"].encode()
         task = await loop.run_in_executor(
@@ -253,6 +286,7 @@ async def submit_ontology(
                 content_type=body.get("format"),
                 owner_id=owner_id,
                 groups=groups,
+                reasoner=reasoner,
             ),
         )
     else:

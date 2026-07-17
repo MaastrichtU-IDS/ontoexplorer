@@ -77,6 +77,7 @@ class IngestionRequest:
     content_type: str | None = None
     owner_id: str | None = None
     groups: list[str] = None  # type: ignore[assignment]
+    reasoner: str = "whelk"
 
     def __post_init__(self):
         if self.groups is None:
@@ -207,6 +208,7 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
         status="ingested",
         triple_count=triple_count,
         source_url=source.final_url or request.url or request.iri,
+        reasoner=request.reasoner,
     )
     db.add(version)
 

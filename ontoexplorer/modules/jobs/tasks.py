@@ -327,6 +327,7 @@ def ingest_ontology(
     content_type: str | None = None,
     owner_id: str | None = None,
     groups: list[str] | None = None,
+    reasoner: str = "whelk",
 ) -> dict:
     """Celery task: run the full ingestion pipeline for one ontology submission."""
     from ontoexplorer.database import make_celery_db_session
@@ -336,6 +337,7 @@ def ingest_ontology(
     request = IngestionRequest(
         iri=iri, url=url, raw_bytes=raw_bytes,
         filename=filename, content_type=content_type, owner_id=owner_id, groups=groups or [],
+        reasoner=reasoner,
     )
 
     async def _run():
