@@ -8,6 +8,58 @@ from classifier import ClassificationResult
 _KONCLUDE_BIN = shutil.which("Konclude")
 
 
+def _transitive_superclasses(
+    parents: dict[str, set[str]], asserted: set[tuple[str, str]]
+) -> dict[str, list[str]]:
+    """Compute the transitive closure of a child -> direct-parents map and
+    return the *inferred-only* superclasses per class (self-loops and
+    asserted subsumption/equivalentClass pairs excluded).
+
+    Konclude's `classification -o out.owx` output contains only the direct
+    subsumption taxonomy (told + direct-inferred edges), not the full
+    transitive closure — unlike whelk (`inferred_axioms()`) and rustdl
+    (`superclasses_of()`), which both return the closure natively. This
+    walks `parents` per class (DFS with memoization) to reproduce that
+    closure, then filters it the same way rustdl_backend.py does:
+    ``[s for s in cls.superclasses_of(c) if s != c and (c, s) not in asserted]``.
+
+    A `visiting` cycle guard handles owl:equivalentClass loops (A<->B via
+    mutual subClassOf edges) without infinite recursion; those pairs are
+    still correctly excluded by the final `asserted` filter regardless of
+    traversal order, since equivalentClass pairs are added to `asserted` in
+    both directions by the caller.
+    """
+    memo: dict[str, frozenset[str]] = {}
+
+    def ancestors(c: str, visiting: frozenset[str]) -> frozenset[str]:
+        cached = memo.get(c)
+        if cached is not None:
+            return cached
+        if c in visiting:
+            return frozenset()  # cycle guard; final filter drops self anyway
+        visiting = visiting | {c}
+        result: set[str] = set()
+        for p in parents.get(c, ()):
+            result.add(p)
+            result |= ancestors(p, visiting)
+        memo[c] = frozenset(result)
+        return memo[c]
+
+    nodes: set[str] = set(parents.keys())
+    for ps in parents.values():
+        nodes |= ps
+
+    superclasses: dict[str, list[str]] = {}
+    for c in nodes:
+        inferred = sorted(
+            p for p in ancestors(c, frozenset())
+            if p != c and (c, p) not in asserted
+        )
+        if inferred:
+            superclasses[c] = inferred
+    return superclasses
+
+
 class KoncludeBackend:
     info = ReasonerInfo(
         name="konclude", profile="OWL 2 (all profiles)",
@@ -83,7 +135,11 @@ class KoncludeBackend:
                     if o not in direct_sup[s]:
                         direct_sup[s].append(o)
 
-        superclasses: dict[str, list[str]] = defaultdict(list)
+        # Konclude's classification output only carries direct (told +
+        # direct-inferred) subClassOf edges, not the full transitive
+        # closure — build the direct child->parents map here and derive
+        # `superclasses` as its transitive closure below.
+        parents: dict[str, set[str]] = defaultdict(set)
         unsatisfiable: list[str] = []
         for s, _, o in g.triples((None, RDFS_SUB, None)):
             if not (isinstance(s, rdflib.URIRef) and isinstance(o, rdflib.URIRef)):
@@ -93,9 +149,11 @@ class KoncludeBackend:
                 if su not in unsatisfiable:
                     unsatisfiable.append(su)
                 continue
-            if su == ob or su == OWL_NOTHING or ob == OWL_THING or (su, ob) in asserted:
+            if su == ob or su == OWL_NOTHING or ob == OWL_THING:
                 continue
-            superclasses[su].append(ob)
+            parents[su].add(ob)
+
+        superclasses = _transitive_superclasses(parents, asserted)
 
         subclasses: dict[str, list[str]] = defaultdict(list)
         for c, sups in superclasses.items():
