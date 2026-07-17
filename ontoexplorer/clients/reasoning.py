@@ -52,9 +52,9 @@ async def available_reasoner_names() -> set[str]:
         return set(_KNOWN_REASONERS)
 
 
-def _elk_cache_key(kind: str, version_id: str, class_iri: str, direct: bool) -> str:
+def _elk_cache_key(kind: str, version_id: str, class_iri: str, direct: bool, reasoner: str) -> str:
     h = hashlib.blake2b(class_iri.encode(), digest_size=10).hexdigest()
-    return f"elk:{kind}:{version_id}:{int(direct)}:{h}"
+    return f"elk:{kind}:{version_id}:{reasoner}:{int(direct)}:{h}"
 
 
 def _get_redis_client():
@@ -122,7 +122,7 @@ async def superclasses(version_id: str, class_iri: str, direct: bool = False, re
     repeat lookup within a browsing session is served from cache.
     """
     r = _get_redis_client()
-    key = _elk_cache_key("super", version_id, class_iri, direct)
+    key = _elk_cache_key("super", version_id, class_iri, direct, reasoner)
     cached = await asyncio.to_thread(r.get, key)
     if cached:
         return _json.loads(cached)
@@ -148,7 +148,7 @@ async def subclasses(version_id: str, class_iri: str, direct: bool = False, reas
     Cached identically to `superclasses` — see that docstring.
     """
     r = _get_redis_client()
-    key = _elk_cache_key("sub", version_id, class_iri, direct)
+    key = _elk_cache_key("sub", version_id, class_iri, direct, reasoner)
     cached = await asyncio.to_thread(r.get, key)
     if cached:
         return _json.loads(cached)
