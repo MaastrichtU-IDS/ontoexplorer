@@ -32,7 +32,8 @@ RUN pip install --no-cache-dir \
     "pyoxigraph>=0.4" \
  && rm -rf /tmp/wheels
 
-COPY main.py classifier.py whelk_classifier.py cache.py justification.py ./
+COPY main.py classifier.py whelk_classifier.py cache.py justification.py \
+     registry.py rustdl_backend.py konclude_backend.py ./
 
 EXPOSE 8001
 
