@@ -136,6 +136,7 @@ services:
 
   reasoner-service:
     build: docker/reasoner-service
+    platform: linux/amd64
     ports:
       - "8001:8001"
     environment:

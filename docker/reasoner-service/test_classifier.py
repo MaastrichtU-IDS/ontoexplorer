@@ -29,8 +29,54 @@ def test_cr2_transitivity():
     result = classify(g(ttl), "v1")
     sups = result.superclasses[f"{EX}A"]
     assert f"{EX}C" in sups
-    assert str(OWL.Thing) in sups
+    assert str(OWL.Thing) not in sups  # owl:Thing must be stripped, per contract
     assert f"{EX}B" not in sups  # asserted, not inferred
+
+
+def test_owl_thing_and_nothing_excluded_from_superclasses():
+    """owl:Thing must never appear in `superclasses`/`subclasses` (cross-backend
+    contract: superclasses = inferred, no owl:Thing). A ⊑ B ⊑ C: superclasses[A]
+    must be exactly [C] (transitive; asserted B excluded; owl:Thing excluded)."""
+    from classifier import classify
+    ttl = """
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix ex: <http://example.org/> .
+    ex:A a owl:Class ; rdfs:subClassOf ex:B .
+    ex:B a owl:Class ; rdfs:subClassOf ex:C .
+    ex:C a owl:Class .
+    """
+    result = classify(g(ttl), "v1")
+    assert result.superclasses[f"{EX}A"] == [f"{EX}C"]
+    for sups in result.superclasses.values():
+        assert str(OWL.Thing) not in sups
+        assert str(OWL.Nothing) not in sups
+    for subs in result.subclasses.values():
+        assert str(OWL.Thing) not in subs
+        assert str(OWL.Nothing) not in subs
+
+
+def test_owl_nothing_excluded_for_unsatisfiable_class():
+    """An unsatisfiable class (A ⊑ B, A ⊑ C, B disjointWith C) must be listed in
+    `unsatisfiable`, but owl:Nothing (added internally by CR6) must NOT pollute
+    `superclasses`/`subclasses`."""
+    from classifier import classify
+    ttl = """
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix ex: <http://example.org/> .
+    ex:A a owl:Class ; rdfs:subClassOf ex:B ; rdfs:subClassOf ex:C .
+    ex:B a owl:Class .
+    ex:C a owl:Class .
+    ex:B owl:disjointWith ex:C .
+    """
+    result = classify(g(ttl), "v1")
+    assert f"{EX}A" in result.unsatisfiable
+    assert str(OWL.Nothing) not in result.superclasses.get(f"{EX}A", [])
+    for sups in result.superclasses.values():
+        assert str(OWL.Nothing) not in sups
+    for subs in result.subclasses.values():
+        assert str(OWL.Nothing) not in subs
 
 
 def test_cr3_conjunction():
