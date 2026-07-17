@@ -1311,7 +1311,7 @@ async def get_term(
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
     from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
 
-    await _get_version_or_404(db, ontology_id, version_id)
+    version = await _get_version_or_404(db, ontology_id, version_id)
 
     # Response cache — repeat clicks across a session are essentially free.
     _r_cache = _get_redis()
@@ -1373,7 +1373,7 @@ async def get_term(
     # Inferred sub/superclasses from ELK — run concurrently, ignore if not ready
     async def _elk_subclasses():
         try:
-            return await elk_subclasses(version_id, term_iri, direct=False)
+            return await elk_subclasses(version_id, term_iri, direct=False, reasoner=version.reasoner)
         except (ReasoningNotReadyError, ClassNotFoundError):
             return {}
         except Exception:
@@ -1381,7 +1381,7 @@ async def get_term(
 
     async def _elk_superclasses():
         try:
-            return await elk_superclasses(version_id, term_iri, direct=False)
+            return await elk_superclasses(version_id, term_iri, direct=False, reasoner=version.reasoner)
         except (ReasoningNotReadyError, ClassNotFoundError):
             return {}
         except Exception:
@@ -2090,7 +2090,7 @@ async def get_term_expanded(
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
     from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
 
-    await _get_version_or_404(db, ontology_id, version_id)
+    version = await _get_version_or_404(db, ontology_id, version_id)
 
     _r_cache = _get_redis()
     _cache_key = _term_expanded_cache_key(ontology_id, version_id, term_iri, lang)
@@ -2157,7 +2157,7 @@ async def get_term_expanded(
 
     if not is_property:
         try:
-            sup_result = await elk_superclasses(version_id, term_iri, direct=False)
+            sup_result = await elk_superclasses(version_id, term_iri, direct=False, reasoner=version.reasoner)
         except Exception:
             sup_result = {}
         _OWL_THING = "http://www.w3.org/2002/07/owl#Thing"
@@ -2370,9 +2370,9 @@ async def get_superclasses(
     direct: bool = Query(False, description="Return only directly asserted superclasses"),
     db: AsyncSession = Depends(get_db),
 ):
-    await _get_version_or_404(db, ontology_id, version_id)
+    version = await _get_version_or_404(db, ontology_id, version_id)
     try:
-        return await elk_superclasses(version_id, cls, direct=direct)
+        return await elk_superclasses(version_id, cls, direct=direct, reasoner=version.reasoner)
     except ReasoningNotReadyError:
         raise HTTPException(409, "Reasoning not yet completed — trigger via POST .../reason")
     except ClassNotFoundError:
@@ -2389,9 +2389,9 @@ async def get_subclasses(
     direct: bool = Query(False, description="Return only directly asserted subclasses"),
     db: AsyncSession = Depends(get_db),
 ):
-    await _get_version_or_404(db, ontology_id, version_id)
+    version = await _get_version_or_404(db, ontology_id, version_id)
     try:
-        return await elk_subclasses(version_id, cls, direct=direct)
+        return await elk_subclasses(version_id, cls, direct=direct, reasoner=version.reasoner)
     except ReasoningNotReadyError:
         raise HTTPException(409, "Reasoning not yet completed — trigger via POST .../reason")
     except ClassNotFoundError:

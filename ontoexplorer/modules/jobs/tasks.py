@@ -452,7 +452,7 @@ async def _run_reasoning(db, version_id: str) -> dict:
     # Call ELK service — classify_v2 POSTs to /classify and caches in Redis
     import httpx as _httpx
     from ontoexplorer.config import get_settings as _get_settings
-    await reasoning_client.classify_v2(asserted_graph, version_id)
+    await reasoning_client.classify_v2(asserted_graph, version_id, reasoner=version.reasoner)
 
     # Fetch the full inferred graph from ELK classification result for Oxigraph persistence
     async with _httpx.AsyncClient(timeout=60.0) as client:
