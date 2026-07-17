@@ -4,11 +4,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json as _json
+import logging
 import time
 import httpx
 import rdflib
 
 from ontoexplorer.config import get_settings
+
+log = logging.getLogger(__name__)
 
 # In-process cache for get_classification: avoids re-fetching the (often 40+ MB)
 # classification JSON on every inferred-tree or MOS-search request.
@@ -26,6 +29,27 @@ _ELK_SUBSUP_TTL = 24 * 3600  # 24 hours
 
 def _elk_url(path: str) -> str:
     return f"{get_settings().reasoner_service_url}{path}"
+
+
+_KNOWN_REASONERS = {"whelk", "rdflib", "rustdl", "konclude"}
+
+
+async def list_reasoners() -> list[dict]:
+    """Return the reasoner-service /reasoners payload."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(_elk_url("/reasoners"))
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def available_reasoner_names() -> set[str]:
+    """Names of reasoners reporting available=true. Falls back to the known set
+    if the reasoner-service can't be reached (validation must not block ingest)."""
+    try:
+        return {r["name"] for r in await list_reasoners() if r.get("available")}
+    except Exception:
+        log.warning("reasoners_unreachable_fallback_to_known_names")
+        return set(_KNOWN_REASONERS)
 
 
 def _elk_cache_key(kind: str, version_id: str, class_iri: str, direct: bool) -> str:
