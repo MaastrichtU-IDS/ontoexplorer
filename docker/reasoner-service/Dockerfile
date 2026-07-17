@@ -1,16 +1,13 @@
-# ELK OWL-EL reasoning service
-# Accepts ontology triples (N-Triples) via HTTP and returns materialised
-# subClassOf / equivalentClass inferences as N-Triples.
-#
-# Two classification backends are available:
-#   - "whelk" (default): py-whelk = whelk-rs (Rust port of Whelk EL reasoner)
-#     invoked in-process via py-horned-owl. Strict superset of ROBOT/ELK's
-#     inferences on tested ontologies; ~4x faster than the legacy backend on
-#     ordo-scale inputs.
-#   - "rdflib" (legacy): pure-Python structural EL classifier in classifier.py.
-#     Kept because its proof-trace output drives the hitting-set justification
-#     algorithm. Has a known coverage gap (misses ~17K inferences on ordo).
-# Switch via env var CLASSIFIER_BACKEND.
+# Reasoner service — hosts a capability-aware registry of OWL reasoners
+# behind one HTTP contract. Reasoner is selected per request (default DEFAULT_REASONER):
+#   - "whelk"    (EL): py-whelk = whelk-rs, in-process via py-horned-owl. Default.
+#   - "rdflib"   (EL, legacy): pure-Python structural classifier in classifier.py.
+#   - "rustdl"   (DL SROIQ): PyO3 binding, installed from the PyPI manylinux wheel
+#                (rustdl==0.3.21, tag v0.3.21). Classify + native sound justify.
+#   - "konclude" (OWL 2, all profiles): prebuilt binary from konclude/konclude:latest,
+#                invoked as a subprocess. Classify + consistency (no justify).
+# Image is pinned to linux/amd64 (via compose) so the x86_64 py_whelk wheel and the
+# x86_64 Konclude binary run natively (emulated on Apple Silicon).
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -30,7 +27,15 @@ RUN pip install --no-cache-dir \
     "py-horned-owl==1.4.*" \
     /tmp/wheels/py_whelk-*.whl \
     "pyoxigraph>=0.4" \
+    "rustdl==0.3.21" \
  && rm -rf /tmp/wheels
+
+# Konclude: bundle the prebuilt binary from the official image (linux/amd64).
+# It links only libstdc++.so.6 at runtime (TBB is statically linked).
+COPY --from=konclude/konclude:latest /root/Konclude /usr/local/bin/Konclude
+RUN chmod +x /usr/local/bin/Konclude \
+ && apt-get update && apt-get install -y --no-install-recommends libstdc++6 \
+ && rm -rf /var/lib/apt/lists/*
 
 COPY main.py classifier.py whelk_classifier.py cache.py justification.py \
      registry.py rustdl_backend.py konclude_backend.py ./
