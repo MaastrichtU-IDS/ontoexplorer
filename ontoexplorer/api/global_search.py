@@ -220,7 +220,7 @@ async def global_search(
 
     async def search_one_expression(v: OntologyVersion) -> list[dict]:
         try:
-            results = await evaluate(ast, str(v.id), str(v.ontology_id), lang=effective_lang)
+            results = await evaluate(ast, str(v.id), str(v.ontology_id), lang=effective_lang, reasoner=v.reasoner)
             # MOS class expressions always yield classes — tag explicitly so the
             # UI badge renders and the chip filter compares like-for-like.
             return [
@@ -313,7 +313,7 @@ async def ontology_search(
         }
 
     try:
-        search_results = await evaluate(ast, version_id, ontology_id, lang=effective_lang, direct=direct)
+        search_results = await evaluate(ast, version_id, ontology_id, lang=effective_lang, direct=direct, reasoner=version.reasoner)
     except AmbiguousLabelError as exc:
         return JSONResponse(status_code=422, content={
             "error": "ambiguous_label", "label": exc.label, "candidates": exc.candidates,

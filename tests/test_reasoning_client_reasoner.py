@@ -124,3 +124,40 @@ def test_elk_cache_key_scoped_by_reasoner():
     assert k1 != k2
     assert "whelk" in k1
     assert "rustdl" in k2
+
+
+def _client_capturing_get_url(calls, payload=None):
+    class _Resp:
+        def __init__(self, status=200, payload=None):
+            self.status_code = status; self._p = payload or {}
+        def json(self): return self._p
+        def raise_for_status(self): pass
+    class _Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url):
+            calls.append(url)
+            return _Resp(200, payload or {"superclasses": {}})
+    return lambda *a, **k: _Client()
+
+
+@pytest.mark.asyncio
+async def test_get_classification_reasoner_reaches_wire(monkeypatch):
+    """Regression for Critical Fix #2: get_classification must append
+    ?reasoner=<reasoner> to the /classify/{version_id} GET, otherwise the
+    reasoner-service's whelk-scoped cache key 409s for non-whelk versions.
+    """
+    calls: list[str] = []
+    monkeypatch.setattr(reasoning.httpx, "AsyncClient", _client_capturing_get_url(calls))
+    await reasoning.get_classification("v-get-classification-rustdl", reasoner="rustdl")
+    assert len(calls) == 1
+    assert "reasoner=rustdl" in calls[0]
+
+
+@pytest.mark.asyncio
+async def test_get_classification_defaults_to_whelk(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(reasoning.httpx, "AsyncClient", _client_capturing_get_url(calls))
+    await reasoning.get_classification("v-get-classification-default")
+    assert len(calls) == 1
+    assert "reasoner=whelk" in calls[0]

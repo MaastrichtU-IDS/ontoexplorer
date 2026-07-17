@@ -2420,12 +2420,12 @@ async def inferred_children(
     Root request (cls=owl:Thing) returns classes with no direct inferred superclass.
     """
     import json as _json
-    await _get_version_or_404(db, ontology_id, version_id)
+    version = await _get_version_or_404(db, ontology_id, version_id)
     from ontoexplorer.clients.reasoning import get_classification
     from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _deprecated_key
 
     try:
-        classification = await get_classification(version_id)
+        classification = await get_classification(version_id, reasoner=version.reasoner)
     except Exception:
         return {"terms": [], "reasoning_available": False}
 
@@ -2547,14 +2547,14 @@ async def term_ancestors(
     db: AsyncSession = Depends(get_db),
 ):
     """Return all ancestors (superclasses) of a term so the UI can expand the tree path."""
-    await _get_version_or_404(db, ontology_id, version_id)
+    version = await _get_version_or_404(db, ontology_id, version_id)
 
     if mode == "inferred":
         from ontoexplorer.clients.reasoning import get_classification
         from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
 
         try:
-            classification = await get_classification(version_id)
+            classification = await get_classification(version_id, reasoner=version.reasoner)
         except Exception:
             return {"ancestors": [], "reasoning_available": False}
 

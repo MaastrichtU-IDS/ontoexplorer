@@ -237,7 +237,7 @@ async def health_check() -> bool:
         return False
 
 
-async def get_classification(version_id: str) -> dict:
+async def get_classification(version_id: str, reasoner: str = "whelk") -> dict:
     """Fetch the full ClassificationResult JSON from the ELK service cache.
 
     Returns the raw dict with keys: superclasses, subclasses, direct_superclasses,
@@ -245,6 +245,8 @@ async def get_classification(version_id: str) -> dict:
 
     Results are cached in-process for _CLASSIFICATION_TTL seconds to avoid
     repeatedly fetching large (40+ MB) payloads on every tree or search request.
+    The cache is keyed by version_id alone (not reasoner) since a version's
+    reasoner is immutable, so version_id -> reasoner is a 1:1 mapping.
 
     Raises ReasoningNotReadyError if the version has not been classified yet.
     """
@@ -263,7 +265,7 @@ async def get_classification(version_id: str) -> dict:
         if cached and (now - cached[0]) < _CLASSIFICATION_TTL:
             return cached[1]
 
-        url = f"{_elk_url('')}/classify/{version_id}"
+        url = f"{_elk_url('')}/classify/{version_id}?reasoner={reasoner}"
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.get(url)
         if resp.status_code in (404, 409):

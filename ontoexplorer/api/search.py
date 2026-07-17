@@ -53,7 +53,7 @@ async def search(
     _user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await _get_version_or_404(db, ontology_id, version_id)
+    version = await _get_version_or_404(db, ontology_id, version_id)
     ontology_row = (await db.execute(
         select(Ontology).where(Ontology.id == ontology_id)
     )).scalar_one_or_none()
@@ -104,6 +104,7 @@ async def search(
         search_results = await evaluate_relation(
             ast, version_id, ontology_id,
             relation=relation, lang=effective_lang, direct=direct,
+            reasoner=version.reasoner,
         )
     except RelationRequiresNamedClassError:
         return JSONResponse(
