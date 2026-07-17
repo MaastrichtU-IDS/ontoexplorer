@@ -63,7 +63,7 @@ def _get_redis_client():
     return _get_redis()
 
 
-async def classify_v2(graph: rdflib.Graph, version_id: str) -> dict:
+async def classify_v2(graph: rdflib.Graph, version_id: str, reasoner: str = "whelk") -> dict:
     """
     POST N-Triples to ELK service (returns 202 immediately), then poll until done.
     Max wait is reasoner_service_timeout seconds (default 3600); raises TimeoutError if exceeded.
@@ -77,7 +77,7 @@ async def classify_v2(graph: rdflib.Graph, version_id: str) -> dict:
     async def _submit() -> dict:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(_elk_url("/classify"),
-                                     json={"ntriples": ntriples, "version_id": version_id})
+                                     json={"ntriples": ntriples, "version_id": version_id, "reasoner": reasoner})
             resp.raise_for_status()
             return resp.json()
 
@@ -105,7 +105,7 @@ async def classify_v2(graph: rdflib.Graph, version_id: str) -> dict:
                 break
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            poll = await client.get(_elk_url(f"/classify/{version_id}"))
+            poll = await client.get(_elk_url(f"/classify/{version_id}?reasoner={reasoner}"))
         if poll.status_code == 200:
             return poll.json()
         if poll.status_code != 409:
@@ -114,7 +114,7 @@ async def classify_v2(graph: rdflib.Graph, version_id: str) -> dict:
     raise TimeoutError(f"ELK classification for {version_id} did not complete within {max_wait}s")
 
 
-async def superclasses(version_id: str, class_iri: str, direct: bool = False) -> dict:
+async def superclasses(version_id: str, class_iri: str, direct: bool = False, reasoner: str = "whelk") -> dict:
     """Return all (or direct-only) inferred superclasses of class_iri.
 
     Cached in Redis under `elk:super:{version_id}:…` with a 24-hour TTL.
@@ -130,7 +130,7 @@ async def superclasses(version_id: str, class_iri: str, direct: bool = False) ->
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(
             _elk_url(f"/classify/{version_id}/superclasses"),
-            params={"cls": class_iri, "direct": str(direct).lower()},
+            params={"cls": class_iri, "direct": str(direct).lower(), "reasoner": reasoner},
         )
         if resp.status_code == 409:
             raise ReasoningNotReadyError(version_id)
@@ -142,7 +142,7 @@ async def superclasses(version_id: str, class_iri: str, direct: bool = False) ->
     return data
 
 
-async def subclasses(version_id: str, class_iri: str, direct: bool = False) -> dict:
+async def subclasses(version_id: str, class_iri: str, direct: bool = False, reasoner: str = "whelk") -> dict:
     """Return all (or direct-only) inferred subclasses of class_iri.
 
     Cached identically to `superclasses` — see that docstring.
@@ -156,7 +156,7 @@ async def subclasses(version_id: str, class_iri: str, direct: bool = False) -> d
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(
             _elk_url(f"/classify/{version_id}/subclasses"),
-            params={"cls": class_iri, "direct": str(direct).lower()},
+            params={"cls": class_iri, "direct": str(direct).lower(), "reasoner": reasoner},
         )
         if resp.status_code == 409:
             raise ReasoningNotReadyError(version_id)
@@ -168,10 +168,10 @@ async def subclasses(version_id: str, class_iri: str, direct: bool = False) -> d
     return data
 
 
-async def consistency(version_id: str) -> dict:
+async def consistency(version_id: str, reasoner: str = "whelk") -> dict:
     """Return consistency check result including unsatisfiable classes."""
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(_elk_url(f"/classify/{version_id}/consistency"))
+        resp = await client.get(_elk_url(f"/classify/{version_id}/consistency?reasoner={reasoner}"))
         if resp.status_code == 409:
             raise ReasoningNotReadyError(version_id)
         resp.raise_for_status()
@@ -183,12 +183,13 @@ async def request_justification(
     sub: str,
     sup: str | None,
     max_justifications: int = 1,
+    reasoner: str = "whelk",
 ) -> dict:
     """
     Synchronously request justification computation from ELK service.
     Long-running — always called from a Celery task, not an HTTP handler.
     """
-    body: dict = {"sub": sub, "max_justifications": max_justifications}
+    body: dict = {"sub": sub, "max_justifications": max_justifications, "reasoner": reasoner}
     if sup:
         body["sup"] = sup
     else:
@@ -200,6 +201,9 @@ async def request_justification(
             _elk_url(f"/classify/{version_id}/justification"),
             json=body,
         )
+        if resp.status_code == 422:
+            detail = resp.json().get("detail", "reasoner does not support justifications")
+            return {"justifications": [], "reasoning_available": False, "reason": detail}
         if resp.status_code == 409:
             raise ReasoningNotReadyError(version_id)
         resp.raise_for_status()
