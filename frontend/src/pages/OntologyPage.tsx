@@ -410,7 +410,7 @@ function OntologyMeta({ iri, version, lang }: {
                 background: 'var(--bg-secondary)',
                 color: 'var(--text-muted)', borderRadius: 3, padding: '1px 7px',
               }}>
-                Reasoner: {version.reasoner}
+                {version.reasoner}
               </span>
             </MetaRow>
           )}

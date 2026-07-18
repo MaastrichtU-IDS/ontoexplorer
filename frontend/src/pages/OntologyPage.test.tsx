@@ -79,8 +79,12 @@ function wrap() {
 }
 
 describe('OntologyPage reasoner badge', () => {
-  it('shows a "Reasoner: rustdl" badge for the active version', async () => {
+  it('shows a Reasoner row with the value (and no duplicated label) for the active version', async () => {
     wrap()
-    expect(await screen.findByText(/Reasoner:\s*rustdl/i)).toBeInTheDocument()
+    const label = await screen.findByText('Reasoner')
+    const row = label.closest('tr')
+    expect(row).not.toBeNull()
+    expect(await screen.findByText('rustdl')).toBeInTheDocument()
+    expect(row?.textContent).not.toMatch(/Reasoner:\s*rustdl/i)
   })
 })
