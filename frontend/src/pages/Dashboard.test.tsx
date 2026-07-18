@@ -49,8 +49,19 @@ vi.mock('../lib/api', () => ({
     admin: {
       checkUpdate: vi.fn().mockResolvedValue({ status: 'up_to_date' }),
     },
+    reasoners: {
+      list: vi.fn().mockResolvedValue([
+        { name: 'whelk', profile: 'EL', capabilities: ['classify'], available: true },
+        { name: 'rustdl', profile: 'DL', capabilities: ['classify', 'justify'], available: true },
+        { name: 'unavailable-one', profile: 'DL', capabilities: [], available: false },
+      ]),
+    },
   },
 }))
+
+import { api } from '../lib/api'
+const mockSubmitByIri = api.ontologies.submitByIri as ReturnType<typeof vi.fn>
+const mockReasonersList = api.reasoners.list as ReturnType<typeof vi.fn>
 
 function wrap() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -97,4 +108,59 @@ test('shows confirm delete UI on delete button click', async () => {
   // After clicking Delete, confirmation shows yes/no buttons
   expect(screen.getByText('yes')).toBeInTheDocument()
   expect(screen.getByText('no')).toBeInTheDocument()
+})
+
+test('Advanced disclosure is collapsed by default and hides the reasoner select', async () => {
+  wrap()
+  fireEvent.click(screen.getByText('+ Add Ontology'))
+  expect(screen.getByText(/Advanced/)).toBeInTheDocument()
+  expect(screen.queryByLabelText(/reasoner/i)).not.toBeInTheDocument()
+})
+
+test('expanding Advanced reveals a reasoner select populated from reasoners.list, filtered to available', async () => {
+  wrap()
+  fireEvent.click(screen.getByText('+ Add Ontology'))
+  fireEvent.click(screen.getByText(/Advanced/))
+
+  await waitFor(() => expect(mockReasonersList).toHaveBeenCalled())
+  const select = await screen.findByLabelText(/reasoner/i)
+  expect(select).toBeInTheDocument()
+
+  expect(screen.getByRole('option', { name: '(default)' })).toBeInTheDocument()
+  expect(screen.getByRole('option', { name: 'whelk' })).toBeInTheDocument()
+  expect(screen.getByRole('option', { name: 'rustdl' })).toBeInTheDocument()
+  // Unavailable reasoners must not be offered.
+  expect(screen.queryByRole('option', { name: 'unavailable-one' })).not.toBeInTheDocument()
+})
+
+test('submitting with Advanced left collapsed calls submitByIri with no reasoner', async () => {
+  wrap()
+  fireEvent.click(screen.getByText('+ Add Ontology'))
+  fireEvent.change(screen.getByPlaceholderText(/purl.obolibrary/), {
+    target: { value: 'https://purl.obolibrary.org/obo/go.owl' },
+  })
+  fireEvent.click(screen.getByText('Add'))
+
+  await waitFor(() =>
+    expect(mockSubmitByIri).toHaveBeenCalledWith('https://purl.obolibrary.org/obo/go.owl', undefined)
+  )
+})
+
+test('choosing a reasoner under Advanced threads it into the submit call', async () => {
+  wrap()
+  fireEvent.click(screen.getByText('+ Add Ontology'))
+  fireEvent.click(screen.getByText(/Advanced/))
+
+  const select = await screen.findByLabelText(/reasoner/i)
+  await waitFor(() => expect(screen.getByRole('option', { name: 'rustdl' })).toBeInTheDocument())
+  fireEvent.change(select, { target: { value: 'rustdl' } })
+
+  fireEvent.change(screen.getByPlaceholderText(/purl.obolibrary/), {
+    target: { value: 'https://purl.obolibrary.org/obo/go.owl' },
+  })
+  fireEvent.click(screen.getByText('Add'))
+
+  await waitFor(() =>
+    expect(mockSubmitByIri).toHaveBeenCalledWith('https://purl.obolibrary.org/obo/go.owl', 'rustdl')
+  )
 })

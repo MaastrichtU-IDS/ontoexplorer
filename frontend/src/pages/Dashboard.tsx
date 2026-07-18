@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, slugFromIri, type Ontology, type OntologyVersion } from '../lib/api'
+import { api, slugFromIri, type Ontology, type OntologyVersion, type ReasonerInfo } from '../lib/api'
 import { useAuth } from '../hooks/useAuth'
 
 // ── Status dot ────────────────────────────────────────────────────────────────
@@ -489,6 +489,16 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
   const [pasteFormat, setPasteFormat] = useState('turtle')
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [reasoner, setReasoner] = useState<string | undefined>(undefined)
+
+  const { data: reasonersData } = useQuery({
+    queryKey: ['reasoners'],
+    queryFn: () => api.reasoners.list(),
+    enabled: showAdvanced,
+    staleTime: 300_000,
+  })
+  const availableReasoners: ReasonerInfo[] = (reasonersData ?? []).filter(r => r.available)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -497,14 +507,14 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
     try {
       let result: { task_id: string }
       if (tab === 'iri') {
-        result = await api.ontologies.submitByIri(value)
+        result = await api.ontologies.submitByIri(value, reasoner)
       } else if (tab === 'url') {
-        result = await api.ontologies.submitByUrl(value)
+        result = await api.ontologies.submitByUrl(value, reasoner)
       } else if (tab === 'upload') {
         if (!file) return
-        result = await api.ontologies.submitFile(file)
+        result = await api.ontologies.submitFile(file, reasoner)
       } else {
-        result = await api.ontologies.submitByContent(pasteContent, pasteFormat)
+        result = await api.ontologies.submitByContent(pasteContent, pasteFormat, reasoner)
       }
       setMessage(`Queued — task ID: ${result.task_id}`)
       setValue('')
@@ -606,6 +616,46 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
             />
           </div>
         )}
+
+        <div style={{ marginTop: '0.5rem' }}>
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(v => !v)}
+            style={{
+              fontSize: 'var(--font-size-sm)',
+              color: 'var(--text-dim)',
+              background: 'transparent',
+              padding: 0,
+            }}
+          >
+            {`${showAdvanced ? '▾' : '▸'} Advanced`}
+          </button>
+
+          {showAdvanced && (
+            <div style={{ marginTop: '0.4rem' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>
+                Reasoner
+                <select
+                  value={reasoner ?? ''}
+                  onChange={e => setReasoner(e.target.value || undefined)}
+                  style={{
+                    fontSize: 'var(--font-size-sm)',
+                    background: 'var(--bg)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '0.2rem 0.4rem',
+                    color: 'var(--text)',
+                  }}
+                >
+                  <option value="">(default)</option>
+                  {availableReasoners.map(r => (
+                    <option key={r.name} value={r.name}>{r.name}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
+        </div>
 
         <div style={{ marginTop: '0.5rem' }}>
           <button
