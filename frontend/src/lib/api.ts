@@ -215,6 +215,10 @@ export interface OntologyVersion {
   triple_count: number | null
   download_url: string
   created_at: string
+  /** Reasoner this version was ingested/classified with (e.g. "whelk",
+   *  "rustdl", "konclude"). Look it up in `api.reasoners.list()` to find its
+   *  capabilities — e.g. whether it supports `justify`. */
+  reasoner?: string | null
 }
 
 export interface Term {
@@ -377,12 +381,6 @@ export interface SearchResult {
   ontology_id?: string
   lang?: string | null
   cross_language?: boolean
-}
-
-export interface JustificationAxiom {
-  sub: ClassExprNode
-  rel: 'subClassOf' | 'equivalentClass' | 'disjointWith'
-  sup: ClassExprNode
 }
 
 export interface JustificationResult {
