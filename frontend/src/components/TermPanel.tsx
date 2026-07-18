@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTerm, useTermExpanded } from '../hooks/useTerm'
 import { useOntologyProfile } from '../hooks/useOntologyProfile'
 import { useOntologyMeta } from '../hooks/useOntologyMeta'
-import { ClassRef, ClassExprNode, InferredExprEntry, JustificationAxiom, PropertyUsage, ClassUsageEntry, SchemaProperty, InheritedSchemaProperty, OntologyProfileData, OntologyMetaProfile, api } from '../lib/api'
+import { ClassRef, ClassExprNode, InferredExprEntry, PropertyUsage, ClassUsageEntry, SchemaProperty, InheritedSchemaProperty, OntologyProfileData, OntologyMetaProfile, api } from '../lib/api'
 import SourceBadge from './SourceBadge'
 
 function CopyChip({ text, label, title }: { text: string; label?: string; title?: string }) {
@@ -148,14 +148,13 @@ function HierGroup({ label, items, slug, vid }: {
   )
 }
 
-function JustificationDisplay({ justifications, slug, vid }: {
-  justifications: JustificationAxiom[][]; slug: string; vid: string
+// MINIMAL rendering for the new Manchester-string justification shape (SP3 Task 4).
+// The reasoner-service now renders every justification line as a plain Manchester
+// string instead of a structured ClassExprNode axiom, so this just lists the
+// strings. Task 6 replaces this with proper Manchester token/IRI-link rendering.
+function JustificationDisplay({ justifications }: {
+  justifications: string[][]
 }) {
-  const sym = (rel: string) => (
-    <span style={{ color: 'var(--text-dim)', margin: '0 4px' }}>
-      {rel === 'subClassOf' ? '⊑' : rel === 'disjointWith' ? '⊥' : '≡'}
-    </span>
-  )
   return (
     <div style={{ marginTop: 6, paddingLeft: 10, borderLeft: '2px solid var(--border)' }}>
       {justifications.map((just, i) => (
@@ -165,11 +164,9 @@ function JustificationDisplay({ justifications, slug, vid }: {
               Justification {i + 1}
             </div>
           )}
-          {just.map((axiom, j) => (
-            <div key={j} style={{ fontSize: 11, lineHeight: 1.7 }}>
-              <ExprNode node={axiom.sub} slug={slug} vid={vid} />
-              {sym(axiom.rel)}
-              <ExprNode node={axiom.sup} slug={slug} vid={vid} parens />
+          {just.map((line, j) => (
+            <div key={j} style={{ fontSize: 11, lineHeight: 1.7, fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+              {line}
             </div>
           ))}
         </div>
@@ -217,7 +214,7 @@ function InferredClassRow({ c, slug, vid, ontologyId, versionId, termIri }: {
             </span>
           )}
           {data?.justifications && data.justifications.length > 0 && (
-            <JustificationDisplay justifications={data.justifications} slug={slug} vid={vid} />
+            <JustificationDisplay justifications={data.justifications} />
           )}
         </div>
       )}
@@ -380,10 +377,9 @@ function ClassExprList({ exprs, label, slug, vid }: {
   )
 }
 
-function InferredExprRow({ entry, slug, vid, ontologyId, versionId, termIri, appendAxiom }: {
+function InferredExprRow({ entry, slug, vid, ontologyId, versionId, termIri }: {
   entry: InferredExprEntry; slug: string; vid: string
   ontologyId: string; versionId: string; termIri: string
-  appendAxiom?: JustificationAxiom
 }) {
   const [expanded, setExpanded] = useState(false)
   const { data, isLoading, isError } = useQuery({
@@ -394,9 +390,10 @@ function InferredExprRow({ entry, slug, vid, ontologyId, versionId, termIri, app
     retry: false,
   })
 
-  const displayJusts = appendAxiom && data?.justifications
-    ? data.justifications.map(just => [...just, appendAxiom])
-    : data?.justifications
+  // MINIMAL: no longer synthesizes an extra "from_iri disjointWith expr" line
+  // (that required structured ClassExprNode axioms; justifications are now
+  // plain Manchester strings). Task 6 re-adds this via proper string rendering.
+  const displayJusts = data?.justifications
 
   return (
     <div style={{ marginBottom: 4 }}>
@@ -435,7 +432,7 @@ function InferredExprRow({ entry, slug, vid, ontologyId, versionId, termIri, app
             </span>
           )}
           {displayJusts && displayJusts.length > 0 && (
-            <JustificationDisplay justifications={displayJusts} slug={slug} vid={vid} />
+            <JustificationDisplay justifications={displayJusts} />
           )}
         </div>
       )}
@@ -443,18 +440,16 @@ function InferredExprRow({ entry, slug, vid, ontologyId, versionId, termIri, app
   )
 }
 
-function InferredExprList({ entries, slug, vid, ontologyId, versionId, termIri, makeAppendAxiom }: {
+function InferredExprList({ entries, slug, vid, ontologyId, versionId, termIri }: {
   entries: InferredExprEntry[]; slug: string; vid: string
   ontologyId: string; versionId: string; termIri: string
-  makeAppendAxiom?: (entry: InferredExprEntry) => JustificationAxiom
 }) {
   if (entries.length === 0) return null
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 8 }}>
       {entries.map((entry, i) => (
         <InferredExprRow key={i} entry={entry} slug={slug} vid={vid}
-          ontologyId={ontologyId} versionId={versionId} termIri={termIri}
-          appendAxiom={makeAppendAxiom?.(entry)} />
+          ontologyId={ontologyId} versionId={versionId} termIri={termIri} />
       ))}
     </div>
   )
@@ -1347,12 +1342,7 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
           <Section label="DisjointWith">
             <ClassExprList exprs={data.disjointWith} slug={slug} vid={versionId} />
             <InferredExprList entries={data.inferredDisjointWith} slug={slug} vid={versionId}
-              ontologyId={ontologyId} versionId={versionId} termIri={termIri}
-              makeAppendAxiom={entry => ({
-                sub: { type: 'named', iri: entry.from_iri, label: entry.from_label },
-                rel: 'disjointWith',
-                sup: entry.expr,
-              })} />
+              ontologyId={ontologyId} versionId={versionId} termIri={termIri} />
           </Section>
         )}
 

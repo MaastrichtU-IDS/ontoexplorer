@@ -386,9 +386,20 @@ export interface JustificationAxiom {
 }
 
 export interface JustificationResult {
-  justifications: JustificationAxiom[][]
+  /** Each justification is a list of Manchester-syntax axiom strings (one
+   *  reasoning step per line). Uniform across reasoners (whelk, rustdl, …) —
+   *  see `format`. */
+  justifications: string[][]
+  format: string
   timed_out: boolean
   reasoning_available: boolean
+}
+
+export interface ReasonerInfo {
+  name: string
+  profile: string
+  capabilities: string[]
+  available: boolean
 }
 
 export interface AutocompleteCompletion {
@@ -1113,28 +1124,29 @@ export const api = {
         `/ontologies/${oid}/${vid}/justification?sub=${encodeURIComponent(sub)}&sup=${encodeURIComponent(sup)}&max_justifications=${max}`
       ),
 
-    submitByIri: (iri: string) =>
+    submitByIri: (iri: string, reasoner?: string) =>
       request<{ task_id: string; status: string }>('/ontologies', {
         method: 'POST',
-        body: JSON.stringify({ iri }),
+        body: JSON.stringify({ iri, ...(reasoner ? { reasoner } : {}) }),
       }),
-    submitByUrl: (url: string) =>
+    submitByUrl: (url: string, reasoner?: string) =>
       request<{ task_id: string; status: string }>('/ontologies', {
         method: 'POST',
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, ...(reasoner ? { reasoner } : {}) }),
       }),
-    submitFile: (file: File) => {
+    submitFile: (file: File, reasoner?: string) => {
       const fd = new FormData()
       fd.append('file', file)
+      if (reasoner) fd.append('reasoner', reasoner)
       return request<{ task_id: string; status: string }>('/ontologies', {
         method: 'POST',
         body: fd,
       })
     },
-    submitByContent: (content: string, format?: string) =>
+    submitByContent: (content: string, format?: string, reasoner?: string) =>
       request<{ task_id: string; status: string }>('/ontologies', {
         method: 'POST',
-        body: JSON.stringify({ content, format }),
+        body: JSON.stringify({ content, format, ...(reasoner ? { reasoner } : {}) }),
       }),
     delete: (id: string) =>
       request<void>(`/ontologies/${id}`, { method: 'DELETE' }),
@@ -1201,6 +1213,10 @@ export const api = {
 
   languages: {
     list: () => request<OntologyLanguage[]>('/languages'),
+  },
+
+  reasoners: {
+    list: () => request<ReasonerInfo[]>('/reasoners'),
   },
 
   jobs: {
