@@ -2660,20 +2660,29 @@ async def get_justification(
         if elk_result.get("reasoning_available") is False:
             return {
                 "justifications": [],
+                "format": "manchester",
+                "timed_out": False,
                 "reasoning_available": False,
                 "reason": elk_result.get("reason", "reasoner has no explanations"),
             }
-        return {
-            "justifications": elk_result.get("justifications", []),
-            "format": "manchester",
-            "timed_out": bool(elk_result.get("timed_out")),
-            "reasoning_available": True,
-        }
+        justifications = elk_result.get("justifications", [])
+        timed_out = bool(elk_result.get("timed_out"))
+        if justifications or timed_out:
+            return {
+                "justifications": justifications,
+                "format": "manchester",
+                "timed_out": timed_out,
+                "reasoning_available": True,
+            }
+        # Reasoner ran successfully but found no formal justification (and
+        # didn't time out): fall through to the BFS asserted-chain fallback
+        # below instead of returning an empty result.
     except Exception:
         pass  # Fall through to BFS
 
     # Fallback: BFS over asserted subClassOf edges in Oxigraph
-    # Covers transitive chains even when ELK proof traces are unavailable.
+    # Covers transitive chains even when ELK proof traces are unavailable,
+    # or when the reasoner ran but returned no justification.
     store  = get_store()
     g_iri  = graph_iri(ontology_id, version_id)
     paths  = await asyncio.to_thread(_find_subclass_path, store, g_iri, sub, sup, _label)
