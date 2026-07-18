@@ -44,6 +44,13 @@ def test_whelk_justify_passes_real_classification_result(monkeypatch):
     always fails that guard, so justify would silently return [] for every
     input. This asserts justify now classifies first and forwards a result
     whose superclasses actually contain the queried pair.
+
+    The fake compute_justifications below returns a non-N-Triple stub
+    string ("stub-axiom"), which cannot round-trip through pyoxigraph as
+    N-Triples — justify's Manchester-rendering step must catch that and
+    fall back to the original (stub) axiom set rather than raising, while
+    still reporting format "manchester" (SP3 task 2: whelk justify always
+    renders/falls back to that format now).
     """
     from classifier import ClassificationResult
 
@@ -78,5 +85,5 @@ def test_whelk_justify_passes_real_classification_result(monkeypatch):
 
     assert captured["result"] is canned
     assert captured["result"].superclasses.get(sub) == [sup]
-    assert sets == [["stub-axiom"]]
-    assert fmt == "ntriples"
+    assert sets == [["stub-axiom"]]  # fell back to the N-Triple stub set
+    assert fmt == "manchester"
