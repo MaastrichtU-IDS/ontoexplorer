@@ -1,0 +1,123 @@
+"""SP3 Task 3: get_justification is a uniform Manchester passthrough for every
+reasoner (whelk and rustdl alike, now that the reasoner-service renders both to
+Manchester), the no-justify (reasoning_available: False) path still works, and
+the version serializer exposes `reasoner`.
+"""
+
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+
+@pytest.fixture
+async def make_version(db_session):
+    """Create an Ontology + OntologyVersion row and return the version."""
+    import uuid
+
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+
+    async def _make(*, reasoner: str = "whelk", status: str = "ready"):
+        unique = uuid.uuid4().hex[:12]
+        ont = Ontology(iri=f"http://example.org/justif-manchester-test-{unique}.owl")
+        db_session.add(ont)
+        await db_session.flush()
+        ver = OntologyVersion(
+            ontology_id=ont.id,
+            minio_key=f"test/justif-manchester-test-{unique}.ttl",
+            sha256=f"justifmanchester{unique}",
+            format="turtle",
+            status=status,
+            reasoner=reasoner,
+        )
+        db_session.add(ver)
+        await db_session.commit()
+        return ver
+
+    return _make
+
+
+@pytest.mark.asyncio
+async def test_whelk_version_returns_manchester(client, make_version):
+    version = await make_version(reasoner="whelk", status="ready")
+    manchester = {
+        "format": "manchester",
+        "timed_out": False,
+        "justifications": [["A SubClassOf B", "B SubClassOf C"]],
+    }
+    with patch(
+        "ontoexplorer.api.ontologies.elk_request_justification",
+        new=AsyncMock(return_value=manchester),
+    ) as m:
+        r = await client.get(
+            f"/api/v1/ontologies/{version.ontology_id}/{version.id}"
+            f"/justification?sub=http://x/A&sup=http://x/C"
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["format"] == "manchester"
+    assert body["justifications"] == [["A SubClassOf B", "B SubClassOf C"]]
+    assert body["reasoning_available"] is True
+    assert body["timed_out"] is False
+
+    _, kwargs = m.call_args
+    passed = kwargs.get("reasoner") or (m.call_args[0][4] if len(m.call_args[0]) > 4 else None)
+    assert passed == "whelk"
+
+
+@pytest.mark.asyncio
+async def test_rustdl_version_returns_manchester(client, make_version):
+    version = await make_version(reasoner="rustdl", status="ready")
+    manchester = {
+        "format": "manchester",
+        "timed_out": False,
+        "justifications": [["SubClassOf(A B)", "SubClassOf(B C)"]],
+    }
+    with patch(
+        "ontoexplorer.api.ontologies.elk_request_justification",
+        new=AsyncMock(return_value=manchester),
+    ) as m:
+        r = await client.get(
+            f"/api/v1/ontologies/{version.ontology_id}/{version.id}"
+            f"/justification?sub=http://x/A&sup=http://x/C"
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["format"] == "manchester"
+    assert body["justifications"] == [["SubClassOf(A B)", "SubClassOf(B C)"]]
+    assert body["reasoning_available"] is True
+
+    _, kwargs = m.call_args
+    passed = kwargs.get("reasoner") or (m.call_args[0][4] if len(m.call_args[0]) > 4 else None)
+    assert passed == "rustdl"
+
+
+@pytest.mark.asyncio
+async def test_konclude_version_reports_no_explanations(client, make_version):
+    version = await make_version(reasoner="konclude", status="ready")
+    unavailable = {
+        "justifications": [],
+        "reasoning_available": False,
+        "reason": "reasoner 'konclude' does not support justifications",
+    }
+    with patch(
+        "ontoexplorer.api.ontologies.elk_request_justification",
+        new=AsyncMock(return_value=unavailable),
+    ):
+        r = await client.get(
+            f"/api/v1/ontologies/{version.ontology_id}/{version.id}"
+            f"/justification?sub=http://x/A&sup=http://x/C"
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["reasoning_available"] is False
+    assert body["justifications"] == []
+    assert body["reason"] == "reasoner 'konclude' does not support justifications"
+
+
+@pytest.mark.asyncio
+async def test_version_serialization_includes_reasoner(client, make_version):
+    version = await make_version(reasoner="rustdl", status="ready")
+    r = await client.get(f"/api/v1/ontologies/{version.ontology_id}/{version.id}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["reasoner"] == "rustdl"

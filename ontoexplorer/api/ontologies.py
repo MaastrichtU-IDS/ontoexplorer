@@ -160,45 +160,20 @@ def _find_subclass_path(store, g_iri: str, sub_iri: str, sup_iri: str, label_fn)
     return []
 
 
-def _render_justification(ntriples_list: list[str], label_fn) -> list[dict]:
-    """Parse a list of N-Triple strings and render each OWL axiom as a ClassExprNode AST dict."""
-    import io
-    import pyoxigraph
-    JUST_GRAPH = pyoxigraph.NamedNode("urn:just")
-    temp_store = pyoxigraph.Store()
-    all_nt = "\n".join(ntriples_list)
-    try:
-        temp_store.bulk_load(io.BytesIO(all_nt.encode()), "application/n-triples", to_graph=JUST_GRAPH)
-    except Exception:
-        for nt in ntriples_list:
-            try:
-                temp_store.bulk_load(io.BytesIO(nt.strip().encode()), "application/n-triples", to_graph=JUST_GRAPH)
-            except Exception:
-                pass
-
-    RDFS_SC = pyoxigraph.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
-    OWL_EC  = pyoxigraph.NamedNode("http://www.w3.org/2002/07/owl#equivalentClass")
-    OWL_DW  = pyoxigraph.NamedNode("http://www.w3.org/2002/07/owl#disjointWith")
-
-    axioms: list[dict] = []
-    seen: set[str] = set()
-    # disjointWith is included because it's load-bearing for unsatisfiability
-    # justifications (e.g., for "C ⊑ Nothing" the disjointness of C's parents is
-    # often the cornerstone axiom). The frontend's JustificationAxiom type
-    # already supports rel="disjointWith".
-    for pred, rel in [(RDFS_SC, "subClassOf"), (OWL_EC, "equivalentClass"), (OWL_DW, "disjointWith")]:
-        for quad in temp_store.quads_for_pattern(None, pred, None, JUST_GRAPH):
-            s_key = quad.subject.value if isinstance(quad.subject, pyoxigraph.NamedNode) else str(quad.subject)
-            o_key = quad.object.value  if isinstance(quad.object,  pyoxigraph.NamedNode) else str(quad.object)
-            dedup = f"{s_key}|{rel}|{o_key}"
-            if dedup in seen:
-                continue
-            seen.add(dedup)
-            sub_ast = _build_class_expr(temp_store, JUST_GRAPH, quad.subject, label_fn)
-            sup_ast = _build_class_expr(temp_store, JUST_GRAPH, quad.object,  label_fn)
-            if sub_ast.get("type") != "unknown" and sup_ast.get("type") != "unknown":
-                axioms.append({"sub": sub_ast, "rel": rel, "sup": sup_ast})
-    return axioms
+def _bfs_as_manchester(paths: list[list[dict]]) -> list[list[str]]:
+    """Flatten `_find_subclass_path`'s AST-edge paths into plain Manchester-ish
+    strings ("<sub label> SubClassOf <sup label>"), so the BFS fallback's shape
+    matches the reasoner-service's uniform `justifications: string[][]`."""
+    out: list[list[str]] = []
+    for path in paths:
+        edges: list[str] = []
+        for edge in path:
+            sub_label = edge.get("sub", {}).get("label") or edge.get("sub", {}).get("iri", "?")
+            sup_label = edge.get("sup", {}).get("label") or edge.get("sup", {}).get("iri", "?")
+            rel = edge.get("rel", "subClassOf")
+            edges.append(f"{sub_label} {rel[0].upper()}{rel[1:]} {sup_label}")
+        out.append(edges)
+    return out
 
 
 # ── Submit ─────────────────────────────────────────────────────────────────────
@@ -2661,8 +2636,9 @@ async def get_justification(
         fragment = iri.rstrip("/")
         return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
 
-    # Try ELK first — uses proof traces, handles complex inferences (CR3/CR4/CR5)
-    rendered: list[list[dict]] = []
+    # The reasoner-service renders every reasoner's justification to Manchester
+    # syntax now (whelk and rustdl alike), so this is a uniform passthrough.
+    rendered: list[list[str]] = []
     try:
         elk_result = await asyncio.wait_for(
             elk_request_justification(
@@ -2676,31 +2652,23 @@ async def get_justification(
                 "reasoning_available": False,
                 "reason": elk_result.get("reason", "reasoner has no explanations"),
             }
-        if elk_result.get("format") == "manchester":
-            return {
-                "justifications": elk_result.get("justifications", []),
-                "format": "manchester",
-                "timed_out": bool(elk_result.get("timed_out")),
-                "reasoning_available": True,
-            }
-        if elk_result.get("timed_out"):
-            return {"justifications": [], "timed_out": True, "reasoning_available": True}
-        rendered = [
-            _render_justification(just_ntriples, _label)
-            for just_ntriples in elk_result.get("justifications", [])
-            if just_ntriples
-        ]
+        return {
+            "justifications": elk_result.get("justifications", []),
+            "format": "manchester",
+            "timed_out": bool(elk_result.get("timed_out")),
+            "reasoning_available": True,
+        }
     except Exception:
         pass  # Fall through to BFS
 
     # Fallback: BFS over asserted subClassOf edges in Oxigraph
     # Covers transitive chains even when ELK proof traces are unavailable.
-    if not rendered:
-        store  = get_store()
-        g_iri  = graph_iri(ontology_id, version_id)
-        rendered = await asyncio.to_thread(_find_subclass_path, store, g_iri, sub, sup, _label)
+    store  = get_store()
+    g_iri  = graph_iri(ontology_id, version_id)
+    paths  = await asyncio.to_thread(_find_subclass_path, store, g_iri, sub, sup, _label)
+    rendered = _bfs_as_manchester(paths)
 
-    return {"justifications": rendered, "timed_out": False, "reasoning_available": True}
+    return {"justifications": rendered, "format": "manchester", "timed_out": False, "reasoning_available": True}
 
 
 @router.post("/{ontology_id}/{version_id}/justification", summary="Request async justification computation")
@@ -2862,6 +2830,7 @@ def _version_dict(v: OntologyVersion) -> dict:
         "triple_count": v.triple_count,
         "download_url": f"/api/v1/ontologies/{v.ontology_id}/{v.id}/download",
         "created_at": v.created_at.isoformat(),
+        "reasoner": v.reasoner,
     }
 
 
