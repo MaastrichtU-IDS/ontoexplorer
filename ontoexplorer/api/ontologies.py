@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ontoexplorer.clients.reasoning import (
     ClassNotFoundError,
     ReasoningNotReadyError,
+    list_reasoners as elk_list_reasoners,
     request_justification as elk_request_justification,
     subclasses as elk_subclasses,
     superclasses as elk_superclasses,
@@ -21,6 +22,16 @@ from ontoexplorer.modules.auth.dependencies import get_current_user, require_aut
 from ontoexplorer.modules.storage.minio_client import fetch_ontology
 
 router = APIRouter(prefix="/api/v1/ontologies", tags=["ontologies"])
+
+# Separate top-level router (not nested under /ontologies) so the reasoner
+# catalog lives at /api/v1/reasoners — a passthrough proxy to the
+# reasoner-service's own /reasoners route (SP3 Task 4).
+reasoners_router = APIRouter(prefix="/api/v1", tags=["reasoners"])
+
+
+@reasoners_router.get("/reasoners", summary="List available reasoners")
+async def list_reasoners():
+    return await elk_list_reasoners()
 
 _RDF_FORMATS = {"text/turtle": "turtle", "application/rdf+xml": "xml", "application/n-triples": "nt"}
 
