@@ -1,0 +1,81 @@
+# Native linux/arm64 build of the reasoner service.
+#
+# Why this exists: the default (amd64) image runs emulated on Apple Silicon,
+# and the cffi-based py-whelk segfaults under that emulation — so whelk (the
+# default reasoner) can't classify locally. This image builds everything for
+# aarch64 so whelk/rdflib/rustdl run NATIVELY (no emulation, no segfault).
+#
+# Reasoner coverage in this image:
+#   - whelk   : native aarch64 py-whelk wheel (docker/reasoner-service/wheels/,
+#               built from patched source — see wheels/py-whelk-arm64.patch)
+#   - rdflib  : pure Python
+#   - rustdl  : PyPI aarch64 wheel (rustdl==0.3.23)
+#   - konclude: x86_64-only (no arm64 build exists anywhere) — bundled as the
+#               x86_64 binary + a small x86_64 sysroot and run under qemu-user
+#               emulation. It's a batch subprocess (classification -i -o), so
+#               per-call emulation is fine; whelk/rustdl stay native.
+#
+# py-horned-owl has no glibc/manylinux aarch64 wheel on PyPI, so it is compiled
+# from sdist in a Rust builder stage below.
+
+# --- builder: compile py-horned-owl (Rust) into an aarch64 wheel ---
+# MUST use the same Python (3.12) as the final image: py-horned-owl builds a
+# version-specific extension (cp312 tag), not abi3, so a cp311 wheel from a
+# python-3.11 builder would be rejected by python:3.12-slim.
+FROM python:3.12-slim-bookworm AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends curl build-essential \
+ && rm -rf /var/lib/apt/lists/*
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+ENV PATH=/root/.cargo/bin:$PATH
+RUN pip install --no-cache-dir maturin
+# Produces /wheels/py_horned_owl-1.4.*-cp312-...aarch64.whl (build backend: maturin).
+RUN pip wheel --no-cache-dir "py-horned-owl==1.4.*" -w /wheels
+
+# --- konclude source: x86_64 image we copy the binary + libs out of ---
+FROM --platform=linux/amd64 konclude/konclude:latest AS konclude-src
+
+# --- final image ---
+FROM python:3.12-slim-bookworm
+WORKDIR /app
+
+# arm64-only artifacts (native aarch64 py-whelk wheel) live in wheels-arm64/ so
+# the base amd64 Dockerfile's wheels/ stays x86_64-only and byte-identical.
+COPY wheels-arm64/ /tmp/wheels/
+COPY --from=builder /wheels/py_horned_owl-*.whl /tmp/wheels/
+RUN pip install --no-cache-dir \
+    "fastapi==0.111.*" \
+    "uvicorn[standard]" \
+    "rdflib" \
+    "redis>=5.0" \
+    "requests>=2.31" \
+    /tmp/wheels/py_horned_owl-*.whl \
+    /tmp/wheels/py_whelk-*aarch64.whl \
+    "pyoxigraph>=0.4" \
+    "rustdl==0.3.23" \
+ && rm -rf /tmp/wheels
+
+# Konclude (x86_64) under qemu-user emulation: bundle the binary + the x86_64
+# shared libs it needs (sysroot), install qemu-x86_64-static, and expose a
+# `Konclude` wrapper on PATH so konclude_backend's shutil.which finds it and the
+# `classification -i -o` subprocess runs transparently under emulation.
+RUN apt-get update && apt-get install -y --no-install-recommends qemu-user-static \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=konclude-src /root/Konclude /opt/konclude/Konclude
+COPY --from=konclude-src /lib64/ld-linux-x86-64.so.2 /opt/konclude/sysroot/lib64/ld-linux-x86-64.so.2
+COPY --from=konclude-src /lib/x86_64-linux-gnu/ /opt/konclude/sysroot/lib/x86_64-linux-gnu/
+COPY --from=konclude-src /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /opt/konclude/sysroot/usr/lib/x86_64-linux-gnu/libstdc++.so.6
+# LC_ALL=C/LANG=C: Konclude's old glibc (2.19) aborts trying to load the base
+# image's newer locale-archive (loadlocale.c assertion); the C locale uses
+# glibc's built-in tables and sidesteps it.
+RUN printf '#!/bin/sh\nexec env LC_ALL=C LANG=C qemu-x86_64-static -L /opt/konclude/sysroot /opt/konclude/Konclude "$@"\n' > /usr/local/bin/Konclude \
+ && chmod +x /usr/local/bin/Konclude /opt/konclude/Konclude
+
+COPY main.py classifier.py whelk_classifier.py cache.py justification.py \
+     registry.py rustdl_backend.py konclude_backend.py ./
+
+EXPOSE 8001
+
+HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
