@@ -4,7 +4,7 @@ Manchester), the no-justify (reasoning_available: False) path still works, and
 the version serializer exposes `reasoner`.
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -62,6 +62,38 @@ async def test_whelk_version_returns_manchester(client, make_version):
     _, kwargs = m.call_args
     passed = kwargs.get("reasoner") or (m.call_args[0][4] if len(m.call_args[0]) > 4 else None)
     assert passed == "whelk"
+
+
+@pytest.mark.asyncio
+async def test_response_includes_labels_for_iris(client, make_version):
+    """Every full IRI in the Manchester justification gets a display label in
+    `labels` so the UI can render clickable, human-readable tokens. With no
+    indexed label the endpoint falls back to the IRI fragment."""
+    version = await make_version(reasoner="whelk", status="ready")
+    manchester = {
+        "format": "manchester",
+        "timed_out": False,
+        "justifications": [["http://ex.org/Foo SubClassOf http://ex.org/Bar"]],
+    }
+    # No indexed labels available in tests -> _label falls back to the IRI
+    # fragment. Patch the redis handle so hgetall returns nothing cleanly
+    # (otherwise the label lookup raises and the endpoint drops to the BFS path).
+    fake_redis = MagicMock()
+    fake_redis.hgetall.return_value = {}
+    with patch(
+        "ontoexplorer.api.ontologies.elk_request_justification",
+        new=AsyncMock(return_value=manchester),
+    ), patch(
+        "ontoexplorer.modules.search.indexer._get_redis", return_value=fake_redis
+    ):
+        r = await client.get(
+            f"/api/v1/ontologies/{version.ontology_id}/{version.id}"
+            f"/justification?sub=http://ex.org/Foo&sup=http://ex.org/Bar"
+        )
+    assert r.status_code == 200
+    labels = r.json()["labels"]
+    assert labels["http://ex.org/Foo"] == "Foo"
+    assert labels["http://ex.org/Bar"] == "Bar"
 
 
 @pytest.mark.asyncio

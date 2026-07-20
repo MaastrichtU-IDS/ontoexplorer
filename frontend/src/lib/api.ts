@@ -391,6 +391,10 @@ export interface JustificationResult {
   format: string
   timed_out: boolean
   reasoning_available: boolean
+  /** IRI→display-label for every IRI mentioned in `justifications`, resolved
+   *  server-side from the ontology's label index (incl. OBO labels). Lets the
+   *  UI render clickable, human-readable entity tokens. */
+  labels?: Record<string, string>
 }
 
 export interface ReasonerInfo {

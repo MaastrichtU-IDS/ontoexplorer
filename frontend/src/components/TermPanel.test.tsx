@@ -151,8 +151,41 @@ describe('justification explain UI', () => {
     expect(button).not.toBeDisabled()
     fireEvent.click(button)
 
-    expect(await screen.findByText('A SubClassOf B')).toBeInTheDocument()
-    expect(screen.getByText('B SubClassOf C')).toBeInTheDocument()
+    // Lines are tokenised across spans now, so match on the line div's full text.
+    const lineIs = (text: string) => (_: string, el: Element | null) =>
+      el?.tagName === 'DIV' && el.textContent === text
+    expect(await screen.findByText(lineIs('A SubClassOf B'))).toBeInTheDocument()
+    expect(screen.getByText(lineIs('B SubClassOf C'))).toBeInTheDocument()
+    // Keyword is highlighted as its own token (appears once per line).
+    expect(screen.getAllByText('SubClassOf').length).toBe(2)
+  })
+
+  test('renders IRI tokens as clickable labelled links using the server labels map', async () => {
+    mockCurrentTerm = mockTermWithInferredSuper
+    mockReasonersList.mockResolvedValue([
+      { name: 'whelk', profile: 'EL', capabilities: ['classify', 'consistency', 'justify'], available: true },
+    ])
+    const A = 'http://purl.obolibrary.org/obo/GO_0000001'
+    const B = 'http://purl.obolibrary.org/obo/GO_0000002'
+    mockJustification.mockResolvedValue({
+      justifications: [[`${A} SubClassOf ${B}`]],
+      format: 'manchester',
+      timed_out: false,
+      reasoning_available: true,
+      labels: { [A]: 'mitochondrion inheritance', [B]: 'reproduction' },
+    })
+
+    wrap(<TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" slug="go" versionReasoner="whelk" />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'inference' }))
+
+    // Full IRIs are shown as their real labels, linking to the term page.
+    const link = await screen.findByRole('link', { name: 'mitochondrion inheritance' })
+    expect(link).toHaveAttribute('href', `/ontologies/go/v1?term=${encodeURIComponent(A)}`)
+    expect(link).toHaveAttribute('title', A)
+    expect(screen.getByRole('link', { name: 'reproduction' })).toBeInTheDocument()
+    // Raw IRIs no longer appear as visible text.
+    expect(screen.queryByText(A)).not.toBeInTheDocument()
   })
 
   test('disables the inference button with a tooltip when the reasoner has no justify capability (konclude)', async () => {

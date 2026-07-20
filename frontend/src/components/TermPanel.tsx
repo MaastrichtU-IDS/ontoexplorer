@@ -226,25 +226,91 @@ function buildJustificationLabelMap(data: {
   return map
 }
 
-const IRI_TOKEN_RE = /https?:\/\/[^\s()]+/g
+// Manchester-syntax keywords, highlighted distinctly from entity names.
+const MANCHESTER_KEYWORDS = new Set([
+  'SubClassOf', 'EquivalentTo', 'EquivalentClasses', 'DisjointWith', 'DisjointClasses',
+  'DisjointUnionOf', 'Type', 'Types', 'SameAs', 'DifferentFrom',
+  'SubPropertyOf', 'SubPropertyChain', 'InverseOf', 'Domain', 'Range', 'Characteristics',
+  'Functional', 'InverseFunctional', 'Transitive', 'Symmetric', 'Asymmetric',
+  'Reflexive', 'Irreflexive',
+  'and', 'or', 'not', 'some', 'only', 'value', 'min', 'max', 'exactly', 'that',
+  'Self', 'inverse', 'o',
+])
 
-// Shortens any full IRIs found in a Manchester axiom string to their label
-// where `labelMap` has one; IRIs with no known label are left as-is.
-function shortenManchesterLine(line: string, labelMap: Map<string, string>): string {
-  if (labelMap.size === 0) return line
-  return line.replace(IRI_TOKEN_RE, iri => labelMap.get(iri) ?? iri)
+// One tokenizer pass over a Manchester line. Order matters: IRIs first (they
+// contain '/' '.' etc.), then quoted labels, identifiers, whitespace, and the
+// punctuation that structures class expressions.
+const JUST_TOKEN_RE = /(https?:\/\/[^\s()<>"']+)|('[^']*')|([A-Za-z_][\w-]*)|(\s+)|([(){}[\],:.])|([^\s]+)/g
+
+function iriFragment(iri: string): string {
+  const stripped = iri.replace(/[#/]+$/, '')
+  return stripped.includes('#') ? stripped.split('#').pop()! : stripped.split('/').pop()! || iri
 }
 
-// Renders each justification as its ordered list of Manchester axiom strings
-// (one reasoning step per line, monospace). Uniform across reasoners (whelk,
-// rustdl, …) since the reasoner-service always renders to Manchester syntax
-// now (SP3 Task 1-3). IRIs are shortened to labels via `labelMap` where cheap;
-// otherwise shown as-is.
-function JustificationDisplay({ justifications, labelMap }: {
+// Renders one Manchester axiom line as coloured, partly-clickable tokens:
+// entity IRIs become links to their term page (green, the app's entity accent),
+// Manchester keywords are highlighted (purple), punctuation is dimmed.
+function ManchesterLine({ line, labels, slug, vid }: {
+  line: string; labels: Map<string, string>; slug?: string; vid?: string
+}) {
+  const parts: JSX.Element[] = []
+  let m: RegExpExecArray | null
+  JUST_TOKEN_RE.lastIndex = 0
+  let k = 0
+  while ((m = JUST_TOKEN_RE.exec(line)) !== null) {
+    const [, iri, quoted, ident, ws, punct, other] = m
+    if (iri) {
+      const label = labels.get(iri) ?? iriFragment(iri)
+      if (slug && vid) {
+        parts.push(
+          <Link
+            key={k++}
+            to={`/ontologies/${slug}/${vid}?term=${encodeURIComponent(iri)}`}
+            title={iri}
+            style={{ color: 'var(--accent)', textDecoration: 'none' }}
+            onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+            onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
+          >{label}</Link>
+        )
+      } else {
+        parts.push(<span key={k++} title={iri} style={{ color: 'var(--accent)' }}>{label}</span>)
+      }
+    } else if (quoted) {
+      parts.push(<span key={k++} style={{ color: 'var(--accent)' }}>{quoted.slice(1, -1)}</span>)
+    } else if (ident) {
+      parts.push(
+        MANCHESTER_KEYWORDS.has(ident)
+          ? <span key={k++} style={{ color: 'var(--accent-purple)' }}>{ident}</span>
+          : <span key={k++}>{labels.get(ident) ?? ident}</span>
+      )
+    } else if (ws) {
+      parts.push(<span key={k++}>{ws}</span>)
+    } else if (punct) {
+      parts.push(<span key={k++} style={{ color: 'var(--text-dim)' }}>{punct}</span>)
+    } else {
+      parts.push(<span key={k++}>{other}</span>)
+    }
+  }
+  return <>{parts}</>
+}
+
+// Renders each justification as its ordered list of Manchester axiom lines
+// (one reasoning step per line). Uniform across reasoners (whelk, rustdl, …)
+// since the reasoner-service renders every justification to Manchester syntax.
+// Entity IRIs are shown as clickable labels (from the server `labels` map, with
+// the cheap in-memory `labelMap` and an IRI-fragment as fallbacks) and keywords
+// are colour-highlighted; see ManchesterLine.
+function JustificationDisplay({ justifications, labelMap, labels, slug, vid }: {
   justifications: string[][]
   labelMap?: Map<string, string>
+  labels?: Record<string, string>
+  slug?: string
+  vid?: string
 }) {
-  const map = labelMap ?? new Map<string, string>()
+  // Server labels (real, incl. OBO) take precedence; fall back to the cheap
+  // in-memory panel labels for anything the server didn't resolve.
+  const merged = new Map<string, string>(labelMap ?? [])
+  if (labels) for (const [iri, label] of Object.entries(labels)) merged.set(iri, label)
   return (
     <div style={{ marginTop: 6, paddingLeft: 10, borderLeft: '2px solid var(--border)' }}>
       {justifications.map((just, i) => (
@@ -259,7 +325,7 @@ function JustificationDisplay({ justifications, labelMap }: {
               fontSize: 11, lineHeight: 1.7, fontFamily: 'var(--font-mono, monospace)',
               whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: 'var(--text-muted)',
             }}>
-              {shortenManchesterLine(line, map)}
+              <ManchesterLine line={line} labels={merged} slug={slug} vid={vid} />
             </div>
           ))}
         </div>
@@ -314,7 +380,8 @@ function InferredClassRow({ c, slug, vid, ontologyId, versionId, termIri, canJus
             </span>
           )}
           {data?.justifications && data.justifications.length > 0 && (
-            <JustificationDisplay justifications={data.justifications} labelMap={labelMap} />
+            <JustificationDisplay justifications={data.justifications} labelMap={labelMap}
+              labels={data.labels} slug={slug} vid={vid} />
           )}
         </div>
       )}
@@ -535,7 +602,8 @@ function InferredExprRow({ entry, slug, vid, ontologyId, versionId, termIri, can
             </span>
           )}
           {displayJusts && displayJusts.length > 0 && (
-            <JustificationDisplay justifications={displayJusts} labelMap={labelMap} />
+            <JustificationDisplay justifications={displayJusts} labelMap={labelMap}
+              labels={data?.labels} slug={slug} vid={vid} />
           )}
         </div>
       )}

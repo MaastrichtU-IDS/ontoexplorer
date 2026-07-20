@@ -2647,6 +2647,19 @@ async def get_justification(
         fragment = iri.rstrip("/")
         return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
 
+    import re as _re
+    _JUST_IRI_RE = _re.compile(r"https?://[^\s()<>\"']+")
+
+    def _labels_for(justs: list[list[str]]) -> dict[str, str]:
+        """Resolve a display label for every IRI mentioned in the rendered
+        Manchester justification strings, so the UI can show real (incl. OBO)
+        labels and clickable links instead of raw IRIs."""
+        iris: set[str] = set()
+        for just in justs:
+            for line in just:
+                iris.update(_JUST_IRI_RE.findall(line))
+        return {iri: _label(iri) for iri in iris}
+
     # The reasoner-service renders every reasoner's justification to Manchester
     # syntax now (whelk and rustdl alike), so this is a uniform passthrough.
     rendered: list[list[str]] = []
@@ -2673,6 +2686,7 @@ async def get_justification(
                 "format": "manchester",
                 "timed_out": timed_out,
                 "reasoning_available": True,
+                "labels": _labels_for(justifications),
             }
         # Reasoner ran successfully but found no formal justification (and
         # didn't time out): fall through to the BFS asserted-chain fallback
@@ -2688,7 +2702,8 @@ async def get_justification(
     paths  = await asyncio.to_thread(_find_subclass_path, store, g_iri, sub, sup, _label)
     rendered = _bfs_as_manchester(paths)
 
-    return {"justifications": rendered, "format": "manchester", "timed_out": False, "reasoning_available": True}
+    return {"justifications": rendered, "format": "manchester", "timed_out": False,
+            "reasoning_available": True, "labels": _labels_for(rendered)}
 
 
 @router.post("/{ontology_id}/{version_id}/justification", summary="Request async justification computation")
