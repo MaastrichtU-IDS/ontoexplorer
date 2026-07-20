@@ -126,8 +126,10 @@ def _build_registry() -> dict[str, Backend]:
     reg: dict[str, Backend] = {"whelk": _WhelkBackend(), "rdflib": _RdflibBackend()}
     from rustdl_backend import RustdlBackend
     from konclude_backend import KoncludeBackend
+    from km_backend import KmBackend
     reg["rustdl"] = RustdlBackend()
     reg["konclude"] = KoncludeBackend()
+    reg["km"] = KmBackend()
     return reg
 
 

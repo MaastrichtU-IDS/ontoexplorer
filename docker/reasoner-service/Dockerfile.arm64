@@ -3,17 +3,19 @@
 # Why this exists: the default (amd64) image runs emulated on Apple Silicon,
 # and the cffi-based py-whelk segfaults under that emulation — so whelk (the
 # default reasoner) can't classify locally. This image builds everything for
-# aarch64 so whelk/rdflib/rustdl run NATIVELY (no emulation, no segfault).
+# aarch64 so ALL reasoners run NATIVELY (no emulation).
 #
-# Reasoner coverage in this image:
-#   - whelk   : native aarch64 py-whelk wheel (docker/reasoner-service/wheels/,
-#               built from patched source — see wheels/py-whelk-arm64.patch)
+# Reasoner coverage in this image (all native aarch64):
+#   - whelk   : native aarch64 py-whelk wheel (docker/reasoner-service/wheels-arm64/,
+#               built from patched source — see wheels-arm64/py-whelk-arm64.patch)
 #   - rdflib  : pure Python
 #   - rustdl  : PyPI aarch64 wheel (rustdl==0.3.23)
-#   - konclude: x86_64-only (no arm64 build exists anywhere) — bundled as the
-#               x86_64 binary + a small x86_64 sysroot and run under qemu-user
-#               emulation. It's a batch subprocess (classification -i -o), so
-#               per-call emulation is fine; whelk/rustdl stay native.
+#   - konclude: compiled from source for aarch64 (see konclude-build stage). We
+#               only ever feed it OWL/XML, so KoncludeWithoutRedland.pro (pure
+#               Qt, no RDF parser) is sufficient — no static Redland stack, no
+#               qemu emulation, no locale workarounds.
+#   - km      : kobayashi-marust, compiled from source for aarch64 (km-build
+#               stage). Rust, links only libc/libgcc. Classify + consistency.
 #
 # py-horned-owl has no glibc/manylinux aarch64 wheel on PyPI, so it is compiled
 # from sdist in a Rust builder stage below.
@@ -31,8 +33,43 @@ RUN pip install --no-cache-dir maturin
 # Produces /wheels/py_horned_owl-1.4.*-cp312-...aarch64.whl (build backend: maturin).
 RUN pip wheel --no-cache-dir "py-horned-owl==1.4.*" -w /wheels
 
-# --- konclude source: x86_64 image we copy the binary + libs out of ---
-FROM --platform=linux/amd64 konclude/konclude:latest AS konclude-src
+# --- konclude: compile natively for aarch64 (Qt-only, no Redland) ---
+# Konclude is portable C++/Qt5; the upstream release does a heavyweight STATIC
+# build (static Qt + static Redland) only for cross-distro portability. Inside
+# this one container we just dynamically link apt's Qt5, and since the backend
+# feeds only OWL/XML we build KoncludeWithoutRedland.pro (drops libxml2/raptor2/
+# rasqal/redland entirely). Verified to classify correctly on aarch64.
+FROM python:3.12-slim-bookworm AS konclude-build
+ARG KONCLUDE_TAG=v0.7.0-1138
+# libgl-dev: KoncludeWithoutRedland.pro keeps Qt's default `gui` module, which
+# links -lGL at the final link. python:slim-bookworm + qtbase5-dev doesn't pull
+# libGL in (the ubuntu spike image did), so the link fails without it.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git ca-certificates build-essential qtbase5-dev qtbase5-dev-tools libgl-dev \
+ && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch "${KONCLUDE_TAG}" https://github.com/konclude/Konclude.git /src
+WORKDIR /src
+# make -j1 (not -jnproc): Konclude is template-heavy C++ and a single TU can use
+# 1-2 GB; any parallelism OOM-kills g++ inside the default ~7.7 GB Docker VM when
+# the app stack is also running. -j1 caps peak memory to one compile and builds
+# reliably regardless of what else is up. It's slow (~10 min) but this is a
+# cached layer that only rebuilds when this stage changes.
+RUN printf '#define KONCLUDE_VERSION_GIT_REVISION_NUMBER 1138\n#define KONCLUDE_VERSION_GIT_TAG_NAME_STRING "v0.7.0"\n#define KONCLUDE_VERSION_GIT_REVISION_HASH_STRING "release"\n' > revision-git.h \
+ && qmake -r CONFIG+=release CONFIG-=debug KoncludeWithoutRedland.pro \
+ && make -j1
+# Separate layer so the ~10 min compile above stays cached across copy tweaks.
+# qmake's DESTDIR is `Release` (capital); find is case-robust either way.
+RUN cp "$(find /src -type f -name Konclude -path '*[Rr]elease*' | head -1)" /Konclude
+
+# --- km-build: compile kobayashi-marust's `km` binary natively for aarch64 ---
+FROM rust:1-slim-bookworm AS km-build
+ARG KM_REV=787a9d22c2a328e701beed3c959181e29b08185a
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+RUN git clone https://github.com/bio-ontology-research-group/kobayashi-marust.git /src \
+ && cd /src && git checkout "${KM_REV}"
+WORKDIR /src/engine
+RUN cargo build --release --bin km && cp target/release/km /km
 
 # --- final image ---
 FROM python:3.12-slim-bookworm
@@ -54,24 +91,21 @@ RUN pip install --no-cache-dir \
     "rustdl==0.3.23" \
  && rm -rf /tmp/wheels
 
-# Konclude (x86_64) under qemu-user emulation: bundle the binary + the x86_64
-# shared libs it needs (sysroot), install qemu-x86_64-static, and expose a
-# `Konclude` wrapper on PATH so konclude_backend's shutil.which finds it and the
-# `classification -i -o` subprocess runs transparently under emulation.
-RUN apt-get update && apt-get install -y --no-install-recommends qemu-user-static \
+# Konclude (native aarch64): the binary dynamically links the Qt5 runtime libs
+# it was built against (Core/Xml/Network/Concurrent). shutil.which finds it on
+# PATH and konclude_backend runs `classification -i -o` as a normal subprocess.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libqt5core5a libqt5xml5 libqt5network5 libqt5concurrent5 \
  && rm -rf /var/lib/apt/lists/*
-COPY --from=konclude-src /root/Konclude /opt/konclude/Konclude
-COPY --from=konclude-src /lib64/ld-linux-x86-64.so.2 /opt/konclude/sysroot/lib64/ld-linux-x86-64.so.2
-COPY --from=konclude-src /lib/x86_64-linux-gnu/ /opt/konclude/sysroot/lib/x86_64-linux-gnu/
-COPY --from=konclude-src /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /opt/konclude/sysroot/usr/lib/x86_64-linux-gnu/libstdc++.so.6
-# LC_ALL=C/LANG=C: Konclude's old glibc (2.19) aborts trying to load the base
-# image's newer locale-archive (loadlocale.c assertion); the C locale uses
-# glibc's built-in tables and sidesteps it.
-RUN printf '#!/bin/sh\nexec env LC_ALL=C LANG=C qemu-x86_64-static -L /opt/konclude/sysroot /opt/konclude/Konclude "$@"\n' > /usr/local/bin/Konclude \
- && chmod +x /usr/local/bin/Konclude /opt/konclude/Konclude
+COPY --from=konclude-build /Konclude /usr/local/bin/Konclude
+RUN chmod +x /usr/local/bin/Konclude
+
+# km (native aarch64 binary; links only libc/libgcc, already present).
+COPY --from=km-build /km /usr/local/bin/km
+RUN chmod +x /usr/local/bin/km
 
 COPY main.py classifier.py whelk_classifier.py cache.py justification.py \
-     registry.py rustdl_backend.py konclude_backend.py ./
+     registry.py rustdl_backend.py konclude_backend.py km_backend.py ./
 
 EXPOSE 8001
 
