@@ -137,6 +137,12 @@ services:
   reasoner-service:
     build: docker/reasoner-service
     platform: linux/amd64
+    # Multiple workers so one long/stuck in-process reasoning call (e.g. a slow
+    # or runaway rustdl classification) can't block /health and every other
+    # request — which otherwise makes the whole service read as "error" in the
+    # admin panel and blocks all reasoners. The cache is Redis-backed (shared),
+    # so workers stay consistent. Overrides the Dockerfile CMD for amd64+arm64.
+    command: uvicorn main:app --host 0.0.0.0 --port 8001 --workers 4
     ports:
       - "8001:8001"
     environment:

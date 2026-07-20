@@ -327,6 +327,7 @@ def ingest_ontology(
     content_type: str | None = None,
     owner_id: str | None = None,
     groups: list[str] | None = None,
+    reasoner: str = "whelk",
 ) -> dict:
     """Celery task: run the full ingestion pipeline for one ontology submission."""
     from ontoexplorer.database import make_celery_db_session
@@ -336,6 +337,7 @@ def ingest_ontology(
     request = IngestionRequest(
         iri=iri, url=url, raw_bytes=raw_bytes,
         filename=filename, content_type=content_type, owner_id=owner_id, groups=groups or [],
+        reasoner=reasoner,
     )
 
     async def _run():
@@ -450,11 +452,13 @@ async def _run_reasoning(db, version_id: str) -> dict:
     # Call ELK service — classify_v2 POSTs to /classify and caches in Redis
     import httpx as _httpx
     from ontoexplorer.config import get_settings as _get_settings
-    await reasoning_client.classify_v2(asserted_graph, version_id)
+    await reasoning_client.classify_v2(asserted_graph, version_id, reasoner=version.reasoner)
 
     # Fetch the full inferred graph from ELK classification result for Oxigraph persistence
     async with _httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.get(f"{_get_settings().reasoner_service_url}/classify/{version_id}")
+        resp = await client.get(
+            f"{_get_settings().reasoner_service_url}/classify/{version_id}?reasoner={version.reasoner}"
+        )
         resp.raise_for_status()
     classification = resp.json()
 
@@ -687,8 +691,11 @@ def compute_justification(
     """
 
     async def _run():
+        from sqlalchemy import select
+
         from ontoexplorer.clients import reasoning as reasoning_client
         from ontoexplorer.database import make_celery_db_session
+        from ontoexplorer.models.db import OntologyVersion
         from ontoexplorer.modules.jobs import tracker
         from ontoexplorer.modules.webhooks.delivery import broadcast_event
 
@@ -696,8 +703,13 @@ def compute_justification(
             job = await tracker.create_job(db, version_id=version_id, job_type="justification")
             await tracker.mark_running(db, job.id)
             try:
+                version_result = await db.execute(
+                    select(OntologyVersion).where(OntologyVersion.id == version_id)
+                )
+                version = version_result.scalar_one_or_none()
+                reasoner = version.reasoner if version else "whelk"
                 result = await reasoning_client.request_justification(
-                    version_id, sub, sup, max_justifications
+                    version_id, sub, sup, max_justifications, reasoner=reasoner
                 )
                 await tracker.mark_done(db, job.id)
                 await broadcast_event(db, "justification.completed", {

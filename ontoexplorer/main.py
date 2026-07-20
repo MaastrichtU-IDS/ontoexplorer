@@ -8,7 +8,7 @@ from ontoexplorer.api.global_search import router as global_search_router
 from ontoexplorer.api.auth import router as auth_router
 from ontoexplorer.api.health import router as health_router
 from ontoexplorer.api.jobs import router as jobs_router
-from ontoexplorer.api.ontologies import router as ontologies_router
+from ontoexplorer.api.ontologies import router as ontologies_router, reasoners_router
 from ontoexplorer.api.search import router as search_router
 from ontoexplorer.api.sparql import router as sparql_router
 from ontoexplorer.api.sparql_queries import router as sparql_queries_router, starters_router as sparql_starters_router
@@ -84,6 +84,7 @@ def create_app() -> FastAPI:
     # match before ontologies_router's parameterized sub-routes
     app.include_router(reuse_router)
     app.include_router(ontologies_router)
+    app.include_router(reasoners_router)
     app.include_router(search_router)
     app.include_router(webhooks_router)
     app.include_router(inbound_router)

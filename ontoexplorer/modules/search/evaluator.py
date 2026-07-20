@@ -200,6 +200,7 @@ async def evaluate(
     ontology_id: str,
     lang: str | None = None,
     direct: bool = False,
+    reasoner: str = "whelk",
 ) -> list[SearchResult]:
     """Evaluate a MOS AST node against the given version, returning matching classes.
 
@@ -210,7 +211,7 @@ async def evaluate(
 
     # Always load ELK: needed for NamedClass/And/Or/Not, and (when direct=False) to
     # expand SPARQL restriction results with inherited subclasses.
-    classification = await get_classification(version_id)
+    classification = await get_classification(version_id, reasoner=reasoner)
     subclasses_index: dict[str, list[str]] = classification.get("subclasses", {})
     # direct_subclasses_index falls back to subclasses_index if the key is absent
     # (older ELK service versions may not include it).
@@ -317,6 +318,7 @@ async def evaluate_relation(
     relation: str = "subclasses",
     lang: str | None = None,
     direct: bool = False,
+    reasoner: str = "whelk",
 ) -> list[SearchResult]:
     """Evaluate a MOS AST node for a given relationship to the expression.
 
@@ -329,7 +331,7 @@ async def evaluate_relation(
     complex expression raises RelationRequiresNamedClassError.
     """
     if relation == "subclasses":
-        return await evaluate(node, version_id, ontology_id, lang=lang, direct=direct)
+        return await evaluate(node, version_id, ontology_id, lang=lang, direct=direct, reasoner=reasoner)
 
     if relation not in ("superclasses", "equivalent"):
         raise ValueError(f"Unknown relation: {relation!r}")
@@ -338,7 +340,7 @@ async def evaluate_relation(
         raise RelationRequiresNamedClassError(relation)
 
     r = _get_redis()
-    classification = await get_classification(version_id)
+    classification = await get_classification(version_id, reasoner=reasoner)
     # ELK's transitive `superclasses` index is unreliable on some ontologies
     # (entries missing, or inconsistent with direct_superclasses — e.g. SULO).
     # `direct_superclasses` is the trustworthy edge set; derive everything from it.

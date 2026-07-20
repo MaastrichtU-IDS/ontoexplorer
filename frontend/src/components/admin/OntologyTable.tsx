@@ -248,7 +248,7 @@ export function OntologyTable({
                       {canAct && (
                         <ActionButton
                           label="⚙ reason"
-                          title="Run OWL-EL classification (ELK reasoner)"
+                          title="Run classification"
                           state={reasonStates[row.id] ?? 'idle'}
                           onClick={() => onReason(row.id)}
                         />

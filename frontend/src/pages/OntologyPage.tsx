@@ -403,6 +403,17 @@ function OntologyMeta({ iri, version, lang }: {
               {version.status}
             </span>
           </MetaRow>
+          {version.reasoner && (
+            <MetaRow label="Reasoner">
+              <span style={{
+                fontSize: 11,
+                background: 'var(--bg-secondary)',
+                color: 'var(--text-muted)', borderRadius: 3, padding: '1px 7px',
+              }}>
+                {version.reasoner}
+              </span>
+            </MetaRow>
+          )}
           <MetaRow label="Ingested">{new Date(version.created_at).toLocaleString()}</MetaRow>
           <MetaRow label="SHA-256">{version.sha256.slice(0, 16) + '…'}</MetaRow>
           {version.download_url && (
@@ -1082,6 +1093,7 @@ export default function OntologyPage() {
           ontologyId={oid} versionId={activeVid}
           termIri={selectedTermIri} slug={slug!} singlePane={true}
           lang={effectiveLang}
+          versionReasoner={activeVersion?.reasoner}
         />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>

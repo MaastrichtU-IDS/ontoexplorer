@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ontoexplorer.clients.reasoning import (
     ClassNotFoundError,
     ReasoningNotReadyError,
+    list_reasoners as elk_list_reasoners,
     request_justification as elk_request_justification,
     subclasses as elk_subclasses,
     superclasses as elk_superclasses,
@@ -21,6 +22,16 @@ from ontoexplorer.modules.auth.dependencies import get_current_user, require_aut
 from ontoexplorer.modules.storage.minio_client import fetch_ontology
 
 router = APIRouter(prefix="/api/v1/ontologies", tags=["ontologies"])
+
+# Separate top-level router (not nested under /ontologies) so the reasoner
+# catalog lives at /api/v1/reasoners — a passthrough proxy to the
+# reasoner-service's own /reasoners route (SP3 Task 4).
+reasoners_router = APIRouter(prefix="/api/v1", tags=["reasoners"])
+
+
+@reasoners_router.get("/reasoners", summary="List available reasoners")
+async def list_reasoners():
+    return await elk_list_reasoners()
 
 _RDF_FORMATS = {"text/turtle": "turtle", "application/rdf+xml": "xml", "application/n-triples": "nt"}
 
@@ -160,45 +171,20 @@ def _find_subclass_path(store, g_iri: str, sub_iri: str, sup_iri: str, label_fn)
     return []
 
 
-def _render_justification(ntriples_list: list[str], label_fn) -> list[dict]:
-    """Parse a list of N-Triple strings and render each OWL axiom as a ClassExprNode AST dict."""
-    import io
-    import pyoxigraph
-    JUST_GRAPH = pyoxigraph.NamedNode("urn:just")
-    temp_store = pyoxigraph.Store()
-    all_nt = "\n".join(ntriples_list)
-    try:
-        temp_store.bulk_load(io.BytesIO(all_nt.encode()), "application/n-triples", to_graph=JUST_GRAPH)
-    except Exception:
-        for nt in ntriples_list:
-            try:
-                temp_store.bulk_load(io.BytesIO(nt.strip().encode()), "application/n-triples", to_graph=JUST_GRAPH)
-            except Exception:
-                pass
-
-    RDFS_SC = pyoxigraph.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
-    OWL_EC  = pyoxigraph.NamedNode("http://www.w3.org/2002/07/owl#equivalentClass")
-    OWL_DW  = pyoxigraph.NamedNode("http://www.w3.org/2002/07/owl#disjointWith")
-
-    axioms: list[dict] = []
-    seen: set[str] = set()
-    # disjointWith is included because it's load-bearing for unsatisfiability
-    # justifications (e.g., for "C ⊑ Nothing" the disjointness of C's parents is
-    # often the cornerstone axiom). The frontend's JustificationAxiom type
-    # already supports rel="disjointWith".
-    for pred, rel in [(RDFS_SC, "subClassOf"), (OWL_EC, "equivalentClass"), (OWL_DW, "disjointWith")]:
-        for quad in temp_store.quads_for_pattern(None, pred, None, JUST_GRAPH):
-            s_key = quad.subject.value if isinstance(quad.subject, pyoxigraph.NamedNode) else str(quad.subject)
-            o_key = quad.object.value  if isinstance(quad.object,  pyoxigraph.NamedNode) else str(quad.object)
-            dedup = f"{s_key}|{rel}|{o_key}"
-            if dedup in seen:
-                continue
-            seen.add(dedup)
-            sub_ast = _build_class_expr(temp_store, JUST_GRAPH, quad.subject, label_fn)
-            sup_ast = _build_class_expr(temp_store, JUST_GRAPH, quad.object,  label_fn)
-            if sub_ast.get("type") != "unknown" and sup_ast.get("type") != "unknown":
-                axioms.append({"sub": sub_ast, "rel": rel, "sup": sup_ast})
-    return axioms
+def _bfs_as_manchester(paths: list[list[dict]]) -> list[list[str]]:
+    """Flatten `_find_subclass_path`'s AST-edge paths into plain Manchester-ish
+    strings ("<sub label> SubClassOf <sup label>"), so the BFS fallback's shape
+    matches the reasoner-service's uniform `justifications: string[][]`."""
+    out: list[list[str]] = []
+    for path in paths:
+        edges: list[str] = []
+        for edge in path:
+            sub_label = edge.get("sub", {}).get("label") or edge.get("sub", {}).get("iri", "?")
+            sup_label = edge.get("sup", {}).get("label") or edge.get("sup", {}).get("iri", "?")
+            rel = edge.get("rel", "subClassOf")
+            edges.append(f"{sub_label} {rel[0].upper()}{rel[1:]} {sup_label}")
+        out.append(edges)
+    return out
 
 
 # ── Submit ─────────────────────────────────────────────────────────────────────
@@ -219,13 +205,40 @@ async def submit_ontology(
     db: AsyncSession = Depends(get_db),
 ):
     import asyncio
+    from ontoexplorer.clients import reasoning as _reasoning
+    from ontoexplorer.config import get_settings as _get_settings
     from ontoexplorer.modules.jobs.tasks import ingest_ontology
 
     content_type = request.headers.get("content-type", "")
     owner_id = user.id if user else None
     loop = asyncio.get_event_loop()
 
-    if "multipart/form-data" in content_type and file:
+    is_multipart = "multipart/form-data" in content_type and file
+
+    # Read the request body exactly once (the ASGI stream can't be re-read),
+    # then reuse it for both reasoner resolution and the iri/url/content branches.
+    form = None
+    body: dict = {}
+    if is_multipart:
+        form = await request.form()
+    else:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+    # Reasoner: from body/form, else app default; validate against the service.
+    req_reasoner = form.get("reasoner") if form is not None else body.get("reasoner")
+    chosen_reasoner = req_reasoner or _get_settings().default_reasoner
+    available = await _reasoning.available_reasoner_names()
+    if chosen_reasoner not in available:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown or unavailable reasoner '{chosen_reasoner}'; available: {sorted(available)}",
+        )
+    reasoner = chosen_reasoner
+
+    if is_multipart:
         raw = await file.read()
         task = await loop.run_in_executor(
             None,
@@ -234,16 +247,22 @@ async def submit_ontology(
                 filename=file.filename,
                 content_type=file.content_type,
                 owner_id=owner_id,
+                reasoner=reasoner,
             ),
         )
         return {"task_id": task.id, "status": "queued"}
 
-    body = await request.json()
     groups = [g for g in (body.get("groups") or []) if g] or None
     if "iri" in body:
-        task = await loop.run_in_executor(None, lambda: ingest_ontology.delay(iri=body["iri"], owner_id=owner_id, groups=groups))
+        task = await loop.run_in_executor(
+            None,
+            lambda: ingest_ontology.delay(iri=body["iri"], owner_id=owner_id, groups=groups, reasoner=reasoner),
+        )
     elif "url" in body:
-        task = await loop.run_in_executor(None, lambda: ingest_ontology.delay(url=body["url"], owner_id=owner_id, groups=groups))
+        task = await loop.run_in_executor(
+            None,
+            lambda: ingest_ontology.delay(url=body["url"], owner_id=owner_id, groups=groups, reasoner=reasoner),
+        )
     elif "content" in body:
         raw = body["content"].encode()
         task = await loop.run_in_executor(
@@ -253,6 +272,7 @@ async def submit_ontology(
                 content_type=body.get("format"),
                 owner_id=owner_id,
                 groups=groups,
+                reasoner=reasoner,
             ),
         )
     else:
@@ -1277,7 +1297,7 @@ async def get_term(
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
     from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
 
-    await _get_version_or_404(db, ontology_id, version_id)
+    version = await _get_version_or_404(db, ontology_id, version_id)
 
     # Response cache — repeat clicks across a session are essentially free.
     _r_cache = _get_redis()
@@ -1339,7 +1359,7 @@ async def get_term(
     # Inferred sub/superclasses from ELK — run concurrently, ignore if not ready
     async def _elk_subclasses():
         try:
-            return await elk_subclasses(version_id, term_iri, direct=False)
+            return await elk_subclasses(version_id, term_iri, direct=False, reasoner=version.reasoner)
         except (ReasoningNotReadyError, ClassNotFoundError):
             return {}
         except Exception:
@@ -1347,7 +1367,7 @@ async def get_term(
 
     async def _elk_superclasses():
         try:
-            return await elk_superclasses(version_id, term_iri, direct=False)
+            return await elk_superclasses(version_id, term_iri, direct=False, reasoner=version.reasoner)
         except (ReasoningNotReadyError, ClassNotFoundError):
             return {}
         except Exception:
@@ -2056,7 +2076,7 @@ async def get_term_expanded(
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
     from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
 
-    await _get_version_or_404(db, ontology_id, version_id)
+    version = await _get_version_or_404(db, ontology_id, version_id)
 
     _r_cache = _get_redis()
     _cache_key = _term_expanded_cache_key(ontology_id, version_id, term_iri, lang)
@@ -2123,7 +2143,7 @@ async def get_term_expanded(
 
     if not is_property:
         try:
-            sup_result = await elk_superclasses(version_id, term_iri, direct=False)
+            sup_result = await elk_superclasses(version_id, term_iri, direct=False, reasoner=version.reasoner)
         except Exception:
             sup_result = {}
         _OWL_THING = "http://www.w3.org/2002/07/owl#Thing"
@@ -2336,9 +2356,9 @@ async def get_superclasses(
     direct: bool = Query(False, description="Return only directly asserted superclasses"),
     db: AsyncSession = Depends(get_db),
 ):
-    await _get_version_or_404(db, ontology_id, version_id)
+    version = await _get_version_or_404(db, ontology_id, version_id)
     try:
-        return await elk_superclasses(version_id, cls, direct=direct)
+        return await elk_superclasses(version_id, cls, direct=direct, reasoner=version.reasoner)
     except ReasoningNotReadyError:
         raise HTTPException(409, "Reasoning not yet completed — trigger via POST .../reason")
     except ClassNotFoundError:
@@ -2355,9 +2375,9 @@ async def get_subclasses(
     direct: bool = Query(False, description="Return only directly asserted subclasses"),
     db: AsyncSession = Depends(get_db),
 ):
-    await _get_version_or_404(db, ontology_id, version_id)
+    version = await _get_version_or_404(db, ontology_id, version_id)
     try:
-        return await elk_subclasses(version_id, cls, direct=direct)
+        return await elk_subclasses(version_id, cls, direct=direct, reasoner=version.reasoner)
     except ReasoningNotReadyError:
         raise HTTPException(409, "Reasoning not yet completed — trigger via POST .../reason")
     except ClassNotFoundError:
@@ -2386,12 +2406,12 @@ async def inferred_children(
     Root request (cls=owl:Thing) returns classes with no direct inferred superclass.
     """
     import json as _json
-    await _get_version_or_404(db, ontology_id, version_id)
+    version = await _get_version_or_404(db, ontology_id, version_id)
     from ontoexplorer.clients.reasoning import get_classification
     from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _deprecated_key
 
     try:
-        classification = await get_classification(version_id)
+        classification = await get_classification(version_id, reasoner=version.reasoner)
     except Exception:
         return {"terms": [], "reasoning_available": False}
 
@@ -2513,14 +2533,14 @@ async def term_ancestors(
     db: AsyncSession = Depends(get_db),
 ):
     """Return all ancestors (superclasses) of a term so the UI can expand the tree path."""
-    await _get_version_or_404(db, ontology_id, version_id)
+    version = await _get_version_or_404(db, ontology_id, version_id)
 
     if mode == "inferred":
         from ontoexplorer.clients.reasoning import get_classification
         from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
 
         try:
-            classification = await get_classification(version_id)
+            classification = await get_classification(version_id, reasoner=version.reasoner)
         except Exception:
             return {"ancestors": [], "reasoning_available": False}
 
@@ -2616,7 +2636,7 @@ async def get_justification(
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
     from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
 
-    await _get_version_or_404(db, ontology_id, version_id)
+    version = await _get_version_or_404(db, ontology_id, version_id)
 
     r = _get_redis()
 
@@ -2627,31 +2647,63 @@ async def get_justification(
         fragment = iri.rstrip("/")
         return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
 
-    # Try ELK first — uses proof traces, handles complex inferences (CR3/CR4/CR5)
-    rendered: list[list[dict]] = []
+    import re as _re
+    _JUST_IRI_RE = _re.compile(r"https?://[^\s()<>\"']+")
+
+    def _labels_for(justs: list[list[str]]) -> dict[str, str]:
+        """Resolve a display label for every IRI mentioned in the rendered
+        Manchester justification strings, so the UI can show real (incl. OBO)
+        labels and clickable links instead of raw IRIs."""
+        iris: set[str] = set()
+        for just in justs:
+            for line in just:
+                iris.update(_JUST_IRI_RE.findall(line))
+        return {iri: _label(iri) for iri in iris}
+
+    # The reasoner-service renders every reasoner's justification to Manchester
+    # syntax now (whelk and rustdl alike), so this is a uniform passthrough.
+    rendered: list[list[str]] = []
     try:
         elk_result = await asyncio.wait_for(
-            elk_request_justification(version_id, sub, sup, max_justifications),
+            elk_request_justification(
+                version_id, sub, sup, max_justifications, reasoner=version.reasoner
+            ),
             timeout=60.0,
         )
-        if elk_result.get("timed_out"):
-            return {"justifications": [], "timed_out": True, "reasoning_available": True}
-        rendered = [
-            _render_justification(just_ntriples, _label)
-            for just_ntriples in elk_result.get("justifications", [])
-            if just_ntriples
-        ]
+        if elk_result.get("reasoning_available") is False:
+            return {
+                "justifications": [],
+                "format": "manchester",
+                "timed_out": False,
+                "reasoning_available": False,
+                "reason": elk_result.get("reason", "reasoner has no explanations"),
+            }
+        justifications = elk_result.get("justifications", [])
+        timed_out = bool(elk_result.get("timed_out"))
+        if justifications or timed_out:
+            return {
+                "justifications": justifications,
+                "format": "manchester",
+                "timed_out": timed_out,
+                "reasoning_available": True,
+                "labels": _labels_for(justifications),
+            }
+        # Reasoner ran successfully but found no formal justification (and
+        # didn't time out): fall through to the BFS asserted-chain fallback
+        # below instead of returning an empty result.
     except Exception:
         pass  # Fall through to BFS
 
     # Fallback: BFS over asserted subClassOf edges in Oxigraph
-    # Covers transitive chains even when ELK proof traces are unavailable.
-    if not rendered:
-        store  = get_store()
-        g_iri  = graph_iri(ontology_id, version_id)
-        rendered = await asyncio.to_thread(_find_subclass_path, store, g_iri, sub, sup, _label)
+    # Covers transitive chains even when ELK proof traces are unavailable,
+    # or when the reasoner ran but returned no justification.
+    store  = get_store()
+    g_iri  = graph_iri(ontology_id, version_id)
+    paths  = await asyncio.to_thread(_find_subclass_path, store, g_iri, sub, sup, _label)
+    rendered = _bfs_as_manchester(paths)
 
-    return {"justifications": rendered, "timed_out": False, "reasoning_available": True}
+    return {"justifications": rendered, "format": "manchester", "timed_out": False,
+            "reasoning_available": True, "labels": _labels_for(rendered)}
 
 
 @router.post("/{ontology_id}/{version_id}/justification", summary="Request async justification computation")
@@ -2813,6 +2865,7 @@ def _version_dict(v: OntologyVersion) -> dict:
         "triple_count": v.triple_count,
         "download_url": f"/api/v1/ontologies/{v.ontology_id}/{v.id}/download",
         "created_at": v.created_at.isoformat(),
+        "reasoner": v.reasoner,
     }
 
 

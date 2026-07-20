@@ -60,6 +60,8 @@ class Settings(BaseSettings):
         default=3600,  # seconds — large ontologies (GO) can take >10 min
         validation_alias=AliasChoices("REASONER_SERVICE_TIMEOUT", "ELK_SERVICE_TIMEOUT"),
     )
+    # Reasoner selected for an ontology when the ingest request omits one.
+    default_reasoner: str = "whelk"
 
     # Anthropic
     anthropic_api_key: str = ""

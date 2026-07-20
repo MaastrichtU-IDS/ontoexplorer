@@ -194,11 +194,11 @@ def _asserted_descendants_sync(ontology_id: str, vid: str, iri: str) -> list[str
 # Fetcher signature: (ontology_id, vid, iri) -> list[str]
 # ---------------------------------------------------------------------------
 
-async def _inferred_parents_fetcher(ontology_id: str, vid: str, iri: str) -> list[str]:
+async def _inferred_parents_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "whelk") -> list[str]:
     """Direct inferred parents via ELK `direct_superclasses`; fallback: asserted."""
     try:
         from ontoexplorer.clients.reasoning import get_classification
-        classification = await get_classification(vid)
+        classification = await get_classification(vid, reasoner=reasoner)
         direct = classification.get("direct_superclasses", {})
         parents = [p for p in direct.get(iri, []) if p not in _OWL_EXCLUDED]
         if parents:
@@ -209,11 +209,11 @@ async def _inferred_parents_fetcher(ontology_id: str, vid: str, iri: str) -> lis
     return await asyncio.to_thread(_asserted_parents_sync, ontology_id, vid, iri)
 
 
-async def _inferred_children_fetcher(ontology_id: str, vid: str, iri: str) -> list[str]:
+async def _inferred_children_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "whelk") -> list[str]:
     """Direct inferred children via ELK `direct_subclasses`; fallback: asserted."""
     try:
         from ontoexplorer.clients.reasoning import get_classification
-        classification = await get_classification(vid)
+        classification = await get_classification(vid, reasoner=reasoner)
         direct = classification.get("direct_subclasses", {})
         children = [c for c in direct.get(iri, []) if c not in _OWL_EXCLUDED]
         if children:
@@ -223,11 +223,11 @@ async def _inferred_children_fetcher(ontology_id: str, vid: str, iri: str) -> li
     return await asyncio.to_thread(_asserted_children_sync, ontology_id, vid, iri)
 
 
-async def _inferred_ancestors_fetcher(ontology_id: str, vid: str, iri: str) -> list[str]:
+async def _inferred_ancestors_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "whelk") -> list[str]:
     """All inferred ancestors via ELK `superclasses`; fallback: asserted-BFS."""
     try:
         from ontoexplorer.clients.reasoning import get_classification
-        classification = await get_classification(vid)
+        classification = await get_classification(vid, reasoner=reasoner)
         all_sup = classification.get("superclasses", {})
         ancestors = [a for a in all_sup.get(iri, []) if a not in _OWL_EXCLUDED]
         if ancestors:
@@ -237,11 +237,11 @@ async def _inferred_ancestors_fetcher(ontology_id: str, vid: str, iri: str) -> l
     return await asyncio.to_thread(_asserted_ancestors_sync, ontology_id, vid, iri)
 
 
-async def _inferred_descendants_fetcher(ontology_id: str, vid: str, iri: str) -> list[str]:
+async def _inferred_descendants_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "whelk") -> list[str]:
     """All inferred descendants via ELK `subclasses`; fallback: asserted-BFS."""
     try:
         from ontoexplorer.clients.reasoning import get_classification
-        classification = await get_classification(vid)
+        classification = await get_classification(vid, reasoner=reasoner)
         all_sub = classification.get("subclasses", {})
         descendants = [d for d in all_sub.get(iri, []) if d not in _OWL_EXCLUDED]
         if descendants:
@@ -255,15 +255,15 @@ async def _inferred_descendants_fetcher(ontology_id: str, vid: str, iri: str) ->
 # Asserted-only fetchers (hierarchical* variants)
 # ---------------------------------------------------------------------------
 
-async def _hierarchical_parents_fetcher(ontology_id: str, vid: str, iri: str) -> list[str]:
+async def _hierarchical_parents_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "whelk") -> list[str]:
     return await asyncio.to_thread(_asserted_parents_sync, ontology_id, vid, iri)
 
 
-async def _hierarchical_ancestors_fetcher(ontology_id: str, vid: str, iri: str) -> list[str]:
+async def _hierarchical_ancestors_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "whelk") -> list[str]:
     return await asyncio.to_thread(_asserted_ancestors_sync, ontology_id, vid, iri)
 
 
-async def _hierarchical_descendants_fetcher(ontology_id: str, vid: str, iri: str) -> list[str]:
+async def _hierarchical_descendants_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "whelk") -> list[str]:
     return await asyncio.to_thread(_asserted_descendants_sync, ontology_id, vid, iri)
 
 
@@ -279,14 +279,14 @@ async def _hal_hierarchy_page(
     size: int,
     lang: str | None,
     db: AsyncSession,
-    fetcher: Callable[[str, str, str], Awaitable[list[str]]],
+    fetcher: Callable[[str, str, str, str], Awaitable[list[str]]],
 ) -> dict:
-    """Fetch related IRIs via `fetcher(ontology_id, vid, iri)`, page them, and return HAL."""
+    """Fetch related IRIs via `fetcher(ontology_id, vid, iri, reasoner)`, page them, and return HAL."""
     ontology = await get_ontology_or_404(db, ontology_id)
     version  = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
-    all_iris = await fetcher(ontology_id, vid, iri)
+    all_iris = await fetcher(ontology_id, vid, iri, version.reasoner)
     offset   = page_to_offset(page, size)
     sliced   = all_iris[offset:offset + size]
 

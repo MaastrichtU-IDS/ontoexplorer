@@ -1,0 +1,38 @@
+# Apple Silicon (linux/arm64) local-dev overlay. OPT-IN — never auto-loaded.
+#
+# The tracked docker-compose.yml + docker/reasoner-service/Dockerfile target
+# linux/amd64 (the prod/CI/server architecture) and are the canonical path.
+# This file layers the arm64-specific build/runtime choices on top of it, and
+# is applied ONLY when you ask for it:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.arm64.yml up -d
+#
+# On this repo's laptops that is wired up automatically via COMPOSE_FILE in the
+# local .env (see docs/local-dev-apple-silicon.md), so a plain `docker compose`
+# picks it up. The x64 server has no such .env entry, runs the base file only,
+# and is completely unaffected by anything here.
+services:
+  # Build the reasoner-service NATIVELY for arm64 (Dockerfile.arm64): compiles
+  # py-horned-owl from source and uses the aarch64 py-whelk + rustdl wheels, so
+  # whelk/rdflib/rustdl classify without amd64 emulation (under which the
+  # cffi-based py-whelk segfaults). Konclude has no arm64 build anywhere, so it
+  # is bundled as the x86_64 binary and run under qemu-user — all four reasoners
+  # report available:true here, same as the amd64 image.
+  reasoner-service:
+    platform: linux/arm64
+    build:
+      context: docker/reasoner-service
+      dockerfile: Dockerfile.arm64
+
+  # App services stay amd64 (emulated). They're pure Python talking to the
+  # reasoner-service over HTTP — no whelk, no segfault — and depend on
+  # py-horned-owl, whose prebuilt wheel is amd64-only (a native arm64 build
+  # would have to compile it from source). Emulation is fine for them.
+  api:
+    platform: linux/amd64
+  worker-heavy:
+    platform: linux/amd64
+  worker-light:
+    platform: linux/amd64
+  beat:
+    platform: linux/amd64

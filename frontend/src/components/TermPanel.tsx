@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTerm, useTermExpanded } from '../hooks/useTerm'
 import { useOntologyProfile } from '../hooks/useOntologyProfile'
 import { useOntologyMeta } from '../hooks/useOntologyMeta'
-import { ClassRef, ClassExprNode, InferredExprEntry, JustificationAxiom, PropertyUsage, ClassUsageEntry, SchemaProperty, InheritedSchemaProperty, OntologyProfileData, OntologyMetaProfile, api } from '../lib/api'
+import { ClassRef, ClassExprNode, InferredExprEntry, PropertyUsage, ClassUsageEntry, SchemaProperty, InheritedSchemaProperty, OntologyProfileData, OntologyMetaProfile, api } from '../lib/api'
 import SourceBadge from './SourceBadge'
 
 function CopyChip({ text, label, title }: { text: string; label?: string; title?: string }) {
@@ -42,6 +42,11 @@ interface Props {
   slug: string
   singlePane?: boolean
   lang?: string | null
+  /** The version's reasoner (e.g. "whelk", "rustdl", "konclude"), used to
+   *  decide whether the "inference" explain buttons can be enabled — looked
+   *  up against `api.reasoners.list()` capabilities. Undefined means unknown
+   *  (defaults to enabled rather than wrongly disabling). */
+  versionReasoner?: string | null
 }
 
 function filterLangLabels(entries: { value: string; lang: string | null }[], lang: string | null) {
@@ -148,14 +153,164 @@ function HierGroup({ label, items, slug, vid }: {
   )
 }
 
-function JustificationDisplay({ justifications, slug, vid }: {
-  justifications: JustificationAxiom[][]; slug: string; vid: string
+// Recursively collects `{iri: label}` pairs from a ClassExprNode's named
+// sub-terms. Used to build a cheap (already-in-memory, no extra fetch)
+// IRI→label map for shortening the reasoner's Manchester justification
+// strings — see `buildJustificationLabelMap` below.
+function collectExprLabels(node: ClassExprNode | undefined, map: Map<string, string>): void {
+  if (!node) return
+  switch (node.type) {
+    case 'named':
+      if (!map.has(node.iri)) map.set(node.iri, node.label)
+      break
+    case 'some':
+    case 'only':
+    case 'value':
+      collectExprLabels(node.property, map)
+      collectExprLabels(node.filler, map)
+      break
+    case 'not':
+      collectExprLabels(node.operand, map)
+      break
+    case 'and':
+    case 'or':
+      node.operands.forEach(o => collectExprLabels(o, map))
+      break
+    case 'min':
+    case 'max':
+    case 'exactly':
+      collectExprLabels(node.property, map)
+      if (node.filler) collectExprLabels(node.filler, map)
+      break
+    case 'one_of':
+      node.individuals.forEach(ind => collectExprLabels(ind, map))
+      break
+    default:
+      break
+  }
+}
+
+// Builds an IRI→label map from term data already loaded for the panel (named
+// superclasses, equivalent/disjoint/GCA expressions, inferred entries, and
+// property labels). This is "cheap" — no extra network round trip — so
+// JustificationDisplay uses it to shorten any full IRIs the reasoner's
+// Manchester strings mention down to their known label; anything not in the
+// map is left as-is (the reasoner-service already renders labels for most
+// terms itself, so this only fills gaps).
+function buildJustificationLabelMap(data: {
+  iri: string
+  label: string
+  superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
+  equivalentTo: ClassExprNode[]
+  disjointWith: ClassExprNode[]
+  disjointUnionOf: ClassExprNode[][]
+  generalClassAxioms: ClassExprNode[]
+  superclassExpressions?: ClassExprNode[]
+  inferredSuperclassExpressions?: InferredExprEntry[]
+  inferredDisjointWith: InferredExprEntry[]
+  propertyLabels: Record<string, string>
+}): Map<string, string> {
+  const map = new Map<string, string>()
+  map.set(data.iri, data.label)
+  for (const c of [...data.superclasses.asserted, ...data.superclasses.inferred]) map.set(c.iri, c.label)
+  for (const expr of [
+    ...data.equivalentTo, ...data.disjointWith, ...data.generalClassAxioms,
+    ...(data.superclassExpressions ?? []),
+  ]) collectExprLabels(expr, map)
+  for (const group of data.disjointUnionOf) for (const expr of group) collectExprLabels(expr, map)
+  for (const entry of [...(data.inferredSuperclassExpressions ?? []), ...data.inferredDisjointWith]) {
+    if (!map.has(entry.from_iri)) map.set(entry.from_iri, entry.from_label)
+    collectExprLabels(entry.expr, map)
+  }
+  for (const [iri, label] of Object.entries(data.propertyLabels)) if (!map.has(iri)) map.set(iri, label)
+  return map
+}
+
+// Manchester-syntax keywords, highlighted distinctly from entity names.
+const MANCHESTER_KEYWORDS = new Set([
+  'SubClassOf', 'EquivalentTo', 'EquivalentClasses', 'DisjointWith', 'DisjointClasses',
+  'DisjointUnionOf', 'Type', 'Types', 'SameAs', 'DifferentFrom',
+  'SubPropertyOf', 'SubPropertyChain', 'InverseOf', 'Domain', 'Range', 'Characteristics',
+  'Functional', 'InverseFunctional', 'Transitive', 'Symmetric', 'Asymmetric',
+  'Reflexive', 'Irreflexive',
+  'and', 'or', 'not', 'some', 'only', 'value', 'min', 'max', 'exactly', 'that',
+  'Self', 'inverse', 'o',
+])
+
+// One tokenizer pass over a Manchester line. Order matters: IRIs first (they
+// contain '/' '.' etc.), then quoted labels, identifiers, whitespace, and the
+// punctuation that structures class expressions.
+const JUST_TOKEN_RE = /(https?:\/\/[^\s()<>"']+)|('[^']*')|([A-Za-z_][\w-]*)|(\s+)|([(){}[\],:.])|([^\s]+)/g
+
+function iriFragment(iri: string): string {
+  const stripped = iri.replace(/[#/]+$/, '')
+  return stripped.includes('#') ? stripped.split('#').pop()! : stripped.split('/').pop()! || iri
+}
+
+// Renders one Manchester axiom line as coloured, partly-clickable tokens:
+// entity IRIs become links to their term page (green, the app's entity accent),
+// Manchester keywords are highlighted (purple), punctuation is dimmed.
+function ManchesterLine({ line, labels, slug, vid }: {
+  line: string; labels: Map<string, string>; slug?: string; vid?: string
 }) {
-  const sym = (rel: string) => (
-    <span style={{ color: 'var(--text-dim)', margin: '0 4px' }}>
-      {rel === 'subClassOf' ? '⊑' : rel === 'disjointWith' ? '⊥' : '≡'}
-    </span>
-  )
+  const parts: JSX.Element[] = []
+  let m: RegExpExecArray | null
+  JUST_TOKEN_RE.lastIndex = 0
+  let k = 0
+  while ((m = JUST_TOKEN_RE.exec(line)) !== null) {
+    const [, iri, quoted, ident, ws, punct, other] = m
+    if (iri) {
+      const label = labels.get(iri) ?? iriFragment(iri)
+      if (slug && vid) {
+        parts.push(
+          <Link
+            key={k++}
+            to={`/ontologies/${slug}/${vid}?term=${encodeURIComponent(iri)}`}
+            title={iri}
+            style={{ color: 'var(--accent)', textDecoration: 'none' }}
+            onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+            onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
+          >{label}</Link>
+        )
+      } else {
+        parts.push(<span key={k++} title={iri} style={{ color: 'var(--accent)' }}>{label}</span>)
+      }
+    } else if (quoted) {
+      parts.push(<span key={k++} style={{ color: 'var(--accent)' }}>{quoted.slice(1, -1)}</span>)
+    } else if (ident) {
+      parts.push(
+        MANCHESTER_KEYWORDS.has(ident)
+          ? <span key={k++} style={{ color: 'var(--accent-purple)' }}>{ident}</span>
+          : <span key={k++}>{labels.get(ident) ?? ident}</span>
+      )
+    } else if (ws) {
+      parts.push(<span key={k++}>{ws}</span>)
+    } else if (punct) {
+      parts.push(<span key={k++} style={{ color: 'var(--text-dim)' }}>{punct}</span>)
+    } else {
+      parts.push(<span key={k++}>{other}</span>)
+    }
+  }
+  return <>{parts}</>
+}
+
+// Renders each justification as its ordered list of Manchester axiom lines
+// (one reasoning step per line). Uniform across reasoners (whelk, rustdl, …)
+// since the reasoner-service renders every justification to Manchester syntax.
+// Entity IRIs are shown as clickable labels (from the server `labels` map, with
+// the cheap in-memory `labelMap` and an IRI-fragment as fallbacks) and keywords
+// are colour-highlighted; see ManchesterLine.
+function JustificationDisplay({ justifications, labelMap, labels, slug, vid }: {
+  justifications: string[][]
+  labelMap?: Map<string, string>
+  labels?: Record<string, string>
+  slug?: string
+  vid?: string
+}) {
+  // Server labels (real, incl. OBO) take precedence; fall back to the cheap
+  // in-memory panel labels for anything the server didn't resolve.
+  const merged = new Map<string, string>(labelMap ?? [])
+  if (labels) for (const [iri, label] of Object.entries(labels)) merged.set(iri, label)
   return (
     <div style={{ marginTop: 6, paddingLeft: 10, borderLeft: '2px solid var(--border)' }}>
       {justifications.map((just, i) => (
@@ -165,11 +320,12 @@ function JustificationDisplay({ justifications, slug, vid }: {
               Justification {i + 1}
             </div>
           )}
-          {just.map((axiom, j) => (
-            <div key={j} style={{ fontSize: 11, lineHeight: 1.7 }}>
-              <ExprNode node={axiom.sub} slug={slug} vid={vid} />
-              {sym(axiom.rel)}
-              <ExprNode node={axiom.sup} slug={slug} vid={vid} parens />
+          {just.map((line, j) => (
+            <div key={j} style={{
+              fontSize: 11, lineHeight: 1.7, fontFamily: 'var(--font-mono, monospace)',
+              whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: 'var(--text-muted)',
+            }}>
+              <ManchesterLine line={line} labels={merged} slug={slug} vid={vid} />
             </div>
           ))}
         </div>
@@ -178,14 +334,18 @@ function JustificationDisplay({ justifications, slug, vid }: {
   )
 }
 
-function InferredClassRow({ c, slug, vid, ontologyId, versionId, termIri }: {
+// Tooltip/disabled styling shared by both "inference" explain toggles.
+const NO_JUSTIFY_TITLE = 'This reasoner does not produce explanations'
+
+function InferredClassRow({ c, slug, vid, ontologyId, versionId, termIri, canJustify, labelMap }: {
   c: ClassRef; slug: string; vid: string; ontologyId: string; versionId: string; termIri: string
+  canJustify: boolean; labelMap: Map<string, string>
 }) {
   const [expanded, setExpanded] = useState(false)
   const { data, isLoading, isError } = useQuery({
     queryKey: ['justification', versionId, termIri, c.iri],
     queryFn: () => api.ontologies.justification(ontologyId, versionId, termIri, c.iri),
-    enabled: expanded,
+    enabled: expanded && canJustify,
     staleTime: 0,
     retry: false,
   })
@@ -195,11 +355,14 @@ function InferredClassRow({ c, slug, vid, ontologyId, versionId, termIri }: {
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <ClassBubble c={c} slug={slug} vid={vid} />
         <button
-          onClick={() => setExpanded(e => !e)}
-          title="Show justification"
+          onClick={() => canJustify && setExpanded(e => !e)}
+          disabled={!canJustify}
+          title={canJustify ? 'Show justification' : NO_JUSTIFY_TITLE}
           style={{
-            fontSize: 9, padding: '1px 4px', borderRadius: 2, cursor: 'pointer',
+            fontSize: 9, padding: '1px 4px', borderRadius: 2,
+            cursor: canJustify ? 'pointer' : 'not-allowed',
             background: 'none', flexShrink: 0,
+            opacity: canJustify ? 1 : 0.5,
             color: expanded ? 'var(--accent)' : 'var(--text-dim)',
             border: `1px solid ${expanded ? 'var(--accent)' : 'var(--border)'}`,
           }}
@@ -207,7 +370,7 @@ function InferredClassRow({ c, slug, vid, ontologyId, versionId, termIri }: {
           inference
         </button>
       </div>
-      {expanded && (
+      {expanded && canJustify && (
         <div style={{ marginLeft: 4 }}>
           {isLoading && <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>Computing…</span>}
           {isError && <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>Unavailable</span>}
@@ -217,7 +380,8 @@ function InferredClassRow({ c, slug, vid, ontologyId, versionId, termIri }: {
             </span>
           )}
           {data?.justifications && data.justifications.length > 0 && (
-            <JustificationDisplay justifications={data.justifications} slug={slug} vid={vid} />
+            <JustificationDisplay justifications={data.justifications} labelMap={labelMap}
+              labels={data.labels} slug={slug} vid={vid} />
           )}
         </div>
       )}
@@ -225,8 +389,9 @@ function InferredClassRow({ c, slug, vid, ontologyId, versionId, termIri }: {
   )
 }
 
-function InferredSuperclasses({ items, slug, vid, ontologyId, versionId, termIri }: {
+function InferredSuperclasses({ items, slug, vid, ontologyId, versionId, termIri, canJustify, labelMap }: {
   items: ClassRef[]; slug: string; vid: string; ontologyId: string; versionId: string; termIri: string
+  canJustify: boolean; labelMap: Map<string, string>
 }) {
   if (items.length === 0) return null
   const sorted = [...items].sort((a, b) =>
@@ -236,7 +401,8 @@ function InferredSuperclasses({ items, slug, vid, ontologyId, versionId, termIri
     <div style={{ marginBottom: 8 }}>
       {sorted.map(c => (
         <InferredClassRow key={c.iri} c={c} slug={slug} vid={vid}
-          ontologyId={ontologyId} versionId={versionId} termIri={termIri} />
+          ontologyId={ontologyId} versionId={versionId} termIri={termIri}
+          canJustify={canJustify} labelMap={labelMap} />
       ))}
     </div>
   )
@@ -380,23 +546,21 @@ function ClassExprList({ exprs, label, slug, vid }: {
   )
 }
 
-function InferredExprRow({ entry, slug, vid, ontologyId, versionId, termIri, appendAxiom }: {
+function InferredExprRow({ entry, slug, vid, ontologyId, versionId, termIri, canJustify, labelMap }: {
   entry: InferredExprEntry; slug: string; vid: string
   ontologyId: string; versionId: string; termIri: string
-  appendAxiom?: JustificationAxiom
+  canJustify: boolean; labelMap: Map<string, string>
 }) {
   const [expanded, setExpanded] = useState(false)
   const { data, isLoading, isError } = useQuery({
     queryKey: ['justification', versionId, termIri, entry.from_iri],
     queryFn: () => api.ontologies.justification(ontologyId, versionId, termIri, entry.from_iri),
-    enabled: expanded,
+    enabled: expanded && canJustify,
     staleTime: 0,
     retry: false,
   })
 
-  const displayJusts = appendAxiom && data?.justifications
-    ? data.justifications.map(just => [...just, appendAxiom])
-    : data?.justifications
+  const displayJusts = data?.justifications
 
   return (
     <div style={{ marginBottom: 4 }}>
@@ -413,11 +577,14 @@ function InferredExprRow({ entry, slug, vid, ontologyId, versionId, termIri, app
           </Link>
         </span>
         <button
-          onClick={() => setExpanded(e => !e)}
-          title="Show justification"
+          onClick={() => canJustify && setExpanded(e => !e)}
+          disabled={!canJustify}
+          title={canJustify ? 'Show justification' : NO_JUSTIFY_TITLE}
           style={{
-            fontSize: 9, padding: '1px 4px', borderRadius: 2, cursor: 'pointer',
+            fontSize: 9, padding: '1px 4px', borderRadius: 2,
+            cursor: canJustify ? 'pointer' : 'not-allowed',
             background: 'none', flexShrink: 0,
+            opacity: canJustify ? 1 : 0.5,
             color: expanded ? 'var(--accent)' : 'var(--text-dim)',
             border: `1px solid ${expanded ? 'var(--accent)' : 'var(--border)'}`,
           }}
@@ -425,7 +592,7 @@ function InferredExprRow({ entry, slug, vid, ontologyId, versionId, termIri, app
           inference
         </button>
       </div>
-      {expanded && (
+      {expanded && canJustify && (
         <div style={{ marginLeft: 4 }}>
           {isLoading && <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>Computing…</span>}
           {isError && <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>Unavailable</span>}
@@ -435,7 +602,8 @@ function InferredExprRow({ entry, slug, vid, ontologyId, versionId, termIri, app
             </span>
           )}
           {displayJusts && displayJusts.length > 0 && (
-            <JustificationDisplay justifications={displayJusts} slug={slug} vid={vid} />
+            <JustificationDisplay justifications={displayJusts} labelMap={labelMap}
+              labels={data?.labels} slug={slug} vid={vid} />
           )}
         </div>
       )}
@@ -443,10 +611,10 @@ function InferredExprRow({ entry, slug, vid, ontologyId, versionId, termIri, app
   )
 }
 
-function InferredExprList({ entries, slug, vid, ontologyId, versionId, termIri, makeAppendAxiom }: {
+function InferredExprList({ entries, slug, vid, ontologyId, versionId, termIri, canJustify, labelMap }: {
   entries: InferredExprEntry[]; slug: string; vid: string
   ontologyId: string; versionId: string; termIri: string
-  makeAppendAxiom?: (entry: InferredExprEntry) => JustificationAxiom
+  canJustify: boolean; labelMap: Map<string, string>
 }) {
   if (entries.length === 0) return null
   return (
@@ -454,7 +622,7 @@ function InferredExprList({ entries, slug, vid, ontologyId, versionId, termIri, 
       {entries.map((entry, i) => (
         <InferredExprRow key={i} entry={entry} slug={slug} vid={vid}
           ontologyId={ontologyId} versionId={versionId} termIri={termIri}
-          appendAxiom={makeAppendAxiom?.(entry)} />
+          canJustify={canJustify} labelMap={labelMap} />
       ))}
     </div>
   )
@@ -1205,7 +1373,7 @@ function PropertyBody({ data, slug, ontologyId, roleMap, versionId, lang }: {
   )
 }
 
-export default function TermPanel({ ontologyId, versionId, termIri, slug, singlePane = false, lang }: Props) {
+export default function TermPanel({ ontologyId, versionId, termIri, slug, singlePane = false, lang, versionReasoner }: Props) {
   const { data: baseData, isLoading, error } = useTerm(ontologyId, versionId, termIri, lang)
   // Lazy fetch of the three expensive sections deferred by the backend. Merged
   // into `data` once it arrives so the rendering below doesn't need to branch.
@@ -1215,6 +1383,20 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
   const { data: profile } = useOntologyProfile(ontologyId ?? undefined, versionId)
   const { data: meta }    = useOntologyMeta(ontologyId ?? undefined, versionId)
   const roleMap = buildRoleMap(profile, meta)
+
+  // Reasoner capability lookup — rarely changes, so cached long. Drives
+  // whether the "inference" explain buttons below are enabled: a reasoner
+  // that can't produce explanations (e.g. konclude) gets a disabled button
+  // with a tooltip instead of a broken/empty explain flow.
+  const { data: reasonersData } = useQuery({
+    queryKey: ['reasoners'],
+    queryFn: () => api.reasoners.list(),
+    staleTime: 5 * 60_000,
+  })
+  const reasonerInfo = versionReasoner ? reasonersData?.find(r => r.name === versionReasoner) : undefined
+  // Unknown reasoner (not yet loaded, or not found in the list) defaults to
+  // enabled — only a confirmed missing `justify` capability disables it.
+  const canJustify = !reasonerInfo || reasonerInfo.capabilities.includes('justify')
 
   if (isLoading) return <div style={{ padding: '1rem', color: 'var(--text-dim)' }}>Loading…</div>
   if (error || !baseData) return <div style={{ padding: '1rem', color: 'var(--text-dim)' }}>Term not found</div>
@@ -1272,6 +1454,9 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
   let body: React.ReactNode
 
   const classSynsFiltered = filterLangLabels(data.rawSynonyms, lang ?? null)
+  // Only the class body's inferred-superclass/disjointWith sections render
+  // justification explain buttons, so the label map is only built there.
+  const justificationLabelMap = buildJustificationLabelMap(data)
 
   if (isIndividual) {
     body = <IndividualBody data={data} slug={slug} roleMap={roleMap} versionId={versionId} lang={lang} />
@@ -1324,7 +1509,8 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
           <Section label="Superclass">
             <HierGroup items={data.superclasses.asserted} slug={slug} vid={versionId} />
             <InferredSuperclasses items={data.superclasses.inferred} slug={slug} vid={versionId}
-              ontologyId={ontologyId} versionId={versionId} termIri={termIri} />
+              ontologyId={ontologyId} versionId={versionId} termIri={termIri}
+              canJustify={canJustify} labelMap={justificationLabelMap} />
             <ClassExprList
               exprs={data.superclassExpressions ?? []}
               slug={slug} vid={versionId}
@@ -1333,6 +1519,7 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
               entries={data.inferredSuperclassExpressions ?? []}
               slug={slug} vid={versionId}
               ontologyId={ontologyId} versionId={versionId} termIri={termIri}
+              canJustify={canJustify} labelMap={justificationLabelMap}
             />
           </Section>
         )}
@@ -1348,11 +1535,7 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
             <ClassExprList exprs={data.disjointWith} slug={slug} vid={versionId} />
             <InferredExprList entries={data.inferredDisjointWith} slug={slug} vid={versionId}
               ontologyId={ontologyId} versionId={versionId} termIri={termIri}
-              makeAppendAxiom={entry => ({
-                sub: { type: 'named', iri: entry.from_iri, label: entry.from_label },
-                rel: 'disjointWith',
-                sup: entry.expr,
-              })} />
+              canJustify={canJustify} labelMap={justificationLabelMap} />
           </Section>
         )}
 

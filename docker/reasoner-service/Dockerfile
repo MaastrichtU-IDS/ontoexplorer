@@ -3,11 +3,26 @@
 #   - "whelk"    (EL): py-whelk = whelk-rs, in-process via py-horned-owl. Default.
 #   - "rdflib"   (EL, legacy): pure-Python structural classifier in classifier.py.
 #   - "rustdl"   (DL SROIQ): PyO3 binding, installed from the PyPI manylinux wheel
-#                (rustdl==0.3.21, tag v0.3.21). Classify + native sound justify.
+#                (rustdl==0.3.23, tag v0.3.23). Classify + native sound justify
+#                + render_manchester (used by the whelk backend's justify path too).
 #   - "konclude" (OWL 2, all profiles): prebuilt binary from konclude/konclude:latest,
 #                invoked as a subprocess. Classify + consistency (no justify).
+#   - "km"       (SROIQ / OWL 2 DL): kobayashi-marust, a sound consequence-based
+#                reasoner compiled from source (see km-build stage). Subprocess
+#                (`km classify`). Classify + consistency (no justify). Experimental.
 # Image is pinned to linux/amd64 (via compose) so the x86_64 py_whelk wheel and the
 # x86_64 Konclude binary run natively (emulated on Apple Silicon).
+
+# --- km-build: compile kobayashi-marust's `km` binary (Rust) ---
+FROM rust:1-slim-bookworm AS km-build
+ARG KM_REV=787a9d22c2a328e701beed3c959181e29b08185a
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+RUN git clone https://github.com/bio-ontology-research-group/kobayashi-marust.git /src \
+ && cd /src && git checkout "${KM_REV}"
+WORKDIR /src/engine
+RUN cargo build --release --bin km && cp target/release/km /km
+
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -27,7 +42,7 @@ RUN pip install --no-cache-dir \
     "py-horned-owl==1.4.*" \
     /tmp/wheels/py_whelk-*.whl \
     "pyoxigraph>=0.4" \
-    "rustdl==0.3.21" \
+    "rustdl==0.3.23" \
  && rm -rf /tmp/wheels
 
 # Konclude: bundle the prebuilt binary from the official image (linux/amd64).
@@ -37,8 +52,12 @@ RUN chmod +x /usr/local/bin/Konclude \
  && apt-get update && apt-get install -y --no-install-recommends libstdc++6 \
  && rm -rf /var/lib/apt/lists/*
 
+# km (native binary; links only libc/libgcc, already present).
+COPY --from=km-build /km /usr/local/bin/km
+RUN chmod +x /usr/local/bin/km
+
 COPY main.py classifier.py whelk_classifier.py cache.py justification.py \
-     registry.py rustdl_backend.py konclude_backend.py ./
+     registry.py rustdl_backend.py konclude_backend.py km_backend.py ./
 
 EXPOSE 8001
 
