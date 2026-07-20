@@ -56,7 +56,7 @@ async def ready():
     # ELK reasoning service
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(f"{settings.elk_service_url}/health")
+            resp = await client.get(f"{settings.reasoner_service_url}/health")
             checks["elk"] = "ok" if resp.status_code == 200 else f"error: {resp.status_code}"
             if resp.status_code != 200:
                 healthy = False

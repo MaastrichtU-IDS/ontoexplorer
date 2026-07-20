@@ -25,7 +25,7 @@ _ELK_SUBSUP_TTL = 24 * 3600  # 24 hours
 
 
 def _elk_url(path: str) -> str:
-    return f"{get_settings().elk_service_url}{path}"
+    return f"{get_settings().reasoner_service_url}{path}"
 
 
 def _elk_cache_key(kind: str, version_id: str, class_iri: str, direct: bool) -> str:
@@ -42,7 +42,7 @@ def _get_redis_client():
 async def classify_v2(graph: rdflib.Graph, version_id: str) -> dict:
     """
     POST N-Triples to ELK service (returns 202 immediately), then poll until done.
-    Max wait is elk_service_timeout seconds (default 3600); raises TimeoutError if exceeded.
+    Max wait is reasoner_service_timeout seconds (default 3600); raises TimeoutError if exceeded.
 
     Re-submits the job every RESUBMIT_INTERVAL seconds if still getting 409 — this handles
     ELK service restarts that clear the in-progress set but not the Redis cache.
@@ -64,7 +64,7 @@ async def classify_v2(graph: rdflib.Graph, version_id: str) -> dict:
         return posted
 
     # Poll GET /classify/{version_id} until 200 or timeout
-    max_wait = get_settings().elk_service_timeout
+    max_wait = get_settings().reasoner_service_timeout
     poll_interval = 5
     elapsed = 0
     last_resubmit = 0
@@ -170,7 +170,7 @@ async def request_justification(
     else:
         body["type"] = "unsatisfiable"
 
-    timeout = get_settings().elk_service_timeout + 60  # extra buffer over time limit
+    timeout = get_settings().reasoner_service_timeout + 60  # extra buffer over time limit
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(
             _elk_url(f"/classify/{version_id}/justification"),

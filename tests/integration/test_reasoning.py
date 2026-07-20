@@ -4,8 +4,8 @@ import sys
 import os
 
 
-# Import the ELK service module directly from the docker directory
-_ELK_DIR = os.path.join(os.path.dirname(__file__), "../../docker/elk-service")
+# Import the reasoner service module directly from the docker directory
+_ELK_DIR = os.path.join(os.path.dirname(__file__), "../../docker/reasoner-service")
 sys.path.insert(0, os.path.abspath(_ELK_DIR))
 
 

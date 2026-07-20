@@ -454,7 +454,7 @@ async def _run_reasoning(db, version_id: str) -> dict:
 
     # Fetch the full inferred graph from ELK classification result for Oxigraph persistence
     async with _httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.get(f"{_get_settings().elk_service_url}/classify/{version_id}")
+        resp = await client.get(f"{_get_settings().reasoner_service_url}/classify/{version_id}")
         resp.raise_for_status()
     classification = resp.json()
 

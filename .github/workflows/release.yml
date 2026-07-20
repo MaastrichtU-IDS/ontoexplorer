@@ -36,9 +36,9 @@ jobs:
           - image: ontoexplorer-api
             context: .
             dockerfile: Dockerfile
-          - image: ontoexplorer-elk-service
-            context: docker/elk-service
-            dockerfile: docker/elk-service/Dockerfile
+          - image: ontoexplorer-reasoner-service
+            context: docker/reasoner-service
+            dockerfile: docker/reasoner-service/Dockerfile
           # Context is repo root so docker/frontend/nginx.conf is reachable.
           - image: ontoexplorer-frontend
             context: .

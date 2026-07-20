@@ -49,7 +49,7 @@ async def _check_minio() -> str:
 async def _check_elk() -> str:
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{get_settings().elk_service_url}/health")
+            resp = await client.get(f"{get_settings().reasoner_service_url}/health")
         return "ok" if resp.status_code == 200 else f"error: HTTP {resp.status_code}"
     except Exception as exc:
         return f"error: {exc}"

@@ -255,7 +255,8 @@ def classify(graph: rdflib.Graph, version_id: str) -> ClassificationResult:
     subclasses:   dict[str, list[str]] = defaultdict(list)
     for cls in classes:
         inf_sups = [s for s in inferred[cls]
-                    if s != cls and (cls, s) not in asserted_all and _is_named_iri(s)]
+                    if s != cls and (cls, s) not in asserted_all and _is_named_iri(s)
+                    and s not in (OWL_THING, OWL_NOTHING)]
         superclasses[cls] = inf_sups
         for sup in inf_sups:
             subclasses[sup].append(cls)
