@@ -165,6 +165,8 @@ async def test_empty_justifications_falls_back_to_bfs(client, make_version):
             "sup": {"type": "named", "iri": "http://x/C", "label": "C"},
         },
     ]]
+    fake_redis = MagicMock()
+    fake_redis.hgetall.return_value = {}
     with patch(
         "ontoexplorer.api.ontologies.elk_request_justification",
         new=AsyncMock(return_value=empty_result),
@@ -174,7 +176,9 @@ async def test_empty_justifications_falls_back_to_bfs(client, make_version):
     ), patch(
         "ontoexplorer.api.ontologies._find_subclass_path",
         return_value=known_path,
-    ) as bfs_mock:
+    ) as bfs_mock, patch(
+        "ontoexplorer.modules.search.indexer._get_redis", return_value=fake_redis
+    ):
         r = await client.get(
             f"/api/v1/ontologies/{version.ontology_id}/{version.id}"
             f"/justification?sub=http://x/A&sup=http://x/C"
@@ -184,7 +188,10 @@ async def test_empty_justifications_falls_back_to_bfs(client, make_version):
     assert body["reasoning_available"] is True
     assert body["format"] == "manchester"
     assert body["timed_out"] is False
-    assert body["justifications"] == [["A SubClassOf C"]]
+    # BFS now emits angle-bracketed IRIs (uniform with the reasoner path) so the
+    # UI can link them; labels resolve to the IRI fragment when unindexed.
+    assert body["justifications"] == [["<http://x/A> SubClassOf <http://x/C>"]]
+    assert body["labels"] == {"http://x/A": "A", "http://x/C": "C"}
 
     m.assert_awaited_once()
     bfs_mock.assert_called_once()
