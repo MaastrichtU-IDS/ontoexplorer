@@ -217,6 +217,11 @@ class PartialParseResult:
     token_type: str   # "OPEN_QUOTE" | "EXPECT_ENTITY" | "EXPECT_KEYWORD" | "EXPECT_INT"
     partial: str      # partial text being typed at cursor
     token_start: int  # index in the original query where the current token starts (splice point)
+    # On EXPECT_KEYWORD, the identifier (label / curie / IRI) of the entity that
+    # immediately precedes the cursor, so the completer can offer restriction
+    # keywords (some/only/min/…) after a property vs boolean (and/or) after a
+    # class. None after a closing paren (a group is always a class expression).
+    prev_entity: str | None = None
 
 
 _KEYWORD_RESTRICTION = {"some", "only", "value", "Self", "min", "max", "exactly"}
@@ -318,9 +323,20 @@ def partial_parse(text: str, cursor: int) -> PartialParseResult:
 
     last_type, last_val = tokens[-1]
 
-    # After a complete entity reference or closing paren → expect boolean keyword
-    if last_type in ("QUOTED_LABEL", "CURIE", "FULL_IRI", "CLOSE_PAREN"):
+    # After a closing paren → class-expression context → boolean keyword.
+    if last_type == "CLOSE_PAREN":
         return PartialParseResult(token_type="EXPECT_KEYWORD", partial="", token_start=cursor)
+
+    # After a complete entity reference → keyword. Carry the entity id so the
+    # completer can pick restriction keywords (property) vs boolean (class).
+    if last_type in ("QUOTED_LABEL", "CURIE", "FULL_IRI"):
+        ent = last_val
+        if last_type == "QUOTED_LABEL":
+            ent = last_val.strip("'")
+        elif last_type == "FULL_IRI":
+            ent = last_val.strip("<>")
+        return PartialParseResult(token_type="EXPECT_KEYWORD", partial="", token_start=cursor,
+                                  prev_entity=ent)
 
     # After min/max/exactly → expect integer
     if last_type == "KW_RESTRICTION" and last_val in ("min", "max", "exactly"):
@@ -336,8 +352,9 @@ def partial_parse(text: str, cursor: int) -> PartialParseResult:
         if not prefix[-1:].isspace():
             token_start = cursor - len(last_val)
             return PartialParseResult(token_type="EXPECT_ENTITY", partial=last_val, token_start=token_start)
-        # WORD followed by whitespace → completed bare entity, expect keyword next
-        return PartialParseResult(token_type="EXPECT_KEYWORD", partial="", token_start=cursor)
+        # WORD followed by whitespace → completed bare entity, expect keyword next.
+        return PartialParseResult(token_type="EXPECT_KEYWORD", partial="", token_start=cursor,
+                                  prev_entity=last_val)
 
     # After restriction keyword (some/only/value) or boolean (and/or) or not / ( → expect entity
     return PartialParseResult(token_type="EXPECT_ENTITY", partial="", token_start=cursor)
