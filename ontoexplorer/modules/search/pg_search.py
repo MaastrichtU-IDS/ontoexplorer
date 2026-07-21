@@ -132,6 +132,7 @@ async def pg_autocomplete_entities(
     limit: int,
     excluded_types: frozenset[str] | None = None,
     ontology_ids: list[str] | None = None,
+    version_id: str | None = None,
 ) -> list[dict]:
     """Cross-ontology entity autocomplete via Postgres entity_index.
 
@@ -160,6 +161,11 @@ async def pg_autocomplete_entities(
     if ontology_ids:
         ontology_filter_sql = "AND ei.ontology_id = ANY(:ontology_ids)"
 
+    # Scope to a single version (per-ontology DL-query autocomplete).
+    version_filter_sql = ""
+    if version_id:
+        version_filter_sql = "AND ei.version_id = :version_id"
+
     # Stage 1: btree text_pattern_ops prefix scan.
     # Within tier-1, sort by label LENGTH so the label closest in size to the
     # query wins over coincidentally-alphabetically-earlier but longer labels
@@ -175,6 +181,7 @@ async def pg_autocomplete_entities(
           AND ei.primary_label_norm LIKE :prefix
           {type_filter_sql}
           {ontology_filter_sql}
+          {version_filter_sql}
         ORDER BY CASE WHEN ei.primary_label_norm = :norm THEN 0 ELSE 1 END,
                  LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
         LIMIT :over
@@ -184,6 +191,8 @@ async def pg_autocomplete_entities(
         params["excluded"] = list(excluded_types)
     if ontology_ids:
         params["ontology_ids"] = ontology_ids
+    if version_id:
+        params["version_id"] = version_id
     result = await db.execute(prefix_sql, params)
 
     seen_iris: set[str] = set()
@@ -219,6 +228,7 @@ async def pg_autocomplete_entities(
           AND ei.primary_label_norm NOT LIKE :prefix
           {type_filter_sql}
           {ontology_filter_sql}
+          {version_filter_sql}
         ORDER BY LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
         LIMIT :over
     """)
@@ -231,6 +241,8 @@ async def pg_autocomplete_entities(
         params2["excluded"] = list(excluded_types)
     if ontology_ids:
         params2["ontology_ids"] = ontology_ids
+    if version_id:
+        params2["version_id"] = version_id
     result = await db.execute(tsv_sql, params2)
 
     for row in result.all():

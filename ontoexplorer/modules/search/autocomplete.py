@@ -91,6 +91,35 @@ def get_completions(
     return []
 
 
+def pg_rows_to_completions(rows: list[dict], close_quote: bool) -> list[Completion]:
+    """Wrap pg_autocomplete_entities rows (relevance-ranked, multi-token) into MOS
+    Completions for the DL-query autocomplete.
+
+    close_quote=True:  the user already typed an opening quote — insert closes it.
+    close_quote=False: bare token — single-word inserts as-is, multi-word is quoted.
+    Same-label collisions get a ' (short)' suffix so they're distinguishable.
+    """
+    from collections import Counter
+    label_counts = Counter((row.get("label") or "") for row in rows)
+    out: list[Completion] = []
+    for row in rows:
+        label = row.get("label") or row.get("iri") or ""
+        short = row.get("short")
+        text = f"{label} ({short})" if label and label_counts[label] > 1 and short else label
+        if close_quote:
+            insert = f"{text}'"
+        else:
+            insert = f"{text} " if " " not in text else f"'{text}' "
+        out.append(Completion(
+            text=text,
+            type=row.get("type") or "class",
+            iri=row.get("iri"),
+            short=short,
+            insert=insert,
+        ))
+    return out
+
+
 def _entity_completions(
     r,
     version_id: str,
