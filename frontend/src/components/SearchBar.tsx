@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useAutocomplete, useGlobalAutocomplete } from '../hooks/useSearch'
 
 interface Props {
@@ -15,7 +15,9 @@ export default function SearchBar({ ontologyId, versionId, onSearch, placeholder
   const [value, setValue] = useState(initialValue ?? '')
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [cursor, setCursor] = useState(-1)
+  const [activeIdx, setActiveIdx] = useState(-1)
   const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
 
   const autocompleteEnabled = showSuggestions && value.length >= 1
   const globalMode = scopeOntologyIds !== undefined
@@ -26,13 +28,38 @@ export default function SearchBar({ ontologyId, versionId, onSearch, placeholder
   const replaceFrom = activeAcData?.replace_from ?? value.length
   const replaceTo   = activeAcData?.replace_to   ?? value.length
 
+  // Reset the highlighted suggestion whenever the suggestion set changes.
+  useEffect(() => { setActiveIdx(-1) }, [activeAcData])
+
+  // Keep the highlighted item scrolled into view during arrow navigation.
+  useEffect(() => {
+    if (activeIdx < 0 || !listRef.current) return
+    const el = listRef.current.children[activeIdx] as HTMLElement | undefined
+    el?.scrollIntoView?.({ block: 'nearest' })
+  }, [activeIdx])
+
+  const suggestionsOpen = showSuggestions && completions.length > 0
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Tab' && completions.length > 0) {
+    if (suggestionsOpen && e.key === 'ArrowDown') {
       e.preventDefault()
-      applyCompletion(completions[0].insert)
+      setActiveIdx(i => Math.min(i + 1, completions.length - 1))
+    } else if (suggestionsOpen && e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveIdx(i => Math.max(i - 1, 0))
+    } else if (e.key === 'Tab' && completions.length > 0) {
+      // Tab accepts the highlighted suggestion (or the top one if none highlighted).
+      e.preventDefault()
+      applyCompletion(completions[activeIdx >= 0 ? activeIdx : 0].insert)
     } else if (e.key === 'Enter') {
-      setShowSuggestions(false)
-      onSearch(value.trim())
+      if (suggestionsOpen && activeIdx >= 0) {
+        // A suggestion is highlighted — accept it and keep building, don't submit.
+        e.preventDefault()
+        applyCompletion(completions[activeIdx].insert)
+      } else {
+        setShowSuggestions(false)
+        onSearch(value.trim())
+      }
     } else if (e.key === 'Escape') {
       setShowSuggestions(false)
     }
@@ -42,6 +69,7 @@ export default function SearchBar({ ontologyId, versionId, onSearch, placeholder
     setValue(e.target.value)
     setCursor(e.target.selectionStart ?? -1)
     setShowSuggestions(true)
+    setActiveIdx(-1)
   }
 
   function applyCompletion(insert: string) {
@@ -50,6 +78,7 @@ export default function SearchBar({ ontologyId, versionId, onSearch, placeholder
     setValue(newValue)
     setCursor(newCursor)
     setShowSuggestions(true)
+    setActiveIdx(-1)
     // Restore cursor position in the input after React re-renders
     setTimeout(() => {
       if (inputRef.current) {
@@ -85,8 +114,8 @@ export default function SearchBar({ ontologyId, versionId, onSearch, placeholder
         />
       </div>
 
-      {showSuggestions && completions.length > 0 && (
-        <ul style={{
+      {suggestionsOpen && (
+        <ul ref={listRef} style={{
           position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 200,
           background: 'var(--bg-secondary)', border: '1px solid var(--border)',
           borderRadius: 'var(--radius-sm)', listStyle: 'none',
@@ -96,12 +125,12 @@ export default function SearchBar({ ontologyId, versionId, onSearch, placeholder
             <li
               key={i}
               onMouseDown={(e) => { e.preventDefault(); applyCompletion(c.insert) }}
+              onMouseEnter={() => setActiveIdx(i)}
               style={{
                 padding: '6px 12px', cursor: 'pointer',
                 display: 'flex', gap: 8, alignItems: 'center',
+                background: i === activeIdx ? 'var(--bg-hover)' : 'transparent',
               }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
-              onMouseLeave={e => (e.currentTarget.style.background = '')}
             >
               <span style={{
                 fontSize: 10, background: 'var(--bg)',
