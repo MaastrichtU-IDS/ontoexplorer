@@ -67,9 +67,9 @@ def text_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def embed_texts(texts: list[str]) -> list[list[float]]:
+def embed_texts(texts: list[str], batch_size: int = 128) -> list[list[float]]:
     embedder = get_embedder()
-    return [v.tolist() for v in embedder.passage_embed(texts, batch_size=64)]
+    return [v.tolist() for v in embedder.passage_embed(texts, batch_size=batch_size)]
 
 
 def embed_query(text: str) -> list[float]:

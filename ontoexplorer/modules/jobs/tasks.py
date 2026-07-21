@@ -27,22 +27,27 @@ celery_app.conf.update(
     task_track_started=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    # Redis broker redelivers any task still unacked after visibility_timeout,
+    # assuming the worker died. With acks_late=True a task is acked only on
+    # completion, so the default (3600s) causes long jobs — reasoning, or
+    # embedding a 200k-term ontology — to be redelivered and run as a duplicate
+    # every hour. Raise it well above the longest expected task.
+    broker_transport_options={"visibility_timeout": 86400},  # 24h
+    result_backend_transport_options={"visibility_timeout": 86400},
     task_ignore_result=True,  # use Postgres jobs table for status; avoid blocking on Redis result backend
     task_default_queue="light",
-    # Two-queue split — see docker-compose.yml `worker-heavy` / `worker-light`.
-    # Heavy: a single ontology can pin the box for minutes-to-hours (reasoning,
-    # diff, justification, big-graph import fetches). Light: many small parallel
-    # tasks (ingest orchestration, metadata, embedding, indexing). Splitting
-    # avoids a long reason job head-of-line-blocking a queue of small ones.
-    # Unrouted tasks fall back to `light` via task_default_queue.
+    # Workers split by Oxigraph ACCESS MODE, not by "heavy/light" — see
+    # docker-compose.yml. The embedded pyoxigraph (RocksDB) store allows only ONE
+    # read-write opener but any number of read-only ones. Route every task that
+    # WRITES triples to a dedicated "write" queue drained by a single-concurrency
+    # worker, so there is exactly one read-write opener and no LOCK contention.
+    # ingest/reason/load_imports are the only writers; everything else reads the
+    # store read-only (OXIGRAPH_READ_ONLY=true on the "light" worker) and runs in
+    # parallel. Unrouted tasks fall back to `light` via task_default_queue.
     task_routes={
-        "ontoexplorer.reason_ontology": {"queue": "heavy"},
-        "ontoexplorer.compute_diff": {"queue": "heavy"},
-        "ontoexplorer.compute_ontology_comparison": {"queue": "heavy"},
-        "ontoexplorer.compute_justification": {"queue": "heavy"},
-        "ontoexplorer.load_imports": {"queue": "heavy"},
-        "ontoexplorer.refresh_stale_inferred_diffs": {"queue": "heavy"},
-        "ontoexplorer.refresh_owl_profile": {"queue": "heavy"},
+        "ontoexplorer.ingest_ontology": {"queue": "write"},
+        "ontoexplorer.reason_ontology": {"queue": "write"},
+        "ontoexplorer.load_imports": {"queue": "write"},
     },
     beat_schedule={
         "poll-for-updates-hourly": {
@@ -323,6 +328,7 @@ def ingest_ontology(
     iri: str | None = None,
     url: str | None = None,
     raw_bytes_hex: str | None = None,
+    upload_key: str | None = None,
     filename: str | None = None,
     content_type: str | None = None,
     owner_id: str | None = None,
@@ -333,7 +339,14 @@ def ingest_ontology(
     from ontoexplorer.database import make_celery_db_session
     from ontoexplorer.modules.ingestion.pipeline import IngestionRequest, run_ingestion
 
-    raw_bytes = bytes.fromhex(raw_bytes_hex) if raw_bytes_hex else None
+    # File uploads are staged in MinIO and referenced by key (see submit_ontology),
+    # so the bytes never travel through the broker. Fall back to the legacy
+    # inline-hex path for backward compatibility.
+    if upload_key:
+        from ontoexplorer.modules.storage.minio_client import fetch_staged_upload
+        raw_bytes = fetch_staged_upload(upload_key)
+    else:
+        raw_bytes = bytes.fromhex(raw_bytes_hex) if raw_bytes_hex else None
     request = IngestionRequest(
         iri=iri, url=url, raw_bytes=raw_bytes,
         filename=filename, content_type=content_type, owner_id=owner_id, groups=groups or [],
@@ -346,6 +359,11 @@ def ingest_ontology(
 
     try:
         result = asyncio.run(_run())
+        if upload_key:
+            # Ingestion stored the file under the ontologies bucket; drop the
+            # staging copy. Only on success — retries re-fetch the same key.
+            from ontoexplorer.modules.storage.minio_client import delete_staged_upload
+            delete_staged_upload(upload_key)
         return {
             "ontology_id": result.ontology_id,
             "version_id": result.version_id,
@@ -876,7 +894,9 @@ def embed_ontology(version_id: str, ontology_id: str = "") -> dict:
         if not records:
             return {"status": "skip", "version_id": version_id}
 
-        BATCH = 32
+        # Larger batches amortize ONNX call overhead and cut DB-commit frequency.
+        # embed_texts feeds these to passage_embed in sub-batches of 128.
+        BATCH = 256
         total = len(records)
 
         async def _embed_and_store() -> None:

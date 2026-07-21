@@ -5,17 +5,40 @@ MinIO layout:
   imports/{sha256}.{ext}                                  -- cached external owl:imports
 """
 
+import uuid
+
 from ontoexplorer.clients.minio import (
     download_bytes,
     object_exists,
     presigned_get_url,
+    remove_object,
     upload_bytes,
+    upload_stream,
 )
 from ontoexplorer.config import get_settings
 
 
 def _settings():
     return get_settings()
+
+
+# ── Upload staging ───────────────────────────────────────────────────────────
+# The API streams a file upload here and hands the ingest task only the key,
+# instead of shipping the bytes (hex-encoded) through the Celery/Redis broker.
+
+def stage_upload(fileobj, length: int = -1, content_type: str = "application/octet-stream") -> str:
+    """Stream an uploaded file to the uploads bucket; return its object key."""
+    key = uuid.uuid4().hex
+    upload_stream(_settings().minio_uploads_bucket, key, fileobj, length=length, content_type=content_type)
+    return key
+
+
+def fetch_staged_upload(key: str) -> bytes:
+    return download_bytes(_settings().minio_uploads_bucket, key)
+
+
+def delete_staged_upload(key: str) -> None:
+    remove_object(_settings().minio_uploads_bucket, key)
 
 
 # ── Ontology artifacts ─────────────────────────────────────────────────────────

@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     minio_secure: bool = False
     minio_ontologies_bucket: str = "ontologies"
     minio_imports_bucket: str = "imports"
+    # Staging area for file uploads: the API streams the upload here and passes
+    # only the object key to the ingest task, instead of shipping the bytes
+    # (hex-encoded, ~2x) through the Celery/Redis broker.
+    minio_uploads_bucket: str = "uploads"
     # Public-facing endpoint used only for presigned URL generation.
     # Defaults to minio_endpoint so local dev works without extra config.
     # In prod set to the externally reachable hostname (e.g. minio.example.com).
