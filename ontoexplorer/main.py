@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import structlog
 
+from ontoexplorer import __version__
+
 from ontoexplorer.api.api_keys import router as api_keys_router
 from ontoexplorer.api.global_search import router as global_search_router
 from ontoexplorer.api.auth import router as auth_router
@@ -37,7 +39,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         description="Next-generation FAIR ontology repository",
-        version="0.1.0",
+        version=__version__,
         docs_url="/api/docs",
         redoc_url="/api/redoc",
         openapi_url="/api/openapi.json",
@@ -111,7 +113,7 @@ def create_app() -> FastAPI:
     if settings.auth_bypass:
         log.warning("SECURITY: auth_bypass=true — every request is silently dev@localhost (do not ship)")
 
-    log.info("OntoExplorer API ready", version="0.2.0", environment=settings.environment)
+    log.info("OntoExplorer API ready", version=__version__, environment=settings.environment)
     return app
 
 

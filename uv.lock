@@ -1421,7 +1421,6 @@ wheels = [
 
 [[package]]
 name = "ontoexplorer"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
