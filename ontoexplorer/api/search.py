@@ -12,7 +12,6 @@ from ontoexplorer.clients.reasoning import ReasoningNotReadyError
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Ontology, User
 from ontoexplorer.modules.auth.dependencies import get_current_user
-from ontoexplorer.modules.search.autocomplete import get_completions
 from ontoexplorer.modules.search.evaluator import (
     AmbiguousLabelError,
     RelationRequiresNamedClassError,
@@ -169,39 +168,11 @@ async def autocomplete(
     db: AsyncSession = Depends(get_db),
 ):
     await _get_version_or_404(db, ontology_id, version_id)
-    ontology_row = (await db.execute(
-        select(Ontology).where(Ontology.id == ontology_id)
-    )).scalar_one_or_none()
-    effective_lang = resolve_lang(lang, ontology_row, _user if isinstance(_user, User) else None)
     effective_cursor = cursor if cursor >= 0 else len(q)
-    from ontoexplorer.modules.search.mos_parser import partial_parse
-    ctx = partial_parse(q, effective_cursor)
-
-    # Entity contexts (typing a class/property, quoted or bare) go through the
-    # Postgres entity_index: relevance ranking (exact/prefix, shortest-label) +
-    # multi-token AND (e.g. "cell divi" -> "cell division"). Keyword/cardinality
-    # and the empty-entity case keep the lightweight static/Redis path.
-    entity_ctx = ctx.token_type == "OPEN_QUOTE" or (
-        ctx.token_type == "EXPECT_ENTITY" and bool(ctx.partial)
-    )
-    if entity_ctx:
-        from ontoexplorer.modules.search.pg_search import pg_autocomplete_entities
-        from ontoexplorer.modules.search.autocomplete import pg_rows_to_completions
-        rows = await pg_autocomplete_entities(
-            db, partial=ctx.partial, limit=limit,
-            excluded_types=frozenset({"annotation_property"}), version_id=version_id,
-        )
-        completions = pg_rows_to_completions(rows, close_quote=(ctx.token_type == "OPEN_QUOTE"))
-    else:
-        completions = await asyncio.to_thread(
-            get_completions, q, effective_cursor, version_id, limit, effective_lang
-        )
+    from ontoexplorer.modules.search.autocomplete import mos_autocomplete
+    completions, ctx = await mos_autocomplete(db, q, effective_cursor, limit, version_id=version_id)
     return {
-        "completions": [
-            {"text": c.text, "type": c.type, "iri": c.iri, "short": c.short, "insert": c.insert,
-             "lang": c.lang, "cross_language": c.cross_language}
-            for c in completions
-        ],
+        "completions": completions,
         "context": ctx.token_type.lower(),
         "replace_from": ctx.token_start,
         "replace_to": effective_cursor,

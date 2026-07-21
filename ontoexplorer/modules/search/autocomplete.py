@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ontoexplorer.modules.search.indexer import _get_redis, _prefix_key, _iri_key, normalise_label
-from ontoexplorer.modules.search.mos_parser import partial_parse
+from ontoexplorer.modules.search.mos_parser import PartialParseResult, partial_parse
 
 def _parse_lang_from_member(member: str) -> tuple[str, str, str, str]:
     """Split a v2 sorted-set key into (norm, lang, entity_type, iri)."""
@@ -145,6 +145,84 @@ def pg_rows_to_completions(rows: list[dict], close_quote: bool) -> list[Completi
         ))
     return out
 
+
+# ── Unified MOS autocomplete (Postgres) ──────────────────────────────────────
+# One implementation used by every MOS-expression autocomplete endpoint
+# (per-ontology and cross-ontology). Entities come from the Postgres
+# entity_index (ranked, multi-token); keywords/cardinalities are context-driven.
+
+_ENTITY_OPEN_KEYWORDS = ["not", "'"]
+_CARDINALITIES = ["1", "2", "3"]
+
+
+def keyword_set_for(token_type: str, prev_is_property: bool) -> list[str]:
+    """The keyword/cardinality tokens valid at a non-entity MOS context. Pure and
+    unit-tested — the single source of truth for which keywords to offer."""
+    if token_type == "EXPECT_KEYWORD":
+        # After an object/data property → restriction; after a class → boolean.
+        return _RESTRICTION_KEYWORDS if prev_is_property else _BOOLEAN_KEYWORDS
+    if token_type == "EXPECT_INT":
+        return _CARDINALITIES
+    # EXPECT_ENTITY with no partial: only `not` or an opening quote make sense.
+    return _ENTITY_OPEN_KEYWORDS
+
+
+def _kw_dict(kw: str) -> dict:
+    # "(" and "'" open a token so take no trailing space; everything else does.
+    ktype = "cardinality" if kw in _CARDINALITIES else "keyword"
+    insert = kw if kw in ("(", "'") else kw + " "
+    return {"text": kw, "type": ktype, "iri": None, "short": None,
+            "insert": insert, "lang": None, "cross_language": False, "ontology_shortname": ""}
+
+
+def _entity_dicts(rows: list[dict], close_quote: bool) -> list[dict]:
+    """Wrap pg_autocomplete_entities rows into completion dicts with MOS insert
+    semantics (close the open quote, or quote multi-word bare labels) and
+    same-label disambiguation."""
+    from collections import Counter
+    label_counts = Counter((r.get("label") or "") for r in rows)
+    out: list[dict] = []
+    for r in rows:
+        label = r.get("label") or r.get("iri") or ""
+        short = r.get("short")
+        text = f"{label} ({short})" if label and label_counts[label] > 1 and short else label
+        insert = f"{text}'" if close_quote else (f"{text} " if " " not in text else f"'{text}' ")
+        out.append({
+            "text": text, "type": r.get("type") or "class", "iri": r.get("iri"),
+            "short": short, "insert": insert, "lang": None, "cross_language": False,
+            "ontology_shortname": r.get("ontology_shortname", ""),
+        })
+    return out
+
+
+async def mos_autocomplete(
+    db, q: str, cursor: int, limit: int, *,
+    version_id: str | None = None,
+    ontology_ids: list[str] | None = None,
+    excluded_types: frozenset[str] = frozenset({"annotation_property"}),
+) -> tuple[list[dict], PartialParseResult]:
+    """Cursor-aware MOS autocomplete for either a single version (`version_id`)
+    or a set of ontologies (`ontology_ids`). Returns (completion dicts, parse
+    context). The single shared implementation behind all MOS endpoints."""
+    from ontoexplorer.modules.search.pg_search import pg_autocomplete_entities, pg_is_property
+    ctx = partial_parse(q, cursor)
+    tt = ctx.token_type
+
+    # Entity contexts (quoted, or a bare word still being typed).
+    if tt == "OPEN_QUOTE" or (tt == "EXPECT_ENTITY" and bool(ctx.partial)):
+        rows = await pg_autocomplete_entities(
+            db, partial=ctx.partial, limit=limit, excluded_types=excluded_types,
+            ontology_ids=ontology_ids, version_id=version_id,
+        )
+        return _entity_dicts(rows, close_quote=(tt == "OPEN_QUOTE")), ctx
+
+    # Keyword contexts. Restriction-vs-boolean depends on the preceding entity.
+    prev_is_property = bool(ctx.prev_entity) and await pg_is_property(
+        db, ctx.prev_entity, ontology_ids=ontology_ids, version_id=version_id)
+    return [_kw_dict(k) for k in keyword_set_for(tt, prev_is_property)], ctx
+
+
+# ── Legacy Redis autocomplete (OLS entity lookup) ─────────────────────────────
 
 def _entity_completions(
     r,

@@ -12,7 +12,6 @@ from ontoexplorer.clients.reasoning import ReasoningNotReadyError
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Ontology, OntologyVersion, User
 from ontoexplorer.modules.auth.dependencies import get_current_user
-from ontoexplorer.modules.search.autocomplete import get_completions
 from ontoexplorer.modules.search.evaluator import AmbiguousLabelError, evaluate
 from ontoexplorer.modules.search.indexer import entity_lookup, entity_lookup_multi, normalise_label
 from ontoexplorer.modules.search.lang import resolve_lang
@@ -45,8 +44,8 @@ def _autocomplete_cache_key(
     ont_part = ",".join(sorted(ontology_ids))
     payload = f"{q}\x1f{cursor}\x1f{limit}\x1f{ont_part}\x1f{lang or ''}"
     h = hashlib.blake2b(payload.encode(), digest_size=16).hexdigest()
-    # v2: EXPECT_KEYWORD now returns restriction keywords after a property.
-    return f"search:autocomplete:v2:{h}"
+    # v3: unified mos_autocomplete — keyword insert format changed ("(" / "'" bare).
+    return f"search:autocomplete:v3:{h}"
 
 
 def _is_expression(node) -> bool:
@@ -348,8 +347,6 @@ async def global_autocomplete(
     _user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from ontoexplorer.modules.search.mos_parser import partial_parse
-
     effective_cursor = cursor if cursor >= 0 else len(q)
 
     # Short-TTL response cache — autocomplete fires per-keystroke, so the same
@@ -361,85 +358,11 @@ async def global_autocomplete(
     if cached:
         return _json.loads(cached)
 
-    ctx = partial_parse(q, effective_cursor)
-
-    # Non-entity contexts return small constant lists — no Redis or Postgres
-    # query needed.
-    KEYWORDS_BOOLEAN = ["and", "or", "not", "(", ")"]
-    KEYWORDS_RESTRICTION = ["some", "only", "value", "min", "max", "exactly", "Self"]
-    KEYWORDS_ENTITY_OPEN = ["not", "'"]
-    CARDINALITIES = ["1", "2", "3"]
-
-    def _empty_resp() -> dict:
-        return {
-            "completions": [],
-            "context": ctx.token_type.lower(),
-            "replace_from": ctx.token_start,
-            "replace_to": effective_cursor,
-        }
-
-    def _kw_completion(kw: str) -> dict:
-        return {
-            "text": kw, "type": "keyword", "iri": None, "short": None,
-            "insert": kw + " ", "lang": None, "cross_language": False,
-            "ontology_shortname": "",
-        }
-
-    def _card_completion(n: str) -> dict:
-        return {
-            "text": n, "type": "cardinality", "iri": None, "short": None,
-            "insert": n + " ", "lang": None, "cross_language": False,
-            "ontology_shortname": "",
-        }
-
-    completions: list[dict] = []
-
-    if ctx.token_type == "EXPECT_KEYWORD":
-        # After an object/data property MOS expects a restriction keyword; after
-        # a class (or a closed group) it expects a boolean. Resolve the preceding
-        # entity across the scoped ontologies (mirrors the per-ontology path).
-        from ontoexplorer.modules.search.pg_search import pg_is_property
-        if ctx.prev_entity and await pg_is_property(db, ctx.prev_entity, ontology_ids or None):
-            completions = [_kw_completion(k) for k in KEYWORDS_RESTRICTION]
-        else:
-            completions = [_kw_completion(k) for k in KEYWORDS_BOOLEAN]
-    elif ctx.token_type == "EXPECT_INT":
-        completions = [_card_completion(n) for n in CARDINALITIES]
-    elif ctx.token_type == "EXPECT_ENTITY" and not ctx.partial:
-        completions = [_kw_completion(k) for k in KEYWORDS_ENTITY_OPEN]
-    elif ctx.token_type in ("OPEN_QUOTE", "EXPECT_ENTITY"):
-        # Entity-prefix path: one SQL query over entity_index, joined with
-        # ontologies for shortname display. Replaces the 25-version Redis
-        # fan-out via get_completions.
-        from ontoexplorer.modules.search.pg_search import pg_autocomplete_entities
-
-        rows = await pg_autocomplete_entities(
-            db,
-            partial=ctx.partial,
-            limit=limit,
-            excluded_types=frozenset({"annotation_property"}),
-            ontology_ids=[oid for oid in ontology_ids] if ontology_ids else None,
-        )
-
-        bare_word_context = ctx.token_type == "EXPECT_ENTITY"
-        for r in rows:
-            label = r["label"]
-            if bare_word_context:
-                # Single-word labels insert bare; multi-word are quoted.
-                insert = label + " " if " " not in label else f"'{label}' "
-            else:
-                # OPEN_QUOTE: close the user's opening quote.
-                insert = f"{label}'"
-            completions.append({
-                "text": label,
-                "type": r["type"],
-                "iri": r["iri"],
-                "short": r["short"],
-                "insert": insert,
-                "lang": None,
-                "cross_language": False,
-                "ontology_shortname": r["ontology_shortname"],
-            })
+    # Single shared MOS autocomplete implementation, scoped to the selected
+    # ontologies (empty = all).
+    from ontoexplorer.modules.search.autocomplete import mos_autocomplete
+    completions, ctx = await mos_autocomplete(
+        db, q, effective_cursor, limit, ontology_ids=ontology_ids or None)
 
     payload = {
         "completions": completions,
@@ -466,21 +389,12 @@ async def ontology_autocomplete(
 ):
     version = await _get_latest_version_or_404(db, ontology_id)
     version_id = str(version.id)
-    ontology_row = (await db.execute(
-        select(Ontology).where(Ontology.id == ontology_id)
-    )).scalar_one_or_none()
-    effective_lang = resolve_lang(lang, ontology_row, _user if isinstance(_user, User) else None)
     effective_cursor = cursor if cursor >= 0 else len(q)
-    completions = await asyncio.to_thread(get_completions, q, effective_cursor, version_id, limit, effective_lang)
-    from ontoexplorer.modules.search.mos_parser import partial_parse
-    ctx = partial_parse(q, effective_cursor)
+    from ontoexplorer.modules.search.autocomplete import mos_autocomplete
+    completions, ctx = await mos_autocomplete(db, q, effective_cursor, limit, version_id=version_id)
     return {
         "version_id": version_id,
-        "completions": [
-            {"text": c.text, "type": c.type, "iri": c.iri, "short": c.short, "insert": c.insert,
-             "lang": c.lang, "cross_language": c.cross_language}
-            for c in completions
-        ],
+        "completions": completions,
         "context": ctx.token_type.lower(),
         "replace_from": ctx.token_start,
         "replace_to": effective_cursor,
