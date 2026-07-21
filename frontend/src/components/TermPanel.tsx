@@ -501,6 +501,28 @@ function ExprNode({ node, slug, vid, parens = false }: {
         </span>
       )
       break
+    case 'datatype_restriction': {
+      // e.g. decimal[>= 0.0, <= 1.0]
+      const SYM: Record<string, string> = {
+        minInclusive: '≥', maxInclusive: '≤', minExclusive: '>', maxExclusive: '<',
+      }
+      content = (
+        <span>
+          <ExprNode node={node.datatype} slug={slug} vid={vid} />
+          <span style={{ color: 'var(--text-dim)' }}>[</span>
+          {node.facets.map((f, i) => (
+            <React.Fragment key={i}>
+              {i > 0 && <span style={{ color: 'var(--text-dim)' }}>, </span>}
+              <span style={{ color: 'var(--accent-blue)', fontStyle: 'italic' }}>{SYM[f.facet] ?? f.facet}</span>
+              {' '}
+              <span style={{ color: 'var(--text-muted)' }}>{f.value}</span>
+            </React.Fragment>
+          ))}
+          <span style={{ color: 'var(--text-dim)' }}>]</span>
+        </span>
+      )
+      break
+    }
     default:
       content = <span style={{ color: 'var(--text-dim)' }}>?</span>
   }
@@ -864,7 +886,9 @@ function UsageTable({ usage, propIri, propLabel, slug, vid }: {
               <code style={{ color: 'var(--accent-blue)', fontSize: 11 }}>{u.restriction}</code>
             </td>
             <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
-              {u.filler_iri ? (
+              {u.filler_expr ? (
+                <ExprNode node={u.filler_expr} slug={slug} vid={vid} />
+              ) : u.filler_iri ? (
                 <IriLink iri={u.filler_iri} label={u.filler_label ?? u.filler_iri} slug={slug} vid={vid} />
               ) : (
                 <span style={{ color: 'var(--text-muted)' }}>{u.filler_label ?? '—'}</span>

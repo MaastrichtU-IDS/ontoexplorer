@@ -133,6 +133,23 @@ def _build_class_expr(store, graph_node, node, label_fn, depth: int = 0) -> dict
             _build_class_expr(store, graph_node, it, label_fn, depth + 1) for it in items
         ]}
 
+    # Datatype restriction: onDatatype + withRestrictions facets, e.g.
+    # xsd:decimal[>= 0.0 , <= 1.0]. Each withRestrictions list item is a blank
+    # node carrying a single facet predicate -> literal value.
+    on_dt = props.get(_OWL + "onDatatype", [])
+    if on_dt:
+        datatype = _build_class_expr(store, graph_node, on_dt[0], label_fn, depth + 1)
+        facets: list[dict] = []
+        wr = props.get(_OWL + "withRestrictions", [])
+        if wr:
+            for item in _rdf_list_items(store, graph_node, wr[0]):
+                for fq in store.quads_for_pattern(item, None, None, graph_node):
+                    pred = fq.predicate.value
+                    fname = pred.split("#")[-1] if "#" in pred else pred.rstrip("/").split("/")[-1]
+                    val = fq.object.value if hasattr(fq.object, "value") else str(fq.object)
+                    facets.append({"facet": fname, "value": val})
+        return {"type": "datatype_restriction", "datatype": datatype, "facets": facets}
+
     return {"type": "unknown"}
 
 
@@ -1218,8 +1235,10 @@ def _sparql_term_props(store, props_q: str, sub_q: str) -> tuple[list, list[str]
     return prop_rows, sub_iris
 
 
-def _sparql_usage(store, q: str, label_fn) -> list[dict]:
+def _sparql_usage(store, q: str, label_fn, graph_iri: str) -> list[dict]:
     """Run property-usage SPARQL query and assemble rows (called via asyncio.to_thread)."""
+    import pyoxigraph
+    graph_node = pyoxigraph.NamedNode(graph_iri)
     result = []
     for row in store.query(q):
         cls_iri = row["class"].value
@@ -1228,7 +1247,13 @@ def _sparql_usage(store, q: str, label_fn) -> list[dict]:
         filler = row["filler"]
         filler_val = filler.value if filler is not None else None
         filler_label: str | None = None
-        if filler_val and (filler_val.startswith("http") or filler_val.startswith("urn:")):
+        filler_expr: dict | None = None
+        if isinstance(filler, pyoxigraph.BlankNode):
+            # Anonymous class expression (e.g. `some (r some X)` or `some (A and B)`):
+            # render the whole nested structure recursively instead of leaking the
+            # blank-node id. The UI renders filler_expr via ExprNode.
+            filler_expr = _build_class_expr(store, graph_node, filler, label_fn)
+        elif filler_val and (filler_val.startswith("http") or filler_val.startswith("urn:")):
             filler_label = label_fn(filler_val)
         result.append({
             "class_iri":    cls_iri,
@@ -1236,7 +1261,8 @@ def _sparql_usage(store, q: str, label_fn) -> list[dict]:
             "relation":     relation,
             "restriction":  rtype,
             "filler_iri":   filler_val if filler_val and filler_val.startswith("http") else None,
-            "filler_label": filler_label or filler_val,
+            "filler_label": None if filler_expr else (filler_label or filler_val),
+            "filler_expr":  filler_expr,
         })
     return result
 
@@ -1297,8 +1323,10 @@ def _term_detail_cache_key(ontology_id: str, version_id: str, term_iri: str, lan
     import hashlib
     payload = f"{ontology_id}\x1f{version_id}\x1f{term_iri}\x1f{lang or ''}"
     h = hashlib.blake2b(payload.encode(), digest_size=16).hexdigest()
+    # v5: property-usage rows now carry `filler_expr` (recursive render of
+    #     blank-node fillers, e.g. datatype restrictions / nested expressions).
     # v4: ClassRef items in term-detail now carry `source` for chip rendering.
-    return f"search:term:v4:{h}"
+    return f"search:term:v5:{h}"
 
 
 @router.get("/{ontology_id}/{version_id}/terms/{term_iri:path}", summary="Term detail")
@@ -1618,7 +1646,7 @@ async def get_term(
             ORDER BY ?class ?relation ?restrictType
             LIMIT {USAGE_SQL_LIMIT}
         """
-        return _sparql_usage(s, q, _label)
+        return _sparql_usage(s, q, _label, g_iri)
 
     def _run_class_usage_queries(s, adc_map: dict) -> list[dict]:
         cu_q = f"""
@@ -1998,7 +2026,7 @@ async def get_term_usage_page(
             ORDER BY ?class ?relation ?restrictType
             OFFSET {sql_offset} LIMIT {sql_limit}
         """
-        rows = await asyncio.to_thread(_sparql_usage, store, q, _label)
+        rows = await asyncio.to_thread(_sparql_usage, store, q, _label, g_iri)
         has_more = len(rows) > limit
         return {"kind": "property", "offset": offset, "limit": limit,
                 "items": rows[:limit], "has_more": has_more}
