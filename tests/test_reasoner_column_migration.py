@@ -1,5 +1,4 @@
 """The reasoner column exists, is NOT NULL, and defaults to whelk."""
-import sqlalchemy as sa
 from ontoexplorer.models.db import OntologyVersion
 
 

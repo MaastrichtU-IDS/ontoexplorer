@@ -1,5 +1,4 @@
 import fakeredis
-import httpx
 import pytest
 from ontoexplorer.clients import reasoning
 
