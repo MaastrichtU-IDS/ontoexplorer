@@ -556,3 +556,48 @@ async def test_evaluate_relation_subclasses_delegates_to_evaluate():
         )
     iris = {x.iri for x in results}
     assert EUKARYOTE in iris and PROK in iris
+
+
+def _redis_haspart_nucleus():
+    r = fakeredis.FakeRedis(decode_responses=True)
+    for label, iri, etype in [
+        ("hasPart", "http://bfo.org/HP", "object_property"),
+        ("Nucleus", "http://ex.org/N", "class"),
+    ]:
+        r.zadd(_prefix_key("v1"), {f"{label.lower()}|{etype}|{iri}": 0})
+        r.hset(_iri_key("v1", iri), mapping={
+            "label": label, "type": etype, "iri": iri, "short": label, "synonyms": "",
+        })
+    return r
+
+
+async def _min_query(cardinality: int) -> str:
+    """Run evaluate() for `hasPart min N Nucleus` and return the SPARQL sent."""
+    r = _redis_haspart_nucleus()
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=_make_classification({}))), \
+         patch("ontoexplorer.modules.search.evaluator.sparql_query",
+               return_value=[]) as mock_sparql:
+        await evaluate(
+            MinCardinality(NamedClass("hasPart", None), cardinality, NamedClass("Nucleus", None)),
+            "v1", "ont1",
+        )
+    return " ".join(str(a) for call in mock_sparql.call_args_list for a in call.args)
+
+
+@pytest.mark.anyio
+async def test_evaluate_min_one_matches_some_values_from():
+    # min 1 R C ≡ some R C — the query must also match someValuesFrom on the filler.
+    q = await _min_query(1)
+    assert "someValuesFrom" in q
+    assert "minQualifiedCardinality" in q
+    assert "http://ex.org/N" in q          # filler is respected (not ignored)
+
+
+@pytest.mark.anyio
+async def test_evaluate_min_two_does_not_match_some_values_from():
+    # min 2 is strictly stronger than some — must NOT match someValuesFrom.
+    q = await _min_query(2)
+    assert "someValuesFrom" not in q
+    assert "minQualifiedCardinality" in q

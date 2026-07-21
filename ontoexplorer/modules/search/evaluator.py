@@ -490,19 +490,47 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
         """
     elif isinstance(node, MinCardinality):
         prop_iri = resolve_prop(node.property_ref)
-        q = f"""
-            SELECT DISTINCT ?cls WHERE {{
-                GRAPH <{g}> {{
-                    ?cls <{RDFS}subClassOf> ?restr .
-                    ?restr <{OWL}onProperty> ?prop .
-                    {{ ?restr <{OWL}minCardinality> ?n . }}
-                    UNION
-                    {{ ?restr <{OWL}minQualifiedCardinality> ?n . }}
-                    FILTER(?n >= {node.cardinality})
-                    ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
-                }}
-            }}
-        """
+        fill_iri = resolve(node.filler) if isinstance(node.filler, NamedClass) else node.filler.ref
+        n = node.cardinality
+        OWL_THING = "http://www.w3.org/2002/07/owl#Thing"
+        # `min n R C` = at least n R-successors in C. Match, on subClassOf and on
+        # equivalentClass intersections (mirroring the `some` path):
+        #   - qualified min-cardinality on C with count >= n, and
+        #   - since (some R C) ≡ (min 1 R C), for n <= 1 also `someValuesFrom C`.
+        # Unqualified min-cardinality only constrains C when C is owl:Thing.
+        blocks = [
+            f"""{{ ?cls <{RDFS}subClassOf> ?restr .
+                   ?restr <{OWL}onProperty> ?prop ;
+                          <{OWL}minQualifiedCardinality> ?n ;
+                          <{OWL}onClass> <{fill_iri}> .
+                   FILTER(?n >= {n})
+                   ?prop <{RDFS}subPropertyOf>* <{prop_iri}> . }}""",
+            f"""{{ ?cls <{OWL}equivalentClass>/<{OWL}intersectionOf>/<{RDF}rest>*/<{RDF}first> ?restr .
+                   ?restr <{OWL}onProperty> ?prop ;
+                          <{OWL}minQualifiedCardinality> ?n ;
+                          <{OWL}onClass> <{fill_iri}> .
+                   FILTER(?n >= {n})
+                   ?prop <{RDFS}subPropertyOf>* <{prop_iri}> . }}""",
+        ]
+        if n <= 1:
+            blocks += [
+                f"""{{ ?cls <{RDFS}subClassOf> ?restr .
+                       ?restr <{OWL}onProperty> ?prop ;
+                              <{OWL}someValuesFrom> <{fill_iri}> .
+                       ?prop <{RDFS}subPropertyOf>* <{prop_iri}> . }}""",
+                f"""{{ ?cls <{OWL}equivalentClass>/<{OWL}intersectionOf>/<{RDF}rest>*/<{RDF}first> ?restr .
+                       ?restr <{OWL}onProperty> ?prop ;
+                              <{OWL}someValuesFrom> <{fill_iri}> .
+                       ?prop <{RDFS}subPropertyOf>* <{prop_iri}> . }}""",
+            ]
+        if fill_iri == OWL_THING:
+            blocks.append(
+                f"""{{ ?cls <{RDFS}subClassOf> ?restr .
+                       ?restr <{OWL}onProperty> ?prop ;
+                              <{OWL}minCardinality> ?n .
+                       FILTER(?n >= {n})
+                       ?prop <{RDFS}subPropertyOf>* <{prop_iri}> . }}""")
+        q = f"SELECT DISTINCT ?cls WHERE {{ GRAPH <{g}> {{ {' UNION '.join(blocks)} }} }}"
     elif isinstance(node, MaxCardinality):
         prop_iri = resolve_prop(node.property_ref)
         q = f"""
