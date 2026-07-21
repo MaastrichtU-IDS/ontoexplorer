@@ -45,7 +45,8 @@ def _autocomplete_cache_key(
     ont_part = ",".join(sorted(ontology_ids))
     payload = f"{q}\x1f{cursor}\x1f{limit}\x1f{ont_part}\x1f{lang or ''}"
     h = hashlib.blake2b(payload.encode(), digest_size=16).hexdigest()
-    return f"search:autocomplete:{h}"
+    # v2: EXPECT_KEYWORD now returns restriction keywords after a property.
+    return f"search:autocomplete:v2:{h}"
 
 
 def _is_expression(node) -> bool:
@@ -365,6 +366,7 @@ async def global_autocomplete(
     # Non-entity contexts return small constant lists — no Redis or Postgres
     # query needed.
     KEYWORDS_BOOLEAN = ["and", "or", "not", "(", ")"]
+    KEYWORDS_RESTRICTION = ["some", "only", "value", "min", "max", "exactly", "Self"]
     KEYWORDS_ENTITY_OPEN = ["not", "'"]
     CARDINALITIES = ["1", "2", "3"]
 
@@ -393,7 +395,14 @@ async def global_autocomplete(
     completions: list[dict] = []
 
     if ctx.token_type == "EXPECT_KEYWORD":
-        completions = [_kw_completion(k) for k in KEYWORDS_BOOLEAN]
+        # After an object/data property MOS expects a restriction keyword; after
+        # a class (or a closed group) it expects a boolean. Resolve the preceding
+        # entity across the scoped ontologies (mirrors the per-ontology path).
+        from ontoexplorer.modules.search.pg_search import pg_is_property
+        if ctx.prev_entity and await pg_is_property(db, ctx.prev_entity, ontology_ids or None):
+            completions = [_kw_completion(k) for k in KEYWORDS_RESTRICTION]
+        else:
+            completions = [_kw_completion(k) for k in KEYWORDS_BOOLEAN]
     elif ctx.token_type == "EXPECT_INT":
         completions = [_card_completion(n) for n in CARDINALITIES]
     elif ctx.token_type == "EXPECT_ENTITY" and not ctx.partial:
