@@ -237,19 +237,21 @@ const MANCHESTER_KEYWORDS = new Set([
   'Self', 'inverse', 'o',
 ])
 
-// One tokenizer pass over a Manchester line. Order matters: IRIs first (they
-// contain '/' '.' etc.), then quoted labels, identifiers, whitespace, and the
-// punctuation that structures class expressions.
-const JUST_TOKEN_RE = /(https?:\/\/[^\s()<>"']+)|('[^']*')|([A-Za-z_][\w-]*)|(\s+)|([(){}[\],:.])|([^\s]+)/g
+// One tokenizer pass over a Manchester line. The reasoner renders entity IRIs
+// wrapped in angle brackets (`<http://…>`), so match those first (capturing the
+// inner IRI), then bare IRIs, quoted labels, identifiers, whitespace, and any
+// single remaining char (punctuation / stray brackets).
+const JUST_TOKEN_RE = /<(https?:\/\/[^>\s]+)>|(https?:\/\/[^\s()<>"']+)|('[^']*')|([A-Za-z_][\w-]*)|(\s+)|(.)/g
 
 function iriFragment(iri: string): string {
   const stripped = iri.replace(/[#/]+$/, '')
   return stripped.includes('#') ? stripped.split('#').pop()! : stripped.split('/').pop()! || iri
 }
 
-// Renders one Manchester axiom line as coloured, partly-clickable tokens:
-// entity IRIs become links to their term page (green, the app's entity accent),
-// Manchester keywords are highlighted (purple), punctuation is dimmed.
+// Renders one Manchester axiom line as coloured, partly-clickable tokens,
+// matching the axioms-description styling: entity IRIs become green links to
+// their term page (labels resolved via the server `labels` map, IRI on hover),
+// Manchester keywords are blue italic, punctuation dimmed.
 function ManchesterLine({ line, labels, slug, vid }: {
   line: string; labels: Map<string, string>; slug?: string; vid?: string
 }) {
@@ -257,38 +259,45 @@ function ManchesterLine({ line, labels, slug, vid }: {
   let m: RegExpExecArray | null
   JUST_TOKEN_RE.lastIndex = 0
   let k = 0
+  const entity = (iri: string) => {
+    const raw = labels.get(iri) ?? iriFragment(iri)
+    const label = raw.includes(' ') ? `'${raw}'` : raw   // quote multi-word labels, like ExprNode
+    if (slug && vid) {
+      return (
+        <Link
+          key={k++}
+          to={`/ontologies/${slug}/${vid}?term=${encodeURIComponent(iri)}`}
+          title={iri}
+          style={{ color: 'var(--accent)', textDecoration: 'none' }}
+          onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+          onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
+        >{label}</Link>
+      )
+    }
+    return <span key={k++} title={iri} style={{ color: 'var(--accent)' }}>{label}</span>
+  }
   while ((m = JUST_TOKEN_RE.exec(line)) !== null) {
-    const [, iri, quoted, ident, ws, punct, other] = m
+    const [, bracketedIri, bareIri, quoted, ident, ws, ch] = m
+    const iri = bracketedIri || bareIri
     if (iri) {
-      const label = labels.get(iri) ?? iriFragment(iri)
-      if (slug && vid) {
-        parts.push(
-          <Link
-            key={k++}
-            to={`/ontologies/${slug}/${vid}?term=${encodeURIComponent(iri)}`}
-            title={iri}
-            style={{ color: 'var(--accent)', textDecoration: 'none' }}
-            onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
-            onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
-          >{label}</Link>
-        )
-      } else {
-        parts.push(<span key={k++} title={iri} style={{ color: 'var(--accent)' }}>{label}</span>)
-      }
+      parts.push(entity(iri))
     } else if (quoted) {
       parts.push(<span key={k++} style={{ color: 'var(--accent)' }}>{quoted.slice(1, -1)}</span>)
     } else if (ident) {
       parts.push(
         MANCHESTER_KEYWORDS.has(ident)
-          ? <span key={k++} style={{ color: 'var(--accent-purple)' }}>{ident}</span>
+          ? <span key={k++} style={{ color: 'var(--accent-blue)', fontStyle: 'italic' }}>{ident}</span>
           : <span key={k++}>{labels.get(ident) ?? ident}</span>
       )
     } else if (ws) {
       parts.push(<span key={k++}>{ws}</span>)
-    } else if (punct) {
-      parts.push(<span key={k++} style={{ color: 'var(--text-dim)' }}>{punct}</span>)
     } else {
-      parts.push(<span key={k++}>{other}</span>)
+      // single char: dim the structural punctuation, keep anything else plain.
+      parts.push(
+        '(){}[],:.'.includes(ch)
+          ? <span key={k++} style={{ color: 'var(--text-dim)' }}>{ch}</span>
+          : <span key={k++}>{ch}</span>
+      )
     }
   }
   return <>{parts}</>
