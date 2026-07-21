@@ -249,6 +249,10 @@ export interface PropertyUsage {
   restriction: string
   filler_iri: string | null
   filler_label: string | null
+  /** Recursive expression for an anonymous (blank-node) filler, e.g.
+   *  `some (r some X)`. Present instead of filler_iri/label when the filler is
+   *  a nested class expression; rendered via ExprNode. */
+  filler_expr?: ClassExprNode | null
 }
 
 export interface ClassUsageEntry {
@@ -367,6 +371,7 @@ export type ClassExprNode =
   | { type: 'and' | 'or'; operands: ClassExprNode[] }
   | { type: 'min' | 'max' | 'exactly'; property: ClassExprNode; n: string; filler?: ClassExprNode }
   | { type: 'one_of'; individuals: ClassExprNode[] }
+  | { type: 'datatype_restriction'; datatype: ClassExprNode; facets: { facet: string; value: string }[] }
   | { type: 'unknown' }
 
 export interface SearchResult {
