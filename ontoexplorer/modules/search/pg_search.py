@@ -401,3 +401,47 @@ def rrf_merge(
     for d in fused:
         d["rrf_score"] = round(scores[d["iri"]], 5)
     return fused[:limit]
+
+
+async def pg_property_iri(db: AsyncSession, ident: str, version_id: str) -> str | None:
+    """Resolve a property reference (IRI, exact label, or CURIE/short) to its IRI
+    within one version's entity_index. Used to look up a restriction's property
+    when suggesting relevant fillers."""
+    if ident.startswith("http://") or ident.startswith("https://"):
+        return ident
+    from ontoexplorer.modules.search.pg_indexer import split_compound_labels
+    norm = normalise_label(split_compound_labels(ident))
+    sql = text("""
+        SELECT ei.iri FROM entity_index ei
+        WHERE ei.version_id = :v
+          AND ei.type IN ('object_property', 'data_property')
+          AND (ei.primary_label_norm = :norm OR ei.short = :ident OR ei.iri = :ident)
+        LIMIT 1
+    """)
+    row = (await db.execute(sql, {"v": version_id, "norm": norm, "ident": ident})).first()
+    return row[0] if row else None
+
+
+async def pg_entities_by_iri(db: AsyncSession, iris: list[str], version_id: str,
+                             limit: int) -> list[dict]:
+    """Fetch display rows (label/short/type/shortname) for a set of IRIs within
+    one version, shortest-label first. Order-independent of the input list."""
+    if not iris:
+        return []
+    sql = text("""
+        SELECT ei.iri, ei.primary_label, ei.short, ei.type,
+               ei.version_id, ei.ontology_id, ei.primary_label_norm,
+               COALESCE(o.shortname, '') AS ontology_shortname
+        FROM entity_index ei
+        JOIN ontologies o ON o.id = ei.ontology_id
+        WHERE ei.version_id = :v AND ei.iri = ANY(:iris)
+              AND ei.type <> 'annotation_property'
+        ORDER BY LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
+        LIMIT :limit
+    """)
+    rows = (await db.execute(sql, {"v": version_id, "iris": list(iris), "limit": limit})).all()
+    return [{
+        "iri": r.iri, "label": r.primary_label, "short": r.short, "type": r.type,
+        "version_id": r.version_id, "ontology_id": r.ontology_id,
+        "ontology_shortname": r.ontology_shortname, "primary_label_norm": r.primary_label_norm,
+    } for r in rows]

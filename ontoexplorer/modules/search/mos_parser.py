@@ -222,6 +222,22 @@ class PartialParseResult:
     # keywords (some/only/min/…) after a property vs boolean (and/or) after a
     # class. None after a closing paren (a group is always a class expression).
     prev_entity: str | None = None
+    # On EXPECT_ENTITY in a *filler* position (right after `some`/`only`/`value`
+    # or `min N`/`max N`/`exactly N`), the property the restriction is on, so the
+    # completer can suggest classes actually used as fillers of that property.
+    restriction_property: str | None = None
+
+
+def _entity_ident(tok: tuple[str, str]) -> str | None:
+    """The label/curie/IRI identifier of an entity token, else None."""
+    t, v = tok
+    if t == "QUOTED_LABEL":
+        return v.strip("'")
+    if t == "FULL_IRI":
+        return v.strip("<>")
+    if t in ("CURIE", "WORD"):
+        return v
+    return None
 
 
 _KEYWORD_RESTRICTION = {"some", "only", "value", "Self", "min", "max", "exactly"}
@@ -342,9 +358,12 @@ def partial_parse(text: str, cursor: int) -> PartialParseResult:
     if last_type == "KW_RESTRICTION" and last_val in ("min", "max", "exactly"):
         return PartialParseResult(token_type="EXPECT_INT", partial="", token_start=cursor)
 
-    # After integer → expect entity (filler class)
+    # After integer → expect entity (filler class). Sequence: [property, min|max|
+    # exactly, INT] — the property is two tokens back.
     if last_type == "INT":
-        return PartialParseResult(token_type="EXPECT_ENTITY", partial="", token_start=cursor)
+        rp = _entity_ident(tokens[-3]) if len(tokens) >= 3 else None
+        return PartialParseResult(token_type="EXPECT_ENTITY", partial="", token_start=cursor,
+                                  restriction_property=rp)
 
     # WORD token: if cursor is right after the word (no trailing space), the user is still
     # typing a bare label → surface entity completions for the partial text.
@@ -356,5 +375,10 @@ def partial_parse(text: str, cursor: int) -> PartialParseResult:
         return PartialParseResult(token_type="EXPECT_KEYWORD", partial="", token_start=cursor,
                                   prev_entity=last_val)
 
-    # After restriction keyword (some/only/value) or boolean (and/or) or not / ( → expect entity
-    return PartialParseResult(token_type="EXPECT_ENTITY", partial="", token_start=cursor)
+    # After restriction keyword (some/only/value) or boolean (and/or) or not / ( → expect entity.
+    # For a value-style restriction keyword, the filler's property is the prior token.
+    rp = None
+    if last_type == "KW_RESTRICTION" and last_val in ("some", "only", "value") and len(tokens) >= 2:
+        rp = _entity_ident(tokens[-2])
+    return PartialParseResult(token_type="EXPECT_ENTITY", partial="", token_start=cursor,
+                              restriction_property=rp)

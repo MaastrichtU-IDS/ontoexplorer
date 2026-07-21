@@ -169,8 +169,12 @@ async def autocomplete(
 ):
     await _get_version_or_404(db, ontology_id, version_id)
     effective_cursor = cursor if cursor >= 0 else len(q)
+    from ontoexplorer.clients.oxigraph import graph_iri
     from ontoexplorer.modules.search.autocomplete import mos_autocomplete
-    completions, ctx = await mos_autocomplete(db, q, effective_cursor, limit, version_id=version_id)
+    completions, ctx = await mos_autocomplete(
+        db, q, effective_cursor, limit, version_id=version_id,
+        graph_iri=graph_iri(ontology_id, version_id),
+    )
     return {
         "completions": completions,
         "context": ctx.token_type.lower(),
