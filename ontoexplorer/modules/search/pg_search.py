@@ -265,16 +265,18 @@ async def pg_autocomplete_entities(
     return out[:limit]
 
 
-async def pg_is_property(db: AsyncSession, ident: str, ontology_ids: list[str] | None = None) -> bool:
+async def pg_is_property(db: AsyncSession, ident: str, ontology_ids: list[str] | None = None,
+                         version_id: str | None = None) -> bool:
     """True if `ident` (an IRI, or an exact label) is an object/data property in
-    the (optionally scoped) entity_index. Used by the cross-ontology MOS
-    autocomplete to offer restriction keywords after a property."""
+    the (optionally scoped) entity_index. Used by the MOS autocomplete to offer
+    restriction keywords after a property."""
     from ontoexplorer.modules.search.pg_indexer import split_compound_labels
     is_iri = ident.startswith("http://") or ident.startswith("https://")
     norm = "" if is_iri else normalise_label(split_compound_labels(ident))
     if not is_iri and not norm:
         return False
     onto_sql = "AND ei.ontology_id = ANY(:ontology_ids)" if ontology_ids else ""
+    version_sql = "AND ei.version_id = :version_id" if version_id else ""
     match_sql = "ei.iri = :ident" if is_iri else "ei.primary_label_norm = :norm"
     sql = text(f"""
         SELECT 1 FROM entity_index ei
@@ -283,11 +285,14 @@ async def pg_is_property(db: AsyncSession, ident: str, ontology_ids: list[str] |
           AND ei.type IN ('object_property','data_property')
           AND {match_sql}
           {onto_sql}
+          {version_sql}
         LIMIT 1
     """)
     params: dict = {"ident": ident} if is_iri else {"norm": norm}
     if ontology_ids:
         params["ontology_ids"] = ontology_ids
+    if version_id:
+        params["version_id"] = version_id
     return (await db.execute(sql, params)).first() is not None
 
 

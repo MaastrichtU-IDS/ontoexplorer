@@ -161,3 +161,27 @@ def test_keyword_completion_after_class_offers_boolean_keywords():
     texts = {c.text for c in comps}
     assert {"and", "or"} <= texts
     assert "some" not in texts
+
+
+# ── Unified mos_autocomplete: pure keyword-set logic ──────────────────────────
+from ontoexplorer.modules.search.autocomplete import keyword_set_for, _kw_dict  # noqa: E402
+
+
+def test_keyword_set_for_property_vs_class():
+    assert keyword_set_for("EXPECT_KEYWORD", prev_is_property=True) == \
+        ["some", "only", "value", "min", "max", "exactly", "Self"]
+    assert keyword_set_for("EXPECT_KEYWORD", prev_is_property=False) == \
+        ["and", "or", "not", "(", ")"]
+
+
+def test_keyword_set_for_int_and_entity_open():
+    assert keyword_set_for("EXPECT_INT", False) == ["1", "2", "3"]
+    assert keyword_set_for("EXPECT_ENTITY", False) == ["not", "'"]
+
+
+def test_kw_dict_insert_and_type():
+    assert _kw_dict("some")["insert"] == "some "        # trailing space
+    assert _kw_dict("(")["insert"] == "("               # opening token: no space
+    assert _kw_dict("'")["insert"] == "'"
+    assert _kw_dict("1")["type"] == "cardinality"
+    assert _kw_dict("and")["type"] == "keyword"
