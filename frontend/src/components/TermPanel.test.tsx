@@ -180,12 +180,41 @@ describe('justification explain UI', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'inference' }))
 
     // Full IRIs are shown as their real labels, linking to the term page.
-    const link = await screen.findByRole('link', { name: 'mitochondrion inheritance' })
+    // Multi-word labels are single-quoted, matching the axioms description.
+    const link = await screen.findByRole('link', { name: "'mitochondrion inheritance'" })
     expect(link).toHaveAttribute('href', `/ontologies/go/v1?term=${encodeURIComponent(A)}`)
     expect(link).toHaveAttribute('title', A)
     expect(screen.getByRole('link', { name: 'reproduction' })).toBeInTheDocument()
     // Raw IRIs no longer appear as visible text.
     expect(screen.queryByText(A)).not.toBeInTheDocument()
+  })
+
+  test('renders angle-bracketed IRIs (the reasoner render format) as clickable labelled links', async () => {
+    mockCurrentTerm = mockTermWithInferredSuper
+    mockReasonersList.mockResolvedValue([
+      { name: 'rustdl', profile: 'DL', capabilities: ['classify', 'consistency', 'justify'], available: true },
+    ])
+    const A = 'http://ex.org/Puppy'
+    const B = 'http://ex.org/Dog'
+    mockJustification.mockResolvedValue({
+      // rustdl.render_manchester emits IRIs wrapped in angle brackets.
+      justifications: [[`<${A}> SubClassOf <${B}>`]],
+      format: 'manchester',
+      timed_out: false,
+      reasoning_available: true,
+      labels: { [A]: 'Puppy', [B]: 'Dog' },
+    })
+
+    wrap(<TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" slug="go" versionReasoner="rustdl" />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'inference' }))
+
+    const puppy = await screen.findByRole('link', { name: 'Puppy' })
+    expect(puppy).toHaveAttribute('href', `/ontologies/go/v1?term=${encodeURIComponent(A)}`)
+    expect(puppy).toHaveAttribute('title', A)
+    expect(screen.getByRole('link', { name: 'Dog' })).toBeInTheDocument()
+    // The raw <...> IRI text must not survive as plain text.
+    expect(screen.queryByText(`<${A}>`)).not.toBeInTheDocument()
   })
 
   test('disables the inference button with a tooltip when the reasoner has no justify capability (konclude)', async () => {
