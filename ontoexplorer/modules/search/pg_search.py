@@ -262,6 +262,56 @@ async def pg_autocomplete_entities(
         if len(out) >= limit:
             break
 
+    # Stage 3: trigram fuzzy fallback (typo tolerance). Only when the exact
+    # prefix + tsvector tiers under-fill, and only for >=3 chars (trigrams are
+    # noise below that). `<%` is index-accelerated by the gin_trgm_ops index on
+    # primary_label_norm and matches the query against the best word/substring,
+    # so `adhesn` still surfaces `cell adhesion`. Fuzzy hits rank last.
+    if len(out) < limit and len(norm) >= 3:
+        # Lower the word-similarity threshold for this fallback (default 0.6 is
+        # too strict for short-drop typos); scoped to the transaction.
+        await db.execute(text("SET LOCAL pg_trgm.word_similarity_threshold = 0.4"))
+        fuzzy_sql = text(f"""
+            SELECT ei.iri, ei.primary_label, ei.short, ei.type,
+                   ei.version_id, ei.ontology_id, ei.primary_label_norm,
+                   COALESCE(o.shortname, '') AS ontology_shortname
+            FROM entity_index ei
+            JOIN versions v ON v.id = ei.version_id
+            JOIN ontologies o ON o.id = ei.ontology_id
+            WHERE v.status NOT IN ('pending','failed','deprecated')
+              AND :norm <% ei.primary_label_norm
+              AND ei.primary_label_norm NOT LIKE :prefix
+              {type_filter_sql}
+              {ontology_filter_sql}
+              {version_filter_sql}
+            ORDER BY word_similarity(:norm, ei.primary_label_norm) DESC,
+                     LENGTH(ei.primary_label_norm), ei.iri
+            LIMIT :over
+        """)
+        params3: dict = {"norm": norm, "prefix": norm + "%", "over": limit * _OVERSAMPLE}
+        if excluded_types:
+            params3["excluded"] = list(excluded_types)
+        if ontology_ids:
+            params3["ontology_ids"] = ontology_ids
+        if version_id:
+            params3["version_id"] = version_id
+        for row in (await db.execute(fuzzy_sql, params3)).all():
+            if row.iri in seen_iris:
+                continue
+            seen_iris.add(row.iri)
+            out.append({
+                "iri": row.iri,
+                "label": row.primary_label,
+                "short": row.short,
+                "type": row.type,
+                "version_id": row.version_id,
+                "ontology_id": row.ontology_id,
+                "ontology_shortname": row.ontology_shortname,
+                "primary_label_norm": row.primary_label_norm,
+            })
+            if len(out) >= limit:
+                break
+
     return out[:limit]
 
 
