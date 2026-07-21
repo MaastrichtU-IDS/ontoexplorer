@@ -531,36 +531,41 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
                        FILTER(?n >= {n})
                        ?prop <{RDFS}subPropertyOf>* <{prop_iri}> . }}""")
         q = f"SELECT DISTINCT ?cls WHERE {{ GRAPH <{g}> {{ {' UNION '.join(blocks)} }} }}"
-    elif isinstance(node, MaxCardinality):
+    elif isinstance(node, (MaxCardinality, ExactCardinality)):
+        # max n R C / exactly n R C: qualified cardinality on the filler with the
+        # right comparator, on subClassOf and equivalentClass-intersection forms
+        # (mirrors min); unqualified cardinality only when the filler is owl:Thing.
+        # Neither is equivalent to `some`, so no someValuesFrom fallback.
         prop_iri = resolve_prop(node.property_ref)
-        q = f"""
-            SELECT DISTINCT ?cls WHERE {{
-                GRAPH <{g}> {{
-                    ?cls <{RDFS}subClassOf> ?restr .
-                    ?restr <{OWL}onProperty> ?prop .
-                    {{ ?restr <{OWL}maxCardinality> ?n . }}
-                    UNION
-                    {{ ?restr <{OWL}maxQualifiedCardinality> ?n . }}
-                    FILTER(?n <= {node.cardinality})
-                    ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
-                }}
-            }}
-        """
-    elif isinstance(node, ExactCardinality):
-        prop_iri = resolve_prop(node.property_ref)
-        q = f"""
-            SELECT DISTINCT ?cls WHERE {{
-                GRAPH <{g}> {{
-                    ?cls <{RDFS}subClassOf> ?restr .
-                    ?restr <{OWL}onProperty> ?prop .
-                    {{ ?restr <{OWL}cardinality> ?n . }}
-                    UNION
-                    {{ ?restr <{OWL}qualifiedCardinality> ?n . }}
-                    FILTER(?n = {node.cardinality})
-                    ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
-                }}
-            }}
-        """
+        fill_iri = resolve(node.filler) if isinstance(node.filler, NamedClass) else node.filler.ref
+        n = node.cardinality
+        OWL_THING = "http://www.w3.org/2002/07/owl#Thing"
+        if isinstance(node, MaxCardinality):
+            qual_pred, unqual_pred, cmp = "maxQualifiedCardinality", "maxCardinality", "<="
+        else:
+            qual_pred, unqual_pred, cmp = "qualifiedCardinality", "cardinality", "="
+        blocks = [
+            f"""{{ ?cls <{RDFS}subClassOf> ?restr .
+                   ?restr <{OWL}onProperty> ?prop ;
+                          <{OWL}{qual_pred}> ?n ;
+                          <{OWL}onClass> <{fill_iri}> .
+                   FILTER(?n {cmp} {n})
+                   ?prop <{RDFS}subPropertyOf>* <{prop_iri}> . }}""",
+            f"""{{ ?cls <{OWL}equivalentClass>/<{OWL}intersectionOf>/<{RDF}rest>*/<{RDF}first> ?restr .
+                   ?restr <{OWL}onProperty> ?prop ;
+                          <{OWL}{qual_pred}> ?n ;
+                          <{OWL}onClass> <{fill_iri}> .
+                   FILTER(?n {cmp} {n})
+                   ?prop <{RDFS}subPropertyOf>* <{prop_iri}> . }}""",
+        ]
+        if fill_iri == OWL_THING:
+            blocks.append(
+                f"""{{ ?cls <{RDFS}subClassOf> ?restr .
+                       ?restr <{OWL}onProperty> ?prop ;
+                              <{OWL}{unqual_pred}> ?n .
+                       FILTER(?n {cmp} {n})
+                       ?prop <{RDFS}subPropertyOf>* <{prop_iri}> . }}""")
+        q = f"SELECT DISTINCT ?cls WHERE {{ GRAPH <{g}> {{ {' UNION '.join(blocks)} }} }}"
     else:
         return set()
 

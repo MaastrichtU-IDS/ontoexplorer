@@ -601,3 +601,33 @@ async def test_evaluate_min_two_does_not_match_some_values_from():
     q = await _min_query(2)
     assert "someValuesFrom" not in q
     assert "minQualifiedCardinality" in q
+
+
+async def _card_query(node) -> str:
+    r = _redis_haspart_nucleus()
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=_make_classification({}))), \
+         patch("ontoexplorer.modules.search.evaluator.sparql_query",
+               return_value=[]) as mock_sparql:
+        await evaluate(node, "v1", "ont1")
+    return " ".join(str(a) for call in mock_sparql.call_args_list for a in call.args)
+
+
+@pytest.mark.anyio
+async def test_evaluate_max_cardinality_qualified_on_filler():
+    q = await _card_query(
+        MaxCardinality(NamedClass("hasPart", None), 2, NamedClass("Nucleus", None)))
+    assert "maxQualifiedCardinality" in q
+    assert "onClass" in q and "http://ex.org/N" in q   # filler respected
+    assert "<=" in q
+    assert "someValuesFrom" not in q                   # max is not `some`
+
+
+@pytest.mark.anyio
+async def test_evaluate_exactly_cardinality_qualified_on_filler():
+    q = await _card_query(
+        ExactCardinality(NamedClass("hasPart", None), 1, NamedClass("Nucleus", None)))
+    assert "qualifiedCardinality" in q
+    assert "onClass" in q and "http://ex.org/N" in q
+    assert "someValuesFrom" not in q                   # exactly 1 is not `some`
