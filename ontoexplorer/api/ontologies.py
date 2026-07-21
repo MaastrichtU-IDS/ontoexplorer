@@ -239,11 +239,25 @@ async def submit_ontology(
     reasoner = chosen_reasoner
 
     if is_multipart:
-        raw = await file.read()
+        # Stream the upload straight to MinIO and pass the ingest task only the
+        # object key. Avoids reading the whole file into memory + hex-encoding
+        # it (~2x) as a Celery arg through Redis, which OOMs on large files.
+        from ontoexplorer.modules.storage.minio_client import stage_upload
+
+        file.file.seek(0)
+        length = file.size if file.size is not None else -1
+        upload_key = await loop.run_in_executor(
+            None,
+            lambda: stage_upload(
+                file.file,
+                length=length,
+                content_type=file.content_type or "application/octet-stream",
+            ),
+        )
         task = await loop.run_in_executor(
             None,
             lambda: ingest_ontology.delay(
-                raw_bytes_hex=raw.hex(),
+                upload_key=upload_key,
                 filename=file.filename,
                 content_type=file.content_type,
                 owner_id=owner_id,

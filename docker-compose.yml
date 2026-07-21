@@ -23,16 +23,18 @@ services:
       - oxigraph-data:/data/oxigraph
       - fastembed-cache:/root/.cache/fastembed
 
-  # Split-pool celery workers — replaces the previous single `worker` service.
-  # Heavy queue runs reasoning / diff / justification (single ontology dominates
-  # the box for minutes-to-hours), light queue runs ingest orchestration /
-  # metadata / embedding / indexing (many small parallel tasks). Splitting
-  # avoids head-of-line blocking when a long reason job sits in front of many
-  # small ones. Routing is configured in
-  # ontoexplorer/modules/jobs/tasks.py via celery `task_routes`.
+  # Workers split by Oxigraph ACCESS MODE, not by "heavy/light". The embedded
+  # pyoxigraph (RocksDB) store allows only ONE read-write opener but any number
+  # of read-only (secondary) openers. So:
+  #   worker-heavy = the sole READ-WRITE owner: drains the "write" queue
+  #     (ingest / reason / load_imports) at concurrency=1 → exactly one process
+  #     ever opens the store read-write, eliminating LOCK contention.
+  #   worker-light = READ-ONLY (OXIGRAPH_READ_ONLY=true): everything else
+  #     (embedding / indexing / profiles / diffs / justification), parallel-safe.
+  # Routing is configured in ontoexplorer/modules/jobs/tasks.py via task_routes.
   worker-heavy:
     build: .
-    command: celery -A ontoexplorer.modules.jobs.tasks worker --loglevel=info -Q heavy --concurrency=2 -n heavy@%h
+    command: celery -A ontoexplorer.modules.jobs.tasks worker --loglevel=info -Q write --concurrency=1 -n write@%h
     env_file: .env
     environment:
       FASTEMBED_CACHE_PATH: /root/.cache/fastembed
@@ -50,10 +52,13 @@ services:
 
   worker-light:
     build: .
-    command: celery -A ontoexplorer.modules.jobs.tasks worker --loglevel=info -Q light --concurrency=12 -n light@%h
+    command: celery -A ontoexplorer.modules.jobs.tasks worker --loglevel=info -Q light --concurrency=12 -n read@%h
     env_file: .env
     environment:
       FASTEMBED_CACHE_PATH: /root/.cache/fastembed
+      # Open Oxigraph read-only (RocksDB secondary) so this worker never contends
+      # with the single read-write writer (worker-heavy) for the store LOCK.
+      OXIGRAPH_READ_ONLY: "true"
       OMP_NUM_THREADS: "2"
       ONNXRUNTIME_NUM_THREADS: "2"
     mem_limit: 16g

@@ -54,6 +54,44 @@ def upload_bytes(bucket: str, key: str, data: bytes, content_type: str = "applic
     client.put_object(bucket, key, BytesIO(data), length=len(data), content_type=content_type)
 
 
+# 16 MiB multipart chunks: bounds peak memory during a streamed upload to one
+# part at a time, regardless of total file size.
+_STREAM_PART_SIZE = 16 * 1024 * 1024
+
+
+def upload_stream(
+    bucket: str,
+    key: str,
+    fileobj,
+    length: int = -1,
+    content_type: str = "application/octet-stream",
+) -> None:
+    """Stream a file-like object straight to MinIO without buffering it all in memory.
+
+    Pass length=-1 when the size is unknown; MinIO then does a multipart upload,
+    reading _STREAM_PART_SIZE bytes at a time. Caller should seek(0) first.
+    """
+    ensure_bucket(bucket)
+    client = get_minio_client()
+    client.put_object(
+        bucket, key, fileobj,
+        length=length,
+        part_size=_STREAM_PART_SIZE if length < 0 else 0,
+        content_type=content_type,
+    )
+
+
+def remove_object(bucket: str, key: str) -> None:
+    """Delete an object. Silently ignores a missing object or bucket."""
+    client = get_minio_client()
+    try:
+        client.remove_object(bucket, key)
+    except S3Error as e:
+        if e.code in ("NoSuchKey", "NoSuchBucket"):
+            return
+        raise
+
+
 def download_bytes(bucket: str, key: str) -> bytes:
     client = get_minio_client()
     response = client.get_object(bucket, key)
@@ -75,6 +113,10 @@ def object_exists(bucket: str, key: str) -> bool:
         client.stat_object(bucket, key)
         return True
     except S3Error as e:
-        if e.code == "NoSuchKey":
+        # A missing object OR a not-yet-created bucket both mean "not present".
+        # NoSuchBucket matters on a fresh deployment: the imports bucket is only
+        # created lazily by the first store_import(), but import_exists() runs
+        # first — so without this the very first import resolution always throws.
+        if e.code in ("NoSuchKey", "NoSuchBucket"):
             return False
         raise
