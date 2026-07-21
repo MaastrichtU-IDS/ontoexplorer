@@ -172,17 +172,21 @@ def _find_subclass_path(store, g_iri: str, sub_iri: str, sup_iri: str, label_fn)
 
 
 def _bfs_as_manchester(paths: list[list[dict]]) -> list[list[str]]:
-    """Flatten `_find_subclass_path`'s AST-edge paths into plain Manchester-ish
-    strings ("<sub label> SubClassOf <sup label>"), so the BFS fallback's shape
-    matches the reasoner-service's uniform `justifications: string[][]`."""
+    """Flatten `_find_subclass_path`'s AST-edge paths into Manchester strings
+    matching the reasoner-service's format — angle-bracketed IRIs
+    ("<sub_iri> SubClassOf <sup_iri>"). Emitting IRIs (not pre-rendered labels)
+    lets get_justification's `_labels_for` resolve display labels and the UI
+    render clickable entity links, identical to the reasoner path."""
     out: list[list[str]] = []
     for path in paths:
         edges: list[str] = []
         for edge in path:
-            sub_label = edge.get("sub", {}).get("label") or edge.get("sub", {}).get("iri", "?")
-            sup_label = edge.get("sup", {}).get("label") or edge.get("sup", {}).get("iri", "?")
+            sub = edge.get("sub", {})
+            sup = edge.get("sup", {})
+            sub_ref = f"<{sub['iri']}>" if sub.get("iri") else (sub.get("label") or "?")
+            sup_ref = f"<{sup['iri']}>" if sup.get("iri") else (sup.get("label") or "?")
             rel = edge.get("rel", "subClassOf")
-            edges.append(f"{sub_label} {rel[0].upper()}{rel[1:]} {sup_label}")
+            edges.append(f"{sub_ref} {rel[0].upper()}{rel[1:]} {sup_ref}")
         out.append(edges)
     return out
 
