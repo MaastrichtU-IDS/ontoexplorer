@@ -44,8 +44,8 @@ def _autocomplete_cache_key(
     ont_part = ",".join(sorted(ontology_ids))
     payload = f"{q}\x1f{cursor}\x1f{limit}\x1f{ont_part}\x1f{lang or ''}"
     h = hashlib.blake2b(payload.encode(), digest_size=16).hexdigest()
-    # v3: unified mos_autocomplete — keyword insert format changed ("(" / "'" bare).
-    return f"search:autocomplete:v3:{h}"
+    # v4: global filler suggestions after a restriction keyword.
+    return f"search:autocomplete:v4:{h}"
 
 
 def _is_expression(node) -> bool:
@@ -359,10 +359,22 @@ async def global_autocomplete(
         return _json.loads(cached)
 
     # Single shared MOS autocomplete implementation, scoped to the selected
-    # ontologies (empty = all).
+    # ontologies (empty = all). When specific ontologies are selected, resolve
+    # their latest-version graphs so filler suggestions work here too; skip when
+    # scope is "all" (querying every graph for fillers is too broad).
+    filler_scope = None
+    if ontology_ids:
+        from ontoexplorer.clients.oxigraph import graph_iri
+        sel = set(ontology_ids)
+        filler_scope = [
+            (str(v.id), graph_iri(str(v.ontology_id), str(v.id)))
+            for v in await _latest_ingested_versions(db)
+            if str(v.ontology_id) in sel
+        ][:25]
     from ontoexplorer.modules.search.autocomplete import mos_autocomplete
     completions, ctx = await mos_autocomplete(
-        db, q, effective_cursor, limit, ontology_ids=ontology_ids or None)
+        db, q, effective_cursor, limit, ontology_ids=ontology_ids or None,
+        filler_scope=filler_scope)
 
     payload = {
         "completions": completions,
@@ -394,7 +406,7 @@ async def ontology_autocomplete(
     from ontoexplorer.modules.search.autocomplete import mos_autocomplete
     completions, ctx = await mos_autocomplete(
         db, q, effective_cursor, limit, version_id=version_id,
-        graph_iri=graph_iri(ontology_id, version_id),
+        filler_scope=[(version_id, graph_iri(ontology_id, version_id))],
     )
     return {
         "version_id": version_id,

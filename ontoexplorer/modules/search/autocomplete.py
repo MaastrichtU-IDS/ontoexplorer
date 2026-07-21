@@ -195,21 +195,25 @@ def _entity_dicts(rows: list[dict], close_quote: bool) -> list[dict]:
     return out
 
 
-def _observed_filler_iris(prop_iri: str, graph_iri: str, limit: int) -> list[str]:
-    """IRIs of classes used as fillers of `prop_iri` (or its sub-properties) in
-    the ontology's restrictions — someValuesFrom / allValuesFrom / onClass."""
+def _observed_filler_iris(prop_iri: str, graph_iris: list[str], limit: int) -> list[str]:
+    """IRIs of classes used as fillers of `prop_iri` (or its sub-properties)
+    across the given graphs — someValuesFrom / allValuesFrom / onClass."""
     from ontoexplorer.clients.oxigraph import get_store
     OWL = "http://www.w3.org/2002/07/owl#"
     RDFS = "http://www.w3.org/2000/01/rdf-schema#"
+    values = " ".join(f"<{g}>" for g in graph_iris)
     query = f"""
-        SELECT DISTINCT ?f WHERE {{ GRAPH <{graph_iri}> {{
-            ?r <{OWL}onProperty> ?p .
-            ?p <{RDFS}subPropertyOf>* <{prop_iri}> .
-            {{ ?r <{OWL}someValuesFrom> ?f }} UNION
-            {{ ?r <{OWL}allValuesFrom> ?f }} UNION
-            {{ ?r <{OWL}onClass> ?f }}
-            FILTER(isIRI(?f))
-        }} }} LIMIT {int(limit)}
+        SELECT DISTINCT ?f WHERE {{
+            VALUES ?g {{ {values} }}
+            GRAPH ?g {{
+                ?r <{OWL}onProperty> ?p .
+                ?p <{RDFS}subPropertyOf>* <{prop_iri}> .
+                {{ ?r <{OWL}someValuesFrom> ?f }} UNION
+                {{ ?r <{OWL}allValuesFrom> ?f }} UNION
+                {{ ?r <{OWL}onClass> ?f }}
+                FILTER(isIRI(?f))
+            }}
+        }} LIMIT {int(limit)}
     """
     try:
         return [row["f"].value for row in get_store().query(query)]
@@ -221,16 +225,17 @@ async def mos_autocomplete(
     db, q: str, cursor: int, limit: int, *,
     version_id: str | None = None,
     ontology_ids: list[str] | None = None,
-    graph_iri: str | None = None,
+    filler_scope: list[tuple[str, str]] | None = None,
     excluded_types: frozenset[str] = frozenset({"annotation_property"}),
 ) -> tuple[list[dict], PartialParseResult]:
     """Cursor-aware MOS autocomplete for either a single version (`version_id`)
     or a set of ontologies (`ontology_ids`). Returns (completion dicts, parse
     context). The single shared implementation behind all MOS endpoints.
 
-    When `graph_iri` is supplied (per-ontology), a filler position right after a
-    restriction keyword suggests classes actually used as fillers of the
-    property; otherwise it falls back to `not` / opening-quote.
+    `filler_scope` is a list of (version_id, graph_iri) pairs. When supplied, a
+    filler position right after a restriction keyword suggests classes actually
+    used as fillers of the property across those graphs; otherwise it falls back
+    to `not` / opening-quote.
     """
     import asyncio
     from ontoexplorer.modules.search.pg_search import (
@@ -248,14 +253,16 @@ async def mos_autocomplete(
         return _entity_dicts(rows, close_quote=(tt == "OPEN_QUOTE")), ctx
 
     # Filler position (empty partial right after a restriction keyword): suggest
-    # the classes actually used as fillers of that property. Per-ontology only —
-    # needs the ontology graph.
+    # the classes actually used as fillers of that property across the scoped
+    # ontology graphs.
     if (tt == "EXPECT_ENTITY" and not ctx.partial and ctx.restriction_property
-            and graph_iri and version_id):
-        prop_iri = await pg_property_iri(db, ctx.restriction_property, version_id)
+            and filler_scope):
+        vids = [v for v, _ in filler_scope]
+        graphs = [g for _, g in filler_scope]
+        prop_iri = await pg_property_iri(db, ctx.restriction_property, vids)
         if prop_iri:
-            iris = await asyncio.to_thread(_observed_filler_iris, prop_iri, graph_iri, limit * 4)
-            rows = await pg_entities_by_iri(db, iris, version_id, limit)
+            iris = await asyncio.to_thread(_observed_filler_iris, prop_iri, graphs, limit * 4)
+            rows = await pg_entities_by_iri(db, iris, vids, limit)
             if rows:
                 return _entity_dicts(rows, close_quote=False) + [_kw_dict("not"), _kw_dict("'")], ctx
 
