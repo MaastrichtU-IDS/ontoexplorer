@@ -16,8 +16,30 @@ def _parse_lang_from_member(member: str) -> tuple[str, str, str, str]:
     return (p[0], "", p[1], p[2]) if len(p) == 3 else ("", "", "", "")
 
 
-_RESTRICTION_KEYWORDS = ["some", "only", "value", "Self", "min", "max", "exactly"]
+_RESTRICTION_KEYWORDS = ["some", "only", "value", "min", "max", "exactly", "Self"]
 _BOOLEAN_KEYWORDS = ["and", "or", "not", "(", ")"]
+
+# Restriction keywords apply to object/data properties (not annotation properties).
+_PROPERTY_TYPES = frozenset({"object_property", "data_property", "property"})
+
+
+def _is_property(r, version_id: str, ident: str) -> bool:
+    """Is the entity identified by `ident` (IRI, or exact label) an object/data
+    property? Used to decide restriction-keyword vs boolean-keyword completion."""
+    if ident.startswith("http://") or ident.startswith("https://"):
+        detail = r.hgetall(_iri_key(version_id, ident))
+        return bool(detail) and detail.get("type") in _PROPERTY_TYPES
+    norm = normalise_label(ident)
+    if not norm:
+        return False
+    # Exact-label scan of the prefix index (handles v1 `norm|type|iri` and
+    # v2 `norm|lang|type|iri` member formats via _parse_lang_from_member).
+    members = r.zrangebylex(_prefix_key(version_id), f"[{norm}|", f"[{norm}|\xff", start=0, num=25)
+    for m in members:
+        m_norm, _lang, m_type, _iri = _parse_lang_from_member(m)
+        if m_norm == norm and m_type in _PROPERTY_TYPES:
+            return True
+    return False
 
 
 @dataclass
@@ -80,8 +102,12 @@ def get_completions(
         return kws
 
     if result.token_type == "EXPECT_KEYWORD":
-        kws = _keyword_completions(_BOOLEAN_KEYWORDS)
-        return kws
+        # After an object/data property MOS expects a restriction keyword
+        # (some/only/value/min/max/exactly/Self); after a class (or a closed
+        # group) it expects a boolean (and/or). Resolve the preceding entity.
+        if result.prev_entity and _is_property(r, version_id, result.prev_entity):
+            return _keyword_completions(_RESTRICTION_KEYWORDS)
+        return _keyword_completions(_BOOLEAN_KEYWORDS)
 
     if result.token_type == "EXPECT_INT":
         return [Completion(text="1", type="cardinality", iri=None, short=None, insert="1 "),

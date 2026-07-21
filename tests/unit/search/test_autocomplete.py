@@ -140,3 +140,24 @@ def test_completions_excludes_annotation_properties():
     types = {c.type for c in completions}
     assert "class" in types
     assert "annotation_property" not in types
+
+
+def test_keyword_completion_after_property_offers_restriction_keywords():
+    r = _setup_redis("v1")
+    q = "'has part' "
+    with patch("ontoexplorer.modules.search.autocomplete._get_redis", return_value=r):
+        comps = get_completions(q, cursor=len(q), version_id="v1", limit=10)
+    texts = {c.text for c in comps}
+    # After an object property, MOS expects a restriction keyword, not and/or.
+    assert {"some", "only", "value", "min", "max", "exactly", "Self"} <= texts
+    assert "and" not in texts
+
+
+def test_keyword_completion_after_class_offers_boolean_keywords():
+    r = _setup_redis("v1")
+    q = "'cell death' "
+    with patch("ontoexplorer.modules.search.autocomplete._get_redis", return_value=r):
+        comps = get_completions(q, cursor=len(q), version_id="v1", limit=10)
+    texts = {c.text for c in comps}
+    assert {"and", "or"} <= texts
+    assert "some" not in texts
