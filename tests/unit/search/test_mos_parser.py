@@ -245,3 +245,24 @@ def test_partial_parse_curie_treated_as_complete():
     result = partial_parse("GO:000", 6)
     assert result.token_type == "EXPECT_KEYWORD"
     assert result.partial == ""
+
+
+def test_partial_parse_captures_restriction_property_after_some():
+    r = partial_parse("'has part' some ", len("'has part' some "))
+    assert r.token_type == "EXPECT_ENTITY"
+    assert r.partial == ""
+    assert r.restriction_property == "has part"
+
+
+def test_partial_parse_captures_restriction_property_after_cardinality():
+    q = "'has part' min 1 "
+    r = partial_parse(q, len(q))
+    assert r.token_type == "EXPECT_ENTITY"
+    assert r.restriction_property == "has part"
+
+
+def test_partial_parse_no_restriction_property_after_boolean():
+    q = "'cell' and "
+    r = partial_parse(q, len(q))
+    assert r.token_type == "EXPECT_ENTITY"
+    assert r.restriction_property is None
