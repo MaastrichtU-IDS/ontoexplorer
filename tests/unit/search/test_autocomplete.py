@@ -185,3 +185,29 @@ def test_kw_dict_insert_and_type():
     assert _kw_dict("'")["insert"] == "'"
     assert _kw_dict("1")["type"] == "cardinality"
     assert _kw_dict("and")["type"] == "keyword"
+
+
+def test_observed_filler_iris_queries_all_scoped_graphs():
+    """Filler lookup fans out over every graph in scope via a VALUES clause,
+    so the front-page (multi-ontology) path finds fillers too."""
+    from ontoexplorer.modules.search import autocomplete as ac
+
+    captured = {}
+
+    class _FakeStore:
+        def query(self, q):
+            captured["q"] = q
+            return []
+
+    with patch("ontoexplorer.clients.oxigraph.get_store", lambda: _FakeStore()):
+        ac._observed_filler_iris(
+            "http://bfo.org/HP",
+            ["http://g/sulo", "http://g/go"],
+            10,
+        )
+
+    q = captured["q"]
+    assert "VALUES ?g {" in q
+    assert "<http://g/sulo>" in q and "<http://g/go>" in q
+    assert "GRAPH ?g" in q
+    assert "<http://bfo.org/HP>" in q

@@ -173,7 +173,7 @@ async def autocomplete(
     from ontoexplorer.modules.search.autocomplete import mos_autocomplete
     completions, ctx = await mos_autocomplete(
         db, q, effective_cursor, limit, version_id=version_id,
-        graph_iri=graph_iri(ontology_id, version_id),
+        filler_scope=[(version_id, graph_iri(ontology_id, version_id))],
     )
     return {
         "completions": completions,
