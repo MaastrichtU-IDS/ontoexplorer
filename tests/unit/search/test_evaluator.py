@@ -213,6 +213,58 @@ async def test_evaluate_direct_false_uses_all_subclasses():
 
 
 @pytest.mark.anyio
+async def test_evaluate_named_class_includes_asserted_direct_subclasses():
+    # Regression (GO 'catalytic activity'): the whelk backend keeps ASSERTED
+    # subclass edges only in direct_subclasses — `subclasses` holds inferred-
+    # not-asserted edges. A class whose subsumption under the query is asserted
+    # (GO_0016218 subClassOf catalytic activity) lives only in direct_subclasses
+    # and must still appear in a non-direct query. The complete closure is
+    # subclasses ∪ direct_subclasses.
+    r = _make_redis_with_entity("v1", "Cell", CELL)
+    classification = _make_classification(
+        subclasses={CELL: [PROK]},              # inferred-only transitive descendant
+        direct_subclasses={CELL: [EUKARYOTE]},  # asserted direct child, ABSENT from subclasses
+    )
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)):
+        results = await evaluate(NamedClass("Cell", None), "v1", "ont1", direct=False)
+    iris = {res.iri for res in results}
+    assert EUKARYOTE in iris   # asserted direct child — was dropped before the fix
+    assert PROK in iris        # inferred transitive descendant
+    assert CELL in iris        # reflexive
+
+
+@pytest.mark.anyio
+async def test_evaluate_and_includes_asserted_subclass_conjunct():
+    # GO case in miniature: `Cell and (HP some Nucleus)`. The class that matches
+    # the restriction (EUKARYOTE) is an ASSERTED subclass of Cell, so it sits in
+    # direct_subclasses[Cell] but not subclasses[Cell]. The conjunction must
+    # still return it.
+    r = _make_redis_multi("v1", [
+        ("Cell", CELL, "class"),
+        ("Nucleus", NUC, "class"),
+        ("hp", HP_IRI, "object_property"),
+    ])
+    classification = _make_classification(
+        subclasses={CELL: [PROK]},              # inferred-only; EUKARYOTE missing
+        direct_subclasses={CELL: [EUKARYOTE]},  # asserted direct child
+    )
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)), \
+         patch("ontoexplorer.modules.search.evaluator.sparql_query",
+               return_value=_mock_sparql([EUKARYOTE])):
+        results = await evaluate(
+            And(NamedClass("Cell", None),
+                SomeValuesFrom(NamedClass("hp", None), NamedClass("Nucleus", None))),
+            "v1", "ont1", direct=False,
+        )
+    iris = {res.iri for res in results}
+    assert EUKARYOTE in iris   # was dropped: absent from subclasses[Cell] before the fix
+
+
+@pytest.mark.anyio
 async def test_evaluate_direct_fallback_when_key_absent():
     # When direct_subclasses key is missing entirely, fall back to subclasses.
     r = _make_redis_with_entity("v1", "Cell", CELL)
