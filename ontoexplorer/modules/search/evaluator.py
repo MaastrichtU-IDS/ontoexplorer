@@ -21,6 +21,7 @@ from ontoexplorer.modules.search.mos_parser import (
     ExactCardinality,
     HasSelf,
     HasValue,
+    InverseRestriction,
     MaxCardinality,
     MinCardinality,
     NamedClass,
@@ -272,6 +273,18 @@ async def evaluate(
         if isinstance(n, (NamedClass, And, Or, Not)):
             return await _eval_with_index(n, direct_subclasses_index)
 
+        if isinstance(n, InverseRestriction):
+            # Reverse lookup: resolve the holder-constraint class, expand it with
+            # its subclasses (unless direct), then return the fillers of the
+            # forward restriction carried by those holders.
+            holder_iri = _resolve_label(r, version_id, n.holder_ref)
+            holders = {holder_iri}
+            if not direct:
+                holders |= set(subclasses_index.get(holder_iri, []))
+                holders |= set(_asserted_direct_sub.get(holder_iri, []))
+            return await asyncio.to_thread(
+                _sparql_eval_inverse, n, holders, version_id, ontology_id, r)
+
         if isinstance(n, (SomeValuesFrom, AllValuesFrom, HasValue, HasSelf,
                           MinCardinality, MaxCardinality, ExactCardinality)):
             asserters = await asyncio.to_thread(_sparql_eval, n, version_id, ontology_id, r)
@@ -293,7 +306,7 @@ async def evaluate(
 
     match_type = "elk" if not isinstance(node, (SomeValuesFrom, AllValuesFrom, HasValue,
                                                   HasSelf, MinCardinality, MaxCardinality,
-                                                  ExactCardinality)) else "sparql"
+                                                  ExactCardinality, InverseRestriction)) else "sparql"
     return _build_results(iris, version_id, lang, r, match_type)
 
 
@@ -590,6 +603,47 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
             cls_val = sol["cls"]
             if cls_val is not None:
                 results.add(cls_val.value)
+        except Exception:
+            pass
+    return results
+
+
+def _sparql_eval_inverse(node, holders: set[str], version_id: str, ontology_id: str, r) -> set[str]:
+    """Reverse-lookup evaluation of `inverse P <kind> C`: given the holder set
+    (C plus its subclasses, already resolved), return the fillers of the forward
+    restriction carried by those holders. Fillers are classes for some/only and
+    individuals for value."""
+    OWL = "http://www.w3.org/2002/07/owl#"
+    RDFS = "http://www.w3.org/2000/01/rdf-schema#"
+    RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+    g = _graph_iri(ontology_id, version_id)
+    if not holders:
+        return set()
+    prop_iri = _resolve_label(r, version_id, node.property_ref, allowed_types=_PROPERTY_TYPES)
+    pred = {"some": f"{OWL}someValuesFrom", "only": f"{OWL}allValuesFrom",
+            "value": f"{OWL}hasValue"}[node.kind]
+    values = " ".join(f"<{h}>" for h in holders)
+    # Match the forward restriction on subClassOf and on equivalentClass
+    # intersections (mirroring the forward `some` path), constrained to holders.
+    q = f"""
+        SELECT DISTINCT ?fill WHERE {{
+            GRAPH <{g}> {{
+                VALUES ?cls {{ {values} }}
+                {{ ?cls <{RDFS}subClassOf> ?restr }} UNION
+                {{ ?cls <{OWL}equivalentClass>/<{OWL}intersectionOf>/<{RDF}rest>*/<{RDF}first> ?restr }}
+                ?restr <{OWL}onProperty> ?prop .
+                ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
+                ?restr <{pred}> ?fill .
+                FILTER(isIRI(?fill))
+            }}
+        }}
+    """
+    results: set[str] = set()
+    for sol in sparql_query(q):
+        try:
+            fill_val = sol["fill"]
+            if fill_val is not None:
+                results.add(fill_val.value)
         except Exception:
             pass
     return results

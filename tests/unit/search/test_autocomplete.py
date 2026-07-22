@@ -176,7 +176,14 @@ def test_keyword_set_for_property_vs_class():
 
 def test_keyword_set_for_int_and_entity_open():
     assert keyword_set_for("EXPECT_INT", False) == ["1", "2", "3"]
-    assert keyword_set_for("EXPECT_ENTITY", False) == ["not", "'"]
+    # `inverse` starts an inverse-property restriction, valid anywhere a class
+    # expression can begin.
+    assert keyword_set_for("EXPECT_ENTITY", False) == ["not", "inverse", "'"]
+
+
+def test_keyword_set_for_after_inverse_offers_only_quote():
+    # Right after `inverse`, a property is expected — not / inverse are invalid.
+    assert keyword_set_for("EXPECT_ENTITY", False, after_inverse=True) == ["'"]
 
 
 def test_kw_dict_insert_and_type():

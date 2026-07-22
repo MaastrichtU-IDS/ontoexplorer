@@ -151,11 +151,12 @@ def pg_rows_to_completions(rows: list[dict], close_quote: bool) -> list[Completi
 # (per-ontology and cross-ontology). Entities come from the Postgres
 # entity_index (ranked, multi-token); keywords/cardinalities are context-driven.
 
-_ENTITY_OPEN_KEYWORDS = ["not", "'"]
+_ENTITY_OPEN_KEYWORDS = ["not", "inverse", "'"]
 _CARDINALITIES = ["1", "2", "3"]
 
 
-def keyword_set_for(token_type: str, prev_is_property: bool) -> list[str]:
+def keyword_set_for(token_type: str, prev_is_property: bool,
+                    after_inverse: bool = False) -> list[str]:
     """The keyword/cardinality tokens valid at a non-entity MOS context. Pure and
     unit-tested — the single source of truth for which keywords to offer."""
     if token_type == "EXPECT_KEYWORD":
@@ -163,7 +164,11 @@ def keyword_set_for(token_type: str, prev_is_property: bool) -> list[str]:
         return _RESTRICTION_KEYWORDS if prev_is_property else _BOOLEAN_KEYWORDS
     if token_type == "EXPECT_INT":
         return _CARDINALITIES
-    # EXPECT_ENTITY with no partial: only `not` or an opening quote make sense.
+    # EXPECT_ENTITY with no partial. Right after `inverse` a property is expected,
+    # so only an opening quote makes sense (no `not`/nested `inverse`); otherwise
+    # an entity, a negation, or an inverse-property restriction can start here.
+    if after_inverse:
+        return ["'"]
     return _ENTITY_OPEN_KEYWORDS
 
 
@@ -286,7 +291,7 @@ async def mos_autocomplete(
     # Keyword contexts. Restriction-vs-boolean depends on the preceding entity.
     prev_is_property = bool(ctx.prev_entity) and await pg_is_property(
         db, ctx.prev_entity, ontology_ids=ontology_ids, version_id=version_id)
-    return [_kw_dict(k) for k in keyword_set_for(tt, prev_is_property)], ctx
+    return [_kw_dict(k) for k in keyword_set_for(tt, prev_is_property, ctx.after_inverse)], ctx
 
 
 # ── Legacy Redis autocomplete (OLS entity lookup) ─────────────────────────────

@@ -7,6 +7,7 @@ from ontoexplorer.modules.search.mos_parser import (
     NamedClass, And, Or, Not,
     SomeValuesFrom, HasValue, HasSelf,
     MinCardinality, MaxCardinality, ExactCardinality,
+    InverseRestriction,
 )
 from ontoexplorer.modules.search.evaluator import (
     AmbiguousLabelError,
@@ -175,6 +176,82 @@ async def test_evaluate_some_values_from_calls_sparql():
         )
     assert mock_sparql.called
     assert any(r.match_type == "sparql" for r in results)
+
+
+def _redis_props_and_classes(version_id: str):
+    return _make_redis_multi(version_id, [
+        ("has part", HP_IRI, "object_property"),
+        ("cell", CELL, "class"),
+        ("nucleus", NUC, "class"),
+    ])
+
+
+@pytest.mark.anyio
+async def test_evaluate_inverse_some_reverse_lookup():
+    # `inverse 'has part' some 'cell'` → fillers of has-part on cell (+ subclasses).
+    r = _redis_props_and_classes("v1")
+    classification = _make_classification(subclasses={CELL: [EUKARYOTE]})
+    captured = {}
+
+    def fake_sparql(q):
+        captured["q"] = q
+        return _mock_sparql([NUC])
+
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)), \
+         patch("ontoexplorer.modules.search.evaluator.sparql_query", side_effect=fake_sparql):
+        results = await evaluate(
+            InverseRestriction(NamedClass("has part", None), "some", NamedClass("cell", None)),
+            "v1", "ont1",
+        )
+    assert {res.iri for res in results} == {NUC}
+    q = captured["q"]
+    assert "?fill" in q                       # projects the filler, not the holder
+    assert "someValuesFrom" in q
+    assert f"<{CELL}>" in q and f"<{EUKARYOTE}>" in q  # holder set = cell + subclasses
+
+
+@pytest.mark.anyio
+async def test_evaluate_inverse_only_uses_allvaluesfrom():
+    r = _redis_props_and_classes("v1")
+    classification = _make_classification({})
+    captured = {}
+
+    def fake_sparql(q):
+        captured["q"] = q
+        return _mock_sparql([NUC])
+
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)), \
+         patch("ontoexplorer.modules.search.evaluator.sparql_query", side_effect=fake_sparql):
+        await evaluate(
+            InverseRestriction(NamedClass("has part", None), "only", NamedClass("cell", None)),
+            "v1", "ont1",
+        )
+    assert "allValuesFrom" in captured["q"]
+
+
+@pytest.mark.anyio
+async def test_evaluate_inverse_value_uses_hasvalue():
+    r = _redis_props_and_classes("v1")
+    classification = _make_classification({})
+    captured = {}
+
+    def fake_sparql(q):
+        captured["q"] = q
+        return _mock_sparql([NUC])
+
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)), \
+         patch("ontoexplorer.modules.search.evaluator.sparql_query", side_effect=fake_sparql):
+        await evaluate(
+            InverseRestriction(NamedClass("has part", None), "value", NamedClass("cell", None)),
+            "v1", "ont1",
+        )
+    assert "hasValue" in captured["q"]
 
 
 # ── direct flag ───────────────────────────────────────────────────────────────

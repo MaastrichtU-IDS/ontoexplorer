@@ -75,10 +75,26 @@ class ExactCardinality:
     filler: "ASTNode"
 
 
+@dataclass
+class InverseRestriction:
+    """A restriction on the inverse of an object property, e.g.
+    `inverse 'has part' some 'cell'` ("what is part of a cell").
+
+    Reverse-lookup semantics: `holder_ref` constrains the class that carries the
+    forward restriction (`holder ⊑ holder_ref`), and evaluation returns the
+    fillers of that restriction. `kind` selects the forward predicate:
+    some → someValuesFrom, only → allValuesFrom, value → hasValue (fillers are
+    individuals for `value`, classes otherwise)."""
+    property_ref: NamedClass
+    kind: str          # "some" | "only" | "value"
+    holder_ref: NamedClass
+
+
 ASTNode = (
     NamedClass | And | Or | Not
     | SomeValuesFrom | AllValuesFrom | HasValue | HasSelf
     | MinCardinality | MaxCardinality | ExactCardinality
+    | InverseRestriction
 )
 
 
@@ -105,6 +121,9 @@ _GRAMMAR = r"""
                  | entity_ref "min"     INT expression -> min_node
                  | entity_ref "max"     INT expression -> max_node
                  | entity_ref "exactly" INT expression -> exactly_node
+                 | "inverse" entity_ref "some"  entity_ref -> inverse_some_node
+                 | "inverse" entity_ref "only"  entity_ref -> inverse_only_node
+                 | "inverse" entity_ref "value" entity_ref -> inverse_value_node
 
     entity_ref   : QUOTED_LABEL
                  | CURIE
@@ -114,7 +133,7 @@ _GRAMMAR = r"""
     QUOTED_LABEL : "'" /[^']+/ "'"
     CURIE        : /[A-Za-z_][A-Za-z0-9_\-]*:[A-Za-z0-9_\-\.]+/
     FULL_IRI     : "<" /[^>]+/ ">"
-    BARE_LABEL   : /(?!(and|or|not|some|only|value|Self|min|max|exactly)\b)[A-Za-z_][A-Za-z0-9_]*/
+    BARE_LABEL   : /(?!(and|or|not|some|only|value|Self|min|max|exactly|inverse)\b)[A-Za-z_][A-Za-z0-9_]*/
     INT          : /[0-9]+/
 
     %ignore /\s+/
@@ -178,6 +197,15 @@ def _build(tree: Tree) -> ASTNode:
     if tree.data == "self_node":
         return HasSelf(_entity_ref_to_named_class(tree.children[0]))
 
+    if tree.data in ("inverse_some_node", "inverse_only_node", "inverse_value_node"):
+        kind = {"inverse_some_node": "some", "inverse_only_node": "only",
+                "inverse_value_node": "value"}[tree.data]
+        return InverseRestriction(
+            property_ref=_entity_ref_to_named_class(tree.children[0]),
+            kind=kind,
+            holder_ref=_entity_ref_to_named_class(tree.children[1]),
+        )
+
     if tree.data == "min_node":
         return MinCardinality(_entity_ref_to_named_class(tree.children[0]), int(tree.children[1]), _build(tree.children[2]))
 
@@ -230,6 +258,9 @@ class PartialParseResult:
     # `value`, `min`, `max`, `exactly`). `value` takes an individual filler
     # (owl:hasValue); the others take a class. None outside a filler position.
     restriction_keyword: str | None = None
+    # True when the cursor is immediately after `inverse` — a property is
+    # expected next (not a boolean/`not`/nested `inverse`).
+    after_inverse: bool = False
 
 
 def _entity_ident(tok: tuple[str, str]) -> str | None:
@@ -299,6 +330,8 @@ def _tokenize_prefix(text: str) -> list[tuple[str, str]]:
                 tokens.append(("KW_BOOLEAN", word))
             elif word == "not":
                 tokens.append(("KW_NOT", word))
+            elif word == "inverse":
+                tokens.append(("KW_INVERSE", word))
             else:
                 tokens.append(("WORD", word))
             i += len(word)
@@ -369,6 +402,11 @@ def partial_parse(text: str, cursor: int) -> PartialParseResult:
         rk = tokens[-2][1] if len(tokens) >= 2 else None
         return PartialParseResult(token_type="EXPECT_ENTITY", partial="", token_start=cursor,
                                   restriction_property=rp, restriction_keyword=rk)
+
+    # After `inverse` → expect the (object) property it inverts.
+    if last_type == "KW_INVERSE":
+        return PartialParseResult(token_type="EXPECT_ENTITY", partial="", token_start=cursor,
+                                  after_inverse=True)
 
     # WORD token: if cursor is right after the word (no trailing space), the user is still
     # typing a bare label → surface entity completions for the partial text.
