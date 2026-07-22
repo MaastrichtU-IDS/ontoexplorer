@@ -119,6 +119,33 @@ def test_parse_inverse_value():
     assert node.kind == "value"
 
 
+def test_parse_inverse_min():
+    node = parse("inverse 'has part' min 2 'cell'")
+    assert isinstance(node, InverseRestriction)
+    assert node.kind == "min"
+    assert node.cardinality == 2
+    assert node.holder_ref.ref == "cell"
+
+
+def test_parse_inverse_max():
+    node = parse("inverse 'has part' max 1 'cell'")
+    assert isinstance(node, InverseRestriction)
+    assert node.kind == "max"
+    assert node.cardinality == 1
+
+
+def test_parse_inverse_exactly():
+    node = parse("inverse 'has part' exactly 3 'cell'")
+    assert isinstance(node, InverseRestriction)
+    assert node.kind == "exactly"
+    assert node.cardinality == 3
+
+
+def test_parse_inverse_some_has_no_cardinality():
+    node = parse("inverse 'has part' some 'cell'")
+    assert node.cardinality is None
+
+
 def test_parse_inverse_with_curie_and_bare():
     node = parse("inverse BFO:0000050 some cell")
     assert isinstance(node, InverseRestriction)

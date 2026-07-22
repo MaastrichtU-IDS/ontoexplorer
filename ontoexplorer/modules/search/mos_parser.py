@@ -83,11 +83,13 @@ class InverseRestriction:
     Reverse-lookup semantics: `holder_ref` constrains the class that carries the
     forward restriction (`holder ⊑ holder_ref`), and evaluation returns the
     fillers of that restriction. `kind` selects the forward predicate:
-    some → someValuesFrom, only → allValuesFrom, value → hasValue (fillers are
-    individuals for `value`, classes otherwise)."""
+    some → someValuesFrom, only → allValuesFrom, value → hasValue, and
+    min/max/exactly → qualified cardinality on onClass (`cardinality` set).
+    Fillers are individuals for `value`, classes otherwise."""
     property_ref: NamedClass
-    kind: str          # "some" | "only" | "value"
+    kind: str          # "some" | "only" | "value" | "min" | "max" | "exactly"
     holder_ref: NamedClass
+    cardinality: int | None = None   # set for min/max/exactly
 
 
 ASTNode = (
@@ -121,9 +123,12 @@ _GRAMMAR = r"""
                  | entity_ref "min"     INT expression -> min_node
                  | entity_ref "max"     INT expression -> max_node
                  | entity_ref "exactly" INT expression -> exactly_node
-                 | "inverse" entity_ref "some"  entity_ref -> inverse_some_node
-                 | "inverse" entity_ref "only"  entity_ref -> inverse_only_node
-                 | "inverse" entity_ref "value" entity_ref -> inverse_value_node
+                 | "inverse" entity_ref "some"    entity_ref     -> inverse_some_node
+                 | "inverse" entity_ref "only"    entity_ref     -> inverse_only_node
+                 | "inverse" entity_ref "value"   entity_ref     -> inverse_value_node
+                 | "inverse" entity_ref "min"     INT entity_ref -> inverse_min_node
+                 | "inverse" entity_ref "max"     INT entity_ref -> inverse_max_node
+                 | "inverse" entity_ref "exactly" INT entity_ref -> inverse_exactly_node
 
     entity_ref   : QUOTED_LABEL
                  | CURIE
@@ -204,6 +209,16 @@ def _build(tree: Tree) -> ASTNode:
             property_ref=_entity_ref_to_named_class(tree.children[0]),
             kind=kind,
             holder_ref=_entity_ref_to_named_class(tree.children[1]),
+        )
+
+    if tree.data in ("inverse_min_node", "inverse_max_node", "inverse_exactly_node"):
+        kind = {"inverse_min_node": "min", "inverse_max_node": "max",
+                "inverse_exactly_node": "exactly"}[tree.data]
+        return InverseRestriction(
+            property_ref=_entity_ref_to_named_class(tree.children[0]),
+            kind=kind,
+            holder_ref=_entity_ref_to_named_class(tree.children[2]),
+            cardinality=int(tree.children[1]),
         )
 
     if tree.data == "min_node":

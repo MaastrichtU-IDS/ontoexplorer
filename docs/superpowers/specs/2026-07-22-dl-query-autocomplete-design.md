@@ -121,27 +121,31 @@ Both endpoints return `{completions, context, replace_from, replace_to}`.
 
 ## Inverse-property restrictions (#34)
 
-`inverse P some C` / `inverse P only C` / `inverse P value C` are a query-language
-feature spanning all three layers, not just completion:
+`inverse P <kind> C` (kind ∈ some / only / value / min n / max n / exactly n) is a
+query-language feature spanning all three layers, not just completion:
 
-- **Grammar/parser**: `"inverse" entity_ref (some|only|value) entity_ref` → the
-  `InverseRestriction(property_ref, kind, holder_ref)` AST node; `inverse` is a
-  reserved word.
+- **Grammar/parser**: `"inverse" entity_ref (some|only|value) entity_ref` and
+  `"inverse" entity_ref (min|max|exactly) INT entity_ref` → the
+  `InverseRestriction(property_ref, kind, holder_ref, cardinality)` AST node;
+  `inverse` is a reserved word.
 - **Evaluator** (reverse lookup): resolve the holder-constraint class `C`, expand
   it with its subclasses (unless `direct`), then a SPARQL that projects the
-  **fillers** of the forward restriction (`someValuesFrom`/`allValuesFrom`/
-  `hasValue` by `kind`) carried by holders `⊑ C`, over `subClassOf` and
-  `equivalentClass`-intersection forms with `subPropertyOf*` on `P`. Fillers are
-  classes for some/only, individuals for value. It is the exact dual of the
-  forward query: `'part of' some X` ⇄ `inverse 'part of' some <holder of X>`.
+  **fillers** of the forward restriction carried by holders `⊑ C`, over
+  `subClassOf` and `equivalentClass`-intersection forms with `subPropertyOf*` on
+  `P`. Filler predicate by kind: `someValuesFrom` / `allValuesFrom` / `hasValue`,
+  or qualified cardinality on `onClass` for min/max/exactly (`minQualified…`≥,
+  `maxQualified…`≤, `qualified…`=; `min 1` also matches `someValuesFrom`). Fillers
+  are classes (individuals for `value`). It is the exact dual of the forward
+  query: `'part of' some X` ⇄ `inverse 'part of' some <holder of X>`.
 - **Autocomplete**: `inverse` is offered at any class-expression-start position;
   after `inverse` a property is expected (`after_inverse` → only `'` in the
-  keyword fallback, no `not`/nested `inverse`).
+  keyword fallback, no `not`/nested `inverse`). The cardinality forms reuse the
+  existing keyword → INT → entity states after the property.
 
 ## Out of scope / future
 
 - Cross-ontology fillers when scope is "all" (deliberately skipped for cost).
-- Inverse restrictions with cardinality (`inverse P min n C`) or a complex holder expression.
+- Inverse restrictions with a complex holder expression (v1 takes a single named class).
 - Datatype-restriction (`xsd:int[>= 5]`) autocomplete.
 
 ## Delivery history
@@ -161,3 +165,4 @@ feature spanning all three layers, not just completion:
 | #30 | Rank fillers by frequency of use (most-used first) |
 | #33 | `value`-restriction fillers suggest individuals (owl:hasValue) |
 | #34 | Inverse-property restrictions (`inverse P some/only/value C`) — grammar + evaluator + autocomplete |
+| #35 | Inverse-property cardinality (`inverse P min/max/exactly n C`) |
