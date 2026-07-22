@@ -254,6 +254,81 @@ async def test_evaluate_inverse_value_uses_hasvalue():
     assert "hasValue" in captured["q"]
 
 
+@pytest.mark.anyio
+async def test_evaluate_inverse_min_uses_qualified_cardinality():
+    r = _redis_props_and_classes("v1")
+    classification = _make_classification({})
+    captured = {}
+
+    def fake_sparql(q):
+        captured["q"] = q
+        return _mock_sparql([NUC])
+
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)), \
+         patch("ontoexplorer.modules.search.evaluator.sparql_query", side_effect=fake_sparql):
+        await evaluate(
+            InverseRestriction(NamedClass("has part", None), "min", NamedClass("cell", None), cardinality=2),
+            "v1", "ont1",
+        )
+    q = captured["q"]
+    assert "minQualifiedCardinality" in q
+    assert "onClass" in q
+    assert ">= 2" in q
+    assert "someValuesFrom" not in q          # n=2 > 1
+
+
+@pytest.mark.anyio
+async def test_evaluate_inverse_min_one_includes_some_equivalence():
+    r = _redis_props_and_classes("v1")
+    classification = _make_classification({})
+    captured = {}
+
+    def fake_sparql(q):
+        captured["q"] = q
+        return _mock_sparql([NUC])
+
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)), \
+         patch("ontoexplorer.modules.search.evaluator.sparql_query", side_effect=fake_sparql):
+        await evaluate(
+            InverseRestriction(NamedClass("has part", None), "min", NamedClass("cell", None), cardinality=1),
+            "v1", "ont1",
+        )
+    # min 1 ≡ some, so someValuesFrom fillers must also be matched.
+    assert "someValuesFrom" in captured["q"]
+
+
+@pytest.mark.anyio
+async def test_evaluate_inverse_max_and_exactly_predicates():
+    r = _redis_props_and_classes("v1")
+    classification = _make_classification({})
+    captured = {}
+
+    def fake_sparql(q):
+        captured["q"] = q
+        return _mock_sparql([NUC])
+
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)), \
+         patch("ontoexplorer.modules.search.evaluator.sparql_query", side_effect=fake_sparql):
+        await evaluate(
+            InverseRestriction(NamedClass("has part", None), "max", NamedClass("cell", None), cardinality=2),
+            "v1", "ont1",
+        )
+        assert "maxQualifiedCardinality" in captured["q"] and "<= 2" in captured["q"]
+        await evaluate(
+            InverseRestriction(NamedClass("has part", None), "exactly", NamedClass("cell", None), cardinality=3),
+            "v1", "ont1",
+        )
+        q = captured["q"]
+        assert "minQualifiedCardinality" not in q and "maxQualifiedCardinality" not in q
+        assert "qualifiedCardinality" in q and "= 3" in q
+
+
 # ── direct flag ───────────────────────────────────────────────────────────────
 
 @pytest.mark.anyio

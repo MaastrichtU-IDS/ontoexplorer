@@ -620,9 +620,24 @@ def _sparql_eval_inverse(node, holders: set[str], version_id: str, ontology_id: 
     if not holders:
         return set()
     prop_iri = _resolve_label(r, version_id, node.property_ref, allowed_types=_PROPERTY_TYPES)
-    pred = {"some": f"{OWL}someValuesFrom", "only": f"{OWL}allValuesFrom",
-            "value": f"{OWL}hasValue"}[node.kind]
     values = " ".join(f"<{h}>" for h in holders)
+    # The pattern that binds ?fill from a restriction node ?restr, by kind.
+    if node.kind in ("some", "only", "value"):
+        pred = {"some": f"{OWL}someValuesFrom", "only": f"{OWL}allValuesFrom",
+                "value": f"{OWL}hasValue"}[node.kind]
+        fill_match = f"?restr <{pred}> ?fill ."
+    else:
+        # min/max/exactly: qualified cardinality on onClass. `min 1` ≡ `some`, so
+        # also match someValuesFrom for min with n <= 1 (parity with the forward path).
+        qual = {"min": "minQualifiedCardinality", "max": "maxQualifiedCardinality",
+                "exactly": "qualifiedCardinality"}[node.kind]
+        cmp = {"min": ">=", "max": "<=", "exactly": "="}[node.kind]
+        n = node.cardinality
+        fill_match = (
+            f"{{ ?restr <{OWL}{qual}> ?nn ; <{OWL}onClass> ?fill . FILTER(?nn {cmp} {n}) }}"
+        )
+        if node.kind == "min" and n is not None and n <= 1:
+            fill_match += f" UNION {{ ?restr <{OWL}someValuesFrom> ?fill }}"
     # Match the forward restriction on subClassOf and on equivalentClass
     # intersections (mirroring the forward `some` path), constrained to holders.
     q = f"""
@@ -633,7 +648,7 @@ def _sparql_eval_inverse(node, holders: set[str], version_id: str, ontology_id: 
                 {{ ?cls <{OWL}equivalentClass>/<{OWL}intersectionOf>/<{RDF}rest>*/<{RDF}first> ?restr }}
                 ?restr <{OWL}onProperty> ?prop .
                 ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
-                ?restr <{pred}> ?fill .
+                {fill_match}
                 FILTER(isIRI(?fill))
             }}
         }}
