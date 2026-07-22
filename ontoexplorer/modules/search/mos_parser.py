@@ -123,12 +123,15 @@ _GRAMMAR = r"""
                  | entity_ref "min"     INT expression -> min_node
                  | entity_ref "max"     INT expression -> max_node
                  | entity_ref "exactly" INT expression -> exactly_node
-                 | "inverse" entity_ref "some"    entity_ref     -> inverse_some_node
-                 | "inverse" entity_ref "only"    entity_ref     -> inverse_only_node
-                 | "inverse" entity_ref "value"   entity_ref     -> inverse_value_node
-                 | "inverse" entity_ref "min"     INT entity_ref -> inverse_min_node
-                 | "inverse" entity_ref "max"     INT entity_ref -> inverse_max_node
-                 | "inverse" entity_ref "exactly" INT entity_ref -> inverse_exactly_node
+                 | inv_prop "some"    entity_ref     -> inverse_some_node
+                 | inv_prop "only"    entity_ref     -> inverse_only_node
+                 | inv_prop "value"   entity_ref     -> inverse_value_node
+                 | inv_prop "min"     INT entity_ref -> inverse_min_node
+                 | inv_prop "max"     INT entity_ref -> inverse_max_node
+                 | inv_prop "exactly" INT entity_ref -> inverse_exactly_node
+
+    inv_prop     : "inverse" entity_ref            -> inv_bare
+                 | "inverse" "(" entity_ref ")"    -> inv_paren
 
     entity_ref   : QUOTED_LABEL
                  | CURIE
@@ -205,8 +208,10 @@ def _build(tree: Tree) -> ASTNode:
     if tree.data in ("inverse_some_node", "inverse_only_node", "inverse_value_node"):
         kind = {"inverse_some_node": "some", "inverse_only_node": "only",
                 "inverse_value_node": "value"}[tree.data]
+        # children[0] is the `inv_prop` subtree (bare or parenthesized); its own
+        # first child is the property entity_ref.
         return InverseRestriction(
-            property_ref=_entity_ref_to_named_class(tree.children[0]),
+            property_ref=_entity_ref_to_named_class(tree.children[0].children[0]),
             kind=kind,
             holder_ref=_entity_ref_to_named_class(tree.children[1]),
         )
@@ -215,7 +220,7 @@ def _build(tree: Tree) -> ASTNode:
         kind = {"inverse_min_node": "min", "inverse_max_node": "max",
                 "inverse_exactly_node": "exactly"}[tree.data]
         return InverseRestriction(
-            property_ref=_entity_ref_to_named_class(tree.children[0]),
+            property_ref=_entity_ref_to_named_class(tree.children[0].children[0]),
             kind=kind,
             holder_ref=_entity_ref_to_named_class(tree.children[2]),
             cardinality=int(tree.children[1]),

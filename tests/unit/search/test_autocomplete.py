@@ -181,9 +181,10 @@ def test_keyword_set_for_int_and_entity_open():
     assert keyword_set_for("EXPECT_ENTITY", False) == ["not", "inverse", "'"]
 
 
-def test_keyword_set_for_after_inverse_offers_only_quote():
-    # Right after `inverse`, a property is expected — not / inverse are invalid.
-    assert keyword_set_for("EXPECT_ENTITY", False, after_inverse=True) == ["'"]
+def test_keyword_set_for_after_inverse_offers_paren_and_quote():
+    # Right after `inverse`, a property is expected — offer `(` (Protégé-style
+    # `inverse (P)`) or a quote; not / inverse are invalid.
+    assert keyword_set_for("EXPECT_ENTITY", False, after_inverse=True) == ["(", "'"]
 
 
 def test_kw_dict_insert_and_type():
