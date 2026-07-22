@@ -165,10 +165,11 @@ def keyword_set_for(token_type: str, prev_is_property: bool,
     if token_type == "EXPECT_INT":
         return _CARDINALITIES
     # EXPECT_ENTITY with no partial. Right after `inverse` a property is expected,
-    # so only an opening quote makes sense (no `not`/nested `inverse`); otherwise
-    # an entity, a negation, or an inverse-property restriction can start here.
+    # so offer an opening paren (Protégé-style `inverse (P)`) or quote — no
+    # `not`/nested `inverse`. Otherwise an entity, a negation, or an
+    # inverse-property restriction can start here.
     if after_inverse:
-        return ["'"]
+        return ["(", "'"]
     return _ENTITY_OPEN_KEYWORDS
 
 

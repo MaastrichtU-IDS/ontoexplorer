@@ -124,10 +124,13 @@ Both endpoints return `{completions, context, replace_from, replace_to}`.
 `inverse P <kind> C` (kind ∈ some / only / value / min n / max n / exactly n) is a
 query-language feature spanning all three layers, not just completion:
 
-- **Grammar/parser**: `"inverse" entity_ref (some|only|value) entity_ref` and
-  `"inverse" entity_ref (min|max|exactly) INT entity_ref` → the
-  `InverseRestriction(property_ref, kind, holder_ref, cardinality)` AST node;
-  `inverse` is a reserved word.
+- **Grammar/parser**: `inv_prop (some|only|value) entity_ref` and
+  `inv_prop (min|max|exactly) INT entity_ref` → the
+  `InverseRestriction(property_ref, kind, holder_ref, cardinality)` AST node,
+  where `inv_prop` is `"inverse" entity_ref` or `"inverse" "(" entity_ref ")"`.
+  The W3C Manchester grammar uses the bare form (`inverse P`); the parenthesized
+  form (`inverse (P)`) is Protégé's rendering and is accepted too. `inverse` is a
+  reserved word.
 - **Evaluator** (reverse lookup): resolve the holder-constraint class `C`, expand
   it with its subclasses (unless `direct`), then a SPARQL that projects the
   **fillers** of the forward restriction carried by holders `⊑ C`, over
@@ -138,7 +141,7 @@ query-language feature spanning all three layers, not just completion:
   are classes (individuals for `value`). It is the exact dual of the forward
   query: `'part of' some X` ⇄ `inverse 'part of' some <holder of X>`.
 - **Autocomplete**: `inverse` is offered at any class-expression-start position;
-  after `inverse` a property is expected (`after_inverse` → only `'` in the
+  after `inverse` a property is expected (`after_inverse` → `(` or `'` in the
   keyword fallback, no `not`/nested `inverse`). The cardinality forms reuse the
   existing keyword → INT → entity states after the property.
 
@@ -166,3 +169,4 @@ query-language feature spanning all three layers, not just completion:
 | #33 | `value`-restriction fillers suggest individuals (owl:hasValue) |
 | #34 | Inverse-property restrictions (`inverse P some/only/value C`) — grammar + evaluator + autocomplete |
 | #35 | Inverse-property cardinality (`inverse P min/max/exactly n C`) |
+| #36 | Accept Protégé-style parenthesized inverse property (`inverse (P)`) |

@@ -44,8 +44,8 @@ def _autocomplete_cache_key(
     ont_part = ",".join(sorted(ontology_ids))
     payload = f"{q}\x1f{cursor}\x1f{limit}\x1f{ont_part}\x1f{lang or ''}"
     h = hashlib.blake2b(payload.encode(), digest_size=16).hexdigest()
-    # v7: `inverse` offered at class-expression-start positions.
-    return f"search:autocomplete:v7:{h}"
+    # v8: after `inverse`, offer `(` (Protégé-style parenthesized property).
+    return f"search:autocomplete:v8:{h}"
 
 
 def _is_expression(node) -> bool:

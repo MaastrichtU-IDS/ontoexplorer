@@ -146,6 +146,26 @@ def test_parse_inverse_some_has_no_cardinality():
     assert node.cardinality is None
 
 
+def test_parse_inverse_parenthesized_property():
+    # Protégé-style `inverse (P)` parses identically to the bare `inverse P`.
+    a = parse("inverse('has direct part') some 'pizza'")
+    b = parse("inverse ('has direct part') some 'pizza'")
+    c = parse("inverse 'has direct part' some 'pizza'")
+    for node in (a, b, c):
+        assert isinstance(node, InverseRestriction)
+        assert node.kind == "some"
+        assert node.property_ref.ref == "has direct part"
+        assert node.holder_ref.ref == "pizza"
+
+
+def test_parse_inverse_parenthesized_cardinality():
+    node = parse("inverse(BFO:0000050) min 2 'cell'")
+    assert isinstance(node, InverseRestriction)
+    assert node.kind == "min"
+    assert node.cardinality == 2
+    assert node.property_ref.ref == "BFO:0000050"
+
+
 def test_parse_inverse_with_curie_and_bare():
     node = parse("inverse BFO:0000050 some cell")
     assert isinstance(node, InverseRestriction)
