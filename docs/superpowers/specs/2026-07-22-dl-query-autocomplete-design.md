@@ -145,10 +145,36 @@ query-language feature spanning all three layers, not just completion:
   keyword fallback, no `not`/nested `inverse`). The cardinality forms reuse the
   existing keyword → INT → entity states after the property.
 
+## Datatype restrictions (#37)
+
+Data-property restrictions with literal and faceted-datatype fillers:
+
+- **Datatype some/only** (already worked): `'has age' some xsd:integer` — the
+  `xsd:`/`rdf:`/`rdfs:`/`owl:` prefixes resolve to the full datatype IRI in
+  `_resolve_label`, and the existing `someValuesFrom` match applies.
+- **Literal `value`**: `'has age' value 42` / `value "text"` / `value 3.14` /
+  `value true`. Grammar `entity_ref "value" literal` → `HasValue` with a
+  `Literal(lexical, datatype)` (int→xsd:integer, decimal→xsd:decimal,
+  double-quoted→xsd:string, true/false→xsd:boolean; the latter excluded from
+  `BARE_LABEL`). Evaluator emits `?restr owl:hasValue "lex"^^<dt>`.
+- **Faceted datatypes**: `'has age' some xsd:integer[>= 18 , < 65]`. Grammar
+  `dtype_restr : entity_ref "[" facet_val ("," facet_val)* "]"` → the
+  `DatatypeRestriction(datatype, facets)` AST node; `FACET` ∈ `>= > <= <`
+  (→ min/maxInclusive/Exclusive), `length`/`minLength`/`maxLength`/`pattern`
+  (→ xsd facets), `langRange` (→ rdf:langRange). Evaluator matches the
+  `owl:onDatatype` + `owl:withRestrictions` list bnode with the exact facet
+  literals, on `subClassOf` and `equivalentClass`-intersection forms.
+
+Autocomplete for facets (offering `>=`/`<=`/… inside `[...]`) is a documented
+gap — the completion tokenizer doesn't yet handle `[`; the parse and evaluation
+are complete. Both literal-value and faceted restrictions occur essentially zero
+times in the currently loaded ontologies, so this is query-language completeness.
+
 ## Out of scope / future
 
 - Cross-ontology fillers when scope is "all" (deliberately skipped for cost).
 - Inverse restrictions with a complex holder expression (v1 takes a single named class).
+- Facet-keyword autocomplete inside a datatype restriction (`[…]`).
 - Datatype-restriction (`xsd:int[>= 5]`) autocomplete.
 
 ## Delivery history
@@ -170,3 +196,4 @@ query-language feature spanning all three layers, not just completion:
 | #34 | Inverse-property restrictions (`inverse P some/only/value C`) — grammar + evaluator + autocomplete |
 | #35 | Inverse-property cardinality (`inverse P min/max/exactly n C`) |
 | #36 | Accept Protégé-style parenthesized inverse property (`inverse (P)`) |
+| #37 | Datatype restrictions: literal `value` fillers + faceted datatypes (`some xsd:integer[>= 18]`) |

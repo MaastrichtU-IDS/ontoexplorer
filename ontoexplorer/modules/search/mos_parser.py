@@ -15,6 +15,22 @@ class NamedClass:
 
 
 @dataclass
+class Literal:
+    """A typed literal filler for a data-property `value` restriction, e.g.
+    `'has age' value 42`. `datatype` is the full XSD IRI."""
+    lexical: str
+    datatype: str
+
+
+@dataclass
+class DatatypeRestriction:
+    """A faceted datatype filler for a data-property some/only restriction, e.g.
+    `xsd:integer[>= 18 , < 65]`. `facets` is a list of (facet-IRI, Literal)."""
+    datatype: NamedClass
+    facets: list[tuple[str, "Literal"]]
+
+
+@dataclass
 class And:
     left: "ASTNode"
     right: "ASTNode"
@@ -46,7 +62,7 @@ class AllValuesFrom:
 @dataclass
 class HasValue:
     property_ref: NamedClass
-    value_ref: NamedClass
+    value_ref: "NamedClass | Literal"
 
 
 @dataclass
@@ -96,7 +112,7 @@ ASTNode = (
     NamedClass | And | Or | Not
     | SomeValuesFrom | AllValuesFrom | HasValue | HasSelf
     | MinCardinality | MaxCardinality | ExactCardinality
-    | InverseRestriction
+    | InverseRestriction | Literal | DatatypeRestriction
 )
 
 
@@ -116,7 +132,10 @@ _GRAMMAR = r"""
                  | restriction
                  | entity_ref     -> named_class_node
 
-    restriction  : entity_ref "some"    expression     -> some_node
+    restriction  : entity_ref "some"    dtype_restr    -> some_dtype_node
+                 | entity_ref "only"    dtype_restr    -> only_dtype_node
+                 | entity_ref "value"   literal        -> value_literal_node
+                 | entity_ref "some"    expression     -> some_node
                  | entity_ref "only"    expression     -> only_node
                  | entity_ref "value"   entity_ref     -> value_node
                  | entity_ref "Self"                   -> self_node
@@ -133,6 +152,14 @@ _GRAMMAR = r"""
     inv_prop     : "inverse" entity_ref            -> inv_bare
                  | "inverse" "(" entity_ref ")"    -> inv_paren
 
+    dtype_restr  : entity_ref "[" facet_val ("," facet_val)* "]"
+    facet_val    : FACET literal
+
+    literal      : DECIMAL   -> dec_lit
+                 | INT       -> int_lit
+                 | DQ_STRING -> str_lit
+                 | BOOL      -> bool_lit
+
     entity_ref   : QUOTED_LABEL
                  | CURIE
                  | FULL_IRI
@@ -141,7 +168,11 @@ _GRAMMAR = r"""
     QUOTED_LABEL : "'" /[^']+/ "'"
     CURIE        : /[A-Za-z_][A-Za-z0-9_\-]*:[A-Za-z0-9_\-\.]+/
     FULL_IRI     : "<" /[^>]+/ ">"
-    BARE_LABEL   : /(?!(and|or|not|some|only|value|Self|min|max|exactly|inverse)\b)[A-Za-z_][A-Za-z0-9_]*/
+    BARE_LABEL   : /(?!(and|or|not|some|only|value|Self|min|max|exactly|inverse|true|false)\b)[A-Za-z_][A-Za-z0-9_]*/
+    FACET        : ">=" | "<=" | ">" | "<" | "minLength" | "maxLength" | "length" | "pattern" | "langRange"
+    BOOL         : "true" | "false"
+    DQ_STRING    : "\"" /[^"]*/ "\""
+    DECIMAL      : /[+-]?[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?/
     INT          : /[0-9]+/
 
     %ignore /\s+/
@@ -150,6 +181,36 @@ _GRAMMAR = r"""
 _PARSER = Lark(_GRAMMAR, start="expression", parser="earley", ambiguity="resolve")
 
 _DISAMBIG_RE = re.compile(r"^(.+?)\s+\(([A-Za-z_][A-Za-z0-9_\-]*:[A-Za-z0-9_\-\.]+)\)$")
+
+_XSD = "http://www.w3.org/2001/XMLSchema#"
+_RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+_FACET_IRI = {
+    ">=": _XSD + "minInclusive", ">": _XSD + "minExclusive",
+    "<=": _XSD + "maxInclusive", "<": _XSD + "maxExclusive",
+    "length": _XSD + "length", "minLength": _XSD + "minLength",
+    "maxLength": _XSD + "maxLength", "pattern": _XSD + "pattern",
+    "langRange": _RDF + "langRange",
+}
+_LITERAL_DT = {
+    "int_lit": _XSD + "integer", "dec_lit": _XSD + "decimal",
+    "str_lit": _XSD + "string", "bool_lit": _XSD + "boolean",
+}
+
+
+def _build_literal(tree: Tree) -> "Literal":
+    tok = str(tree.children[0])
+    if tree.data == "str_lit":
+        tok = tok[1:-1]  # strip surrounding double quotes
+    return Literal(lexical=tok, datatype=_LITERAL_DT[tree.data])
+
+
+def _build_dtype_restr(tree: Tree) -> "DatatypeRestriction":
+    datatype = _entity_ref_to_named_class(tree.children[0])
+    facets: list[tuple[str, "Literal"]] = []
+    for fv in tree.children[1:]:  # each is a facet_val: FACET literal
+        facet_tok = str(fv.children[0])
+        facets.append((_FACET_IRI[facet_tok], _build_literal(fv.children[1])))
+    return DatatypeRestriction(datatype=datatype, facets=facets)
 
 
 def _entity_ref_to_named_class(tree: Tree) -> NamedClass:
@@ -201,6 +262,15 @@ def _build(tree: Tree) -> ASTNode:
 
     if tree.data == "value_node":
         return HasValue(_entity_ref_to_named_class(tree.children[0]), _entity_ref_to_named_class(tree.children[1]))
+
+    if tree.data == "value_literal_node":
+        return HasValue(_entity_ref_to_named_class(tree.children[0]), _build_literal(tree.children[1]))
+
+    if tree.data == "some_dtype_node":
+        return SomeValuesFrom(_entity_ref_to_named_class(tree.children[0]), _build_dtype_restr(tree.children[1]))
+
+    if tree.data == "only_dtype_node":
+        return AllValuesFrom(_entity_ref_to_named_class(tree.children[0]), _build_dtype_restr(tree.children[1]))
 
     if tree.data == "self_node":
         return HasSelf(_entity_ref_to_named_class(tree.children[0]))

@@ -18,10 +18,12 @@ from ontoexplorer.modules.search.indexer import (
 from ontoexplorer.modules.search.mos_parser import (
     AllValuesFrom,
     And,
+    DatatypeRestriction,
     ExactCardinality,
     HasSelf,
     HasValue,
     InverseRestriction,
+    Literal,
     MaxCardinality,
     MinCardinality,
     NamedClass,
@@ -419,6 +421,14 @@ async def evaluate_relation(
     return _build_results(equivalents, version_id, lang, r, "elk")
 
 
+def _literal_sparql(lit: Literal) -> str:
+    """A typed-literal SPARQL term, e.g. `"42"^^<…#integer>`, with the lexical
+    form escaped for a double-quoted SPARQL string."""
+    esc = (lit.lexical.replace("\\", "\\\\").replace('"', '\\"')
+           .replace("\n", "\\n").replace("\r", "\\r"))
+    return f'"{esc}"^^<{lit.datatype}>'
+
+
 def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
     """Translate restriction AST nodes to SPARQL and query Oxigraph."""
     OWL = "http://www.w3.org/2002/07/owl#"
@@ -432,13 +442,35 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
         return _resolve_label(r, version_id, named_class_node)
 
     RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+
+    def _dtype_restr_query(prop_iri: str, dr: DatatypeRestriction, pred: str) -> str:
+        """Match classes whose `pred` (someValuesFrom/allValuesFrom) filler is a
+        faceted datatype restriction: onDatatype <base> with the exact facets."""
+        base_dt = resolve(dr.datatype)
+        facet_lines = "\n                ".join(
+            f"?wr <{RDF}rest>*/<{RDF}first> [ <{fi}> {_literal_sparql(lit)} ] ."
+            for fi, lit in dr.facets
+        )
+        return f"""
+            SELECT DISTINCT ?cls WHERE {{ GRAPH <{g}> {{
+                {{ ?cls <{RDFS}subClassOf> ?restr }} UNION
+                {{ ?cls <{OWL}equivalentClass>/<{OWL}intersectionOf>/<{RDF}rest>*/<{RDF}first> ?restr }}
+                ?restr <{OWL}onProperty> ?prop ; <{OWL}{pred}> ?dt .
+                ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
+                ?dt <{OWL}onDatatype> <{base_dt}> ; <{OWL}withRestrictions> ?wr .
+                {facet_lines}
+            }} }}
+        """
+
     if isinstance(node, SomeValuesFrom):
         prop_iri = resolve_prop(node.property_ref)
         # Use rdfs:subPropertyOf* so that restrictions written on sub-properties
         # of the queried property are also matched.  For example, querying
         # 'has part some X' should find classes with 'has direct part some X'
         # when 'has direct part' subPropertyOf 'has part'.
-        if isinstance(node.filler, NamedClass):
+        if isinstance(node.filler, DatatypeRestriction):
+            q = _dtype_restr_query(prop_iri, node.filler, "someValuesFrom")
+        elif isinstance(node.filler, NamedClass):
             fill_iri = resolve(node.filler)
             q = f"""
                 SELECT DISTINCT ?cls WHERE {{
@@ -479,26 +511,31 @@ def _sparql_eval(node, version_id: str, ontology_id: str, r) -> set[str]:
             """
     elif isinstance(node, AllValuesFrom):
         prop_iri = resolve_prop(node.property_ref)
-        fill_iri = resolve(node.filler) if isinstance(node.filler, NamedClass) else node.filler.ref
-        q = f"""
-            SELECT DISTINCT ?cls WHERE {{
-                GRAPH <{g}> {{
-                    ?cls <{RDFS}subClassOf> ?restr .
-                    ?restr <{OWL}onProperty> ?prop .
-                    ?restr <{OWL}allValuesFrom> <{fill_iri}> .
-                    ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
+        if isinstance(node.filler, DatatypeRestriction):
+            q = _dtype_restr_query(prop_iri, node.filler, "allValuesFrom")
+        else:
+            fill_iri = resolve(node.filler) if isinstance(node.filler, NamedClass) else node.filler.ref
+            q = f"""
+                SELECT DISTINCT ?cls WHERE {{
+                    GRAPH <{g}> {{
+                        ?cls <{RDFS}subClassOf> ?restr .
+                        ?restr <{OWL}onProperty> ?prop .
+                        ?restr <{OWL}allValuesFrom> <{fill_iri}> .
+                        ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
+                    }}
                 }}
-            }}
-        """
+            """
     elif isinstance(node, HasValue):
         prop_iri = resolve_prop(node.property_ref)
-        val_iri = resolve(node.value_ref)
+        val_term = (_literal_sparql(node.value_ref)
+                    if isinstance(node.value_ref, Literal)
+                    else f"<{resolve(node.value_ref)}>")
         q = f"""
             SELECT DISTINCT ?cls WHERE {{
                 GRAPH <{g}> {{
                     ?cls <{RDFS}subClassOf> ?restr .
                     ?restr <{OWL}onProperty> ?prop .
-                    ?restr <{OWL}hasValue> <{val_iri}> .
+                    ?restr <{OWL}hasValue> {val_term} .
                     ?prop <{RDFS}subPropertyOf>* <{prop_iri}> .
                 }}
             }}

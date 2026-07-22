@@ -5,10 +5,13 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 from ontoexplorer.modules.search.mos_parser import (
     NamedClass, And, Or, Not,
-    SomeValuesFrom, HasValue, HasSelf,
+    SomeValuesFrom, AllValuesFrom, HasValue, HasSelf,
     MinCardinality, MaxCardinality, ExactCardinality,
     InverseRestriction,
+    Literal, DatatypeRestriction,
 )
+
+_XSD = "http://www.w3.org/2001/XMLSchema#"
 from ontoexplorer.modules.search.evaluator import (
     AmbiguousLabelError,
     evaluate,
@@ -327,6 +330,56 @@ async def test_evaluate_inverse_max_and_exactly_predicates():
         q = captured["q"]
         assert "minQualifiedCardinality" not in q and "maxQualifiedCardinality" not in q
         assert "qualifiedCardinality" in q and "= 3" in q
+
+
+@pytest.mark.anyio
+async def test_evaluate_value_literal_builds_typed_literal():
+    r = _make_redis_multi("v1", [("has age", HP_IRI, "data_property")])
+    classification = _make_classification({})
+    captured = {}
+
+    def fake_sparql(q):
+        captured["q"] = q
+        return _mock_sparql([CELL])
+
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)), \
+         patch("ontoexplorer.modules.search.evaluator.sparql_query", side_effect=fake_sparql):
+        await evaluate(
+            HasValue(NamedClass("has age", None), Literal("42", _XSD + "integer")),
+            "v1", "ont1",
+        )
+    q = captured["q"]
+    assert "hasValue" in q
+    assert f'"42"^^<{_XSD}integer>' in q
+
+
+@pytest.mark.anyio
+async def test_evaluate_datatype_restriction_matches_facets():
+    r = _make_redis_multi("v1", [("has age", HP_IRI, "data_property")])
+    classification = _make_classification({})
+    captured = {}
+
+    def fake_sparql(q):
+        captured["q"] = q
+        return _mock_sparql([CELL])
+
+    dr = DatatypeRestriction(
+        datatype=NamedClass("xsd:integer", None),
+        facets=[(_XSD + "minInclusive", Literal("18", _XSD + "integer"))],
+    )
+    with patch("ontoexplorer.modules.search.evaluator._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)), \
+         patch("ontoexplorer.modules.search.evaluator.sparql_query", side_effect=fake_sparql):
+        await evaluate(SomeValuesFrom(NamedClass("has age", None), dr), "v1", "ont1")
+    q = captured["q"]
+    assert "onDatatype" in q
+    assert f"<{_XSD}integer>" in q                 # base datatype
+    assert "withRestrictions" in q
+    assert f"<{_XSD}minInclusive>" in q
+    assert f'"18"^^<{_XSD}integer>' in q
 
 
 # ── direct flag ───────────────────────────────────────────────────────────────
