@@ -145,7 +145,7 @@ query-language feature spanning all three layers, not just completion:
   keyword fallback, no `not`/nested `inverse`). The cardinality forms reuse the
   existing keyword → INT → entity states after the property.
 
-## Datatype restrictions (#37)
+## Datatype restrictions (#38)
 
 Data-property restrictions with literal and faceted-datatype fillers:
 
@@ -196,4 +196,4 @@ times in the currently loaded ontologies, so this is query-language completeness
 | #34 | Inverse-property restrictions (`inverse P some/only/value C`) — grammar + evaluator + autocomplete |
 | #35 | Inverse-property cardinality (`inverse P min/max/exactly n C`) |
 | #36 | Accept Protégé-style parenthesized inverse property (`inverse (P)`) |
-| #37 | Datatype restrictions: literal `value` fillers + faceted datatypes (`some xsd:integer[>= 18]`) |
+| #38 | Datatype restrictions: literal `value` fillers + faceted datatypes (`some xsd:integer[>= 18]`) |
