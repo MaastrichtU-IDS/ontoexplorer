@@ -213,22 +213,36 @@ async def evaluate(
     # expand SPARQL restriction results with inherited subclasses.
     classification = await get_classification(version_id, reasoner=reasoner)
     subclasses_index: dict[str, list[str]] = classification.get("subclasses", {})
+    # The whelk backend keeps ASSERTED subclass edges only in `direct_subclasses`
+    # — `subclasses` holds inferred-not-asserted transitive edges. Neither map
+    # alone is the complete closure: their union is (every edge missing from
+    # `subclasses` is an asserted one, and asserted edges are exactly what
+    # `direct_subclasses` carries). So a class whose subsumption under the query
+    # is asserted (e.g. GO_0016218 subClassOf 'catalytic activity') lives only in
+    # `direct_subclasses` and must be folded back in for a complete answer.
+    _asserted_direct_sub: dict[str, list[str]] = classification.get("direct_subclasses") or {}
     # direct_subclasses_index falls back to subclasses_index if the key is absent
     # (older ELK service versions may not include it).
     _ds = classification.get("direct_subclasses")
     direct_subclasses_index: dict[str, list[str]] = (
         _ds if _ds is not None else subclasses_index
     ) if direct else subclasses_index
-    all_class_iris: set[str] = set(subclasses_index.keys()) | {
-        iri for subs in subclasses_index.values() for iri in subs
-    }
+    all_class_iris: set[str] = (
+        set(subclasses_index.keys())
+        | {iri for subs in subclasses_index.values() for iri in subs}
+        | set(_asserted_direct_sub.keys())
+        | {iri for subs in _asserted_direct_sub.values() for iri in subs}
+    )
 
     async def _eval_with_index(n, idx: dict) -> set[str]:
         if isinstance(n, NamedClass):
             iri = _resolve_label(r, version_id, n)
             if iri == _OWL_THING:
                 return r.smembers(_type_key(version_id, "class"))
-            subs = set(idx.get(iri, []))
+            # Union the asserted direct edges so asserted genus links (present
+            # only in direct_subclasses) are never dropped. Idempotent in direct
+            # mode, where `idx` already is the asserted-direct map.
+            subs = set(idx.get(iri, [])) | set(_asserted_direct_sub.get(iri, []))
             subs.add(iri)
             return subs
 
@@ -270,6 +284,7 @@ async def evaluate(
             expanded = set(asserters)
             for iri in asserters:
                 expanded.update(subclasses_index.get(iri, []))
+                expanded.update(_asserted_direct_sub.get(iri, []))
             return expanded
 
         return set()
