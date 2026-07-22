@@ -197,13 +197,15 @@ def _entity_dicts(rows: list[dict], close_quote: bool) -> list[dict]:
 
 def _observed_filler_iris(prop_iri: str, graph_iris: list[str], limit: int) -> list[str]:
     """IRIs of classes used as fillers of `prop_iri` (or its sub-properties)
-    across the given graphs — someValuesFrom / allValuesFrom / onClass."""
+    across the given graphs — someValuesFrom / allValuesFrom / onClass — ordered
+    by frequency of use (most-used filler first) so the likeliest completions
+    surface at the top. IRI is the tiebreaker for a deterministic order."""
     from ontoexplorer.clients.oxigraph import get_store
     OWL = "http://www.w3.org/2002/07/owl#"
     RDFS = "http://www.w3.org/2000/01/rdf-schema#"
     values = " ".join(f"<{g}>" for g in graph_iris)
     query = f"""
-        SELECT DISTINCT ?f WHERE {{
+        SELECT ?f (COUNT(DISTINCT ?r) AS ?n) WHERE {{
             VALUES ?g {{ {values} }}
             GRAPH ?g {{
                 ?r <{OWL}onProperty> ?p .
@@ -213,7 +215,7 @@ def _observed_filler_iris(prop_iri: str, graph_iris: list[str], limit: int) -> l
                 {{ ?r <{OWL}onClass> ?f }}
                 FILTER(isIRI(?f))
             }}
-        }} LIMIT {int(limit)}
+        }} GROUP BY ?f ORDER BY DESC(?n) ?f LIMIT {int(limit)}
     """
     try:
         return [row["f"].value for row in get_store().query(query)]
