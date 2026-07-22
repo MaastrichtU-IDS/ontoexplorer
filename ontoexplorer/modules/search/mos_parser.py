@@ -226,6 +226,10 @@ class PartialParseResult:
     # or `min N`/`max N`/`exactly N`), the property the restriction is on, so the
     # completer can suggest classes actually used as fillers of that property.
     restriction_property: str | None = None
+    # The restriction keyword that opened the filler position (`some`, `only`,
+    # `value`, `min`, `max`, `exactly`). `value` takes an individual filler
+    # (owl:hasValue); the others take a class. None outside a filler position.
+    restriction_keyword: str | None = None
 
 
 def _entity_ident(tok: tuple[str, str]) -> str | None:
@@ -359,11 +363,12 @@ def partial_parse(text: str, cursor: int) -> PartialParseResult:
         return PartialParseResult(token_type="EXPECT_INT", partial="", token_start=cursor)
 
     # After integer → expect entity (filler class). Sequence: [property, min|max|
-    # exactly, INT] — the property is two tokens back.
+    # exactly, INT] — the property is two tokens back and the keyword is one back.
     if last_type == "INT":
         rp = _entity_ident(tokens[-3]) if len(tokens) >= 3 else None
+        rk = tokens[-2][1] if len(tokens) >= 2 else None
         return PartialParseResult(token_type="EXPECT_ENTITY", partial="", token_start=cursor,
-                                  restriction_property=rp)
+                                  restriction_property=rp, restriction_keyword=rk)
 
     # WORD token: if cursor is right after the word (no trailing space), the user is still
     # typing a bare label → surface entity completions for the partial text.
@@ -378,7 +383,9 @@ def partial_parse(text: str, cursor: int) -> PartialParseResult:
     # After restriction keyword (some/only/value) or boolean (and/or) or not / ( → expect entity.
     # For a value-style restriction keyword, the filler's property is the prior token.
     rp = None
+    rk = None
     if last_type == "KW_RESTRICTION" and last_val in ("some", "only", "value") and len(tokens) >= 2:
         rp = _entity_ident(tokens[-2])
+        rk = last_val
     return PartialParseResult(token_type="EXPECT_ENTITY", partial="", token_start=cursor,
-                              restriction_property=rp)
+                              restriction_property=rp, restriction_keyword=rk)

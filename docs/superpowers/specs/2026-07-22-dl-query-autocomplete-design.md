@@ -90,6 +90,12 @@ first, with the IRI as a deterministic tiebreaker (#30). The engine over-fetches
 (`limit * 4` IRIs) and `pg_entities_by_iri` **preserves that rank** when hydrating
 display rows, so the likeliest completions stay at the top of the dropdown.
 
+For a `value` restriction the fillers are **individuals** drawn from `owl:hasValue`
+rather than classes; the parser reports the triggering keyword (`restriction_keyword`)
+so `_observed_filler_iris` swaps the class-restriction clause for `owl:hasValue`, and
+the completer offers only an opening quote after the individuals (`not` is a class-
+expression operator, invalid before a `value` individual) (#33).
+
 `pg_property_iri` and `pg_entities_by_iri` take a `version_ids` list (`= ANY(:vids)`,
 `DISTINCT ON (iri)`) so both paths share one code path (generalized in #29).
 
@@ -115,7 +121,6 @@ Both endpoints return `{completions, context, replace_from, replace_to}`.
 
 ## Out of scope / future
 
-- Filler suggestions for `value` (individuals) — currently class-oriented.
 - Cross-ontology fillers when scope is "all" (deliberately skipped for cost).
 - Property-chain / inverse-property completion.
 - Datatype-restriction (`xsd:int[>= 5]`) autocomplete.
@@ -135,3 +140,4 @@ Both endpoints return `{completions, context, replace_from, replace_to}`.
 | #28 | Observed-filler suggestions after a restriction keyword (per-ontology) |
 | #29 | Observed-filler suggestions on the front-page (multi-ontology) path |
 | #30 | Rank fillers by frequency of use (most-used first) |
+| #33 | `value`-restriction fillers suggest individuals (owl:hasValue) |

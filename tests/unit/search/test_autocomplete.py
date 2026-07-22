@@ -232,3 +232,44 @@ def test_observed_filler_iris_ranks_by_frequency():
     assert "COUNT(DISTINCT ?r)" in q
     assert "GROUP BY ?f" in q
     assert "ORDER BY DESC(?n)" in q
+
+
+def test_observed_filler_iris_value_queries_hasvalue_individuals():
+    """For a `value` restriction the fillers are INDIVIDUALS drawn from
+    owl:hasValue, not classes — the query must use hasValue, not
+    someValuesFrom/onClass."""
+    from ontoexplorer.modules.search import autocomplete as ac
+
+    captured = {}
+
+    class _FakeStore:
+        def query(self, q):
+            captured["q"] = q
+            return []
+
+    with patch("ontoexplorer.clients.oxigraph.get_store", lambda: _FakeStore()):
+        ac._observed_filler_iris("http://bfo.org/HP", ["http://g/sulo"], 10, keyword="value")
+
+    q = captured["q"]
+    assert "hasValue" in q
+    assert "someValuesFrom" not in q
+    assert "onClass" not in q
+
+
+def test_observed_filler_iris_default_keyword_queries_classes():
+    """Non-value keywords keep the class-restriction query."""
+    from ontoexplorer.modules.search import autocomplete as ac
+
+    captured = {}
+
+    class _FakeStore:
+        def query(self, q):
+            captured["q"] = q
+            return []
+
+    with patch("ontoexplorer.clients.oxigraph.get_store", lambda: _FakeStore()):
+        ac._observed_filler_iris("http://bfo.org/HP", ["http://g/sulo"], 10, keyword="some")
+
+    q = captured["q"]
+    assert "someValuesFrom" in q
+    assert "hasValue" not in q
