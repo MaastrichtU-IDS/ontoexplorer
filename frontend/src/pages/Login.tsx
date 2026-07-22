@@ -3,7 +3,8 @@ import { loginWithProvider } from '../lib/auth'
 const providers = [
   { id: 'orcid' as const, label: 'Sign in with ORCID', color: '#a6ce39' },
   { id: 'github' as const, label: 'Sign in with GitHub', color: '#6e7681' },
-  { id: 'google' as const, label: 'Sign in with Google', color: '#4285f4' },
+  // Google sign-in disabled for now — re-add when a Google OAuth app is configured.
+  // { id: 'google' as const, label: 'Sign in with Google', color: '#4285f4' },
 ]
 
 export default function Login() {
