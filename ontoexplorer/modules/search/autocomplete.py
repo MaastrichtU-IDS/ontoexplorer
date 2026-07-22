@@ -195,24 +195,34 @@ def _entity_dicts(rows: list[dict], close_quote: bool) -> list[dict]:
     return out
 
 
-def _observed_filler_iris(prop_iri: str, graph_iris: list[str], limit: int) -> list[str]:
-    """IRIs of classes used as fillers of `prop_iri` (or its sub-properties)
-    across the given graphs — someValuesFrom / allValuesFrom / onClass — ordered
-    by frequency of use (most-used filler first) so the likeliest completions
-    surface at the top. IRI is the tiebreaker for a deterministic order."""
+def _observed_filler_iris(prop_iri: str, graph_iris: list[str], limit: int,
+                          keyword: str | None = None) -> list[str]:
+    """IRIs used as fillers of `prop_iri` (or its sub-properties) across the given
+    graphs, ordered by frequency of use (most-used first; IRI tiebreaker for a
+    deterministic order).
+
+    For a `value` restriction the fillers are INDIVIDUALS drawn from owl:hasValue;
+    for every other keyword (some/only/min/max/exactly) they are CLASSES drawn
+    from someValuesFrom / allValuesFrom / onClass."""
     from ontoexplorer.clients.oxigraph import get_store
     OWL = "http://www.w3.org/2002/07/owl#"
     RDFS = "http://www.w3.org/2000/01/rdf-schema#"
     values = " ".join(f"<{g}>" for g in graph_iris)
+    if keyword == "value":
+        filler_clause = f"?r <{OWL}hasValue> ?f ."
+    else:
+        filler_clause = (
+            f"{{ ?r <{OWL}someValuesFrom> ?f }} UNION "
+            f"{{ ?r <{OWL}allValuesFrom> ?f }} UNION "
+            f"{{ ?r <{OWL}onClass> ?f }}"
+        )
     query = f"""
         SELECT ?f (COUNT(DISTINCT ?r) AS ?n) WHERE {{
             VALUES ?g {{ {values} }}
             GRAPH ?g {{
                 ?r <{OWL}onProperty> ?p .
                 ?p <{RDFS}subPropertyOf>* <{prop_iri}> .
-                {{ ?r <{OWL}someValuesFrom> ?f }} UNION
-                {{ ?r <{OWL}allValuesFrom> ?f }} UNION
-                {{ ?r <{OWL}onClass> ?f }}
+                {filler_clause}
                 FILTER(isIRI(?f))
             }}
         }} GROUP BY ?f ORDER BY DESC(?n) ?f LIMIT {int(limit)}
@@ -255,18 +265,23 @@ async def mos_autocomplete(
         return _entity_dicts(rows, close_quote=(tt == "OPEN_QUOTE")), ctx
 
     # Filler position (empty partial right after a restriction keyword): suggest
-    # the classes actually used as fillers of that property across the scoped
-    # ontology graphs.
+    # the entities actually used as fillers of that property across the scoped
+    # ontology graphs — individuals for `value`, classes otherwise.
     if (tt == "EXPECT_ENTITY" and not ctx.partial and ctx.restriction_property
             and filler_scope):
         vids = [v for v, _ in filler_scope]
         graphs = [g for _, g in filler_scope]
         prop_iri = await pg_property_iri(db, ctx.restriction_property, vids)
         if prop_iri:
-            iris = await asyncio.to_thread(_observed_filler_iris, prop_iri, graphs, limit * 4)
+            iris = await asyncio.to_thread(
+                _observed_filler_iris, prop_iri, graphs, limit * 4, ctx.restriction_keyword)
             rows = await pg_entities_by_iri(db, iris, vids, limit)
             if rows:
-                return _entity_dicts(rows, close_quote=False) + [_kw_dict("not"), _kw_dict("'")], ctx
+                # `value` takes a bare individual — `not` (a class-expression
+                # operator) is not valid there, so offer only an opening quote.
+                extra = [_kw_dict("'")] if ctx.restriction_keyword == "value" \
+                    else [_kw_dict("not"), _kw_dict("'")]
+                return _entity_dicts(rows, close_quote=False) + extra, ctx
 
     # Keyword contexts. Restriction-vs-boolean depends on the preceding entity.
     prev_is_property = bool(ctx.prev_entity) and await pg_is_property(

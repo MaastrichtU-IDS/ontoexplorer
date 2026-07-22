@@ -266,3 +266,29 @@ def test_partial_parse_no_restriction_property_after_boolean():
     r = partial_parse(q, len(q))
     assert r.token_type == "EXPECT_ENTITY"
     assert r.restriction_property is None
+
+
+def test_partial_parse_captures_restriction_keyword_value():
+    q = "'has part' value "
+    r = partial_parse(q, len(q))
+    assert r.token_type == "EXPECT_ENTITY"
+    assert r.restriction_property == "has part"
+    assert r.restriction_keyword == "value"
+
+
+def test_partial_parse_captures_restriction_keyword_some():
+    q = "'has part' some "
+    r = partial_parse(q, len(q))
+    assert r.restriction_keyword == "some"
+
+
+def test_partial_parse_captures_restriction_keyword_cardinality():
+    q = "'has part' min 1 "
+    r = partial_parse(q, len(q))
+    assert r.restriction_keyword == "min"
+
+
+def test_partial_parse_no_restriction_keyword_after_boolean():
+    q = "'cell' and "
+    r = partial_parse(q, len(q))
+    assert r.restriction_keyword is None
