@@ -51,11 +51,33 @@ const RELATION_FACETS: { value: MosRelation; label: string; namedClassOnly: bool
   { value: 'equivalent', label: 'Equivalent', namedClassOnly: true },
 ]
 
+// MOS reserved words. A bare token equal to one of these makes a query a real
+// expression rather than a label.
+const MOS_KEYWORDS = new Set([
+  'and', 'or', 'not', 'some', 'only', 'value', 'min', 'max', 'exactly', 'self', 'that',
+])
+
+// A bare multi-word label typed without quotes (e.g. `catalytic activity`) is a
+// single named class, but the MOS parser only accepts it quoted. Wrap it so it
+// parses as one NamedClass — unless it already carries MOS syntax (a quote or a
+// paren) or a reserved operator token, in which case it's a genuine expression
+// and is left untouched. Single tokens and CURIEs need no quoting.
+export function normalizeMos(q: string): string {
+  const t = q.trim()
+  if (!t) return t
+  if (t.includes("'") || t.includes('(') || t.includes(')')) return t
+  const tokens = t.split(/\s+/)
+  if (tokens.length <= 1) return t
+  if (tokens.some(tok => MOS_KEYWORDS.has(tok.toLowerCase()))) return t
+  return `'${t}'`
+}
+
 // A MOS query is a single named class (so super/equivalent are answerable) when
 // it's one bare token (word or CURIE) or a single quoted phrase — i.e. no
 // boolean/restriction operators. Anything with whitespace outside quotes is a
-// complex expression.
-function isNamedClassQuery(q: string): boolean {
+// complex expression. Callers pass the normalized query so a bare multi-word
+// label counts as a named class.
+export function isNamedClassQuery(q: string): boolean {
   const t = q.trim()
   if (!t) return false
   if (/^'[^']*'$/.test(t)) return true
@@ -388,10 +410,14 @@ function MOSQuery({ relation, onRelationChange }: {
   const [mosQuery, setMosQuery] = useState('')
   const [direct, setDirect] = useState(false)
 
+  // Auto-quote a bare multi-word label so it's treated as a single named class
+  // (both for the chip gate and for the actual query the backend parses).
+  const normalizedQuery = normalizeMos(mosQuery)
+
   // Super/equivalent are only answerable for a single named class. When the
   // query is a complex expression, force the relation back to subclasses
   // (the chips for the others render disabled).
-  const namedClass = isNamedClassQuery(mosQuery)
+  const namedClass = isNamedClassQuery(normalizedQuery)
   const effectiveRelation: MosRelation = namedClass ? relation : 'subclasses'
 
   // latest_version is now returned inline by the list endpoint — no extra calls needed
@@ -405,8 +431,9 @@ function MOSQuery({ relation, onRelationChange }: {
     ? allPairs.filter(p => selectedOids.includes(p.oid))
     : allPairs
 
-  // Fan-out MOS search across scoped ontologies
-  const searchResults = useMOSFanout(scopePairs, mosQuery, direct, effectiveRelation)
+  // Fan-out MOS search across scoped ontologies (normalized so a bare
+  // multi-word label parses as one named class instead of erroring).
+  const searchResults = useMOSFanout(scopePairs, normalizedQuery, direct, effectiveRelation)
   // Tag each result with the oid/vid of the ontology it came from
   const allResults: SearchResult[] = searchResults.flatMap((r, i) =>
     (r.data?.results ?? []).map(res => ({
