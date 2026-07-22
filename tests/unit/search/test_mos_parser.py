@@ -9,7 +9,10 @@ from ontoexplorer.modules.search.mos_parser import (
     SomeValuesFrom, AllValuesFrom, HasValue, HasSelf,
     MinCardinality, MaxCardinality, ExactCardinality,
     InverseRestriction,
+    Literal, DatatypeRestriction,
 )
+
+XSD = "http://www.w3.org/2001/XMLSchema#"
 
 
 def test_parse_quoted_label():
@@ -177,6 +180,74 @@ def test_parse_inverse_nested_in_conjunction():
     node = parse("'cell' and (inverse 'has part' some 'organelle')")
     assert isinstance(node, And)
     assert isinstance(node.right, InverseRestriction)
+
+
+def test_parse_value_integer_literal():
+    node = parse("'has age' value 42")
+    assert isinstance(node, HasValue)
+    assert isinstance(node.value_ref, Literal)
+    assert node.value_ref.lexical == "42"
+    assert node.value_ref.datatype == XSD + "integer"
+
+
+def test_parse_value_decimal_literal():
+    node = parse("'ratio' value 3.14")
+    assert isinstance(node.value_ref, Literal)
+    assert node.value_ref.lexical == "3.14"
+    assert node.value_ref.datatype == XSD + "decimal"
+
+
+def test_parse_value_string_literal():
+    node = parse('\'label\' value "hello world"')
+    assert isinstance(node.value_ref, Literal)
+    assert node.value_ref.lexical == "hello world"
+    assert node.value_ref.datatype == XSD + "string"
+
+
+def test_parse_value_boolean_literal():
+    node = parse("'active' value true")
+    assert isinstance(node.value_ref, Literal)
+    assert node.value_ref.lexical == "true"
+    assert node.value_ref.datatype == XSD + "boolean"
+
+
+def test_parse_value_individual_still_works():
+    node = parse("'hasColor' value GO:0000001")
+    assert isinstance(node, HasValue)
+    assert isinstance(node.value_ref, NamedClass)
+
+
+def test_parse_datatype_facet_min_inclusive():
+    node = parse("'has age' some xsd:integer[>= 18]")
+    assert isinstance(node, SomeValuesFrom)
+    assert isinstance(node.filler, DatatypeRestriction)
+    assert node.filler.datatype.ref == "xsd:integer"
+    assert len(node.filler.facets) == 1
+    facet, lit = node.filler.facets[0]
+    assert facet == XSD + "minInclusive"
+    assert lit.lexical == "18" and lit.datatype == XSD + "integer"
+
+
+def test_parse_datatype_facet_range_two_facets():
+    node = parse("'has age' some xsd:integer[>= 18 , < 65]")
+    assert isinstance(node.filler, DatatypeRestriction)
+    facets = {f for f, _ in node.filler.facets}
+    assert facets == {XSD + "minInclusive", XSD + "maxExclusive"}
+
+
+def test_parse_datatype_facet_only_string_length():
+    node = parse("'code' only xsd:string[minLength 3]")
+    assert isinstance(node, AllValuesFrom)
+    assert isinstance(node.filler, DatatypeRestriction)
+    facet, lit = node.filler.facets[0]
+    assert facet == XSD + "minLength"
+
+
+def test_parse_datatype_plain_no_facets_still_named_class():
+    # `some xsd:integer` without brackets stays a plain NamedClass filler.
+    node = parse("'has age' some xsd:integer")
+    assert isinstance(node, SomeValuesFrom)
+    assert isinstance(node.filler, NamedClass)
 
 
 def test_parse_nested():
