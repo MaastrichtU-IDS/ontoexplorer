@@ -8,6 +8,7 @@ from ontoexplorer.modules.search.mos_parser import (
     NamedClass,
     SomeValuesFrom, AllValuesFrom, HasValue, HasSelf,
     MinCardinality, MaxCardinality, ExactCardinality,
+    InverseRestriction,
 )
 
 
@@ -94,6 +95,41 @@ def test_parse_has_self():
 def test_parse_has_value():
     node = parse("'hasColor' value GO:0000001")
     assert isinstance(node, HasValue)
+
+
+def test_parse_inverse_some():
+    node = parse("inverse 'has part' some 'cell'")
+    assert isinstance(node, InverseRestriction)
+    assert node.kind == "some"
+    assert isinstance(node.property_ref, NamedClass)
+    assert node.property_ref.ref == "has part"
+    assert isinstance(node.holder_ref, NamedClass)
+    assert node.holder_ref.ref == "cell"
+
+
+def test_parse_inverse_only():
+    node = parse("inverse 'has part' only 'cell'")
+    assert isinstance(node, InverseRestriction)
+    assert node.kind == "only"
+
+
+def test_parse_inverse_value():
+    node = parse("inverse 'has part' value 'cell'")
+    assert isinstance(node, InverseRestriction)
+    assert node.kind == "value"
+
+
+def test_parse_inverse_with_curie_and_bare():
+    node = parse("inverse BFO:0000050 some cell")
+    assert isinstance(node, InverseRestriction)
+    assert node.property_ref.ref == "BFO:0000050"
+    assert node.holder_ref.ref == "cell"
+
+
+def test_parse_inverse_nested_in_conjunction():
+    node = parse("'cell' and (inverse 'has part' some 'organelle')")
+    assert isinstance(node, And)
+    assert isinstance(node.right, InverseRestriction)
 
 
 def test_parse_nested():
@@ -292,3 +328,18 @@ def test_partial_parse_no_restriction_keyword_after_boolean():
     q = "'cell' and "
     r = partial_parse(q, len(q))
     assert r.restriction_keyword is None
+
+
+def test_partial_parse_after_inverse_expects_property():
+    q = "inverse "
+    r = partial_parse(q, len(q))
+    assert r.token_type == "EXPECT_ENTITY"
+    assert r.after_inverse is True
+
+
+def test_partial_parse_after_inverse_property_expects_keyword():
+    q = "inverse 'has part' "
+    r = partial_parse(q, len(q))
+    assert r.token_type == "EXPECT_KEYWORD"
+    assert r.prev_entity == "has part"
+    assert r.after_inverse is False
