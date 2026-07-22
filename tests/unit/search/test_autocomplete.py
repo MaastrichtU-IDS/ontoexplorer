@@ -211,3 +211,24 @@ def test_observed_filler_iris_queries_all_scoped_graphs():
     assert "<http://g/sulo>" in q and "<http://g/go>" in q
     assert "GRAPH ?g" in q
     assert "<http://bfo.org/HP>" in q
+
+
+def test_observed_filler_iris_ranks_by_frequency():
+    """Fillers are aggregated and ordered most-used-first, so the SPARQL counts
+    usages and sorts descending (IRI as the deterministic tiebreaker)."""
+    from ontoexplorer.modules.search import autocomplete as ac
+
+    captured = {}
+
+    class _FakeStore:
+        def query(self, q):
+            captured["q"] = q
+            return []
+
+    with patch("ontoexplorer.clients.oxigraph.get_store", lambda: _FakeStore()):
+        ac._observed_filler_iris("http://bfo.org/HP", ["http://g/sulo"], 10)
+
+    q = captured["q"]
+    assert "COUNT(DISTINCT ?r)" in q
+    assert "GROUP BY ?f" in q
+    assert "ORDER BY DESC(?n)" in q

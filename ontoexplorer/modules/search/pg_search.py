@@ -427,7 +427,10 @@ async def pg_property_iri(db: AsyncSession, ident: str, version_ids: list[str]) 
 async def pg_entities_by_iri(db: AsyncSession, iris: list[str], version_ids: list[str],
                              limit: int) -> list[dict]:
     """Fetch display rows (label/short/type/shortname) for a set of IRIs within
-    the given versions, shortest-label first, deduped by IRI across versions."""
+    the given versions, deduped by IRI across versions. Rows come back in the
+    order the IRIs were passed in — callers rank the IRIs (e.g. by filler
+    frequency) and that ranking is preserved here. The shortest label is chosen
+    as each IRI's representative when a version has several."""
     if not iris or not version_ids:
         return []
     sql = text("""
@@ -442,7 +445,8 @@ async def pg_entities_by_iri(db: AsyncSession, iris: list[str], version_ids: lis
         ORDER BY ei.iri, LENGTH(ei.primary_label_norm)
     """)
     rows = (await db.execute(sql, {"vids": version_ids, "iris": list(iris)})).all()
-    rows = sorted(rows, key=lambda r: (len(r.primary_label_norm or ""), r.primary_label_norm or "", r.iri))
+    rank = {iri: i for i, iri in enumerate(iris)}
+    rows = sorted(rows, key=lambda r: rank.get(r.iri, len(rank)))
     return [{
         "iri": r.iri, "label": r.primary_label, "short": r.short, "type": r.type,
         "version_id": r.version_id, "ontology_id": r.ontology_id,

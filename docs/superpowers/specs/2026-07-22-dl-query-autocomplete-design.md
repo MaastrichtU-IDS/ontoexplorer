@@ -71,7 +71,7 @@ Scoping: `version_id` (single) for the per-ontology path, `ontology_ids` (list) 
 `_observed_filler_iris(prop_iri, graph_iris, limit)` runs one SPARQL query over oxigraph across all scoped graphs:
 
 ```sparql
-SELECT DISTINCT ?f WHERE {
+SELECT ?f (COUNT(DISTINCT ?r) AS ?n) WHERE {
   VALUES ?g { <g1> <g2> ... }
   GRAPH ?g {
     ?r owl:onProperty ?p .
@@ -81,10 +81,17 @@ SELECT DISTINCT ?f WHERE {
     { ?r owl:onClass ?f }
     FILTER(isIRI(?f))
   }
-} LIMIT n
+} GROUP BY ?f ORDER BY DESC(?n) ?f LIMIT n
 ```
 
-`pg_property_iri` and `pg_entities_by_iri` take a `version_ids` list (`= ANY(:vids)`, `DISTINCT ON (iri)`) so both paths share one code path (generalized in #29).
+Fillers are ranked by **frequency of use** — the number of distinct restrictions
+that use each class as a filler of the property (across the scoped graphs), most-used
+first, with the IRI as a deterministic tiebreaker (#30). The engine over-fetches
+(`limit * 4` IRIs) and `pg_entities_by_iri` **preserves that rank** when hydrating
+display rows, so the likeliest completions stay at the top of the dropdown.
+
+`pg_property_iri` and `pg_entities_by_iri` take a `version_ids` list (`= ANY(:vids)`,
+`DISTINCT ON (iri)`) so both paths share one code path (generalized in #29).
 
 ## Cardinality semantics (evaluator, kept consistent with the suggestions)
 
@@ -109,7 +116,6 @@ Both endpoints return `{completions, context, replace_from, replace_to}`.
 ## Out of scope / future
 
 - Filler suggestions for `value` (individuals) — currently class-oriented.
-- Ranking fillers by frequency-of-use rather than first-N.
 - Cross-ontology fillers when scope is "all" (deliberately skipped for cost).
 - Property-chain / inverse-property completion.
 - Datatype-restriction (`xsd:int[>= 5]`) autocomplete.
@@ -128,3 +134,4 @@ Both endpoints return `{completions, context, replace_from, replace_to}`.
 | #26 | Trigram fuzzy (typo-tolerant) tier |
 | #28 | Observed-filler suggestions after a restriction keyword (per-ontology) |
 | #29 | Observed-filler suggestions on the front-page (multi-ontology) path |
+| #30 | Rank fillers by frequency of use (most-used first) |

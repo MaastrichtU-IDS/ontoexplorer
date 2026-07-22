@@ -44,8 +44,8 @@ def _autocomplete_cache_key(
     ont_part = ",".join(sorted(ontology_ids))
     payload = f"{q}\x1f{cursor}\x1f{limit}\x1f{ont_part}\x1f{lang or ''}"
     h = hashlib.blake2b(payload.encode(), digest_size=16).hexdigest()
-    # v4: global filler suggestions after a restriction keyword.
-    return f"search:autocomplete:v4:{h}"
+    # v5: fillers ranked by frequency of use.
+    return f"search:autocomplete:v5:{h}"
 
 
 def _is_expression(node) -> bool:
