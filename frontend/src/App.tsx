@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Link, Navigate, Route, Routes, useSearchParams } from 'react-router-dom'
 import NavBar from './components/NavBar'
 import AuthGuard from './components/AuthGuard'
@@ -17,7 +18,23 @@ import AdminPage from './pages/AdminPage'
 import Sparql from './pages/Sparql'
 import SparqlGallery from './pages/SparqlGallery'
 
-function Footer() {
+interface VersionInfo { version: string; git_ref: string | null; git_sha: string | null }
+
+export function Footer() {
+  const [ver, setVer] = useState<VersionInfo | null>(null)
+  useEffect(() => {
+    let alive = true
+    fetch('/api/v1/version')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (alive && d) setVer(d) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [])
+
+  // Prefer the build's git tag (git_ref); fall back to the packaged version.
+  const label = ver ? (ver.git_ref ?? `v${ver.version}`) : null
+  const sha = ver?.git_sha ?? null
+
   return (
     <footer style={{
       borderTop: '1px solid var(--border)',
@@ -56,6 +73,14 @@ function Footer() {
       >
         MOD API
       </a>
+      {label && (
+        <span
+          title={sha ? `commit ${sha}` : undefined}
+          style={{ marginLeft: 'auto', color: 'var(--text-dim)', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}
+        >
+          {label}{sha ? ` · ${sha}` : ''}
+        </span>
+      )}
     </footer>
   )
 }

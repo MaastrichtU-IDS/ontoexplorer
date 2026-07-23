@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     #   development | staging | production
     environment: str = "development"
 
+    # Build provenance — injected at Docker build time from CI (git ref + sha).
+    # Empty in local/dev; the /api/v1/version endpoint then falls back to the
+    # packaged __version__ for the ref.
+    git_ref: str = ""
+    git_sha: str = ""
+
     # Postgres
     database_url: str = "postgresql+asyncpg://ontoexplorer:ontoexplorer@localhost:5432/ontoexplorer"
 

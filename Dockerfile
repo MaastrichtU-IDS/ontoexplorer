@@ -32,4 +32,11 @@ RUN uv sync --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
+# Build provenance — passed by CI (docker build --build-arg …) and surfaced by
+# GET /api/v1/version. Empty for a plain local build.
+ARG GIT_REF=""
+ARG GIT_SHA=""
+ENV GIT_REF=$GIT_REF
+ENV GIT_SHA=$GIT_SHA
+
 CMD ["uvicorn", "ontoexplorer.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

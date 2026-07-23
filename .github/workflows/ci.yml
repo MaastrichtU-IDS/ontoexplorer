@@ -98,6 +98,9 @@ jobs:
           file: ${{ matrix.dockerfile }}
           push: false
           load: false
+          build-args: |
+            GIT_REF=${{ github.ref_name }}
+            GIT_SHA=${{ github.sha }}
           tags: ${{ matrix.image }}:ci
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,scope=${{ matrix.image }},mode=max
