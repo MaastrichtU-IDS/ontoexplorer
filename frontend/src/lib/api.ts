@@ -20,7 +20,9 @@ export class ApiError extends Error {
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+// Core request against an ABSOLUTE app path (already including any prefix).
+// Handles the bearer header + one refresh-on-401 retry + typed errors.
+async function requestUrl<T>(url: string, options: RequestInit = {}): Promise<T> {
   const token = getAccessToken()
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string>),
@@ -31,7 +33,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  let resp = await fetch(`${BASE}${path}`, { ...options, headers })
+  let resp = await fetch(url, { ...options, headers })
 
   if (resp.status === 401) {
     // Only attempt refresh + redirect if we actually had a session.
@@ -41,7 +43,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       const newToken = await refreshAccessToken()
       if (newToken) {
         headers['Authorization'] = `Bearer ${newToken}`
-        resp = await fetch(`${BASE}${path}`, { ...options, headers })
+        resp = await fetch(url, { ...options, headers })
       } else {
         clearAccessToken()
         window.location.href = '/login'
@@ -61,6 +63,16 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (resp.status === 204) return undefined as T
   return resp.json()
+}
+
+// Request against the versioned API (routers mounted under /api/v1).
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  return requestUrl<T>(`${BASE}${path}`, options)
+}
+
+// Request against the auth router, which is mounted at /auth (NOT under /api/v1).
+async function authRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  return requestUrl<T>(path, options)
 }
 
 async function authFetch<T>(path: string): Promise<T> {
@@ -1008,22 +1020,24 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
 
 export const api = {
   auth: {
+    // NOTE: the auth router is mounted at /auth (NOT under /api/v1), so these use
+    // authRequest (no BASE prefix), not request.
     me: () => authFetch<UserProfile>('/auth/me'),
     patchMe: (body: { preferred_lang?: string | null; lang_fallback_strategy?: string; display_name?: string }) =>
-      request<UserProfile>('/auth/me', {
+      authRequest<UserProfile>('/auth/me', {
         method: 'PATCH',
         body: JSON.stringify(body),
       }),
     // Start linking a provider to the current account — returns the OAuth
     // authorize URL to redirect the browser to (see loginWithProvider/linkProvider).
     linkStart: (provider: 'orcid' | 'github' | 'google') =>
-      request<{ authorize_url: string }>(`/auth/${provider}/link`),
+      authRequest<{ authorize_url: string }>(`/auth/${provider}/link`),
     unlink: (provider: 'orcid' | 'github' | 'google') =>
-      request<{ connected_providers: string[] }>(`/auth/${provider}/unlink`, { method: 'POST' }),
+      authRequest<{ connected_providers: string[] }>(`/auth/${provider}/unlink`, { method: 'POST' }),
     // Confirm merging another account (identified by the signed token that
     // /callback handed back via ?merge_available) into the current one.
     merge: (token: string) =>
-      request<{ moved: Record<string, number>; connected_providers: string[] }>('/auth/merge', {
+      authRequest<{ moved: Record<string, number>; connected_providers: string[] }>('/auth/merge', {
         method: 'POST',
         body: JSON.stringify({ token }),
       }),
