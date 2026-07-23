@@ -5,8 +5,14 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from ontoexplorer.models.db import OAuthAccount, User
-from ontoexplorer.modules.auth.session import link_oauth_account, unlink_oauth_account
+from ontoexplorer.models.db import ApiKey, OAuthAccount, Ontology, SavedQuery, User
+from ontoexplorer.modules.auth.session import (
+    create_merge_token,
+    decode_merge_token,
+    link_oauth_account,
+    merge_users,
+    unlink_oauth_account,
+)
 
 
 async def _make_user(db, email=None, display_name=None) -> User:
@@ -210,3 +216,93 @@ async def test_unlink_unknown_provider_404(client, user_and_key):
     _, raw_key = user_and_key
     resp = await client.post("/auth/frobnicate/unlink", headers={"Authorization": f"Bearer {raw_key}"})
     assert resp.status_code == 404
+
+
+# ── Account merge: session-layer unit tests ────────────────────────────────────
+
+@pytest.mark.anyio
+async def test_merge_moves_resources_and_deletes_source(db_session):
+    target = await _make_user(db_session)
+    source = await _make_user(db_session)
+    await _add_oauth(db_session, target.id, "github")
+    await _add_oauth(db_session, source.id, "orcid")
+    db_session.add(Ontology(id=str(uuid.uuid4()), iri=f"http://ex/{uuid.uuid4()}", owner_id=source.id))
+    db_session.add(ApiKey(id=str(uuid.uuid4()), user_id=source.id, key_hash=str(uuid.uuid4()), name="k", scopes=["read"]))
+    db_session.add(SavedQuery(id=str(uuid.uuid4()), user_id=source.id, name="q", query_text="SELECT * WHERE {?s ?p ?o}"))
+    await db_session.commit()
+
+    result = await merge_users(db_session, target_id=target.id, source_id=source.id)
+
+    # source's providers + resources now belong to target
+    assert set(result["connected_providers"]) == {"github", "orcid"}
+    assert await _providers_of(db_session, target.id) == {"github", "orcid"}
+    owners = (await db_session.execute(select(Ontology.owner_id))).scalars().all()
+    assert all(o == target.id for o in owners)
+    keys = (await db_session.execute(select(ApiKey).where(ApiKey.user_id == source.id))).scalars().all()
+    assert keys == []
+    # source user is gone
+    assert (await db_session.execute(select(User).where(User.id == source.id))).scalar_one_or_none() is None
+
+
+@pytest.mark.anyio
+async def test_merge_backfills_email_when_target_empty(db_session):
+    target = await _make_user(db_session)  # no email
+    src_email = f"src-{uuid.uuid4()}@example.com"
+    source = await _make_user(db_session, email=src_email, display_name="Src Name")
+    await _add_oauth(db_session, target.id, "github")
+    await _add_oauth(db_session, source.id, "orcid")
+
+    await merge_users(db_session, target_id=target.id, source_id=source.id)
+
+    merged = (await db_session.execute(select(User).where(User.id == target.id))).scalar_one()
+    assert merged.email == src_email
+    assert merged.display_name == "Src Name"
+
+
+@pytest.mark.anyio
+async def test_merge_into_self_raises(db_session):
+    u = await _make_user(db_session)
+    with pytest.raises(ValueError, match="itself"):
+        await merge_users(db_session, target_id=u.id, source_id=u.id)
+
+
+@pytest.mark.anyio
+async def test_merge_missing_account_raises(db_session):
+    u = await _make_user(db_session)
+    with pytest.raises(ValueError, match="not found"):
+        await merge_users(db_session, target_id=u.id, source_id=str(uuid.uuid4()))
+
+
+def test_merge_token_roundtrip():
+    tok = create_merge_token("target-1", "source-2")
+    assert decode_merge_token(tok) == ("target-1", "source-2")
+
+
+# ── Account merge: endpoint tests ───────────────────────────────────────────────
+
+@pytest.mark.anyio
+async def test_merge_requires_auth(client):
+    resp = await client.post("/auth/merge", json={"token": "x"})
+    assert resp.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_merge_invalid_token_400(client, user_and_key):
+    _, raw_key = user_and_key
+    resp = await client.post(
+        "/auth/merge", json={"token": "not-a-jwt"},
+        headers={"Authorization": f"Bearer {raw_key}"},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_merge_token_for_other_user_forbidden(client, user_and_key):
+    user, raw_key = user_and_key
+    # token whose target is somebody else → refused even with a valid signature
+    other_token = create_merge_token(target_user_id=str(uuid.uuid4()), source_user_id=str(uuid.uuid4()))
+    resp = await client.post(
+        "/auth/merge", json={"token": other_token},
+        headers={"Authorization": f"Bearer {raw_key}"},
+    )
+    assert resp.status_code == 403

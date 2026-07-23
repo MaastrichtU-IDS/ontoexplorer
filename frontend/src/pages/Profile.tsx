@@ -24,6 +24,8 @@ export default function Profile() {
 
   const [linkMsg, setLinkMsg] = useState<{ text: string; ok: boolean } | null>(null)
   const [busyProvider, setBusyProvider] = useState<string | null>(null)
+  const [mergeOffer, setMergeOffer] = useState<{ token: string; provider: string } | null>(null)
+  const [merging, setMerging] = useState(false)
 
   useEffect(() => {
     if (user) {
@@ -40,13 +42,33 @@ export default function Profile() {
     const params = new URLSearchParams(window.location.search)
     const linked = params.get('linked')
     const err = params.get('link_error')
+    const mergeToken = params.get('merge_available')
+    const mergeProvider = params.get('merge_provider')
     if (linked) setLinkMsg({ text: `Connected ${PROVIDER_LABELS[linked] || linked}.`, ok: true })
     else if (err) setLinkMsg({ text: err, ok: false })
-    if (linked || err) {
+    if (mergeToken) setMergeOffer({ token: mergeToken, provider: mergeProvider || '' })
+    if (linked || err || mergeToken) {
       window.history.replaceState({}, '', window.location.pathname)
       queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
     }
   }, [])
+
+  async function confirmMerge() {
+    if (!mergeOffer) return
+    setMerging(true)
+    setLinkMsg(null)
+    try {
+      const res = await api.auth.merge(mergeOffer.token)
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
+      const total = Object.values(res.moved || {}).reduce((a, b) => a + b, 0)
+      setLinkMsg({ text: `Accounts merged — moved ${total} item${total === 1 ? '' : 's'} and combined your sign-in methods.`, ok: true })
+      setMergeOffer(null)
+    } catch (e) {
+      setLinkMsg({ text: (e as Error)?.message || 'Merge failed.', ok: false })
+    } finally {
+      setMerging(false)
+    }
+  }
 
   async function connectProvider(provider: (typeof LINKABLE_PROVIDERS)[number]) {
     setLinkMsg(null)
@@ -159,6 +181,47 @@ export default function Profile() {
         <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)', marginBottom: '1rem' }}>
           Sign in with any linked provider. You can't remove your only one.
         </p>
+
+        {mergeOffer && (
+          <div style={{
+            marginBottom: '1rem', padding: '12px 14px',
+            border: '1px solid #f0883e66', background: '#f0883e14',
+            borderRadius: 'var(--radius-sm)',
+          }}>
+            <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text)', marginBottom: 10, lineHeight: 1.5 }}>
+              An existing account already uses this <strong>{PROVIDER_LABELS[mergeOffer.provider] || mergeOffer.provider}</strong>.
+              Merge it into <em>this</em> account? Its ontologies, saved queries, API keys and webhooks
+              move here and its sign-in methods are added — then the duplicate is{' '}
+              <strong>deleted</strong>. This can't be undone.
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={confirmMerge}
+                disabled={merging}
+                style={{
+                  padding: '5px 14px', borderRadius: 'var(--radius-sm)',
+                  background: '#f0883e', border: 'none', color: '#0a0f1a',
+                  fontSize: 'var(--font-size-sm)', fontWeight: 600,
+                  cursor: merging ? 'default' : 'pointer', opacity: merging ? 0.7 : 1,
+                }}
+              >
+                {merging ? 'Merging…' : 'Merge accounts'}
+              </button>
+              <button
+                onClick={() => setMergeOffer(null)}
+                disabled={merging}
+                style={{
+                  padding: '5px 14px', borderRadius: 'var(--radius-sm)',
+                  background: 'transparent', border: '1px solid var(--border)',
+                  color: 'var(--text)', fontSize: 'var(--font-size-sm)',
+                  cursor: merging ? 'default' : 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           {LINKABLE_PROVIDERS.map(provider => {

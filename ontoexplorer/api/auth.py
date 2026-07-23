@@ -20,14 +20,19 @@ from ontoexplorer.modules.auth.oauth import (
 )
 from ontoexplorer.modules.auth.session import (
     create_link_token,
+    create_merge_token,
     create_session,
     decode_link_token,
+    decode_merge_token,
+    find_oauth_owner,
     get_or_create_user,
     link_oauth_account,
+    merge_users,
     refresh_session,
     revoke_session,
     unlink_oauth_account,
 )
+from pydantic import BaseModel
 from ontoexplorer.config import get_settings, is_admin
 from ontoexplorer.models.db import User
 
@@ -84,6 +89,36 @@ async def oauth_unlink(
     return {"connected_providers": remaining}
 
 
+class _MergeRequest(BaseModel):
+    token: str
+
+
+@router.post("/merge", summary="Merge another account into the current one")
+async def oauth_merge(
+    body: _MergeRequest,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Confirm a merge previously offered by /callback (when linking hit an identity
+    owned by another account). The signed merge token proves control of both
+    accounts was established during the OAuth round-trip; here we additionally
+    require the caller to be authenticated as the token's target. Destructive:
+    moves the source's resources here and deletes it.
+    """
+    try:
+        target_id, source_id = decode_merge_token(body.token)
+    except JWTError:
+        raise HTTPException(status_code=400, detail="Merge request expired or invalid — start again.")
+    if target_id != user.id:
+        raise HTTPException(status_code=403, detail="This merge request is for a different account.")
+    try:
+        result = await merge_users(db, target_id=user.id, source_id=source_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return result
+
+
 @router.get("/{provider}/callback", summary="Handle OAuth callback")
 async def oauth_callback(
     provider: str,
@@ -133,6 +168,20 @@ async def oauth_callback(
             resp = RedirectResponse(url=f"{frontend}/profile?link_error={quote('Link request expired — try again.')}")
             resp.delete_cookie("oauth_link")
             return resp
+        # If this identity already belongs to a DIFFERENT account, we can't just
+        # link it — but the caller has now proven control of BOTH accounts (the
+        # signed oauth_link cookie = target, this fresh OAuth = source). Offer a
+        # merge: mint a signed merge token and bounce to a confirm UI. We do NOT
+        # merge here — it's destructive, so it needs an explicit confirmation.
+        owner = await find_oauth_owner(db, provider, provider_user_id)
+        if owner is not None and owner != link_user_id:
+            merge_token = create_merge_token(target_user_id=link_user_id, source_user_id=owner)
+            resp = RedirectResponse(
+                url=f"{frontend}/profile?merge_available={quote(merge_token)}&merge_provider={quote(provider)}"
+            )
+            resp.delete_cookie("oauth_link")
+            return resp
+
         try:
             await link_oauth_account(
                 db,
