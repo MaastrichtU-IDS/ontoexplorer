@@ -4,6 +4,7 @@ from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from ontoexplorer import __version__
 from ontoexplorer.config import get_settings
 from ontoexplorer.database import AsyncSessionLocal
 
@@ -13,6 +14,19 @@ router = APIRouter(tags=["health"])
 @router.get("/health", summary="Liveness probe")
 async def health():
     return {"status": "ok"}
+
+
+@router.get("/api/v1/version", summary="Build version — app version + git ref/sha")
+async def version():
+    """The running build's version. `git_ref`/`git_sha` are injected at image
+    build time (CI); both are null for a local/dev build, where `version` (the
+    packaged __version__) is the source of truth."""
+    s = get_settings()
+    return {
+        "version": __version__,
+        "git_ref": s.git_ref or None,
+        "git_sha": s.git_sha[:12] if s.git_sha else None,
+    }
 
 
 @router.get("/ready", summary="Readiness probe — checks all backend connections")
