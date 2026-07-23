@@ -23,7 +23,12 @@ export class ApiError extends Error {
 // Core request against an ABSOLUTE app path (already including any prefix).
 // Handles the bearer header + one refresh-on-401 retry + typed errors.
 async function requestUrl<T>(url: string, options: RequestInit = {}): Promise<T> {
-  const token = getAccessToken()
+  // Cold load / lost in-memory token: bootstrap it from the refresh_token cookie
+  // BEFORE sending, so authenticated actions (e.g. uploads, which the backend
+  // accepts anonymously and would silently record with no owner) carry the
+  // bearer token. Single-flighted in refreshAccessToken, so this is cheap.
+  let token = getAccessToken()
+  if (!token) token = await refreshAccessToken()
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string>),
   }

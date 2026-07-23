@@ -718,14 +718,22 @@ export default function Dashboard() {
   const [search, setSearch] = useState('')
   const [sortCol, setSortCol] = useState<SortCol>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
+  // After an upload, ingestion runs asynchronously in a worker and creates the
+  // ontology row ~10-30s later. Poll the list until this timestamp so the new
+  // ontology appears without a manual refresh.
+  const [pollUntil, setPollUntil] = useState(0)
   const qc = useQueryClient()
 
   const { data, isLoading } = useQuery({
     queryKey: ['ontologies'],
     queryFn: () => api.ontologies.list(),
+    refetchInterval: () => (Date.now() < pollUntil ? 4000 : false),
   })
 
   function handleAdded() {
+    // Ingestion is async — keep refetching for ~90s so the new ontology shows
+    // up on its own once the worker finishes (covers all but very large loads).
+    setPollUntil(Date.now() + 90_000)
     qc.invalidateQueries({ queryKey: ['ontologies'] })
     qc.invalidateQueries({ queryKey: ['stats'] })
     setShowForm(false)
