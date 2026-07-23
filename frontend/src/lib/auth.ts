@@ -44,24 +44,37 @@ export async function linkProvider(provider: 'orcid' | 'github' | 'google'): Pro
   window.location.href = authorize_url
 }
 
-export async function refreshAccessToken(): Promise<string | null> {
-  // Refresh token is in an httpOnly cookie — the browser sends it automatically
-  try {
-    const resp = await fetch('/auth/refresh', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: '' }), // server reads from cookie
-    })
-    if (!resp.ok) {
-      clearAccessToken()
+// Single-flight: concurrent callers (e.g. several requests firing on a cold
+// load) share one /auth/refresh round-trip instead of stampeding it.
+let _refreshInFlight: Promise<string | null> | null = null
+
+export function refreshAccessToken(): Promise<string | null> {
+  if (_refreshInFlight) return _refreshInFlight
+  _refreshInFlight = (async () => {
+    // Refresh token is in an httpOnly cookie — the browser sends it automatically
+    try {
+      const resp = await fetch('/auth/refresh', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: '' }), // server reads from cookie
+      })
+      if (!resp.ok) {
+        clearAccessToken()
+        return null
+      }
+      const data = await resp.json()
+      setAccessToken(data.access_token)
+      return data.access_token
+    } catch {
       return null
     }
-    const data = await resp.json()
-    setAccessToken(data.access_token)
-    return data.access_token
-  } catch {
-    return null
+  })()
+  try {
+    return _refreshInFlight
+  } finally {
+    // Clear once settled so a later genuine refresh can run.
+    _refreshInFlight.finally(() => { _refreshInFlight = null })
   }
 }
 
