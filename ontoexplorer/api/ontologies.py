@@ -222,7 +222,7 @@ class SubmitByUrl(BaseModel):
 async def submit_ontology(
     request: Request,
     file: UploadFile | None = File(default=None),
-    user: User | None = Depends(get_current_user),
+    user: User = Depends(require_auth),   # uploads require login → 401 if anonymous
     db: AsyncSession = Depends(get_db),
 ):
     import asyncio
@@ -231,7 +231,7 @@ async def submit_ontology(
     from ontoexplorer.modules.jobs.tasks import ingest_ontology
 
     content_type = request.headers.get("content-type", "")
-    owner_id = user.id if user else None
+    owner_id = user.id   # require_auth guarantees a user; ontologies are always owned
     loop = asyncio.get_event_loop()
 
     is_multipart = "multipart/form-data" in content_type and file

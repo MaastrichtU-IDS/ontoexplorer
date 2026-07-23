@@ -25,21 +25,34 @@ def _captured_delay(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_submit_rejects_unknown_reasoner(client, _captured_delay):
-    r = await client.post("/api/v1/ontologies", json={"iri": "http://x/o.owl", "reasoner": "hermit"})
+async def test_submit_rejects_unknown_reasoner(client, user_and_key, _captured_delay):
+    _, key = user_and_key
+    auth = {"Authorization": f"Bearer {key}"}
+    r = await client.post("/api/v1/ontologies", json={"iri": "http://x/o.owl", "reasoner": "hermit"}, headers=auth)
     assert r.status_code == 422
     assert "hermit" in r.text
 
 
 @pytest.mark.anyio
-async def test_submit_threads_reasoner_to_task(client, _captured_delay):
-    r = await client.post("/api/v1/ontologies", json={"iri": "http://x/o.owl", "reasoner": "rustdl"})
+async def test_submit_threads_reasoner_to_task(client, user_and_key, _captured_delay):
+    _, key = user_and_key
+    auth = {"Authorization": f"Bearer {key}"}
+    r = await client.post("/api/v1/ontologies", json={"iri": "http://x/o.owl", "reasoner": "rustdl"}, headers=auth)
     assert r.status_code == 200
     assert _captured_delay.get("reasoner") == "rustdl"
 
 
 @pytest.mark.anyio
-async def test_submit_defaults_reasoner_when_omitted(client, _captured_delay):
-    r = await client.post("/api/v1/ontologies", json={"iri": "http://x/o.owl"})
+async def test_submit_defaults_reasoner_when_omitted(client, user_and_key, _captured_delay):
+    _, key = user_and_key
+    auth = {"Authorization": f"Bearer {key}"}
+    r = await client.post("/api/v1/ontologies", json={"iri": "http://x/o.owl"}, headers=auth)
     assert r.status_code == 200
     assert _captured_delay.get("reasoner") == "whelk"   # app default
+
+
+@pytest.mark.anyio
+async def test_submit_requires_auth(client, _captured_delay):
+    """Uploads now require login — anonymous POST is rejected."""
+    r = await client.post("/api/v1/ontologies", json={"iri": "http://x/o.owl"})
+    assert r.status_code == 401
