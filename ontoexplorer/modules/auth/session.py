@@ -6,11 +6,19 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from jose import JWTError, jwt
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.config import get_settings
-from ontoexplorer.models.db import OAuthAccount, Session, User
+from ontoexplorer.models.db import (
+    ApiKey,
+    OAuthAccount,
+    Ontology,
+    SavedQuery,
+    Session,
+    User,
+    Webhook,
+)
 
 
 def _settings():
@@ -72,6 +80,31 @@ def decode_link_token(token: str) -> str:
         raise JWTError("Not a link token")
     user_id: str = payload["sub"]
     return user_id
+
+
+# ── Account-merge tokens ───────────────────────────────────────────────────────
+# Minted by /callback ONLY after the caller has proven control of BOTH accounts:
+# the signed oauth_link cookie (target) + a fresh OAuth with the other provider
+# (source). Carries {target, source} to the confirm step, which re-checks the
+# caller is authenticated as `target`. Short-lived to limit replay.
+
+_MERGE_TOKEN_TTL_MINUTES = 10
+
+
+def create_merge_token(target_user_id: str, source_user_id: str) -> str:
+    s = _settings()
+    expire = datetime.now(UTC) + timedelta(minutes=_MERGE_TOKEN_TTL_MINUTES)
+    payload = {"target": target_user_id, "source": source_user_id, "exp": expire, "type": "merge"}
+    return jwt.encode(payload, s.jwt_secret_key, algorithm=s.jwt_algorithm)
+
+
+def decode_merge_token(token: str) -> tuple[str, str]:
+    """Decode a merge token → (target_user_id, source_user_id) or raise JWTError."""
+    s = _settings()
+    payload = jwt.decode(token, s.jwt_secret_key, algorithms=[s.jwt_algorithm])
+    if payload.get("type") != "merge":
+        raise JWTError("Not a merge token")
+    return payload["target"], payload["source"]
 
 
 # ── Session CRUD ───────────────────────────────────────────────────────────────
@@ -268,3 +301,80 @@ async def unlink_oauth_account(db: AsyncSession, user_id: str, provider: str) ->
     await db.commit()
 
     return [a.provider for a in accounts if a.provider != provider]
+
+
+async def find_oauth_owner(db: AsyncSession, provider: str, provider_user_id: str) -> str | None:
+    """Return the user_id that owns this provider identity, or None if unlinked."""
+    row = (
+        await db.execute(
+            select(OAuthAccount).where(
+                OAuthAccount.provider == provider,
+                OAuthAccount.provider_user_id == provider_user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    return row.user_id if row else None
+
+
+# All tables that reference users.id (see models/db.py). Merge reassigns each from
+# the source user to the target BEFORE the source is deleted. None carry a
+# per-user unique constraint, so reassignment can't collide. Sessions are dropped
+# rather than reassigned (the old identity simply re-logs in).
+_MERGE_REASSIGN = [
+    (OAuthAccount, "user_id"),
+    (Ontology, "owner_id"),
+    (Webhook, "user_id"),
+    (ApiKey, "user_id"),
+    (SavedQuery, "user_id"),
+]
+
+
+async def merge_users(db: AsyncSession, target_id: str, source_id: str) -> dict:
+    """
+    Merge `source` into `target`: move everything source owns to target, then
+    delete source. Returns a per-table count of moved rows plus the target's
+    resulting providers. Idempotent-ish: safe to call once; source ceases to exist.
+
+    Authorization is the caller's responsibility — this must only run once the
+    caller has proven control of both accounts (see the /callback + /auth/merge
+    flow and the signed merge token).
+    """
+    if target_id == source_id:
+        raise ValueError("Cannot merge an account into itself.")
+
+    target = (await db.execute(select(User).where(User.id == target_id))).scalar_one_or_none()
+    source = (await db.execute(select(User).where(User.id == source_id))).scalar_one_or_none()
+    if target is None or source is None:
+        raise ValueError("Account not found.")
+
+    moved: dict[str, int] = {}
+    for model, col in _MERGE_REASSIGN:
+        res = await db.execute(
+            update(model).where(getattr(model, col) == source_id).values(**{col: target_id})
+        )
+        moved[model.__tablename__] = res.rowcount or 0
+
+    # Drop the source's sessions (can't reassign a hashed token meaningfully).
+    await db.execute(delete(Session).where(Session.user_id == source_id))
+
+    # Backfill target profile from source where empty. Email is UNIQUE, and the
+    # source still holds it until deleted, so free it first to avoid a collision.
+    src_email = source.email
+    src_name = source.display_name
+    if src_email and not target.email:
+        await db.execute(update(User).where(User.id == source_id).values(email=None))
+        await db.execute(update(User).where(User.id == target_id).values(email=src_email))
+    if src_name and not target.display_name:
+        await db.execute(update(User).where(User.id == target_id).values(display_name=src_name))
+
+    # Source now owns nothing — safe to delete.
+    await db.execute(delete(User).where(User.id == source_id))
+    await db.commit()
+
+    providers = [
+        a.provider
+        for a in (
+            await db.execute(select(OAuthAccount).where(OAuthAccount.user_id == target_id))
+        ).scalars().all()
+    ]
+    return {"moved": moved, "connected_providers": providers}
