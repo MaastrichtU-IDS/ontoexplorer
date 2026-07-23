@@ -165,7 +165,7 @@ async def oauth_callback(
         try:
             link_user_id = decode_link_token(oauth_link)
         except JWTError:
-            resp = RedirectResponse(url=f"{frontend}/profile?link_error={quote('Link request expired — try again.')}")
+            resp = RedirectResponse(url=f"{frontend}/dashboard/profile?link_error={quote('Link request expired — try again.')}")
             resp.delete_cookie("oauth_link")
             return resp
         # If this identity already belongs to a DIFFERENT account, we can't just
@@ -177,7 +177,7 @@ async def oauth_callback(
         if owner is not None and owner != link_user_id:
             merge_token = create_merge_token(target_user_id=link_user_id, source_user_id=owner)
             resp = RedirectResponse(
-                url=f"{frontend}/profile?merge_available={quote(merge_token)}&merge_provider={quote(provider)}"
+                url=f"{frontend}/dashboard/profile?merge_available={quote(merge_token)}&merge_provider={quote(provider)}"
             )
             resp.delete_cookie("oauth_link")
             return resp
@@ -195,10 +195,10 @@ async def oauth_callback(
                 expires_at=expires_at,
             )
         except ValueError as exc:
-            resp = RedirectResponse(url=f"{frontend}/profile?link_error={quote(str(exc))}")
+            resp = RedirectResponse(url=f"{frontend}/dashboard/profile?link_error={quote(str(exc))}")
             resp.delete_cookie("oauth_link")
             return resp
-        resp = RedirectResponse(url=f"{frontend}/profile?linked={provider}")
+        resp = RedirectResponse(url=f"{frontend}/dashboard/profile?linked={provider}")
         resp.delete_cookie("oauth_link")
         return resp
 
