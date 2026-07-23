@@ -1022,7 +1022,14 @@ export const api = {
   auth: {
     // NOTE: the auth router is mounted at /auth (NOT under /api/v1), so these use
     // authRequest (no BASE prefix), not request.
-    me: () => authFetch<UserProfile>('/auth/me'),
+    me: async () => {
+      // Cold loads (page refresh, or returning from an OAuth link/merge
+      // round-trip) have no in-memory access token — the login cookie is
+      // single-use. Restore the session from the httpOnly refresh_token cookie
+      // before calling /auth/me, so the user isn't shown as logged out.
+      if (!getAccessToken()) await refreshAccessToken()
+      return authFetch<UserProfile>('/auth/me')
+    },
     patchMe: (body: { preferred_lang?: string | null; lang_fallback_strategy?: string; display_name?: string }) =>
       authRequest<UserProfile>('/auth/me', {
         method: 'PATCH',
