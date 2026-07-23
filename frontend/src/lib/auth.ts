@@ -32,6 +32,18 @@ export function loginWithProvider(provider: 'orcid' | 'github' | 'google'): void
   window.location.href = `/auth/${provider}/login`
 }
 
+/**
+ * Link an additional provider to the CURRENT account. Unlike login, this needs
+ * the auth header, so we fetch the authorize URL via the API client (which sets
+ * the signed oauth_link cookie) and then navigate to it. The /callback attaches
+ * the provider and bounces back to /profile.
+ */
+export async function linkProvider(provider: 'orcid' | 'github' | 'google'): Promise<void> {
+  const { api } = await import('./api')
+  const { authorize_url } = await api.auth.linkStart(provider)
+  window.location.href = authorize_url
+}
+
 export async function refreshAccessToken(): Promise<string | null> {
   // Refresh token is in an httpOnly cookie — the browser sends it automatically
   try {

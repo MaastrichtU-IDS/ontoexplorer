@@ -1,6 +1,9 @@
 """OAuth 2.0 / OIDC authentication endpoints."""
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
+from jose import JWTError
 from sqlalchemy import select
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,10 +19,14 @@ from ontoexplorer.modules.auth.oauth import (
     make_oauth_client,
 )
 from ontoexplorer.modules.auth.session import (
+    create_link_token,
     create_session,
+    decode_link_token,
     get_or_create_user,
+    link_oauth_account,
     refresh_session,
     revoke_session,
+    unlink_oauth_account,
 )
 from ontoexplorer.config import get_settings, is_admin
 from ontoexplorer.models.db import User
@@ -41,12 +48,49 @@ async def oauth_login(provider: str, response: Response):
     return resp
 
 
+@router.get("/{provider}/link", summary="Start linking a provider to the current account")
+async def oauth_link_start(
+    provider: str,
+    response: Response,
+    user: User = Depends(require_auth),
+):
+    """
+    Begin the OAuth dance to LINK `provider` to the logged-in user. Returns the
+    authorize URL (the caller redirects the browser to it) and sets a short-lived,
+    signed `oauth_link` cookie so /callback knows to link rather than log in.
+    Requires auth — this is a top-level nav initiated from an authenticated fetch.
+    """
+    _check_provider(provider)
+    client = make_oauth_client(provider)
+    redirect_uri = get_redirect_uri(provider)
+    authorize_url = get_authorize_url(provider)
+    uri, state = client.create_authorization_url(authorize_url, redirect_uri=redirect_uri)
+    response.set_cookie("oauth_state", state, httponly=True, samesite="lax", max_age=600)
+    response.set_cookie("oauth_link", create_link_token(user.id), httponly=True, samesite="lax", max_age=600)
+    return {"authorize_url": uri}
+
+
+@router.post("/{provider}/unlink", summary="Unlink a provider from the current account")
+async def oauth_unlink(
+    provider: str,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    _check_provider(provider)
+    try:
+        remaining = await unlink_oauth_account(db, user.id, provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"connected_providers": remaining}
+
+
 @router.get("/{provider}/callback", summary="Handle OAuth callback")
 async def oauth_callback(
     provider: str,
     code: str,
     state: str,
     oauth_state: str | None = Cookie(default=None),
+    oauth_link: str | None = Cookie(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     _check_provider(provider)
@@ -76,6 +120,40 @@ async def oauth_callback(
     if token.get("expires_in"):
         expires_at = datetime.now(UTC) + timedelta(seconds=int(token["expires_in"]))
 
+    frontend = get_settings().frontend_url.rstrip('/')
+
+    # ── LINK MODE ────────────────────────────────────────────────────────────
+    # A signed oauth_link cookie means an already-logged-in user is attaching this
+    # provider to their account (not logging in). Attach it, then bounce back to
+    # the profile page — no new session is issued.
+    if oauth_link:
+        try:
+            link_user_id = decode_link_token(oauth_link)
+        except JWTError:
+            resp = RedirectResponse(url=f"{frontend}/profile?link_error={quote('Link request expired — try again.')}")
+            resp.delete_cookie("oauth_link")
+            return resp
+        try:
+            await link_oauth_account(
+                db,
+                user_id=link_user_id,
+                provider=provider,
+                provider_user_id=provider_user_id,
+                email=email,
+                display_name=display_name,
+                access_token=access_token,
+                refresh_token=token.get("refresh_token"),
+                expires_at=expires_at,
+            )
+        except ValueError as exc:
+            resp = RedirectResponse(url=f"{frontend}/profile?link_error={quote(str(exc))}")
+            resp.delete_cookie("oauth_link")
+            return resp
+        resp = RedirectResponse(url=f"{frontend}/profile?linked={provider}")
+        resp.delete_cookie("oauth_link")
+        return resp
+
+    # ── LOGIN MODE ───────────────────────────────────────────────────────────
     user = await get_or_create_user(
         db,
         provider=provider,
@@ -89,7 +167,6 @@ async def oauth_callback(
 
     jwt_access, refresh_token = await create_session(db, user.id)
 
-    frontend = get_settings().frontend_url.rstrip('/')
     resp = RedirectResponse(url=f"{frontend}/dashboard")
     resp.set_cookie("refresh_token", refresh_token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
     resp.set_cookie("access_token", jwt_access, httponly=False, samesite="lax", max_age=3600)

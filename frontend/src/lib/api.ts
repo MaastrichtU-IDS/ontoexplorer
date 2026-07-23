@@ -1014,6 +1014,12 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify(body),
       }),
+    // Start linking a provider to the current account — returns the OAuth
+    // authorize URL to redirect the browser to (see loginWithProvider/linkProvider).
+    linkStart: (provider: 'orcid' | 'github' | 'google') =>
+      request<{ authorize_url: string }>(`/auth/${provider}/link`),
+    unlink: (provider: 'orcid' | 'github' | 'google') =>
+      request<{ connected_providers: string[] }>(`/auth/${provider}/unlink`, { method: 'POST' }),
   },
 
   ontologies: {

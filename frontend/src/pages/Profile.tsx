@@ -2,12 +2,17 @@ import { useState, useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../hooks/useAuth'
 import { api } from '../lib/api'
+import { linkProvider } from '../lib/auth'
 
 const PROVIDER_LABELS: Record<string, string> = {
   github: 'GitHub',
   google: 'Google',
   orcid: 'ORCID',
 }
+
+// Providers offered for linking — mirror the enabled providers on the Login page
+// (Google is disabled for now; the backend still supports it if re-enabled there).
+const LINKABLE_PROVIDERS = ['orcid', 'github'] as const
 
 export default function Profile() {
   const { user } = useAuth()
@@ -17,6 +22,9 @@ export default function Profile() {
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
 
+  const [linkMsg, setLinkMsg] = useState<{ text: string; ok: boolean } | null>(null)
+  const [busyProvider, setBusyProvider] = useState<string | null>(null)
+
   useEffect(() => {
     if (user) {
       setLangPrefs({
@@ -25,6 +33,45 @@ export default function Profile() {
       })
     }
   }, [user?.preferred_lang, user?.lang_fallback_strategy])
+
+  // Surface the result of a link round-trip (/callback redirects here with
+  // ?linked=<provider> or ?link_error=<message>), then clean the URL.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const linked = params.get('linked')
+    const err = params.get('link_error')
+    if (linked) setLinkMsg({ text: `Connected ${PROVIDER_LABELS[linked] || linked}.`, ok: true })
+    else if (err) setLinkMsg({ text: err, ok: false })
+    if (linked || err) {
+      window.history.replaceState({}, '', window.location.pathname)
+      queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
+    }
+  }, [])
+
+  async function connectProvider(provider: (typeof LINKABLE_PROVIDERS)[number]) {
+    setLinkMsg(null)
+    setBusyProvider(provider)
+    try {
+      await linkProvider(provider)  // navigates away on success
+    } catch {
+      setLinkMsg({ text: `Could not start linking ${PROVIDER_LABELS[provider]}.`, ok: false })
+      setBusyProvider(null)
+    }
+  }
+
+  async function disconnectProvider(provider: (typeof LINKABLE_PROVIDERS)[number]) {
+    setLinkMsg(null)
+    setBusyProvider(provider)
+    try {
+      await api.auth.unlink(provider)
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
+      setLinkMsg({ text: `Disconnected ${PROVIDER_LABELS[provider]}.`, ok: true })
+    } catch (e) {
+      setLinkMsg({ text: (e as Error)?.message || `Could not disconnect ${PROVIDER_LABELS[provider]}.`, ok: false })
+    } finally {
+      setBusyProvider(null)
+    }
+  }
 
   if (!user) return <p style={{ color: 'var(--text-dim)' }}>Loading…</p>
 
@@ -95,15 +142,80 @@ export default function Profile() {
 
         <div style={{ padding: '1rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           <Row label="Member since" value={memberSince} />
-          <Row
-            label="Connected accounts"
-            value={
-              user.connected_providers && user.connected_providers.length > 0
-                ? user.connected_providers.map(p => PROVIDER_LABELS[p] || p).join(', ')
-                : '—'
-            }
-          />
         </div>
+      </div>
+
+      {/* Connected accounts section */}
+      <div style={{
+        marginTop: '1.5rem',
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius)',
+        padding: '1.25rem 1.5rem',
+      }}>
+        <h2 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text)', marginBottom: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Connected accounts
+        </h2>
+        <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)', marginBottom: '1rem' }}>
+          Sign in with any linked provider. You can't remove your only one.
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          {LINKABLE_PROVIDERS.map(provider => {
+            const connected = (user.connected_providers || []).includes(provider)
+            const isOnly = connected && (user.connected_providers || []).length <= 1
+            const busy = busyProvider === provider
+            return (
+              <div key={provider} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '8px 12px', borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--border)', background: 'var(--bg)',
+              }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--font-size-sm)', color: 'var(--text)' }}>
+                  {PROVIDER_LABELS[provider]}
+                  {connected && (
+                    <span style={{ fontSize: '0.7rem', color: '#3fb950' }}>● connected</span>
+                  )}
+                </span>
+                {connected ? (
+                  <button
+                    onClick={() => disconnectProvider(provider)}
+                    disabled={busy || isOnly}
+                    title={isOnly ? "Can't remove your only sign-in method" : undefined}
+                    style={{
+                      padding: '4px 12px', borderRadius: 'var(--radius-sm)',
+                      background: 'transparent', border: '1px solid var(--border)',
+                      color: isOnly ? 'var(--text-dim)' : 'var(--error, #e06c75)',
+                      fontSize: 'var(--font-size-sm)',
+                      cursor: (busy || isOnly) ? 'default' : 'pointer', opacity: (busy || isOnly) ? 0.6 : 1,
+                    }}
+                  >
+                    {busy ? '…' : 'Disconnect'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => connectProvider(provider)}
+                    disabled={busy}
+                    style={{
+                      padding: '4px 12px', borderRadius: 'var(--radius-sm)',
+                      background: 'var(--accent)', border: 'none',
+                      color: '#0a0f1a', fontSize: 'var(--font-size-sm)', fontWeight: 600,
+                      cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.7 : 1,
+                    }}
+                  >
+                    {busy ? '…' : 'Connect'}
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {linkMsg && (
+          <p style={{ marginTop: '0.75rem', fontSize: 'var(--font-size-sm)', color: linkMsg.ok ? '#3fb950' : 'var(--error, #e06c75)' }}>
+            {linkMsg.text}
+          </p>
+        )}
       </div>
 
       {/* Language preferences section */}
