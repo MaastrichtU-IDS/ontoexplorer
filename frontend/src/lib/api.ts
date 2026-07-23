@@ -1020,6 +1020,13 @@ export const api = {
       request<{ authorize_url: string }>(`/auth/${provider}/link`),
     unlink: (provider: 'orcid' | 'github' | 'google') =>
       request<{ connected_providers: string[] }>(`/auth/${provider}/unlink`, { method: 'POST' }),
+    // Confirm merging another account (identified by the signed token that
+    // /callback handed back via ?merge_available) into the current one.
+    merge: (token: string) =>
+      request<{ moved: Record<string, number>; connected_providers: string[] }>('/auth/merge', {
+        method: 'POST',
+        body: JSON.stringify({ token }),
+      }),
   },
 
   ontologies: {
