@@ -266,6 +266,44 @@ const FIELD_LABEL: React.CSSProperties = {
 
 type CheckState = 'idle' | 'checking' | 'up_to_date' | 'update_queued' | 'no_source_url' | 'error'
 
+function versionLabel(v: OntologyVersion): string {
+  if (v.version_iri) return v.version_iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? v.version_iri
+  return v.id.slice(0, 8)
+}
+
+// Pick which version is the ontology's default ("latest"). Empty = automatic
+// (version-aware) selection; a specific version pins it. Reuses PATCH, so an
+// ontology owner/maintainer can set it (no admin needed).
+function DefaultVersionEditor({ ontology, versions }: { ontology: Ontology; versions: OntologyVersion[] }) {
+  const qc = useQueryClient()
+  const [error, setError] = useState<string | null>(null)
+  const ready = versions.filter(v => !['pending', 'failed', 'deprecated'].includes(v.status))
+  const mut = useMutation({
+    mutationFn: (cvid: string | null) => api.ontologies.patch(ontology.id, { current_version_id: cvid }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['ontologies'] }); setError(null) },
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Update failed'),
+  })
+  if (ready.length <= 1) {
+    return <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>—</span>
+  }
+  const value = ontology.current_version_id ?? ''
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+      <select
+        value={value}
+        onChange={e => mut.mutate(e.target.value || null)}
+        disabled={mut.isPending}
+        style={{ fontSize: 'var(--font-size-sm)', background: 'var(--bg-secondary)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px', maxWidth: '100%' }}
+      >
+        <option value="">Automatic (latest by version)</option>
+        {ready.map(v => <option key={v.id} value={v.id}>{versionLabel(v)}</option>)}
+      </select>
+      {value === '' && <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>auto</span>}
+      {error && <span style={{ color: 'var(--error, #e06c75)', fontSize: 11 }}>{error}</span>}
+    </div>
+  )
+}
+
 function OntologyRow({ ontology }: { ontology: Ontology }) {
   const [confirming, setConfirming] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -351,6 +389,9 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
 
               <span style={FIELD_LABEL}>groups</span>
               <GroupsEditor ontology={ontology} />
+
+              <span style={FIELD_LABEL}>default version</span>
+              <DefaultVersionEditor ontology={ontology} versions={versionsData?.versions ?? []} />
 
               <span style={FIELD_LABEL}>version IRI</span>
               {latest?.version_iri ? (

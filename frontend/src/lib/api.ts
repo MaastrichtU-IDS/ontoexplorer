@@ -227,6 +227,7 @@ export interface Ontology {
   title: string | null
   groups?: string[]
   created_at: string
+  current_version_id?: string | null
   latest_version?: OntologyVersion | null
   class_count?: number | null
   property_count?: number | null
@@ -875,6 +876,7 @@ export interface AdminOntologyEntry {
   shortname: string | null
   label: string | null
   source_url: string | null
+  current_version_id: string | null
   version_id: string
   version_iri: string | null
   version_count: number
@@ -1096,7 +1098,7 @@ export const api = {
       )
     },
     get: (id: string) => request<Ontology>(`/ontologies/${id}`),
-    patch: (id: string, body: { shortname?: string | null; title?: string | null; preferred_lang?: string | null; groups?: string[] }) =>
+    patch: (id: string, body: { shortname?: string | null; title?: string | null; preferred_lang?: string | null; groups?: string[]; current_version_id?: string | null }) =>
       request<Ontology>(`/ontologies/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(body),

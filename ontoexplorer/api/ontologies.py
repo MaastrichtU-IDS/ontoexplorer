@@ -365,6 +365,25 @@ async def patch_ontology(
     if "title" in body:
         ontology.title = body["title"] or None
 
+    if "current_version_id" in body:
+        # Pin the default ("latest") version, overriding version-aware auto
+        # selection. null clears the pin (back to automatic).
+        cvid = body["current_version_id"]
+        if cvid is not None:
+            v = (await db.execute(
+                select(OntologyVersion).where(
+                    OntologyVersion.id == cvid,
+                    OntologyVersion.ontology_id == ontology_id,
+                )
+            )).scalar_one_or_none()
+            if not v:
+                raise HTTPException(status_code=404, detail="Version not found for this ontology")
+            if v.status in ("pending", "failed", "deprecated"):
+                raise HTTPException(status_code=422, detail=f"Version is not ready (status={v.status})")
+        ontology.current_version_id = cvid
+        from ontoexplorer.modules.search.versions import invalidate_latest_ready_versions_cache
+        invalidate_latest_ready_versions_cache()
+
     await db.commit()
     await db.refresh(ontology)
     return _ontology_dict(ontology)
@@ -2888,7 +2907,7 @@ async def _get_version_or_404(db: AsyncSession, ontology_id: str, version_id: st
 
 
 def _ontology_dict(o: Ontology) -> dict:
-    return {"id": o.id, "iri": o.iri, "shortname": o.shortname, "title": o.title, "groups": o.groups or [], "auto_sync": o.auto_sync, "created_at": o.created_at.isoformat()}
+    return {"id": o.id, "iri": o.iri, "shortname": o.shortname, "title": o.title, "groups": o.groups or [], "auto_sync": o.auto_sync, "current_version_id": o.current_version_id, "created_at": o.created_at.isoformat()}
 
 
 def _version_dict(v: OntologyVersion) -> dict:
