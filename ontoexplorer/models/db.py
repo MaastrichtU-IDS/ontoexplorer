@@ -106,10 +106,22 @@ class Ontology(Base):
     owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     auto_sync: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     preferred_lang: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Admin-pinned default version. When set (and still ready), it overrides the
+    # automatic version-aware "latest" selection. Nullable FK; SET NULL so
+    # deleting the pinned version falls back to automatic selection.
+    current_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("versions.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     owner: Mapped[User | None] = relationship(back_populates="ontologies")
-    versions: Mapped[list["OntologyVersion"]] = relationship(back_populates="ontology", cascade="all, delete-orphan")
+    # `foreign_keys` is explicit because there are now two FKs between ontologies
+    # and versions (versions.ontology_id and ontologies.current_version_id); this
+    # relationship is the ontology_id one.
+    versions: Mapped[list["OntologyVersion"]] = relationship(
+        back_populates="ontology",
+        cascade="all, delete-orphan",
+        foreign_keys="OntologyVersion.ontology_id",
+    )
 
 
 class OntologyVersion(Base):
@@ -127,7 +139,8 @@ class OntologyVersion(Base):
     triple_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    ontology: Mapped[Ontology] = relationship(back_populates="versions")
+    ontology: Mapped[Ontology] = relationship(
+        back_populates="versions", foreign_keys="OntologyVersion.ontology_id")
     imports: Mapped[list["OntologyImport"]] = relationship(back_populates="version", cascade="all, delete-orphan")
     jobs: Mapped[list["Job"]] = relationship(back_populates="version", passive_deletes=True)
 
