@@ -150,6 +150,20 @@ async def oauth_callback(
     userinfo = await fetch_userinfo(provider, access_token, orcid_id=orcid_id)
     provider_user_id, email, display_name = extract_user_info(provider, userinfo)
 
+    # ORCID's OAuth token response carries the authoritative iD; the userinfo
+    # /person payload does not reliably include it. Prefer the token value.
+    if provider == "orcid" and orcid_id:
+        provider_user_id = str(orcid_id)
+
+    # NEVER proceed without a real provider id. A null/"None" id would match the
+    # (provider, "None") key for every such login and collapse them all onto one
+    # account (a privilege-escalation bug we hit with ORCID).
+    if not provider_user_id or provider_user_id == "None":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not determine your {provider} account identifier; login aborted.",
+        )
+
     from datetime import UTC, datetime, timedelta
     expires_at = None
     if token.get("expires_in"):
