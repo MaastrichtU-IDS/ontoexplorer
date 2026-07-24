@@ -1161,6 +1161,71 @@ const STANDARDIZED_ORDER: string[] = [
 ]
 const STANDARDIZED_RANK = new Map(STANDARDIZED_ORDER.map((name, i) => [name, i]))
 
+// Always-visible table of a fixed set of predicate assertions (e.g. an
+// individual's object- or data-property assertions). Unlike AnnotationsSection
+// there is NO standardized/original toggle — these are asserted facts, not
+// annotations, so they must always be shown.
+function AssertionsSection({
+  label, properties, preds, propertyLabels, roleMap, slug, versionId, lang,
+}: {
+  label: string
+  properties: Record<string, { value: string; lang: string | null }[]>
+  preds: string[]
+  propertyLabels: Record<string, string>
+  roleMap: Map<string, string>
+  slug: string
+  versionId: string
+  lang?: string | null
+}) {
+  if (preds.length === 0) return null
+  const rows = preds
+    .map(pred => ({
+      pred,
+      values: properties[pred] ?? [],
+      displayLabel: resolvePredLabel(pred, 'original', propertyLabels, roleMap),
+    }))
+    .filter(r => r.values.length > 0)
+    .sort((a, b) => a.displayLabel.localeCompare(b.displayLabel))
+  if (rows.length === 0) return null
+
+  return (
+    <Section label={label}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-size-sm)' }}>
+        <tbody>
+          {rows.map(({ pred, values, displayLabel }) => {
+            const iris = values.filter(v => v.value.startsWith('http://') || v.value.startsWith('https://'))
+            const literals = values.filter(v => !v.value.startsWith('http://') && !v.value.startsWith('https://'))
+            const filteredLiterals = filterLangLabels(literals, lang ?? null)
+            const displayVals = [...iris, ...filteredLiterals]
+            return (
+              <tr key={pred} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', verticalAlign: 'top' }}>
+                <td style={{ padding: '4px 10px 4px 0', color: 'var(--text-dim)', whiteSpace: 'nowrap', width: 1, fontSize: 11 }}
+                    title={pred}>
+                  {displayLabel}
+                </td>
+                <td style={{ padding: '4px 0', color: 'var(--text-muted)', wordBreak: 'break-word' }}>
+                  {displayVals.map((entry, i) => {
+                    const v = entry.value
+                    const isIri = v.startsWith('http://') || v.startsWith('https://')
+                    return (
+                      <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 2 }}>
+                        {isIri
+                          ? <IriLink iri={v} label={v.split(/[#/]/).pop() ?? v} slug={slug} vid={versionId} />
+                          : <TruncatedLiteral value={v} />}
+                        <LangBadge lang={entry.lang} />
+                      </div>
+                    )
+                  })}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </Section>
+  )
+}
+
 function AnnotationsSection({
   properties, propertyLabels, handled, roleMap, slug, versionId, lang,
 }: {
@@ -1249,6 +1314,17 @@ function IndividualBody({ data, slug, roleMap, versionId, lang }: {
   versionId: string
   lang?: string | null
 }) {
+  // Split asserted predicates by their OWL type so object- and data-property
+  // assertions (the substantive ABox facts) get their own always-visible
+  // sections. Only genuine annotation properties (and unindexed predicates)
+  // fall through to AnnotationsSection, whose standardized/original toggle is
+  // meant for annotations alone — not relational assertions.
+  const objectPreds = Object.keys(data.rawProperties)
+    .filter(p => data.propertyTypes[p] === 'object_property' && !HANDLED_PREDICATES.has(p))
+  const dataPreds = Object.keys(data.rawProperties)
+    .filter(p => data.propertyTypes[p] === 'data_property' && !HANDLED_PREDICATES.has(p))
+  const annotationHandled = new Set([...HANDLED_PREDICATES, ...objectPreds, ...dataPreds])
+
   return (
     <div style={{ flex: 1, padding: '10px 16px', overflow: 'auto' }}>
       <LabeledTextBlock
@@ -1263,10 +1339,28 @@ function IndividualBody({ data, slug, roleMap, versionId, lang }: {
         lang={lang}
       />
 
+      <AssertionsSection
+        label="Object property assertions"
+        properties={data.rawProperties}
+        preds={objectPreds}
+        propertyLabels={data.propertyLabels}
+        roleMap={roleMap}
+        slug={slug} versionId={versionId} lang={lang}
+      />
+
+      <AssertionsSection
+        label="Data property assertions"
+        properties={data.rawProperties}
+        preds={dataPreds}
+        propertyLabels={data.propertyLabels}
+        roleMap={roleMap}
+        slug={slug} versionId={versionId} lang={lang}
+      />
+
       <AnnotationsSection
         properties={data.rawProperties}
         propertyLabels={data.propertyLabels}
-        handled={HANDLED_PREDICATES}
+        handled={annotationHandled}
         roleMap={roleMap}
         slug={slug} versionId={versionId} lang={lang}
       />
