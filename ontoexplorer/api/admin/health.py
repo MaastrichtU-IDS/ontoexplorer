@@ -193,6 +193,7 @@ async def admin_overview(
     rows = (await db.execute(
         text("""
             SELECT o.id, o.iri, o.shortname, o.title AS ont_title,
+                   o.current_version_id,
                    v.id AS version_id, v.version_iri, v.triple_count,
                    v.status AS ingestion_status,
                    v.created_at AS version_created_at, v.source_url,
@@ -207,6 +208,21 @@ async def admin_overview(
             ORDER BY o.shortname NULLS LAST, o.iri
         """)
     )).mappings().all()
+
+    # The SQL above picks the created_at-latest version per ontology; override
+    # with the pin-aware, version-aware default so the admin panel's "latest"
+    # matches the rest of the app (loading an older release must not hijack it).
+    from ontoexplorer.modules.search.versions import latest_versions_for
+    rows = [dict(r) for r in rows]
+    _defaults = await latest_versions_for(db, [str(r["id"]) for r in rows])
+    for r in rows:
+        d = _defaults.get(str(r["id"]))
+        if d is not None:
+            r["version_id"] = d.id
+            r["version_iri"] = d.version_iri
+            r["triple_count"] = d.triple_count
+            r["ingestion_status"] = d.status
+            r["version_created_at"] = d.created_at
 
     version_ids = [str(r["version_id"]) for r in rows]
     embed_counts: dict[str, int] = {}
@@ -242,6 +258,7 @@ async def admin_overview(
             "shortname": row["shortname"],
             "label": label,
             "source_url": row["source_url"],
+            "current_version_id": row["current_version_id"],
             "version_id": vid,
             "version_iri": row["version_iri"],
             "version_count": int(row["version_count"]),

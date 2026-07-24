@@ -58,7 +58,11 @@ async def admin_ontology_versions(
     embed_counts = {str(r.version_id): int(r.cnt) for r in count_rows}
 
     search_r = await asyncio.to_thread(_search_redis)
-    latest_id = versions[0].id
+    # Pin-aware, version-aware default (not merely the newest by created_at), so
+    # the admin "latest" marker matches the rest of the app.
+    from ontoexplorer.modules.search.versions import latest_versions_for
+    _default = (await latest_versions_for(db, [ontology_id])).get(ontology_id)
+    latest_id = _default.id if _default is not None else versions[0].id
 
     async def _entry(idx: int, v: OntologyVersion) -> dict:
         vid = v.id

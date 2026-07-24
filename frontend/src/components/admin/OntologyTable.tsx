@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AdminOntologyEntry, AdminVersionEntry, api, slugFromIri } from '../../lib/api'
 import { usePagedTable } from '../../hooks/usePagedTable'
 import { TablePager } from '../TablePager'
@@ -288,6 +288,7 @@ export function OntologyTable({
                     slug={row.shortname ?? slugFromIri(row.iri)}
                     colSpan={10}
                     latestVersionId={row.version_id}
+                    currentVersionId={row.current_version_id}
                     pairDiffStates={pairDiffStates}
                     onPairDiff={onPairDiff}
                     versionIndexStates={versionIndexStates}
@@ -328,6 +329,7 @@ interface VersionsSubRowsProps {
   slug: string
   colSpan: number
   latestVersionId: string
+  currentVersionId: string | null
   pairDiffStates: Record<string, UpdateState>
   onPairDiff: (fromVid: string, toVid: string) => void
   versionIndexStates: Record<string, UpdateState>
@@ -343,7 +345,7 @@ interface VersionsSubRowsProps {
 }
 
 function VersionsSubRows({
-  ontologyId, slug, colSpan, latestVersionId,
+  ontologyId, slug, colSpan, latestVersionId, currentVersionId,
   pairDiffStates, onPairDiff,
   versionIndexStates, onVersionIndex,
   versionEmbedStates, onVersionEmbed,
@@ -351,10 +353,20 @@ function VersionsSubRows({
   versionProfileStates, onVersionDetectProfile,
   versionIngestStates, onVersionIngest,
 }: VersionsSubRowsProps) {
+  const qc = useQueryClient()
   const { data, isLoading, isError } = useQuery({
     queryKey: ['admin-versions', ontologyId],
     queryFn: () => api.admin.versions(ontologyId),
     refetchInterval: 10_000,
+  })
+
+  const setDefault = useMutation({
+    mutationFn: (cvid: string | null) => api.ontologies.patch(ontologyId, { current_version_id: cvid }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-versions', ontologyId] })
+      qc.invalidateQueries({ queryKey: ['admin', 'overview'] })
+      qc.invalidateQueries({ queryKey: ['ontologies'] })
+    },
   })
 
   if (isLoading) {
@@ -377,18 +389,54 @@ function VersionsSubRows({
   }
 
   const others: AdminVersionEntry[] = data.versions.filter(v => v.version_id !== latestVersionId)
+
+  const vlabel = (v: AdminVersionEntry) =>
+    v.version_iri ? (v.version_iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? v.version_iri) : v.version_id.slice(0, 8)
+  const readyVersions = data.versions.filter(
+    v => !['deprecated', 'pending', 'failed'].includes(v.ingestion_status))
+  const currentDefault = readyVersions.find(v => v.version_id === latestVersionId) ?? readyVersions[0]
+
+  // "Default version" picker — pin a specific version or return to automatic
+  // (version-aware) selection. Same PATCH the dashboard uses.
+  const defaultRow = readyVersions.length > 1 ? (
+    <tr key="__default_picker" style={{ background: 'rgba(88,166,255,0.06)' }}>
+      <td />
+      <td colSpan={colSpan - 1} style={{ padding: '8px 10px', fontSize: 11 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ color: 'var(--text-dim)' }}>Default version:</span>
+          <select
+            value={currentVersionId ?? ''}
+            onChange={e => setDefault.mutate(e.target.value || null)}
+            disabled={setDefault.isPending}
+            style={{ fontSize: 11, background: 'var(--bg-secondary)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px' }}
+          >
+            <option value="">Automatic (latest by version)</option>
+            {readyVersions.map(v => <option key={v.version_id} value={v.version_id}>{vlabel(v)}</option>)}
+          </select>
+          <span style={{ color: 'var(--text-dim)' }}>
+            {currentVersionId ? 'pinned' : 'auto'}{currentDefault ? ` · currently ${vlabel(currentDefault)}` : ''}
+          </span>
+        </div>
+      </td>
+    </tr>
+  ) : null
+
   if (others.length === 0) {
     return (
-      <tr>
-        <td colSpan={colSpan} style={{ padding: '8px 16px', color: 'var(--text-dim)', fontSize: 11 }}>
-          No older versions
-        </td>
-      </tr>
+      <>
+        {defaultRow}
+        <tr>
+          <td colSpan={colSpan} style={{ padding: '8px 16px', color: 'var(--text-dim)', fontSize: 11 }}>
+            No older versions
+          </td>
+        </tr>
+      </>
     )
   }
 
   return (
     <>
+      {defaultRow}
       {others.map(v => (
         <tr key={v.version_id} style={{ background: 'rgba(255,255,255,0.02)' }}>
           <td />
