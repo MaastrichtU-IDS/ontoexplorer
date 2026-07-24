@@ -9,8 +9,8 @@ from __future__ import annotations
 import hashlib
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import text
+from fastapi import APIRouter, Body, Depends, HTTPException
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.database import get_db
@@ -211,6 +211,45 @@ async def admin_queue_reason(
 
     task = reason_ontology.delay(version_id=str(version.id))
     return {"status": "queued", "task_id": task.id}
+
+
+@router.put("/ontologies/{ontology_id}/current-version",
+             summary="Pin (or clear) the default version of an ontology")
+async def admin_set_current_version(
+    ontology_id: str,
+    body: dict = Body(default={}),
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pin the ontology's default ("latest") version to `version_id`, overriding
+    the automatic version-aware selection. Pass `version_id: null` to clear the
+    pin and return to automatic selection."""
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    from ontoexplorer.modules.search.versions import invalidate_latest_ready_versions_cache
+
+    ont = (await db.execute(
+        select(Ontology).where(Ontology.id == ontology_id)
+    )).scalar_one_or_none()
+    if not ont:
+        raise HTTPException(status_code=404, detail="Ontology not found")
+
+    version_id = body.get("version_id")
+    if version_id is not None:
+        v = (await db.execute(
+            select(OntologyVersion).where(
+                OntologyVersion.id == version_id,
+                OntologyVersion.ontology_id == ontology_id,
+            )
+        )).scalar_one_or_none()
+        if not v:
+            raise HTTPException(status_code=404, detail="Version not found for this ontology")
+        if v.status in ("pending", "failed", "deprecated"):
+            raise HTTPException(status_code=422, detail=f"Version is not ready (status={v.status})")
+
+    ont.current_version_id = version_id  # None clears the pin
+    await db.commit()
+    invalidate_latest_ready_versions_cache()
+    return {"ontology_id": ontology_id, "current_version_id": version_id}
 
 
 @router.post("/ontologies/{ontology_id}/detect-profile", summary="Queue OWL profile detection for one ontology")

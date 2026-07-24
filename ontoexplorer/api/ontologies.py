@@ -410,28 +410,11 @@ async def list_ontologies(
     result = await db.execute(stmt)
     ontologies = result.scalars().all()
 
-    # Batch-load the latest version per ontology in one SQL query
+    # Default version per ontology: pin-aware + version-aware (shared with the
+    # OLS/global helpers), so loading an older release never hijacks the default.
+    from ontoexplorer.modules.search.versions import latest_versions_for
     ontology_ids = [o.id for o in ontologies]
-    latest_by_oid: dict = {}
-    if ontology_ids:
-        subq = (
-            select(
-                OntologyVersion.ontology_id,
-                func.max(OntologyVersion.created_at).label("max_created"),
-            )
-            .where(OntologyVersion.ontology_id.in_(ontology_ids))
-            .group_by(OntologyVersion.ontology_id)
-            .subquery()
-        )
-        vr = await db.execute(
-            select(OntologyVersion).join(
-                subq,
-                (OntologyVersion.ontology_id == subq.c.ontology_id)
-                & (OntologyVersion.created_at == subq.c.max_created),
-            )
-        )
-        for v in vr.scalars().all():
-            latest_by_oid[v.ontology_id] = v
+    latest_by_oid: dict = await latest_versions_for(db, ontology_ids)
 
     # Batch-load cached stats from Redis (no Oxigraph queries)
     stats_by_vid: dict = {}
