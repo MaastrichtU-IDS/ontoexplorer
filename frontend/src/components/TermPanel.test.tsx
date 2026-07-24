@@ -89,7 +89,7 @@ vi.mock('../lib/api', async (importOriginal) => {
     ...actual,
     api: {
       ...actual.api,
-      ontologies: { ...actual.api.ontologies, justification: vi.fn() },
+      ontologies: { ...actual.api.ontologies, justification: vi.fn(), terms: vi.fn() },
       reasoners: { list: vi.fn() },
     },
   }
@@ -98,6 +98,7 @@ vi.mock('../lib/api', async (importOriginal) => {
 import { api } from '../lib/api'
 const mockJustification = api.ontologies.justification as ReturnType<typeof vi.fn>
 const mockReasonersList = api.reasoners.list as ReturnType<typeof vi.fn>
+const mockTerms = api.ontologies.terms as ReturnType<typeof vi.fn>
 
 function wrap(ui: React.ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -113,6 +114,10 @@ beforeEach(() => {
   mockJustification.mockReset()
   mockReasonersList.mockReset()
   mockReasonersList.mockResolvedValue([])
+  // Default: classes have no instances (so the Instances section stays hidden
+  // and unrelated class tests are unaffected). Specific tests override this.
+  mockTerms.mockReset()
+  mockTerms.mockResolvedValue({ terms: [], offset: 0, limit: 50, parent: null })
 })
 
 test('shows term label and definition', () => {
@@ -174,6 +179,58 @@ describe('individual object-property assertions', () => {
     expect(screen.getByText('a non-standard annotation')).toBeInTheDocument()
     // The object-property value is not duplicated into the annotations table.
     expect(screen.getAllByRole('link', { name: 'bob' })).toHaveLength(1)
+  })
+
+  test('caps a high-fan-out assertion and reveals the rest via "show N more"', () => {
+    const KNOWS = 'http://example.org/family#knows'
+    const targets = Array.from({ length: 25 }, (_, i) => ({
+      value: `http://example.org/family#p${i}`,
+      lang: null,
+    }))
+    mockCurrentTerm = {
+      ...mockTerm,
+      iri: 'http://example.org/family#hub',
+      entityType: 'individual' as const,
+      definition: null,
+      rawProperties: { [KNOWS]: targets },
+      propertyLabels: { [KNOWS]: 'knows' },
+      propertyTypes: { [KNOWS]: 'object_property' },
+    } as unknown as typeof mockTerm
+
+    wrap(<TermPanel ontologyId="family" versionId="v1" termIri="http://example.org/family#hub" slug="family" />)
+
+    // Only the first 20 of 25 values render initially.
+    expect(screen.getByRole('link', { name: 'p0' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'p19' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'p20' })).not.toBeInTheDocument()
+
+    // Expander reveals the remaining 5.
+    fireEvent.click(screen.getByRole('button', { name: 'show 5 more' }))
+    expect(screen.getByRole('link', { name: 'p24' })).toBeInTheDocument()
+  })
+})
+
+describe('class instances section', () => {
+  test('lists a class\'s individuals, paged, and hidden when there are none', async () => {
+    // mockTerm is a class; return two instances for it.
+    mockTerms.mockResolvedValue({
+      terms: [
+        { iri: 'http://ex.org/i/alice', label: 'Alice', lang: null, has_children: false, source: '' },
+        { iri: 'http://ex.org/i/bob', label: 'Bob', lang: null, has_children: false, source: '' },
+      ],
+      offset: 0, limit: 50, parent: 'http://purl.obolibrary.org/obo/GO_0008219',
+    })
+
+    wrap(<TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" slug="go" />)
+
+    expect(await screen.findByText('Instances (2)')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Alice' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Bob' })).toBeInTheDocument()
+    // Requested individuals for this class IRI, not classes.
+    expect(mockTerms).toHaveBeenCalledWith(
+      'go', 'v1', 'http://purl.obolibrary.org/obo/GO_0008219', 'individual',
+      false, true, 50, 0, undefined,
+    )
   })
 })
 

@@ -42,6 +42,25 @@ function IndividualList({ ontologyId, versionId, selectedIri, onSelect, lang }: 
 
   const terms: Term[] = data?.pages.flatMap(p => p.terms) ?? []
 
+  // Auto-load the next page when a sentinel at the list's end scrolls into view,
+  // so large individual sets fill in on scroll instead of requiring repeated
+  // clicks. The "Load more" button stays as a keyboard/fallback affordance.
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const el = sentinelRef.current
+    if (!el || !hasNextPage) return
+    const obs = new IntersectionObserver(
+      entries => {
+        if (entries[0]?.isIntersecting && hasNextPage && !isFetchingNextPage) {
+          fetchNextPage()
+        }
+      },
+      { rootMargin: '200px' },
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+
   if (isLoading) return (
     <div style={{ padding: '6px 12px', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</div>
   )
@@ -79,19 +98,22 @@ function IndividualList({ ontologyId, versionId, selectedIri, onSelect, lang }: 
         })}
       </ul>
       {hasNextPage && (
-        <button
-          onClick={() => fetchNextPage()}
-          disabled={isFetchingNextPage}
-          style={{
-            display: 'block', width: '100%', padding: '6px',
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: 'var(--text-dim)', fontSize: 11, textAlign: 'center',
-          }}
-          onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent)')}
-          onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-dim)')}
-        >
-          {isFetchingNextPage ? 'Loading…' : `Load more (${terms.length} loaded)`}
-        </button>
+        <>
+          <button
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+            style={{
+              display: 'block', width: '100%', padding: '6px',
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: 'var(--text-dim)', fontSize: 11, textAlign: 'center',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent)')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-dim)')}
+          >
+            {isFetchingNextPage ? 'Loading…' : `Load more (${terms.length} loaded)`}
+          </button>
+          <div ref={sentinelRef} aria-hidden style={{ height: 1 }} />
+        </>
       )}
     </div>
   )

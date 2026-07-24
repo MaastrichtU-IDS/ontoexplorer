@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTerm, useTermExpanded } from '../hooks/useTerm'
 import { useOntologyProfile } from '../hooks/useOntologyProfile'
 import { useOntologyMeta } from '../hooks/useOntologyMeta'
-import { ClassRef, ClassExprNode, InferredExprEntry, PropertyUsage, ClassUsageEntry, SchemaProperty, InheritedSchemaProperty, OntologyProfileData, OntologyMetaProfile, api } from '../lib/api'
+import { ClassRef, ClassExprNode, InferredExprEntry, PropertyUsage, ClassUsageEntry, SchemaProperty, InheritedSchemaProperty, OntologyProfileData, OntologyMetaProfile, Term, api } from '../lib/api'
 import SourceBadge from './SourceBadge'
 
 function CopyChip({ text, label, title }: { text: string; label?: string; title?: string }) {
@@ -853,6 +853,54 @@ function UsagePager<T>({ initial, initialHasMore, fetchPage, children }: {
 }
 
 
+// Paged list of a class's asserted individuals (instances). Fetches the first
+// page eagerly to decide whether to render the section at all, then pages the
+// rest through UsagePager. Hidden entirely when the class has no instances, so
+// TBox-only classes show nothing.
+const INSTANCES_PAGE = 50
+
+function ClassInstances({ ontologyId, versionId, classIri, slug, lang }: {
+  ontologyId: string
+  versionId: string
+  classIri: string
+  slug: string
+  lang?: string | null
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['class-instances', ontologyId, versionId, classIri, lang ?? ''],
+    queryFn: () => api.ontologies.terms(ontologyId, versionId, classIri, 'individual', false, true, INSTANCES_PAGE, 0, lang),
+    staleTime: 60_000,
+  })
+  if (isLoading) return null
+  const first = data?.terms ?? []
+  if (first.length === 0) return null
+
+  const more = first.length === INSTANCES_PAGE
+  return (
+    <Section label={`Instances (${first.length}${more ? '+' : ''})`}>
+      <UsagePager<Term>
+        key={`${classIri}:${lang ?? ''}`}
+        initial={first}
+        initialHasMore={more}
+        fetchPage={async (offset) => {
+          const page = await api.ontologies.terms(ontologyId, versionId, classIri, 'individual', false, true, INSTANCES_PAGE, offset, lang)
+          return { items: page.terms, has_more: page.terms.length === INSTANCES_PAGE }
+        }}
+      >
+        {(rows) => (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {rows.map(t => (
+              <div key={t.iri} style={{ paddingLeft: 8 }}>
+                <IriLink iri={t.iri} label={t.label ?? t.iri.split(/[#/]/).pop() ?? t.iri} slug={slug} vid={versionId} />
+              </div>
+            ))}
+          </div>
+        )}
+      </UsagePager>
+    </Section>
+  )
+}
+
 function UsageTable({ usage, propIri, propLabel, slug, vid }: {
   usage: PropertyUsage[]; propIri: string; propLabel: string; slug: string; vid: string
 }) {
@@ -1161,6 +1209,49 @@ const STANDARDIZED_ORDER: string[] = [
 ]
 const STANDARDIZED_RANK = new Map(STANDARDIZED_ORDER.map((name, i) => [name, i]))
 
+// A single predicate's value list, capped so a high-fan-out assertion (e.g. an
+// individual linked to thousands of others, or a long sameAs chain) doesn't
+// render thousands of DOM nodes at once. Shows the first VALUE_CAP values with
+// a "show N more" expander.
+const VALUE_CAP = 20
+
+function PropertyValueCell({ values, slug, versionId }: {
+  values: { value: string; lang: string | null }[]
+  slug: string
+  versionId: string
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const shown = expanded ? values : values.slice(0, VALUE_CAP)
+  const hiddenCount = values.length - VALUE_CAP
+  return (
+    <>
+      {shown.map((entry, i) => {
+        const v = entry.value
+        const isIri = v.startsWith('http://') || v.startsWith('https://')
+        return (
+          <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 2 }}>
+            {isIri
+              ? <IriLink iri={v} label={v.split(/[#/]/).pop() ?? v} slug={slug} vid={versionId} />
+              : <TruncatedLiteral value={v} />}
+            <LangBadge lang={entry.lang} />
+          </div>
+        )
+      })}
+      {hiddenCount > 0 && (
+        <button
+          onClick={() => setExpanded(e => !e)}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--accent)', fontSize: 11, padding: '2px 0 0 0',
+          }}
+        >
+          {expanded ? 'show less' : `show ${hiddenCount} more`}
+        </button>
+      )}
+    </>
+  )
+}
+
 // Always-visible table of a fixed set of predicate assertions (e.g. an
 // individual's object- or data-property assertions). Unlike AnnotationsSection
 // there is NO standardized/original toggle — these are asserted facts, not
@@ -1204,18 +1295,7 @@ function AssertionsSection({
                   {displayLabel}
                 </td>
                 <td style={{ padding: '4px 0', color: 'var(--text-muted)', wordBreak: 'break-word' }}>
-                  {displayVals.map((entry, i) => {
-                    const v = entry.value
-                    const isIri = v.startsWith('http://') || v.startsWith('https://')
-                    return (
-                      <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 2 }}>
-                        {isIri
-                          ? <IriLink iri={v} label={v.split(/[#/]/).pop() ?? v} slug={slug} vid={versionId} />
-                          : <TruncatedLiteral value={v} />}
-                        <LangBadge lang={entry.lang} />
-                      </div>
-                    )
-                  })}
+                  <PropertyValueCell values={displayVals} slug={slug} versionId={versionId} />
                 </td>
               </tr>
             )
@@ -1283,18 +1363,7 @@ function AnnotationsSection({
                     {displayLabel}
                   </td>
                   <td style={{ padding: '4px 0', color: 'var(--text-muted)', wordBreak: 'break-word' }}>
-                    {displayVals.map((entry, i) => {
-                      const v = entry.value
-                      const isIri = v.startsWith('http://') || v.startsWith('https://')
-                      return (
-                        <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 2 }}>
-                          {isIri
-                            ? <IriLink iri={v} label={v.split(/[#/]/).pop() ?? v} slug={slug} vid={versionId} />
-                            : <TruncatedLiteral value={v} />}
-                          <LangBadge lang={entry.lang} />
-                        </div>
-                      )
-                    })}
+                    <PropertyValueCell values={displayVals} slug={slug} versionId={versionId} />
                   </td>
                 </tr>
               )
@@ -1676,6 +1745,16 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
           <Section label="General Class Axioms">
             <ClassExprList exprs={data.generalClassAxioms} slug={slug} vid={versionId} />
           </Section>
+        )}
+
+        {ontologyId && (
+          <ClassInstances
+            ontologyId={ontologyId}
+            versionId={versionId}
+            classIri={data.iri}
+            slug={slug}
+            lang={lang}
+          />
         )}
 
         {hasSchemaDomain && (
