@@ -3,7 +3,7 @@
 #   - "whelk"    (EL): py-whelk = whelk-rs, in-process via py-horned-owl. Default.
 #   - "rdflib"   (EL, legacy): pure-Python structural classifier in classifier.py.
 #   - "rustdl"   (DL SROIQ): PyO3 binding, installed from the PyPI manylinux wheel
-#                (rustdl==0.3.23, tag v0.3.23). Classify + native sound justify
+#                (rustdl==0.3.41, tag v0.3.41). Classify + native sound justify
 #                + render_manchester (used by the whelk backend's justify path too).
 #   - "konclude" (OWL 2, all profiles): prebuilt binary from konclude/konclude:latest,
 #                invoked as a subprocess. Classify + consistency (no justify).
@@ -42,7 +42,7 @@ RUN pip install --no-cache-dir \
     "py-horned-owl==1.4.*" \
     /tmp/wheels/py_whelk-*.whl \
     "pyoxigraph>=0.4" \
-    "rustdl==0.3.23" \
+    "rustdl==0.3.41" \
  && rm -rf /tmp/wheels
 
 # Konclude: bundle the prebuilt binary from the official image (linux/amd64).
