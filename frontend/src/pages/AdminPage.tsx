@@ -8,14 +8,16 @@ import { JobsTable } from '../components/admin/JobsTable'
 import { OntologyTable } from '../components/admin/OntologyTable'
 import { WorkersPanel } from '../components/admin/WorkersPanel'
 import { StarterQueriesPanel } from '../components/admin/StarterQueriesPanel'
+import { MaintainerRequestsPanel } from '../components/admin/MaintainerRequestsPanel'
 import { SectionLabel, ServiceCard, UpdateState, ontologyDisplayName } from '../components/admin/shared'
 
-type Tab = 'ontology' | 'sparql' | 'jobs'
-const TAB_VALUES: Tab[] = ['ontology', 'sparql', 'jobs']
+type Tab = 'ontology' | 'sparql' | 'jobs' | 'maintainers'
+const TAB_VALUES: Tab[] = ['ontology', 'sparql', 'jobs', 'maintainers']
 const TAB_LABELS: Record<Tab, string> = {
   ontology: 'Ontology',
   sparql: 'SPARQL queries',
   jobs: 'Jobs',
+  maintainers: 'Maintainer requests',
 }
 
 export default function AdminPage() {
@@ -356,6 +358,10 @@ export default function AdminPage() {
           </div>
           <JobsTable jobs={data!.jobs} />
         </>
+      )}
+
+      {tab === 'maintainers' && (
+        <MaintainerRequestsPanel />
       )}
 
     </div>

@@ -9,7 +9,7 @@ from jose import JWTError
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ontoexplorer.config import can_upload, get_settings
+from ontoexplorer.config import can_upload, get_settings, is_admin
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import ApiKey, User
 from ontoexplorer.modules.auth.session import decode_access_token
@@ -92,4 +92,11 @@ async def require_uploader(user: User = Depends(require_auth)) -> User:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not allowed to add ontologies. Contact an admin to be added to the uploader allowlist.",
         )
+    return user
+
+
+async def require_admin(user: User = Depends(require_auth)) -> User:
+    """Dependency that raises 403 if the authenticated user is not an admin."""
+    if not is_admin(user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return user

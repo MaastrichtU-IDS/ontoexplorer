@@ -333,8 +333,9 @@ async def patch_ontology(
     body = await request.json()
     ontology = await _get_ontology_or_404(db, ontology_id)
 
-    if ontology.owner_id is not None and ontology.owner_id != user.id:
-        raise HTTPException(status_code=403, detail="Not the owner")
+    from ontoexplorer.modules.auth.permissions import can_edit_ontology
+    if not await can_edit_ontology(db, user, ontology):
+        raise HTTPException(status_code=403, detail="You are not allowed to edit this ontology")
 
     if "shortname" in body:
         shortname = body["shortname"]

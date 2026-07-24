@@ -158,9 +158,12 @@ def is_admin(user) -> bool:
 
 
 def can_upload(user) -> bool:
-    """Return True if the user may add ontologies: admins always, plus any email
-    in the UPLOAD_ALLOWED_EMAILS allowlist. Empty allowlist => admins only."""
+    """Return True if the user may add ontologies: admins always; users granted
+    the uploader role (is_uploader, via an approved maintainer request); plus any
+    email in the UPLOAD_ALLOWED_EMAILS allowlist. Empty allowlist => admins only."""
     if is_admin(user):
+        return True
+    if getattr(user, "is_uploader", False):
         return True
     emails = {e.strip().lower() for e in get_settings().upload_allowed_emails.split(",") if e.strip()}
     return bool(user.email and user.email.lower() in emails)

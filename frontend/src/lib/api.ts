@@ -196,9 +196,28 @@ export interface UserProfile {
   display_name: string | null
   created_at: string
   is_admin: boolean
+  is_uploader?: boolean
   connected_providers: string[]
   preferred_lang?: string | null
   lang_fallback_strategy?: string
+}
+
+export interface MaintainerRequest {
+  id: string
+  user_id: string
+  request_type: 'ontology' | 'uploader'
+  ontology_id: string | null
+  note: string | null
+  status: 'pending' | 'approved' | 'denied'
+  decision_note: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+  created_at: string
+  // decorated fields (present on list responses)
+  user_email?: string | null
+  user_display_name?: string | null
+  ontology_shortname?: string
+  ontology_iri?: string
 }
 
 export interface Ontology {
@@ -1055,6 +1074,16 @@ export const api = {
       }),
   },
 
+  maintainers: {
+    // Request a maintainer role: over an existing ontology, or global upload rights.
+    request: (body: { request_type: 'ontology' | 'uploader'; ontology_id?: string; note?: string }) =>
+      request<MaintainerRequest>('/maintainer-requests', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    mine: () => request<{ requests: MaintainerRequest[] }>('/maintainer-requests'),
+  },
+
   ontologies: {
     list: (offset = 0, limit = 50, q?: string, group?: string, profile?: ProfileName, reuses?: string) => {
       const params = new URLSearchParams({ offset: String(offset), limit: String(limit) })
@@ -1377,6 +1406,18 @@ export const api = {
 
   admin: {
     overview: () => request<AdminOverview>('/admin/overview'),
+    maintainerRequests: (status?: string) =>
+      request<{ requests: MaintainerRequest[] }>(
+        `/admin/maintainer-requests${status ? `?status=${encodeURIComponent(status)}` : ''}`,
+      ),
+    approveMaintainerRequest: (id: string, note?: string) =>
+      request<MaintainerRequest>(`/admin/maintainer-requests/${id}/approve`, {
+        method: 'POST', body: JSON.stringify({ note: note ?? null }),
+      }),
+    denyMaintainerRequest: (id: string, note?: string) =>
+      request<MaintainerRequest>(`/admin/maintainer-requests/${id}/deny`, {
+        method: 'POST', body: JSON.stringify({ note: note ?? null }),
+      }),
     checkUpdate: (ontologyId: string) =>
       request<{ status: 'up_to_date' | 'update_queued' | 'no_source_url'; task_id?: string }>(
         `/admin/ontologies/${ontologyId}/check-update`,

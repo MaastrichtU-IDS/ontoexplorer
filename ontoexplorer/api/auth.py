@@ -33,7 +33,7 @@ from ontoexplorer.modules.auth.session import (
     unlink_oauth_account,
 )
 from pydantic import BaseModel
-from ontoexplorer.config import get_settings, is_admin
+from ontoexplorer.config import can_upload, get_settings, is_admin
 from ontoexplorer.models.db import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -254,6 +254,7 @@ async def me(user: User = Depends(require_auth), db: AsyncSession = Depends(get_
         "display_name": user.display_name,
         "created_at": user.created_at.isoformat(),
         "is_admin": is_admin(user),
+        "is_uploader": can_upload(user),
         "connected_providers": [a.provider for a in accounts],
         "preferred_lang": user.preferred_lang,
         "lang_fallback_strategy": user.lang_fallback_strategy,
