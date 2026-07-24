@@ -2454,7 +2454,7 @@ async def inferred_children(
     import json as _json
     version = await _get_version_or_404(db, ontology_id, version_id)
     from ontoexplorer.clients.reasoning import get_classification
-    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _deprecated_key
+    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _deprecated_key, _type_key
 
     try:
         classification = await get_classification(version_id, reasoner=version.reasoner)
@@ -2498,6 +2498,13 @@ async def inferred_children(
             all_classes.update(parents)
         for parents in elk_all.values():
             all_classes.update(parents)
+        # EL reasoners (whelk/ELK) strip owl:Thing and omit classes with no
+        # non-trivial subsumptions, so a top-level class with NO subclasses (e.g.
+        # SULO's `Process`) is absent from the classification maps entirely. Union
+        # in every named class from the index so such classes still appear as
+        # inferred roots (they have no inferred parent). owl:Thing/deprecated
+        # subtractions below then apply uniformly.
+        all_classes |= set(r.smembers(_type_key(version_id, "class")))
         all_classes -= {_OWL_THING}
         if hide_obsolete:
             all_classes -= deprecated_iris
