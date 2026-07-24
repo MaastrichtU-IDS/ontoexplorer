@@ -18,7 +18,7 @@ from ontoexplorer.clients.reasoning import (
 )
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Ontology, OntologyVersion, User
-from ontoexplorer.modules.auth.dependencies import get_current_user, require_auth
+from ontoexplorer.modules.auth.dependencies import get_current_user, require_auth, require_uploader
 from ontoexplorer.modules.storage.minio_client import fetch_ontology
 
 router = APIRouter(prefix="/api/v1/ontologies", tags=["ontologies"])
@@ -222,7 +222,7 @@ class SubmitByUrl(BaseModel):
 async def submit_ontology(
     request: Request,
     file: UploadFile | None = File(default=None),
-    user: User = Depends(require_auth),   # uploads require login → 401 if anonymous
+    user: User = Depends(require_uploader),   # 401 if anonymous, 403 if not an allowed uploader
     db: AsyncSession = Depends(get_db),
 ):
     import asyncio
@@ -231,7 +231,7 @@ async def submit_ontology(
     from ontoexplorer.modules.jobs.tasks import ingest_ontology
 
     content_type = request.headers.get("content-type", "")
-    owner_id = user.id   # require_auth guarantees a user; ontologies are always owned
+    owner_id = user.id   # require_uploader guarantees an authorized user; ontologies are always owned
     loop = asyncio.get_event_loop()
 
     is_multipart = "multipart/form-data" in content_type and file

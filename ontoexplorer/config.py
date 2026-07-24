@@ -100,6 +100,9 @@ class Settings(BaseSettings):
 
     # Admin access — comma-separated list of email addresses granted /admin access
     admin_emails: str = ""
+    # Ontology upload allowlist — comma-separated emails permitted to add
+    # ontologies (in ADDITION to admins). Empty => admins only.
+    upload_allowed_emails: str = ""
 
     # Development auth bypass — set AUTH_BYPASS=true to skip OAuth for local dev
     auth_bypass: bool = False
@@ -151,6 +154,15 @@ class Settings(BaseSettings):
 def is_admin(user) -> bool:
     """Return True if user.email is in the ADMIN_EMAILS allowlist."""
     emails = {e.strip().lower() for e in get_settings().admin_emails.split(",") if e.strip()}
+    return bool(user.email and user.email.lower() in emails)
+
+
+def can_upload(user) -> bool:
+    """Return True if the user may add ontologies: admins always, plus any email
+    in the UPLOAD_ALLOWED_EMAILS allowlist. Empty allowlist => admins only."""
+    if is_admin(user):
+        return True
+    emails = {e.strip().lower() for e in get_settings().upload_allowed_emails.split(",") if e.strip()}
     return bool(user.email and user.email.lower() in emails)
 
 
