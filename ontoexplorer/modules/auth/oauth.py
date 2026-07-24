@@ -110,7 +110,11 @@ def extract_user_info(provider: str, userinfo: dict) -> tuple[str, str | None, s
         given = name_data.get("given-names", {}).get("value", "") if isinstance(name_data.get("given-names"), dict) else ""
         family = name_data.get("family-name", {}).get("value", "") if isinstance(name_data.get("family-name"), dict) else ""
         display_name = f"{given} {family}".strip() or orcid_id
-        return str(orcid_id), None, display_name
+        # Return None (not str(None)=="None") when the iD can't be extracted, so
+        # callers reject it instead of collapsing every such login onto one
+        # bogus (orcid,"None") account. The authoritative iD comes from the token
+        # response; see the callback, which prefers it.
+        return (str(orcid_id) if orcid_id else None), None, display_name
 
     if provider == "github":
         return str(userinfo["id"]), userinfo.get("email"), userinfo.get("name") or userinfo.get("login")

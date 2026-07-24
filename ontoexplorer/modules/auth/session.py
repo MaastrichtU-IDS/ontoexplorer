@@ -173,6 +173,8 @@ async def get_or_create_user(
     expires_at: datetime | None,
 ) -> User:
     """Find existing user by OAuth account, or create a new one."""
+    if not provider_user_id or provider_user_id == "None":
+        raise ValueError(f"Refusing to resolve a {provider} account with an empty provider_user_id")
     result = await db.execute(
         select(OAuthAccount).where(
             OAuthAccount.provider == provider,
@@ -232,6 +234,8 @@ async def link_oauth_account(
     - Otherwise → create the OAuthAccount and, opportunistically, backfill the
       user's email/display_name if they're empty (helps e.g. admin-by-email).
     """
+    if not provider_user_id or provider_user_id == "None":
+        raise ValueError(f"Refusing to link a {provider} account with an empty provider_user_id")
     existing = (
         await db.execute(
             select(OAuthAccount).where(
@@ -305,6 +309,8 @@ async def unlink_oauth_account(db: AsyncSession, user_id: str, provider: str) ->
 
 async def find_oauth_owner(db: AsyncSession, provider: str, provider_user_id: str) -> str | None:
     """Return the user_id that owns this provider identity, or None if unlinked."""
+    if not provider_user_id or provider_user_id == "None":
+        return None
     row = (
         await db.execute(
             select(OAuthAccount).where(
