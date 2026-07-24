@@ -1885,14 +1885,20 @@ async def get_term(
     from ontoexplorer.models.db import EntityIndex as _EntityIndex
     _pred_iris = list(properties_typed.keys())
     property_labels: dict[str, str] = {}
+    # Predicate IRI -> its OWL entity type (object_property / data_property /
+    # annotation_property) as recorded in the index. Lets the frontend render an
+    # individual's object/data property assertions in their own always-visible
+    # sections rather than lumping them into the toggle-gated annotations table.
+    property_types: dict[str, str] = {}
     if _pred_iris:
         _pl_rows = (await db.execute(
-            _select(_EntityIndex.iri, _EntityIndex.primary_label).where(
+            _select(_EntityIndex.iri, _EntityIndex.primary_label, _EntityIndex.type).where(
                 _EntityIndex.version_id == version_id,
                 _EntityIndex.iri.in_(_pred_iris),
             )
         )).all()
-        property_labels = {iri: label for iri, label in _pl_rows}
+        property_labels = {iri: label for iri, label, _t in _pl_rows}
+        property_types = {iri: _t for iri, _label, _t in _pl_rows}
 
     _payload = {
         "iri": term_iri,
@@ -1905,6 +1911,7 @@ async def get_term(
         "source": source,
         "properties": properties_typed,
         "property_labels": property_labels,
+        "property_types": property_types,
         "type_of": type_of,
         "is_inverse_target": is_inverse_target,
         "superclasses": {

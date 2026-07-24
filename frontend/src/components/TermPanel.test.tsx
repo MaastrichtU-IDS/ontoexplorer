@@ -12,6 +12,7 @@ const mockTerm = {
   typeOf: [],
   rawProperties: {},
   propertyLabels: {},
+  propertyTypes: {},
   rawLabels: [],
   rawDefinitions: [],
   rawElucidations: [],
@@ -130,6 +131,50 @@ test('shows superclasses', () => {
   // component). Assert the asserted superclass label is shown.
   wrap(<TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" slug="go" />)
   expect(screen.getByText('GO_0008150')).toBeInTheDocument()
+})
+
+describe('individual object-property assertions', () => {
+  const HAS_PARENT = 'http://example.org/family#hasParent'
+  const BOB = 'http://example.org/family#bob'
+  const CUSTOM_NOTE = 'http://example.org/family#note'
+
+  const mockIndividual = {
+    ...mockTerm,
+    iri: 'http://example.org/family#alice',
+    label: 'alice',
+    definition: null,
+    entityType: 'individual' as const,
+    typeOf: [{ iri: 'http://example.org/family#Person', label: 'Person' }],
+    rawProperties: {
+      [HAS_PARENT]: [{ value: BOB, lang: null }],
+      [CUSTOM_NOTE]: [{ value: 'a non-standard annotation', lang: null }],
+    },
+    propertyLabels: { [HAS_PARENT]: 'has parent' },
+    // hasParent is a declared object property; note is an annotation property.
+    propertyTypes: { [HAS_PARENT]: 'object_property', [CUSTOM_NOTE]: 'annotation_property' },
+  }
+
+  test('object-property assertions are shown by default, not hidden behind the annotations toggle', () => {
+    // Cast: mockIndividual intentionally differs from the class-shaped mockTerm
+    // (entityType, definition:null, typed typeOf) — only the runtime shape matters here.
+    mockCurrentTerm = mockIndividual as unknown as typeof mockTerm
+    wrap(<TermPanel ontologyId="family" versionId="v1" termIri="http://example.org/family#alice" slug="family" />)
+
+    // Dedicated section header is present.
+    expect(screen.getByText('Object property assertions')).toBeInTheDocument()
+    // The target individual is a visible link WITHOUT clicking "View original annotations".
+    const bob = screen.getByRole('link', { name: 'bob' })
+    expect(bob).toHaveAttribute('href', `/ontologies/family/v1?term=${encodeURIComponent(BOB)}`)
+    // The predicate label comes from propertyLabels.
+    expect(screen.getByText('has parent')).toBeInTheDocument()
+
+    // The genuine annotation stays gated: hidden until the toggle flips to original.
+    expect(screen.queryByText('a non-standard annotation')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /View original annotations/ }))
+    expect(screen.getByText('a non-standard annotation')).toBeInTheDocument()
+    // The object-property value is not duplicated into the annotations table.
+    expect(screen.getAllByRole('link', { name: 'bob' })).toHaveLength(1)
+  })
 })
 
 describe('justification explain UI', () => {

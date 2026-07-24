@@ -328,6 +328,9 @@ export interface RawTermDetail {
    *  joined from entity_index. Empty/missing entries fall back to a
    *  well-known static table, then to the IRI fragment. */
   property_labels?: Record<string, string>
+  /** Predicate IRI -> its OWL entity type (object_property / data_property /
+   *  annotation_property) from entity_index. Missing for unindexed predicates. */
+  property_types?: Record<string, string>
   labels?: LangLabel[]
   definitions?: LangLabel[]
   elucidations?: LangLabel[]
@@ -362,6 +365,7 @@ export interface ParsedTerm {
   typeOf: ClassRef[]
   rawProperties: Record<string, LangLabel[]>
   propertyLabels: Record<string, string>
+  propertyTypes: Record<string, string>
   rawLabels: LangLabel[]
   rawDefinitions: LangLabel[]
   rawElucidations: LangLabel[]
@@ -1010,6 +1014,7 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
     typeOf: raw.type_of ?? [],
     rawProperties: raw.properties,
     propertyLabels: raw.property_labels ?? {},
+    propertyTypes: raw.property_types ?? {},
     rawLabels: raw.labels ?? [],
     rawDefinitions: raw.definitions ?? [],
     rawElucidations: raw.elucidations ?? [],
