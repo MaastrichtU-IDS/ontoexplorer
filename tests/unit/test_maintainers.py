@@ -174,3 +174,76 @@ async def test_admin_approve_already_decided_409(client, user_and_key, db_sessio
     assert first.status_code == 200
     second = await client.post(f"/api/v1/admin/maintainer-requests/{req.id}/approve", json={}, headers=_auth(key))
     assert second.status_code == 409
+
+
+# ── Per-ontology edit permission (owner / admin / maintainer) ────────────────────
+
+from ontoexplorer.modules.auth.permissions import can_edit_ontology  # noqa: E402
+
+
+@pytest.mark.anyio
+async def test_can_edit_ontology_helper(db_session, monkeypatch):
+    owner = await _make_user(db_session)
+    other = await _make_user(db_session)
+    maint = await _make_user(db_session)
+    owned = Ontology(id=str(uuid.uuid4()), iri=f"http://ex/{uuid.uuid4()}", owner_id=owner.id)
+    unowned = Ontology(id=str(uuid.uuid4()), iri=f"http://ex/{uuid.uuid4()}")
+    db_session.add_all([owned, unowned])
+    await db_session.commit()
+    db_session.add(OntologyMaintainer(user_id=maint.id, ontology_id=owned.id))
+    await db_session.commit()
+
+    assert await can_edit_ontology(db_session, owner, owned) is True
+    assert await can_edit_ontology(db_session, maint, owned) is True
+    assert await can_edit_ontology(db_session, other, owned) is False
+    assert await can_edit_ontology(db_session, other, unowned) is True   # legacy-permissive
+    assert await can_edit_ontology(db_session, None, owned) is False
+
+    monkeypatch.setattr("ontoexplorer.modules.auth.permissions.is_admin", lambda u: True)
+    assert await can_edit_ontology(db_session, other, owned) is True     # admin
+
+
+@pytest.mark.anyio
+async def test_patch_ontology_owner_ok(client, user_and_key, db_session):
+    user, key = user_and_key
+    onto = Ontology(id=str(uuid.uuid4()), iri=f"http://ex/{uuid.uuid4()}", owner_id=user.id)
+    db_session.add(onto)
+    await db_session.commit()
+    r = await client.patch(f"/api/v1/ontologies/{onto.id}", json={"title": "My Title"}, headers=_auth(key))
+    assert r.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_patch_ontology_forbidden_for_non_owner(client, user_and_key, db_session):
+    _, key = user_and_key
+    other = await _make_user(db_session)
+    onto = Ontology(id=str(uuid.uuid4()), iri=f"http://ex/{uuid.uuid4()}", owner_id=other.id)
+    db_session.add(onto)
+    await db_session.commit()
+    r = await client.patch(f"/api/v1/ontologies/{onto.id}", json={"title": "x"}, headers=_auth(key))
+    assert r.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_patch_ontology_allowed_for_maintainer(client, user_and_key, db_session):
+    user, key = user_and_key
+    other = await _make_user(db_session)
+    onto = Ontology(id=str(uuid.uuid4()), iri=f"http://ex/{uuid.uuid4()}", owner_id=other.id)
+    db_session.add(onto)
+    await db_session.commit()
+    db_session.add(OntologyMaintainer(user_id=user.id, ontology_id=onto.id))
+    await db_session.commit()
+    r = await client.patch(f"/api/v1/ontologies/{onto.id}", json={"title": "Maintained"}, headers=_auth(key))
+    assert r.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_meta_profile_patch_forbidden_for_non_maintainer(client, user_and_key, db_session):
+    _, key = user_and_key
+    other = await _make_user(db_session)
+    onto = Ontology(id=str(uuid.uuid4()), iri=f"http://ex/{uuid.uuid4()}", owner_id=other.id)
+    db_session.add(onto)
+    await db_session.commit()
+    # permission is checked before any version/meta lookup, so a dummy version id is fine
+    r = await client.patch(f"/api/v1/ontologies/{onto.id}/some-version/meta", json={}, headers=_auth(key))
+    assert r.status_code == 403

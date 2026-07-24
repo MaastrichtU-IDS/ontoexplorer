@@ -95,8 +95,12 @@ async def patch_meta_profile(
     version_id: str,
     body: MetaProfilePatch,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_auth),
+    user: User = Depends(require_auth),
 ):
+    from ontoexplorer.modules.auth.permissions import can_edit_ontology_id
+    if not await can_edit_ontology_id(db, user, ontology_id):
+        raise HTTPException(status_code=403, detail="You are not allowed to edit this ontology's metadata profile")
+
     profile = await _get_meta_profile_or_404(version_id, db)
 
     updated_any = False
@@ -139,8 +143,12 @@ async def trigger_meta_detect(
     ontology_id: str,
     version_id: str,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(require_auth),
+    user: User = Depends(require_auth),
 ):
+    from ontoexplorer.modules.auth.permissions import can_edit_ontology_id
+    if not await can_edit_ontology_id(db, user, ontology_id):
+        raise HTTPException(status_code=403, detail="You are not allowed to edit this ontology's metadata profile")
+
     await _get_version_or_404(version_id, db)
     from ontoexplorer.modules.meta_profile.detector import run_meta_detection
     await run_meta_detection(db, version_id, ontology_id=ontology_id)
