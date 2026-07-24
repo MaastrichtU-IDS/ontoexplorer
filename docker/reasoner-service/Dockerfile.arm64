@@ -9,7 +9,7 @@
 #   - whelk   : native aarch64 py-whelk wheel (docker/reasoner-service/wheels-arm64/,
 #               built from patched source — see wheels-arm64/py-whelk-arm64.patch)
 #   - rdflib  : pure Python
-#   - rustdl  : PyPI aarch64 wheel (rustdl==0.3.23)
+#   - rustdl  : PyPI aarch64 wheel (rustdl==0.3.41)
 #   - konclude: compiled from source for aarch64 (see konclude-build stage). We
 #               only ever feed it OWL/XML, so KoncludeWithoutRedland.pro (pure
 #               Qt, no RDF parser) is sufficient — no static Redland stack, no
@@ -88,7 +88,7 @@ RUN pip install --no-cache-dir \
     /tmp/wheels/py_horned_owl-*.whl \
     /tmp/wheels/py_whelk-*aarch64.whl \
     "pyoxigraph>=0.4" \
-    "rustdl==0.3.23" \
+    "rustdl==0.3.41" \
  && rm -rf /tmp/wheels
 
 # Konclude (native aarch64): the binary dynamically links the Qt5 runtime libs
