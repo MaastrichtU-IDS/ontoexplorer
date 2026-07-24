@@ -876,6 +876,13 @@ async def list_terms(
     is_any_property = entity_type == "property" or is_prop_subtype
     is_individual = entity_type == "individual"
 
+    def _label_score(lang_tag: str | None) -> int:
+        """Prefer preferred lang > English > untagged > anything else."""
+        if lang and lang_tag == lang: return 3
+        if lang_tag == "en": return 2
+        if lang_tag is None or lang_tag == "": return 1
+        return 0
+
     # Individuals: flat paginated list, never a tree
     if is_individual:
         _NOT_DEPRECATED_IND = (
@@ -962,13 +969,6 @@ async def list_terms(
         if lbl is None or not hasattr(lbl, "language"):
             return None
         return lbl.language  # None for untagged literals, str for lang-tagged
-
-    def _label_score(lang_tag: str | None) -> int:
-        """Prefer preferred lang > English > untagged > anything else."""
-        if lang and lang_tag == lang: return 3
-        if lang_tag == "en": return 2
-        if lang_tag is None or lang_tag == "": return 1
-        return 0
 
     def _deduped_terms(s, q) -> list[dict]:
         """Run query and deduplicate by IRI, picking the best-language label."""
