@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../hooks/useAuth'
 import { api } from '../lib/api'
 import { linkProvider } from '../lib/auth'
+import MaintainerAccess from '../components/MaintainerAccess'
 
 const PROVIDER_LABELS: Record<string, string> = {
   github: 'GitHub',
@@ -280,6 +281,9 @@ export default function Profile() {
           </p>
         )}
       </div>
+
+      {/* Maintainer access — request upload rights or ontology maintainership */}
+      <MaintainerAccess />
 
       {/* Language preferences section */}
       <div style={{

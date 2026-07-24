@@ -31,6 +31,10 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     preferred_lang: Mapped[str | None] = mapped_column(String, nullable=True)
     lang_fallback_strategy: Mapped[str] = mapped_column(String, nullable=False, default="silent", server_default="silent")
+    # Global grant: may add NEW ontologies (in addition to admins + the
+    # UPLOAD_ALLOWED_EMAILS env allowlist). Set when an "uploader" maintainer
+    # request is approved. See can_upload().
+    is_uploader: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     oauth_accounts: Mapped[list["OAuthAccount"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     sessions: Mapped[list["Session"]] = relationship(back_populates="user", cascade="all, delete-orphan")
@@ -365,3 +369,36 @@ class SavedQuery(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     user: Mapped["User"] = relationship(back_populates="saved_queries")
+
+
+class OntologyMaintainer(Base):
+    """A user granted maintainer rights over a specific existing ontology.
+    Created when an 'ontology' maintainer request is approved."""
+    __tablename__ = "ontology_maintainers"
+    __table_args__ = (UniqueConstraint("user_id", "ontology_id"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    ontology_id: Mapped[str] = mapped_column(ForeignKey("ontologies.id", ondelete="CASCADE"))
+    granted_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MaintainerRequest(Base):
+    """A user's request for maintainer rights: either over an existing ontology
+    (request_type='ontology', ontology_id set) or the global ability to add new
+    ontologies (request_type='uploader'). Admins approve/deny with a note."""
+    __tablename__ = "maintainer_requests"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    request_type: Mapped[str] = mapped_column(String, nullable=False)  # "ontology" | "uploader"
+    ontology_id: Mapped[str | None] = mapped_column(
+        ForeignKey("ontologies.id", ondelete="CASCADE"), nullable=True
+    )
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)          # user rationale
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", server_default="pending")
+    decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)  # admin rationale (optional)
+    reviewed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

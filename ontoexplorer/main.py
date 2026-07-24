@@ -6,6 +6,8 @@ import structlog
 from ontoexplorer import __version__
 
 from ontoexplorer.api.api_keys import router as api_keys_router
+from ontoexplorer.api.maintainers import admin_router as maintainer_admin_router
+from ontoexplorer.api.maintainers import router as maintainer_router
 from ontoexplorer.api.global_search import router as global_search_router
 from ontoexplorer.api.auth import router as auth_router
 from ontoexplorer.api.health import router as health_router
@@ -91,6 +93,8 @@ def create_app() -> FastAPI:
     app.include_router(webhooks_router)
     app.include_router(inbound_router)
     app.include_router(api_keys_router)
+    app.include_router(maintainer_router)
+    app.include_router(maintainer_admin_router)
     app.include_router(stats_router)
     app.include_router(admin_router)
     app.include_router(mod_router)
