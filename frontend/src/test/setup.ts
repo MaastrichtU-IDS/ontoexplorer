@@ -13,3 +13,11 @@ class MockIntersectionObserver {
 }
 ;(globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver =
   MockIntersectionObserver as unknown as typeof IntersectionObserver
+
+// jsdom has no ResizeObserver; recharts' ResponsiveContainer constructs one.
+class MockResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = MockResizeObserver
