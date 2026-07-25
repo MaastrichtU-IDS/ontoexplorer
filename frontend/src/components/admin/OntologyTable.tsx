@@ -390,8 +390,13 @@ function VersionsSubRows({
 
   const others: AdminVersionEntry[] = data.versions.filter(v => v.version_id !== latestVersionId)
 
-  const vlabel = (v: AdminVersionEntry) =>
-    v.version_iri ? (v.version_iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? v.version_iri) : v.version_id.slice(0, 8)
+  const vlabel = (v: AdminVersionEntry): string => {
+    const seg = v.version_iri ? (v.version_iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? v.version_iri) : ''
+    // Prefer a clean version/date token (e.g. "0.2.14", "2024-05-01") over the
+    // filename; fall back to the filename, then the version-id prefix.
+    const m = seg.match(/\d{4}-\d{2}-\d{2}/) ?? seg.match(/\d+(?:\.\d+)+/)
+    return m ? m[0] : (seg || v.version_id.slice(0, 8))
+  }
   const readyVersions = data.versions.filter(
     v => !['deprecated', 'pending', 'failed'].includes(v.ingestion_status))
   const currentDefault = readyVersions.find(v => v.version_id === latestVersionId) ?? readyVersions[0]
@@ -445,9 +450,9 @@ function VersionsSubRows({
               <Link
                 to={`/ontologies/${slug}/${v.version_id}`}
                 style={{ color: 'var(--text-muted)', textDecoration: 'none', fontFamily: 'monospace' }}
-                title={v.version_id}
+                title={`version ${v.version_id}`}
               >
-                ↳ {v.version_id.slice(0, 8)}
+                ↳ {vlabel(v)}
               </Link>
               {v.version_iri && <CopyableIri iri={v.version_iri} label="vIRI" />}
               {v.ingestion_status === 'deprecated' && (
