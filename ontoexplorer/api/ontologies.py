@@ -1270,6 +1270,30 @@ def _mos_mark_clickable(store, graph_node, tokens: list[dict]) -> list[dict]:
     return tokens
 
 
+def _render_prop_expr(store, graph_node, node, label_fn, depth: int = 0) -> list[dict]:
+    """Render an OWL object-property expression as Manchester tokens.
+
+    Handles named properties and ObjectInverseOf (`owl:inverseOf` blank nodes,
+    e.g. inside a property chain: `p o inverse q`). `render_class_expression`
+    only covers class expressions, so an inverse-property bnode would otherwise
+    leak as `[bnode:…]`.
+    """
+    import pyoxigraph
+    if isinstance(node, pyoxigraph.NamedNode):
+        return [{"t": "iri", "label": label_fn(node.value), "iri": node.value, "in_ontology": False}]
+    if isinstance(node, pyoxigraph.BlankNode) and depth < 10:
+        inv = list(store.quads_for_pattern(
+            node, pyoxigraph.NamedNode(_OWL + "inverseOf"), None, graph_node))
+        if inv:
+            return [
+                {"t": "text", "v": "inverse "},
+                *_render_prop_expr(store, graph_node, inv[0].object, label_fn, depth + 1),
+            ]
+    if isinstance(node, pyoxigraph.Literal):
+        return [{"t": "text", "v": node.value}]
+    return [{"t": "text", "v": "(anonymous property)"}]
+
+
 def _sparql_usage(store, q: str, label_fn, graph_iri: str) -> list[dict]:
     """Run property-usage SPARQL query and assemble rows (called via asyncio.to_thread)."""
     import pyoxigraph
@@ -1728,17 +1752,16 @@ async def get_term(
         return _sparql_usage(s, q, _label, g_iri)
 
     def _run_property_axioms(s) -> list[list[dict]]:
-        """The property's own hierarchy/identity axioms as Manchester token lines.
+        """The property's identity/chain axioms as Manchester token lines.
 
-        Covers subPropertyOf / equivalentProperty / propertyChainAxiom (the last
-        walked from its RDF list into `p1 o p2 o …`). Each entry is a full
-        subject-first axiom line, matching the "Used in axioms" style.
+        Covers equivalentProperty and propertyChainAxiom (the latter walked from
+        its RDF list into `p1 o p2 o …`, with inverse members rendered as
+        `inverse q`). subPropertyOf is rendered separately as the Super-properties
+        list. Each entry is a full subject-first axiom line.
         """
         import pyoxigraph as ox
-        from ontoexplorer.modules.diff import manchester as _mos
         gnode = ox.NamedNode(g_iri)
         term = ox.NamedNode(term_iri)
-        mos_labels: dict[str, str] = {}
 
         def _line(keyword: str, obj_tokens: list[dict]) -> list[dict]:
             return _mos_mark_clickable(s, gnode, [
@@ -1748,23 +1771,18 @@ async def get_term(
             ])
 
         out: list[list[dict]] = []
-        for pred, kw in (
-            ("http://www.w3.org/2000/01/rdf-schema#subPropertyOf", "SubPropertyOf"),
-            ("http://www.w3.org/2002/07/owl#equivalentProperty", "EquivalentTo"),
-        ):
-            for q in s.quads_for_pattern(term, ox.NamedNode(pred), None, gnode):
-                obj = _mos.render_class_expression(
-                    s, gnode, q.object, labels=mos_labels, known_iris=frozenset())
-                out.append(_line(kw, obj))
-        # Property chains: object is an RDF list of properties → `p1 o p2 o …`.
+        for q in s.quads_for_pattern(
+            term, ox.NamedNode(_OWL + "equivalentProperty"), None, gnode):
+            out.append(_line("EquivalentTo", _render_prop_expr(s, gnode, q.object, _label)))
+        # Property chains: object is an RDF list of property expressions →
+        # `p1 o p2 o …`; members may be `inverse q` (ObjectInverseOf bnodes).
         for q in s.quads_for_pattern(
             term, ox.NamedNode(_OWL + "propertyChainAxiom"), None, gnode):
             chain: list[dict] = []
             for i, item in enumerate(_rdf_list_items(s, gnode, q.object)):
                 if i:
                     chain.append({"t": "text", "v": " o "})
-                chain.extend(_mos.render_class_expression(
-                    s, gnode, item, labels=mos_labels, known_iris=frozenset()))
+                chain.extend(_render_prop_expr(s, gnode, item, _label))
             if chain:
                 out.append(_line("SubPropertyChain", chain))
         return out

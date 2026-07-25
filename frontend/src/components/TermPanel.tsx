@@ -1578,19 +1578,36 @@ function PropertyBody({ data, slug, ontologyId, roleMap, versionId, lang }: {
         slug={slug} versionId={versionId} lang={lang}
       />
 
-      {/* Property-hierarchy / identity axioms in Manchester syntax:
-          subPropertyOf, equivalentProperty, and propertyChainAxiom (rendered as
-          `p1 o p2 o …`). These predicates are in PROPERTY_HANDLED_PREDICATES
-          (excluded from the annotations table), so without this they'd be
-          dropped entirely. Server-supplied token lines. */}
-      {data.propertyAxioms.length > 0 && (
-        <Section label="Property axioms">
-          <UsageManchester
-            rows={data.propertyAxioms.map(toks => ({ manchester: toks }))}
-            slug={slug} vid={versionId}
-          />
+      {data.characteristics.length > 0 && (
+        <Section label="Characteristics">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {data.characteristics.map(c => (
+              <span key={c} style={{
+                fontSize: 11, borderRadius: 3, padding: '2px 7px',
+                background: 'rgba(80,160,255,0.12)', color: 'var(--accent-blue)',
+              }}>{c}</span>
+            ))}
+          </div>
         </Section>
       )}
+
+      {/* Direct super-properties (this property subPropertyOf X). subPropertyOf
+          is in PROPERTY_HANDLED_PREDICATES (excluded from the annotations table),
+          so it is rendered here from the asserted values — mirroring the
+          Sub-properties list below. */}
+      {(() => {
+        const supers = (data.rawProperties['http://www.w3.org/2000/01/rdf-schema#subPropertyOf'] ?? [])
+          .map(v => v.value).filter(v => v.startsWith('http'))
+        return supers.length > 0 && (
+          <Section label={`Super-properties (${supers.length})`}>
+            {supers.map(iri => (
+              <div key={iri} style={{ paddingLeft: 8, marginBottom: 2 }}>
+                <IriLink iri={iri} label={shortLabel(iri)} slug={slug} vid={versionId} />
+              </div>
+            ))}
+          </Section>
+        )
+      })()}
 
       {ontologyId && data.entityType !== 'class' && data.entityType !== 'individual' && (
         <SubPropertyList
@@ -1603,16 +1620,16 @@ function PropertyBody({ data, slug, ontologyId, roleMap, versionId, lang }: {
         />
       )}
 
-      {data.characteristics.length > 0 && (
-        <Section label="Characteristics">
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {data.characteristics.map(c => (
-              <span key={c} style={{
-                fontSize: 11, borderRadius: 3, padding: '2px 7px',
-                background: 'rgba(80,160,255,0.12)', color: 'var(--accent-blue)',
-              }}>{c}</span>
-            ))}
-          </div>
+      {/* Identity/chain axioms in Manchester syntax: equivalentProperty and
+          propertyChainAxiom (rendered as `p1 o p2 o …`, incl. `inverse q`
+          members). subPropertyOf is shown as Super-properties above.
+          Server-supplied token lines. */}
+      {data.propertyAxioms.length > 0 && (
+        <Section label="Property axioms">
+          <UsageManchester
+            rows={data.propertyAxioms.map(toks => ({ manchester: toks }))}
+            slug={slug} vid={versionId}
+          />
         </Section>
       )}
 
