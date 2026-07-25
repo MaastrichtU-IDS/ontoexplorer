@@ -354,6 +354,9 @@ export interface RawTermDetail {
   general_class_axioms?: ClassExprNode[]
   usage: PropertyUsage[]
   usage_has_more?: boolean
+  /** The property's own hierarchy/identity axioms (subPropertyOf,
+   *  equivalentProperty, propertyChainAxiom) as Manchester token lines. */
+  property_axioms?: ManchesterToken[][]
   class_usage?: ClassUsageEntry[]
   class_usage_has_more?: boolean
   schema_properties?: SchemaProperty[]
@@ -391,6 +394,7 @@ export interface ParsedTerm {
   inverseOf: string[]
   usage: PropertyUsage[]
   usageHasMore?: boolean
+  propertyAxioms: ManchesterToken[][]
   classUsage: ClassUsageEntry[]
   classUsageHasMore?: boolean
   schemaProperties: SchemaProperty[]
@@ -1045,6 +1049,7 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
     inverseOf:            getValues(P.inverseOf),
     usage:           raw.usage        ?? [],
     usageHasMore:    raw.usage_has_more,
+    propertyAxioms:  raw.property_axioms ?? [],
     classUsage:      raw.class_usage  ?? [],
     classUsageHasMore: raw.class_usage_has_more,
     schemaProperties:          raw.schema_properties           ?? [],

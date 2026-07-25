@@ -1727,6 +1727,48 @@ async def get_term(
         """
         return _sparql_usage(s, q, _label, g_iri)
 
+    def _run_property_axioms(s) -> list[list[dict]]:
+        """The property's own hierarchy/identity axioms as Manchester token lines.
+
+        Covers subPropertyOf / equivalentProperty / propertyChainAxiom (the last
+        walked from its RDF list into `p1 o p2 o …`). Each entry is a full
+        subject-first axiom line, matching the "Used in axioms" style.
+        """
+        import pyoxigraph as ox
+        from ontoexplorer.modules.diff import manchester as _mos
+        gnode = ox.NamedNode(g_iri)
+        term = ox.NamedNode(term_iri)
+        mos_labels: dict[str, str] = {}
+
+        def _line(keyword: str, obj_tokens: list[dict]) -> list[dict]:
+            return _mos_mark_clickable(s, gnode, [
+                {"t": "iri", "label": _label(term_iri), "iri": term_iri, "in_ontology": False},
+                {"t": "text", "v": f" {keyword} "},
+                *obj_tokens,
+            ])
+
+        out: list[list[dict]] = []
+        for pred, kw in (
+            ("http://www.w3.org/2000/01/rdf-schema#subPropertyOf", "SubPropertyOf"),
+            ("http://www.w3.org/2002/07/owl#equivalentProperty", "EquivalentTo"),
+        ):
+            for q in s.quads_for_pattern(term, ox.NamedNode(pred), None, gnode):
+                obj = _mos.render_class_expression(
+                    s, gnode, q.object, labels=mos_labels, known_iris=frozenset())
+                out.append(_line(kw, obj))
+        # Property chains: object is an RDF list of properties → `p1 o p2 o …`.
+        for q in s.quads_for_pattern(
+            term, ox.NamedNode(_OWL + "propertyChainAxiom"), None, gnode):
+            chain: list[dict] = []
+            for i, item in enumerate(_rdf_list_items(s, gnode, q.object)):
+                if i:
+                    chain.append({"t": "text", "v": " o "})
+                chain.extend(_mos.render_class_expression(
+                    s, gnode, item, labels=mos_labels, known_iris=frozenset()))
+            if chain:
+                out.append(_line("SubPropertyChain", chain))
+        return out
+
     def _run_class_usage_queries(s, adc_map: dict) -> list[dict]:
         cu_q = f"""
             PREFIX owl:  <http://www.w3.org/2002/07/owl#>
@@ -1823,6 +1865,7 @@ async def get_term(
     ]
     if is_property:
         _phase1.append(asyncio.to_thread(_run_usage_query, store))         # 2
+        _phase1.append(asyncio.to_thread(_run_property_axioms, store))     # 3
     else:
         _phase1.append(asyncio.to_thread(_run_schema_props_query, store))  # 2
 
@@ -1843,6 +1886,7 @@ async def get_term(
 
     usage: list[dict] = []
     schema_properties: list[dict] = []
+    property_axioms: list[list[dict]] = []
     usage_has_more = False
     class_usage_has_more = False
 
@@ -1850,6 +1894,7 @@ async def get_term(
         _usage_rows = _results_1[2]
         usage_has_more = len(_usage_rows) > USAGE_PAGE_SIZE
         usage = _usage_rows[:USAGE_PAGE_SIZE]
+        property_axioms = _results_1[3]
     else:
         _dp_rows = _results_1[2]
         _resolve_labels(
@@ -2007,6 +2052,7 @@ async def get_term(
         "general_class_axioms": general_class_axioms,
         "usage": usage,
         "usage_has_more": usage_has_more,
+        "property_axioms": property_axioms,
         "class_usage": class_usage,
         "class_usage_has_more": class_usage_has_more,
         "schema_properties": schema_properties,

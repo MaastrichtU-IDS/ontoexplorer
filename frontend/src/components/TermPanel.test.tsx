@@ -38,6 +38,7 @@ const mockTerm = {
   characteristics: [],
   inverseOf: [],
   usage: [],
+  propertyAxioms: [],
   classUsage: [],
   schemaProperties: [],
   inheritedSchemaProperties: [],
@@ -246,23 +247,32 @@ describe('used-in-axioms Manchester rendering', () => {
   })
 })
 
-describe('property subPropertyOf axiom', () => {
-  test('renders a "SubProperty of" section with a clickable super-property', () => {
+describe('property axioms in Manchester (subPropertyOf / chain)', () => {
+  test('renders a "Property axioms" section incl. a property chain, clickable', () => {
     mockCurrentTerm = {
       ...mockTerm,
-      iri: 'http://ex.org/hasFather',
+      iri: 'http://ex.org/hasGrandparent',
       entityType: 'object_property' as const,
-      rawProperties: {
-        'http://www.w3.org/2000/01/rdf-schema#subPropertyOf': [
-          { value: 'http://ex.org/hasParent', lang: null },
+      propertyAxioms: [
+        [
+          { t: 'iri', label: 'hasGrandparent', iri: 'http://ex.org/hasGrandparent', in_ontology: true },
+          { t: 'text', v: ' SubPropertyChain ' },
+          { t: 'iri', label: 'hasParent', iri: 'http://ex.org/hasParent', in_ontology: true },
+          { t: 'text', v: ' o ' },
+          { t: 'iri', label: 'hasParent', iri: 'http://ex.org/hasParent', in_ontology: true },
         ],
-      },
+      ],
     } as unknown as typeof mockTerm
 
-    wrap(<TermPanel ontologyId="fam" versionId="v1" termIri="http://ex.org/hasFather" slug="fam" />)
+    wrap(<TermPanel ontologyId="fam" versionId="v1" termIri="http://ex.org/hasGrandparent" slug="fam" />)
 
-    expect(screen.getByText('SubProperty of')).toBeInTheDocument()
-    const link = screen.getByRole('link', { name: 'hasParent' })
+    expect(screen.getByText('Property axioms')).toBeInTheDocument()
+    const line = screen.getByText(
+      (_t, el) => el?.tagName === 'DIV'
+        && el.textContent === 'hasGrandparent SubPropertyChain hasParent o hasParent',
+    )
+    expect(line).toBeInTheDocument()
+    const link = screen.getAllByRole('link', { name: 'hasParent' })[0]
     expect(link).toHaveAttribute(
       'href', `/ontologies/fam/v1?term=${encodeURIComponent('http://ex.org/hasParent')}`)
   })
