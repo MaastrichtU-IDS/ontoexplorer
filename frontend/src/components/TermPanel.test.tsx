@@ -278,6 +278,30 @@ describe('property axioms in Manchester (subPropertyOf / chain)', () => {
   })
 })
 
+describe('property sub-properties list', () => {
+  test('lists direct sub-properties as clickable links', async () => {
+    mockCurrentTerm = {
+      ...mockTerm,
+      iri: 'http://ex.org/contains',
+      entityType: 'object_property' as const,
+    } as unknown as typeof mockTerm
+    mockTerms.mockResolvedValue({
+      terms: [{ iri: 'http://ex.org/hasPart', label: 'has part', lang: null, has_children: false, source: '' }],
+      offset: 0, limit: 50, parent: 'http://ex.org/contains',
+    })
+
+    wrap(<TermPanel ontologyId="pizza" versionId="v1" termIri="http://ex.org/contains" slug="pizza" />)
+
+    expect(await screen.findByText('Sub-properties (1)')).toBeInTheDocument()
+    const link = screen.getByRole('link', { name: 'has part' })
+    expect(link).toHaveAttribute(
+      'href', `/ontologies/pizza/v1?term=${encodeURIComponent('http://ex.org/hasPart')}`)
+    // Queried children of this property, scoped to its own entity type.
+    expect(mockTerms).toHaveBeenCalledWith(
+      'pizza', 'v1', 'http://ex.org/contains', 'object_property', false, true, 50, 0, undefined)
+  })
+})
+
 describe('class instances section', () => {
   test('lists a class\'s individuals, paged, and hidden when there are none', async () => {
     // mockTerm is a class; return two instances for it.
