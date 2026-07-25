@@ -2,7 +2,7 @@
 
 import asyncio
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +20,38 @@ def _sum_bucket_bytes(bucket: str) -> int:
         return 0
 
 router = APIRouter(prefix="/api/v1/stats", tags=["stats"])
+
+
+@router.get("/usage/public", summary="Site-wide view/download usage (no auth)")
+async def get_usage_public(
+    granularity: str = Query("month"),
+    periods: int = Query(12, ge=1, le=60),
+    db: AsyncSession = Depends(get_db),
+):
+    """All-time view/download totals (both unique + total) plus a zero-filled
+    trend over the last `periods` week/month/year buckets."""
+    from datetime import UTC, datetime
+
+    from ontoexplorer.modules.usage.query import (
+        GRANULARITIES,
+        build_trend,
+        period_starts,
+        usage_totals,
+        usage_trend,
+    )
+
+    if granularity not in GRANULARITIES:
+        raise HTTPException(status_code=400, detail=f"granularity must be one of {sorted(GRANULARITIES)}")
+
+    today = datetime.now(UTC).date()
+    starts = period_starts(granularity, periods, today)
+    totals = await usage_totals(db)
+    tmap = await usage_trend(db, granularity, starts[0])
+    return {
+        "granularity": granularity,
+        "totals": totals,
+        "trend": build_trend(granularity, periods, today, tmap),
+    }
 
 
 @router.get("/public", summary="Public aggregate statistics (no auth required)")

@@ -989,6 +989,20 @@ const OWL_CHARACTERISTICS: Record<string, string> = {
   'http://www.w3.org/2002/07/owl#IrreflexiveProperty':       'Irreflexive',
 }
 
+export interface UsageCounts { unique: number; total: number }
+export interface UsageTrendPoint {
+  period: string
+  view_unique: number
+  view_total: number
+  download_unique: number
+  download_total: number
+}
+export interface UsagePublic {
+  granularity: string
+  totals: { views: UsageCounts; downloads: UsageCounts }
+  trend: UsageTrendPoint[]
+}
+
 export function slugFromIri(iri: string): string {
   const last = iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? iri
   return last.replace(/\.(owl|ttl|rdf|obo|json|xml|nt)$/i, '').toLowerCase()
@@ -1424,6 +1438,8 @@ export const api = {
         total_individuals: number
         unique_individuals: number
       }>('/stats/public'),
+    usagePublic: (granularity = 'month', periods = 12) =>
+      request<UsagePublic>(`/stats/usage/public?granularity=${granularity}&periods=${periods}`),
   },
 
   admin: {
