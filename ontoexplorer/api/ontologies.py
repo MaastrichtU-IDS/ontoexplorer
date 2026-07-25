@@ -610,6 +610,20 @@ async def get_ontology(ontology_id: str, request: Request, db: AsyncSession = De
     return _negotiate_response(request, data, subject_iri=ontology.iri)
 
 
+@router.post("/{ontology_id}/view", status_code=204, summary="Record an ontology page view")
+async def record_ontology_view(ontology_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """Fire-and-forget view beacon (the SPA POSTs this once per page mount).
+
+    Deliberately a dedicated uncached endpoint rather than counting get_ontology
+    (which bots, content-negotiation, and prefetch also hit). Deduped per visitor
+    per UTC day in record_usage. Returns 204 even on filtered/failed recording.
+    """
+    await _get_ontology_or_404(db, ontology_id)
+    from ontoexplorer.modules.usage.capture import KIND_VIEW, record_usage
+    await record_usage(request, ontology_id, KIND_VIEW)
+    return Response(status_code=204)
+
+
 @router.get("/{ontology_id}/versions", summary="All versions with provenance")
 async def list_versions(ontology_id: str, db: AsyncSession = Depends(get_db)):
     await _get_ontology_or_404(db, ontology_id)
