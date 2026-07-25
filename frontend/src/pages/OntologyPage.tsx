@@ -47,6 +47,20 @@ function IndividualList({ ontologyId, versionId, selectedIri, onSelect, lang }: 
 
   const terms: Term[] = data?.pages.flatMap(p => p.terms) ?? []
 
+  // Reveal the selected individual (e.g. arrived from a global search result):
+  // keep loading pages until it's found, then scroll it into view. Without this
+  // a selected individual on a later page would never render or highlight.
+  const selectedRef = useRef<HTMLDivElement | null>(null)
+  const selectedLoaded = !!selectedIri && terms.some(t => t.iri === selectedIri)
+  useEffect(() => {
+    if (selectedIri && !selectedLoaded && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage()
+    }
+  }, [selectedIri, selectedLoaded, hasNextPage, isFetchingNextPage, fetchNextPage])
+  useEffect(() => {
+    if (selectedLoaded) selectedRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [selectedLoaded, selectedIri])
+
   // Auto-load the next page when a sentinel at the list's end scrolls into view,
   // so large individual sets fill in on scroll instead of requiring repeated
   // clicks. The "Load more" button stays as a keyboard/fallback affordance.
@@ -82,6 +96,7 @@ function IndividualList({ ontologyId, versionId, selectedIri, onSelect, lang }: 
           return (
             <li key={t.iri}>
               <div
+                ref={isSelected ? selectedRef : undefined}
                 onClick={() => onSelect(t.iri)}
                 style={{
                   padding: '4px 8px 4px 20px',
@@ -493,10 +508,15 @@ function ExpandToggleBtn({ onExpand, onCollapse }: { onExpand: () => void; onCol
   )
 }
 
-function CollapsibleSection({ label, defaultOpen = true, children, headerExtra }: {
+function CollapsibleSection({ label, defaultOpen = true, children, headerExtra, openSignal }: {
   label: string; defaultOpen?: boolean; children: React.ReactNode; headerExtra?: React.ReactNode
+  // When this changes to a truthy value, force the section open (e.g. a search
+  // result selected an entity that lives in this section). The user can still
+  // collapse it afterwards; a new signal value re-opens it.
+  openSignal?: string | null
 }) {
   const [open, setOpen] = useState(defaultOpen)
+  useEffect(() => { if (openSignal) setOpen(true) }, [openSignal])
   return (
     <div style={{ borderBottom: '1px solid var(--border)' }}>
       <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -1079,7 +1099,11 @@ export default function OntologyPage() {
             />
           </CollapsibleSection>
           {individualCount > 0 && (
-            <CollapsibleSection label={`Individuals (${individualCount.toLocaleString()})`} defaultOpen={false}>
+            <CollapsibleSection
+              label={`Individuals (${individualCount.toLocaleString()})`}
+              defaultOpen={false}
+              openSignal={selectedTermData?.entityType === 'individual' ? selectedTermIri : null}
+            >
               <IndividualList
                 ontologyId={oid} versionId={activeVid}
                 selectedIri={selectedTermIri} onSelect={selectTerm}
