@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     # only the object key to the ingest task, instead of shipping the bytes
     # (hex-encoded, ~2x) through the Celery/Redis broker.
     minio_uploads_bucket: str = "uploads"
+    # Periodic snapshots of processed aggregates (e.g. usage_daily) live here so
+    # the stats survive a bad migration / accidental drop / postgres-PVC loss.
+    minio_backups_bucket: str = "backups"
     # Public-facing endpoint used only for presigned URL generation.
     # Defaults to minio_endpoint so local dev works without extra config.
     # In prod set to the externally reachable hostname (e.g. minio.example.com).
@@ -75,6 +78,10 @@ class Settings(BaseSettings):
 
     # Anthropic
     anthropic_api_key: str = ""
+
+    # Secret for the rotating daily salt used to dedup usage views/downloads.
+    # Falls back to jwt_secret_key when unset. Never stored per-visitor.
+    usage_hash_salt: str = ""
 
     # JWT / session
     jwt_secret_key: str = "change-me-in-production"

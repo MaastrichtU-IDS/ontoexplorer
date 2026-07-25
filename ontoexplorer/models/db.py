@@ -1,10 +1,12 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     String,
@@ -415,3 +417,29 @@ class MaintainerRequest(Base):
     reviewed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class UsageDaily(Base):
+    """Per-ontology daily view/download aggregates.
+
+    Written by the Celery rollup task from Redis counters (absolute counts, so
+    the upsert is idempotent). Daily grain so week/month/year trends are all
+    derivable on read via date_trunc; no raw event log and no per-visitor rows
+    are ever stored (dedup happens ephemerally in Redis). `unique_count` = one
+    per visitor per UTC day (deduped); `total_count` = every counted hit.
+    """
+    __tablename__ = "usage_daily"
+    __table_args__ = (
+        UniqueConstraint("ontology_id", "kind", "day", name="uq_usage_daily"),
+        Index("ix_usage_daily_day", "day"),
+        Index("ix_usage_daily_onto_day", "ontology_id", "day"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    ontology_id: Mapped[str] = mapped_column(ForeignKey("ontologies.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String, nullable=False)  # "view" | "download"
+    day: Mapped[date] = mapped_column(Date, nullable=False)    # UTC calendar day
+    unique_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

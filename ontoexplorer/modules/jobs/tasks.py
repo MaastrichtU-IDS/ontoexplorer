@@ -5,6 +5,7 @@ import asyncio
 import pyoxigraph
 import rdflib
 from celery import Celery
+from celery.schedules import crontab
 
 from ontoexplorer.config import get_settings
 from ontoexplorer.logging_config import get_logger
@@ -62,6 +63,16 @@ celery_app.conf.update(
             "task": "ontoexplorer.beat_heartbeat",
             "schedule": 60.0,
         },
+        # Flush Redis view/download counters into usage_daily (absolute upsert).
+        "rollup-usage-15min": {
+            "task": "ontoexplorer.rollup_usage",
+            "schedule": 900.0,
+        },
+        # Weekly snapshot of the processed aggregates to MinIO (durability).
+        "backup-usage-weekly": {
+            "task": "ontoexplorer.backup_usage_daily",
+            "schedule": crontab(hour=3, minute=30, day_of_week="sun"),
+        },
     },
 )
 
@@ -73,6 +84,66 @@ def beat_heartbeat() -> None:
     import redis as redis_sync
     r = redis_sync.from_url(get_settings().redis_url, decode_responses=True)
     r.set("beat:heartbeat", datetime.now(UTC).isoformat(), ex=300)
+
+
+@celery_app.task(name="ontoexplorer.rollup_usage")
+def rollup_usage() -> dict:
+    """Flush today's + yesterday's Redis usage counters into usage_daily.
+
+    Both days each run: yesterday is re-flushed to capture any hits recorded
+    just before the UTC boundary. Upserts are absolute counts → idempotent.
+    """
+    try:
+        from datetime import UTC, datetime, timedelta
+
+        import redis as redis_sync
+
+        from ontoexplorer.database import make_celery_db_session
+        from ontoexplorer.modules.usage.rollup import flush_day
+
+        r = redis_sync.from_url(get_settings().redis_url, decode_responses=True)
+        now = datetime.now(UTC)
+        days = [now.strftime("%Y%m%d"), (now - timedelta(days=1)).strftime("%Y%m%d")]
+
+        async def _run() -> int:
+            written = 0
+            async with make_celery_db_session()() as db:
+                for d in days:
+                    written += await flush_day(db, r, d)
+            return written
+
+        n = asyncio.run(_run())
+        log.info("rollup_usage_done", rows=n)
+        return {"status": "done", "rows": n}
+    except Exception as exc:
+        log.error("rollup_usage_failed", error=str(exc))
+        return {"status": "error", "error": str(exc)}
+
+
+@celery_app.task(name="ontoexplorer.backup_usage_daily")
+def backup_usage_daily() -> dict:
+    """Snapshot the whole usage_daily table to MinIO as JSON (durability)."""
+    try:
+        from datetime import UTC, datetime
+
+        from ontoexplorer.clients.minio import ensure_bucket, upload_bytes
+        from ontoexplorer.database import make_celery_db_session
+        from ontoexplorer.modules.usage.rollup import export_usage_daily
+
+        async def _run() -> bytes:
+            async with make_celery_db_session()() as db:
+                return await export_usage_daily(db)
+
+        blob = asyncio.run(_run())
+        bucket = get_settings().minio_backups_bucket
+        ensure_bucket(bucket)
+        key = f"usage-backups/usage_daily_{datetime.now(UTC).strftime('%Y-%m-%d')}.json"
+        upload_bytes(bucket, key, blob, content_type="application/json")
+        log.info("backup_usage_daily_done", key=key, bytes=len(blob))
+        return {"status": "done", "key": key, "bytes": len(blob)}
+    except Exception as exc:
+        log.error("backup_usage_daily_failed", error=str(exc))
+        return {"status": "error", "error": str(exc)}
 
 
 @celery_app.on_after_finalize.connect
