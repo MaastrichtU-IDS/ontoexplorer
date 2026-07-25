@@ -901,6 +901,53 @@ function ClassInstances({ ontologyId, versionId, classIri, slug, lang }: {
   )
 }
 
+// Paged list of a property's direct sub-properties (properties Y where
+// `Y subPropertyOf <property>`). Uses the same paginated terms endpoint that
+// backs the property tree (parent=<property>, entity_type=<property's type>).
+// Hidden when the property has no sub-properties.
+function SubPropertyList({ ontologyId, versionId, propertyIri, entityType, slug, lang }: {
+  ontologyId: string
+  versionId: string
+  propertyIri: string
+  entityType: 'object_property' | 'data_property' | 'annotation_property' | 'property'
+  slug: string
+  lang?: string | null
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['subproperties', ontologyId, versionId, propertyIri, entityType, lang ?? ''],
+    queryFn: () => api.ontologies.terms(ontologyId, versionId, propertyIri, entityType, false, true, INSTANCES_PAGE, 0, lang),
+    staleTime: 60_000,
+  })
+  if (isLoading) return null
+  const first = data?.terms ?? []
+  if (first.length === 0) return null
+
+  const more = first.length === INSTANCES_PAGE
+  return (
+    <Section label={`Sub-properties (${first.length}${more ? '+' : ''})`}>
+      <UsagePager<Term>
+        key={`${propertyIri}:${lang ?? ''}`}
+        initial={first}
+        initialHasMore={more}
+        fetchPage={async (offset) => {
+          const page = await api.ontologies.terms(ontologyId, versionId, propertyIri, entityType, false, true, INSTANCES_PAGE, offset, lang)
+          return { items: page.terms, has_more: page.terms.length === INSTANCES_PAGE }
+        }}
+      >
+        {(rows) => (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {rows.map(t => (
+              <div key={t.iri} style={{ paddingLeft: 8 }}>
+                <IriLink iri={t.iri} label={t.label ?? t.iri.split(/[#/]/).pop() ?? t.iri} slug={slug} vid={versionId} />
+              </div>
+            ))}
+          </div>
+        )}
+      </UsagePager>
+    </Section>
+  )
+}
+
 // Renders usage entries as Manchester-syntax axiom lines with clickable IRIs.
 // One line per axiom, e.g. `Man SubClassOf hasFather some Man`. Used in place of
 // the flat Class/Relation/Restriction/Filler tables when the backend supplies
@@ -1543,6 +1590,17 @@ function PropertyBody({ data, slug, ontologyId, roleMap, versionId, lang }: {
             slug={slug} vid={versionId}
           />
         </Section>
+      )}
+
+      {ontologyId && data.entityType !== 'class' && data.entityType !== 'individual' && (
+        <SubPropertyList
+          ontologyId={ontologyId}
+          versionId={versionId}
+          propertyIri={data.iri}
+          entityType={data.entityType}
+          slug={slug}
+          lang={lang}
+        />
       )}
 
       {data.characteristics.length > 0 && (
