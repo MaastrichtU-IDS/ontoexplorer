@@ -268,8 +268,10 @@ const FIELD_LABEL: React.CSSProperties = {
 type CheckState = 'idle' | 'checking' | 'up_to_date' | 'update_queued' | 'no_source_url' | 'error'
 
 function versionLabel(v: OntologyVersion): string {
-  if (v.version_iri) return v.version_iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? v.version_iri
-  return v.id.slice(0, 8)
+  const seg = v.version_iri ? (v.version_iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? v.version_iri) : ''
+  // Prefer a clean version/date token (e.g. "0.2.14", "2024-05-01").
+  const m = seg.match(/\d{4}-\d{2}-\d{2}/) ?? seg.match(/\d+(?:\.\d+)+/)
+  return m ? m[0] : (seg || v.id.slice(0, 8))
 }
 
 // Pick which version is the ontology's default ("latest"). Empty = automatic
