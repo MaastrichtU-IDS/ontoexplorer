@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, slugFromIri, type Ontology, type OntologyVersion, type ReasonerInfo } from '../lib/api'
+import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { api, slugFromIri, type Ontology, type OntologyVersion, type ReasonerInfo, type UsageCounts } from '../lib/api'
 import { useAuth } from '../hooks/useAuth'
 
 // ── Status dot ────────────────────────────────────────────────────────────────
@@ -754,6 +755,104 @@ function sortOntologies(list: Ontology[], col: SortCol, dir: SortDir): Ontology[
   return sorted
 }
 
+const DASH_GRANULARITIES = ['week', 'month', 'year'] as const
+
+function _DualCount({ counts }: { counts?: UsageCounts }) {
+  return (
+    <span>
+      <strong style={{ color: 'var(--text)' }}>{(counts?.unique ?? 0).toLocaleString()}</strong>
+      <span style={{ color: 'var(--text-dim)' }}> / {(counts?.total ?? 0).toLocaleString()}</span>
+    </span>
+  )
+}
+
+function MyUsageSection() {
+  const [gran, setGran] = useState<typeof DASH_GRANULARITIES[number]>('month')
+  const { data, isLoading } = useQuery({
+    queryKey: ['usage-mine', gran],
+    queryFn: () => api.stats.usageMine(gran, 12),
+  })
+  const per = data?.per_ontology ?? []
+  const trend = data?.trend ?? []
+  const hasData = trend.some(d => d.view_total || d.download_total)
+  const anyUsage = per.some(o => o.view_total || o.download_total)
+
+  const cell: React.CSSProperties = { padding: '5px 8px', textAlign: 'right', fontSize: 'var(--font-size-sm)' }
+  const th: React.CSSProperties = { ...cell, color: 'var(--text-dim)', fontSize: 10, textTransform: 'uppercase', fontWeight: 500 }
+
+  return (
+    <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '1rem', marginBottom: '1rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+        <h2 style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Views &amp; Downloads — my ontologies
+        </h2>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {DASH_GRANULARITIES.map(g => (
+            <button key={g} onClick={() => setGran(g)} style={{
+              fontSize: 11, textTransform: 'capitalize', cursor: 'pointer', padding: '3px 10px',
+              borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)',
+              background: g === gran ? 'var(--accent)' : 'transparent',
+              color: g === gran ? '#fff' : 'var(--text-dim)',
+            }}>{g}</button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: '1.5rem', fontSize: 'var(--font-size-sm)', marginBottom: '0.75rem' }}>
+        <div>Views (unique / total): <_DualCount counts={data?.totals.views} /></div>
+        <div>Downloads (unique / total): <_DualCount counts={data?.totals.downloads} /></div>
+      </div>
+
+      {isLoading ? (
+        <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</p>
+      ) : per.length === 0 ? (
+        <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>You don't own or maintain any ontologies yet.</p>
+      ) : (
+        <>
+          {hasData && (
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={trend}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                <XAxis dataKey="period" tick={{ fontSize: 11, fill: 'var(--text-dim)' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: 'var(--text-dim)' }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', color: 'var(--text)' }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Line type="monotone" dataKey="view_unique" name="Views" stroke="var(--accent-blue)" dot={false} strokeWidth={2} />
+                <Line type="monotone" dataKey="download_unique" name="Downloads" stroke="var(--accent)" dot={false} strokeWidth={2} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: hasData ? '0.75rem' : 0 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                <th style={{ ...th, textAlign: 'left' }}>Ontology</th>
+                <th style={th}>Views (u / t)</th>
+                <th style={th}>Downloads (u / t)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {per.map(o => (
+                <tr key={o.ontology_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                  <td style={{ ...cell, textAlign: 'left' }}>
+                    <Link to={`/ontologies/${o.shortname ?? o.ontology_id}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+                      {o.title || o.shortname || o.ontology_id}
+                    </Link>
+                  </td>
+                  <td style={cell}>{o.view_unique.toLocaleString()} / {o.view_total.toLocaleString()}</td>
+                  <td style={cell}>{o.download_unique.toLocaleString()} / {o.download_total.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!anyUsage && (
+            <p style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: '0.5rem' }}>No views or downloads recorded yet.</p>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function Dashboard() {
   const [showForm, setShowForm] = useState(false)
   const [search, setSearch] = useState('')
@@ -766,8 +865,10 @@ export default function Dashboard() {
   const qc = useQueryClient()
 
   const { data, isLoading } = useQuery({
-    queryKey: ['ontologies'],
-    queryFn: () => api.ontologies.list(),
+    queryKey: ['ontologies', 'mine'],
+    // "My Ontologies" = owned or maintained (distinct from the global catalog
+    // cache under ['ontologies'] used by search/OntologyPage).
+    queryFn: () => api.ontologies.list(0, 200, undefined, undefined, undefined, undefined, true),
     refetchInterval: () => (Date.now() < pollUntil ? 4000 : false),
   })
 
@@ -775,6 +876,7 @@ export default function Dashboard() {
     // Ingestion is async — keep refetching for ~90s so the new ontology shows
     // up on its own once the worker finishes (covers all but very large loads).
     setPollUntil(Date.now() + 90_000)
+    qc.invalidateQueries({ queryKey: ['ontologies', 'mine'] })
     qc.invalidateQueries({ queryKey: ['ontologies'] })
     qc.invalidateQueries({ queryKey: ['stats'] })
     setShowForm(false)
@@ -836,6 +938,8 @@ export default function Dashboard() {
           <button onClick={() => setSearch('')} style={{ color: 'var(--text-dim)', fontSize: 11, padding: '2px 4px' }}>✕</button>
         )}
       </div>
+
+      <MyUsageSection />
 
       {/* Sort bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginBottom: '0.75rem' }}>

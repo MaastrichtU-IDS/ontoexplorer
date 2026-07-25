@@ -87,6 +87,34 @@ async def usage_trend(
     return out
 
 
+async def usage_per_ontology(db: AsyncSession, ontology_ids: list[str]) -> list[dict]:
+    """All-time view/download counts per ontology (LEFT JOIN so zero-usage
+    ontologies still appear), ordered by most-active first."""
+    if not ontology_ids:
+        return []
+    sql = text("""
+        SELECT o.id, o.shortname, o.title,
+               COALESCE(SUM(u.unique_count) FILTER (WHERE u.kind='view'), 0)     AS vu,
+               COALESCE(SUM(u.total_count)  FILTER (WHERE u.kind='view'), 0)     AS vt,
+               COALESCE(SUM(u.unique_count) FILTER (WHERE u.kind='download'), 0) AS du,
+               COALESCE(SUM(u.total_count)  FILTER (WHERE u.kind='download'), 0) AS dt
+        FROM ontologies o
+        LEFT JOIN usage_daily u ON u.ontology_id = o.id
+        WHERE o.id = ANY(:ids)
+        GROUP BY o.id, o.shortname, o.title
+        ORDER BY (COALESCE(SUM(u.total_count), 0)) DESC, o.shortname
+    """)
+    rows = (await db.execute(sql, {"ids": ontology_ids})).all()
+    return [
+        {
+            "ontology_id": oid, "shortname": shortname, "title": title,
+            "view_unique": int(vu), "view_total": int(vt),
+            "download_unique": int(du), "download_total": int(dt),
+        }
+        for oid, shortname, title, vu, vt, du, dt in rows
+    ]
+
+
 def build_trend(granularity: str, periods: int, today: date, tmap: dict[date, dict]) -> list[dict]:
     """Zero-filled, labelled, ascending trend series over the last `periods` buckets."""
     empty = {"view_unique": 0, "view_total": 0, "download_unique": 0, "download_total": 0}

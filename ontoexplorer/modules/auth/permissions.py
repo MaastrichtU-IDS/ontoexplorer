@@ -8,6 +8,18 @@ from ontoexplorer.config import is_admin
 from ontoexplorer.models.db import Ontology, OntologyMaintainer, User
 
 
+async def owned_or_maintained_ontology_ids(db: AsyncSession, user_id: str) -> list[str]:
+    """Ontology ids the user owns OR has an approved maintainer grant over.
+
+    Used by the contributor dashboard + its usage stats to scope to "their"
+    ontologies (per the product decision: owned + maintained, not owned-only).
+    """
+    owned = select(Ontology.id).where(Ontology.owner_id == user_id)
+    maintained = select(OntologyMaintainer.ontology_id).where(OntologyMaintainer.user_id == user_id)
+    rows = (await db.execute(owned.union(maintained))).scalars().all()
+    return list(rows)
+
+
 async def is_ontology_maintainer(db: AsyncSession, user_id: str, ontology_id: str) -> bool:
     row = (
         await db.execute(

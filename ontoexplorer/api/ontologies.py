@@ -398,9 +398,11 @@ async def list_ontologies(
     group: str | None = Query(None, description="Filter by group tag (upper, obo, fair, biomedical)"),
     profile: str | None = Query(None, description="Filter by OWL 2 profile: el | rl | ql | dl"),
     reuses: str | None = Query(None, description="Filter: latest version reuses this prefix"),
+    mine: bool = Query(False, description="Only ontologies the caller owns or maintains"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
+    user: User | None = Depends(get_current_user),
 ):
     import json as _json
     from sqlalchemy import func
@@ -418,6 +420,13 @@ async def list_ontologies(
     # When filtering by q or profile we must load all and filter in Python.
     # At current scale (~24 ontologies) this is negligible; revisit if catalog grows large.
     stmt = select(Ontology).order_by(Ontology.created_at.desc())
+
+    # ?mine=true → restrict to the caller's owned/maintained ontologies (the
+    # contributor dashboard). Anonymous callers get an empty list.
+    if mine:
+        from ontoexplorer.modules.auth.permissions import owned_or_maintained_ontology_ids
+        my_ids = await owned_or_maintained_ontology_ids(db, user.id) if user else []
+        stmt = stmt.where(Ontology.id.in_(my_ids))
     if group:
         import json as _json_grp
         from sqlalchemy import text
