@@ -278,6 +278,28 @@ describe('property axioms in Manchester (subPropertyOf / chain)', () => {
   })
 })
 
+describe('property super-properties list', () => {
+  test('renders a "Super-properties" section from subPropertyOf, clickable', () => {
+    mockCurrentTerm = {
+      ...mockTerm,
+      iri: 'http://ex.org/hasFather',
+      entityType: 'object_property' as const,
+      rawProperties: {
+        'http://www.w3.org/2000/01/rdf-schema#subPropertyOf': [
+          { value: 'http://ex.org/hasParent', lang: null },
+        ],
+      },
+    } as unknown as typeof mockTerm
+
+    wrap(<TermPanel ontologyId="fam" versionId="v1" termIri="http://ex.org/hasFather" slug="fam" />)
+
+    expect(screen.getByText('Super-properties (1)')).toBeInTheDocument()
+    const link = screen.getByRole('link', { name: 'hasParent' })
+    expect(link).toHaveAttribute(
+      'href', `/ontologies/fam/v1?term=${encodeURIComponent('http://ex.org/hasParent')}`)
+  })
+})
+
 describe('property sub-properties list', () => {
   test('lists direct sub-properties as clickable links', async () => {
     mockCurrentTerm = {

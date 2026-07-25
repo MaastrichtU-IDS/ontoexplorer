@@ -6,7 +6,7 @@ clickable IRIs. These build a minimal in-memory store and assert the tokens.
 """
 import pyoxigraph as ox
 
-from ontoexplorer.api.ontologies import _sparql_usage, _sparql_class_usage
+from ontoexplorer.api.ontologies import _sparql_usage, _sparql_class_usage, _render_prop_expr
 
 _GRAPH = ox.NamedNode("urn:test:graph")
 _OWL = "http://www.w3.org/2002/07/owl#"
@@ -133,6 +133,23 @@ def test_class_usage_disjoint_renders_manchester():
     assert len(rows) == 1
     assert rows[0]["relation"] == "disjointWith"
     assert _mos_text(rows[0]["manchester"]) == "Woman DisjointWith Man"
+
+
+def test_render_prop_expr_named():
+    p = _n("http://ex.org/hasPart")
+    store = _store((p, _n(_RDF + "type"), _n(_OWL + "ObjectProperty")))
+    toks = _render_prop_expr(store, _GRAPH, p, _local)
+    assert toks == [{"t": "iri", "label": "hasPart", "iri": "http://ex.org/hasPart", "in_ontology": False}]
+
+
+def test_render_prop_expr_inverse_bnode_expands():
+    # ObjectInverseOf: `[ owl:inverseOf hasFeature ]` → `inverse hasFeature`
+    # rather than leaking a blank-node id (the hasParticipant chain bug).
+    inner = _n("http://ex.org/hasFeature")
+    b = ox.BlankNode()
+    store = _store((b, _n(_OWL + "inverseOf"), inner))
+    toks = _render_prop_expr(store, _GRAPH, b, _local)
+    assert _mos_text(toks) == "inverse hasFeature"
 
 
 def test_class_usage_as_filler_renders_manchester():
