@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTerm, useTermExpanded } from '../hooks/useTerm'
 import { useOntologyProfile } from '../hooks/useOntologyProfile'
 import { useOntologyMeta } from '../hooks/useOntologyMeta'
-import { ClassRef, ClassExprNode, InferredExprEntry, PropertyUsage, ClassUsageEntry, SchemaProperty, InheritedSchemaProperty, OntologyProfileData, OntologyMetaProfile, Term, api } from '../lib/api'
+import { ClassRef, ClassExprNode, InferredExprEntry, PropertyUsage, ClassUsageEntry, SchemaProperty, InheritedSchemaProperty, OntologyProfileData, OntologyMetaProfile, Term, ManchesterToken, api } from '../lib/api'
 import SourceBadge from './SourceBadge'
 
 function CopyChip({ text, label, title }: { text: string; label?: string; title?: string }) {
@@ -901,6 +901,39 @@ function ClassInstances({ ontologyId, versionId, classIri, slug, lang }: {
   )
 }
 
+// Renders usage entries as Manchester-syntax axiom lines with clickable IRIs.
+// One line per axiom, e.g. `Man SubClassOf hasFather some Man`. Used in place of
+// the flat Class/Relation/Restriction/Filler tables when the backend supplies
+// `manchester` tokens (it always does on current versions; the tables remain as
+// a fallback for stale cached responses without tokens).
+function UsageManchester({ rows, slug, vid }: {
+  rows: { manchester?: ManchesterToken[] | null }[]
+  slug: string
+  vid: string
+}) {
+  return (
+    <pre style={{
+      margin: 0, padding: '0.5rem 0.75rem',
+      background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+      borderRadius: 4, fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+      fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+      overflowX: 'auto',
+    }}>
+      {rows.map((row, i) => (
+        <div key={i}>
+          {(row.manchester ?? []).map((tok, j) =>
+            tok.t === 'text'
+              ? <span key={j}>{tok.v}</span>
+              : tok.in_ontology
+                ? <IriLink key={j} iri={tok.iri} label={tok.label} slug={slug} vid={vid} />
+                : <span key={j} title={tok.iri} style={{ cursor: 'help' }}>{tok.label}</span>
+          )}
+        </div>
+      ))}
+    </pre>
+  )
+}
+
 function UsageTable({ usage, propIri, propLabel, slug, vid }: {
   usage: PropertyUsage[]; propIri: string; propLabel: string; slug: string; vid: string
 }) {
@@ -1555,13 +1588,15 @@ function PropertyBody({ data, slug, ontologyId, roleMap, versionId, lang }: {
           }}
         >
           {(rows) => (
-            <UsageTable
-              usage={rows}
-              propIri={data.iri}
-              propLabel={data.label || data.iri.split(/[#/]/).pop() || data.iri}
-              slug={slug}
-              vid={versionId}
-            />
+            rows.length > 0 && rows.every(r => r.manchester)
+              ? <UsageManchester rows={rows} slug={slug} vid={versionId} />
+              : <UsageTable
+                  usage={rows}
+                  propIri={data.iri}
+                  propLabel={data.label || data.iri.split(/[#/]/).pop() || data.iri}
+                  slug={slug}
+                  vid={versionId}
+                />
           )}
         </UsagePager>
       </Section>
@@ -1780,13 +1815,15 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
               }}
             >
               {(rows) => (
-                <ClassUsageTable
-                  usage={rows}
-                  classIri={data.iri}
-                  classLabel={data.label || data.iri.split(/[#/]/).pop() || data.iri}
-                  slug={slug}
-                  vid={versionId}
-                />
+                rows.length > 0 && rows.every(r => r.manchester)
+                  ? <UsageManchester rows={rows} slug={slug} vid={versionId} />
+                  : <ClassUsageTable
+                      usage={rows}
+                      classIri={data.iri}
+                      classLabel={data.label || data.iri.split(/[#/]/).pop() || data.iri}
+                      slug={slug}
+                      vid={versionId}
+                    />
               )}
             </UsagePager>
           </Section>

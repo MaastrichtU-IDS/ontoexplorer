@@ -290,6 +290,9 @@ export interface PropertyUsage {
    *  `some (r some X)`. Present instead of filler_iri/label when the filler is
    *  a nested class expression; rendered via ExprNode. */
   filler_expr?: ClassExprNode | null
+  /** The whole axiom as Manchester-syntax tokens (clickable IRIs). Preferred
+   *  rendering; the flat fields above remain as a fallback. */
+  manchester?: ManchesterToken[] | null
 }
 
 export interface ClassUsageEntry {
@@ -299,6 +302,8 @@ export interface ClassUsageEntry {
   property_iri: string | null
   property_label: string | null
   restriction: string
+  /** The whole axiom as Manchester-syntax tokens (clickable IRIs). */
+  manchester?: ManchesterToken[] | null
 }
 
 export interface InferredExprEntry {

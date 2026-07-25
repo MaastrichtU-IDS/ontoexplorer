@@ -210,6 +210,42 @@ describe('individual object-property assertions', () => {
   })
 })
 
+describe('used-in-axioms Manchester rendering', () => {
+  test('renders property usage as a Manchester axiom line with clickable IRIs', () => {
+    mockCurrentTerm = {
+      ...mockTerm,
+      iri: 'http://ex.org/hasFather',
+      entityType: 'object_property' as const,
+      usage: [{
+        class_iri: 'http://ex.org/Man', class_label: 'Man',
+        relation: 'subClassOf', restriction: 'some',
+        filler_iri: 'http://ex.org/Man', filler_label: 'Man', filler_expr: null,
+        manchester: [
+          { t: 'iri', label: 'Man', iri: 'http://ex.org/Man', in_ontology: true },
+          { t: 'text', v: ' SubClassOf ' },
+          { t: 'iri', label: 'hasFather', iri: 'http://ex.org/hasFather', in_ontology: true },
+          { t: 'text', v: ' some ' },
+          { t: 'iri', label: 'Man', iri: 'http://ex.org/Man', in_ontology: true },
+        ],
+      }],
+      usageHasMore: false,
+    } as unknown as typeof mockTerm
+
+    wrap(<TermPanel ontologyId="fam" versionId="v1" termIri="http://ex.org/hasFather" slug="fam" />)
+
+    // The full axiom renders as one line.
+    const line = screen.getByText(
+      (_t, el) => el?.tagName === 'DIV' && el.textContent === 'Man SubClassOf hasFather some Man',
+    )
+    expect(line).toBeInTheDocument()
+    // IRIs are clickable, version-pinned links.
+    const manLink = screen.getAllByRole('link', { name: 'Man' })[0]
+    expect(manLink).toHaveAttribute(
+      'href', `/ontologies/fam/v1?term=${encodeURIComponent('http://ex.org/Man')}`)
+    expect(screen.getAllByRole('link', { name: 'hasFather' }).length).toBeGreaterThanOrEqual(1)
+  })
+})
+
 describe('class instances section', () => {
   test('lists a class\'s individuals, paged, and hidden when there are none', async () => {
     // mockTerm is a class; return two instances for it.

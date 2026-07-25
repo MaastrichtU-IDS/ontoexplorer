@@ -1238,10 +1238,44 @@ def _sparql_term_props(store, props_q: str, sub_q: str) -> tuple[list, list[str]
     return prop_rows, sub_iris
 
 
+# Usage relation → Manchester frame keyword.
+_USAGE_MOS_KEYWORD = {
+    "subClassOf":      "SubClassOf",
+    "equivalentClass": "EquivalentTo",
+    "disjointWith":    "DisjointWith",
+}
+
+
+def _mos_mark_clickable(store, graph_node, tokens: list[dict]) -> list[dict]:
+    """Set `in_ontology` on each IRI token via a cheap per-IRI existence check.
+
+    An IRI is clickable when it is the subject of at least one triple in this
+    graph — i.e. a described entity with its own term page. This avoids the
+    full-graph scan that `manchester._known_iris` does (which would run on every
+    uncached term-detail load); we only probe the handful of IRIs actually
+    rendered, each an indexed lookup.
+    """
+    import pyoxigraph
+    seen: dict[str, bool] = {}
+    for tok in tokens:
+        if tok.get("t") != "iri":
+            continue
+        iri = tok["iri"]
+        hit = seen.get(iri)
+        if hit is None:
+            hit = any(True for _ in store.quads_for_pattern(
+                pyoxigraph.NamedNode(iri), None, None, graph_node))
+            seen[iri] = hit
+        tok["in_ontology"] = hit
+    return tokens
+
+
 def _sparql_usage(store, q: str, label_fn, graph_iri: str) -> list[dict]:
     """Run property-usage SPARQL query and assemble rows (called via asyncio.to_thread)."""
     import pyoxigraph
+    from ontoexplorer.modules.diff import manchester as _mos
     graph_node = pyoxigraph.NamedNode(graph_iri)
+    mos_labels: dict[str, str] = {}
     result = []
     for row in store.query(q):
         cls_iri = row["class"].value
@@ -1258,6 +1292,22 @@ def _sparql_usage(store, q: str, label_fn, graph_iri: str) -> list[dict]:
             filler_expr = _build_class_expr(store, graph_node, filler, label_fn)
         elif filler_val and (filler_val.startswith("http") or filler_val.startswith("urn:")):
             filler_label = label_fn(filler_val)
+
+        # Whole axiom in Manchester syntax: `<Class> SubClassOf <restriction>`.
+        # `?r` is the anonymous superclass (the restriction on this property), so
+        # rendering it yields e.g. `hasFather some Man` with proper nesting.
+        manchester: list[dict] | None = None
+        r_node = row["r"]
+        if r_node is not None:
+            kw = _USAGE_MOS_KEYWORD.get(relation, "SubClassOf")
+            toks: list[dict] = [
+                {"t": "iri", "label": label_fn(cls_iri), "iri": cls_iri, "in_ontology": False},
+                {"t": "text", "v": f" {kw} "},
+                *_mos.render_class_expression(
+                    store, graph_node, r_node, labels=mos_labels, known_iris=frozenset()),
+            ]
+            manchester = _mos_mark_clickable(store, graph_node, toks)
+
         result.append({
             "class_iri":    cls_iri,
             "class_label":  label_fn(cls_iri),
@@ -1266,12 +1316,25 @@ def _sparql_usage(store, q: str, label_fn, graph_iri: str) -> list[dict]:
             "filler_iri":   filler_val if filler_val and filler_val.startswith("http") else None,
             "filler_label": None if filler_expr else (filler_label or filler_val),
             "filler_expr":  filler_expr,
+            "manchester":   manchester,
         })
     return result
 
 
-def _sparql_class_usage(store, cu_q: str, disj_q: str, label_fn, adc_map: dict, term_iri: str) -> list[dict]:
+def _sparql_class_usage(store, cu_q: str, disj_q: str, label_fn, adc_map: dict, term_iri: str, graph_iri: str) -> list[dict]:
     """Run class-usage SPARQL queries and assemble rows (called via asyncio.to_thread)."""
+    import pyoxigraph
+    from ontoexplorer.modules.diff import manchester as _mos
+    graph_node = pyoxigraph.NamedNode(graph_iri)
+    mos_labels: dict[str, str] = {}
+
+    def _disjoint_mos(cls_iri: str) -> list[dict]:
+        return _mos_mark_clickable(store, graph_node, [
+            {"t": "iri", "label": label_fn(cls_iri), "iri": cls_iri, "in_ontology": False},
+            {"t": "text", "v": " DisjointWith "},
+            {"t": "iri", "label": label_fn(term_iri), "iri": term_iri, "in_ontology": False},
+        ])
+
     seen: set[str] = set()
     result: list[dict] = []
     for row in store.query(cu_q):
@@ -1282,6 +1345,16 @@ def _sparql_class_usage(store, cu_q: str, disj_q: str, label_fn, adc_map: dict, 
         key = f"{cls_iri}||{relation}||{prop_iri}||{rtype}"
         if key not in seen:
             seen.add(key)
+            # `?r` is the restriction on `cls_iri` whose filler is this term, so
+            # rendering it yields e.g. `hasFather some <term>` — the whole axiom.
+            r_node = row["r"]
+            kw = _USAGE_MOS_KEYWORD.get(relation, "SubClassOf")
+            manchester = _mos_mark_clickable(store, graph_node, [
+                {"t": "iri", "label": label_fn(cls_iri), "iri": cls_iri, "in_ontology": False},
+                {"t": "text", "v": f" {kw} "},
+                *_mos.render_class_expression(
+                    store, graph_node, r_node, labels=mos_labels, known_iris=frozenset()),
+            ]) if r_node is not None else None
             result.append({
                 "class_iri":      cls_iri,
                 "class_label":    label_fn(cls_iri),
@@ -1289,6 +1362,7 @@ def _sparql_class_usage(store, cu_q: str, disj_q: str, label_fn, adc_map: dict, 
                 "property_iri":   prop_iri,
                 "property_label": label_fn(prop_iri) if prop_iri else None,
                 "restriction":    rtype,
+                "manchester":     manchester,
             })
     for row in store.query(disj_q):
         cls_iri = row["class"].value
@@ -1302,6 +1376,7 @@ def _sparql_class_usage(store, cu_q: str, disj_q: str, label_fn, adc_map: dict, 
                 "property_iri":   None,
                 "property_label": None,
                 "restriction":    "",
+                "manchester":     _disjoint_mos(cls_iri),
             })
     for co_iri in adc_map.get(term_iri, []):
         key = f"{co_iri}||disjointWith"
@@ -1314,6 +1389,7 @@ def _sparql_class_usage(store, cu_q: str, disj_q: str, label_fn, adc_map: dict, 
                 "property_iri":   None,
                 "property_label": None,
                 "restriction":    "",
+                "manchester":     _disjoint_mos(co_iri),
             })
     result.sort(key=lambda x: (x["class_label"] or x["class_iri"]).lower())
     return result
@@ -1629,7 +1705,7 @@ async def get_term(
         q = f"""
             PREFIX owl:  <http://www.w3.org/2002/07/owl#>
             PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-            SELECT ?class ?relation ?restrictType ?filler WHERE {{
+            SELECT ?class ?relation ?restrictType ?filler ?r WHERE {{
                 GRAPH <{g_iri}> {{
                     {{ ?class rdfs:subClassOf ?r . BIND("subClassOf" AS ?relation) }}
                     UNION {{ ?class owl:equivalentClass ?r . BIND("equivalentClass" AS ?relation) }}
@@ -1655,7 +1731,7 @@ async def get_term(
         cu_q = f"""
             PREFIX owl:  <http://www.w3.org/2002/07/owl#>
             PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-            SELECT DISTINCT ?class ?relation ?prop ?restrictType WHERE {{
+            SELECT DISTINCT ?class ?relation ?prop ?restrictType ?r WHERE {{
                 GRAPH <{g_iri}> {{
                     {{ ?r owl:someValuesFrom <{term_iri}> . ?r owl:onProperty ?prop . BIND("some" AS ?restrictType) }}
                     UNION {{ ?r owl:allValuesFrom <{term_iri}> . ?r owl:onProperty ?prop . BIND("only" AS ?restrictType) }}
@@ -1677,7 +1753,7 @@ async def get_term(
             ORDER BY ?class
             LIMIT {USAGE_SQL_LIMIT}
         """
-        return _sparql_class_usage(s, cu_q, disj_q, _label, adc_map, term_iri)
+        return _sparql_class_usage(s, cu_q, disj_q, _label, adc_map, term_iri, g_iri)
 
     def _run_schema_props_query(s) -> list[dict]:
         q = f"""
@@ -2016,7 +2092,7 @@ async def get_term_usage_page(
         q = f"""
             PREFIX owl:  <http://www.w3.org/2002/07/owl#>
             PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-            SELECT ?class ?relation ?restrictType ?filler WHERE {{
+            SELECT ?class ?relation ?restrictType ?filler ?r WHERE {{
                 GRAPH <{g_iri}> {{
                     {{ ?class rdfs:subClassOf ?r . BIND("subClassOf" AS ?relation) }}
                     UNION {{ ?class owl:equivalentClass ?r . BIND("equivalentClass" AS ?relation) }}
@@ -2064,7 +2140,7 @@ async def get_term_usage_page(
     cu_q = f"""
         PREFIX owl:  <http://www.w3.org/2002/07/owl#>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-        SELECT DISTINCT ?class ?relation ?prop ?restrictType WHERE {{
+        SELECT DISTINCT ?class ?relation ?prop ?restrictType ?r WHERE {{
             GRAPH <{g_iri}> {{
                 {{ ?r owl:someValuesFrom <{term_iri}> . ?r owl:onProperty ?prop . BIND("some" AS ?restrictType) }}
                 UNION {{ ?r owl:allValuesFrom <{term_iri}> . ?r owl:onProperty ?prop . BIND("only" AS ?restrictType) }}
@@ -2088,7 +2164,7 @@ async def get_term_usage_page(
     """
     _adc_map = await asyncio.to_thread(_compute_adc_map, store)
     rows = await asyncio.to_thread(
-        _sparql_class_usage, store, cu_q, disj_q, _label, _adc_map, term_iri
+        _sparql_class_usage, store, cu_q, disj_q, _label, _adc_map, term_iri, g_iri
     )
     has_more = len(rows) > limit
     return {"kind": "class", "offset": offset, "limit": limit,
