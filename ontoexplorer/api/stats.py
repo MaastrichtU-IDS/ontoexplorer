@@ -54,6 +54,52 @@ async def get_usage_public(
     }
 
 
+@router.get("/usage/mine", summary="Usage for the caller's owned/maintained ontologies")
+async def get_usage_mine(
+    granularity: str = Query("month"),
+    periods: int = Query(12, ge=1, le=60),
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """View/download stats scoped to ontologies the caller owns OR maintains:
+    totals (both counts), a per-ontology breakdown, and a trend."""
+    from datetime import UTC, datetime
+
+    from ontoexplorer.modules.auth.permissions import owned_or_maintained_ontology_ids
+    from ontoexplorer.modules.usage.query import (
+        GRANULARITIES,
+        build_trend,
+        period_starts,
+        usage_per_ontology,
+        usage_totals,
+        usage_trend,
+    )
+
+    if granularity not in GRANULARITIES:
+        raise HTTPException(status_code=400, detail=f"granularity must be one of {sorted(GRANULARITIES)}")
+
+    ids = await owned_or_maintained_ontology_ids(db, user.id)
+    today = datetime.now(UTC).date()
+    if not ids:
+        return {
+            "granularity": granularity,
+            "totals": {"views": {"unique": 0, "total": 0}, "downloads": {"unique": 0, "total": 0}},
+            "per_ontology": [],
+            "trend": build_trend(granularity, periods, today, {}),
+        }
+
+    starts = period_starts(granularity, periods, today)
+    totals = await usage_totals(db, ids)
+    tmap = await usage_trend(db, granularity, starts[0], ids)
+    per_ontology = await usage_per_ontology(db, ids)
+    return {
+        "granularity": granularity,
+        "totals": totals,
+        "per_ontology": per_ontology,
+        "trend": build_trend(granularity, periods, today, tmap),
+    }
+
+
 @router.get("/public", summary="Public aggregate statistics (no auth required)")
 async def get_public_stats(db: AsyncSession = Depends(get_db)):
     import json

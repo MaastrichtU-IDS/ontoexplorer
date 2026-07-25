@@ -1002,6 +1002,18 @@ export interface UsagePublic {
   totals: { views: UsageCounts; downloads: UsageCounts }
   trend: UsageTrendPoint[]
 }
+export interface UsagePerOntology {
+  ontology_id: string
+  shortname: string | null
+  title: string | null
+  view_unique: number
+  view_total: number
+  download_unique: number
+  download_total: number
+}
+export interface UsageMine extends UsagePublic {
+  per_ontology: UsagePerOntology[]
+}
 
 export function slugFromIri(iri: string): string {
   const last = iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? iri
@@ -1119,12 +1131,13 @@ export const api = {
   },
 
   ontologies: {
-    list: (offset = 0, limit = 50, q?: string, group?: string, profile?: ProfileName, reuses?: string) => {
+    list: (offset = 0, limit = 50, q?: string, group?: string, profile?: ProfileName, reuses?: string, mine = false) => {
       const params = new URLSearchParams({ offset: String(offset), limit: String(limit) })
       if (q) params.set('q', q)
       if (group) params.set('group', group)   // single group filter sent to API
       if (profile) params.set('profile', profile)
       if (reuses) params.set('reuses', reuses)
+      if (mine) params.set('mine', 'true')
       return request<{ ontologies: Ontology[]; offset: number; limit: number }>(
         `/ontologies?${params}`
       )
@@ -1440,6 +1453,8 @@ export const api = {
       }>('/stats/public'),
     usagePublic: (granularity = 'month', periods = 12) =>
       request<UsagePublic>(`/stats/usage/public?granularity=${granularity}&periods=${periods}`),
+    usageMine: (granularity = 'month', periods = 12) =>
+      request<UsageMine>(`/stats/usage/mine?granularity=${granularity}&periods=${periods}`),
   },
 
   admin: {

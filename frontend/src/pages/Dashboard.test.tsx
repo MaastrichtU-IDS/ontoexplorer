@@ -46,6 +46,17 @@ vi.mock('../lib/api', () => ({
       delete: vi.fn().mockResolvedValue(undefined),
       patch: vi.fn().mockResolvedValue(undefined),
     },
+    stats: {
+      usageMine: vi.fn().mockResolvedValue({
+        granularity: 'month',
+        totals: { views: { unique: 30, total: 75 }, downloads: { unique: 4, total: 9 } },
+        per_ontology: [
+          { ontology_id: 'ont1', shortname: 'go', title: 'Gene Ontology',
+            view_unique: 30, view_total: 75, download_unique: 4, download_total: 9 },
+        ],
+        trend: [{ period: '2026-07', view_unique: 30, view_total: 75, download_unique: 4, download_total: 9 }],
+      }),
+    },
     admin: {
       checkUpdate: vi.fn().mockResolvedValue({ status: 'up_to_date' }),
     },
@@ -163,4 +174,13 @@ test('choosing a reasoner under Advanced threads it into the submit call', async
   await waitFor(() =>
     expect(mockSubmitByIri).toHaveBeenCalledWith('https://purl.obolibrary.org/obo/go.owl', 'rustdl')
   )
+})
+
+test('shows the "my ontologies" usage section with per-ontology views/downloads', async () => {
+  wrap()
+  expect(await screen.findByText(/Views & Downloads — my ontologies/)).toBeInTheDocument()
+  // Per-ontology row (title links to the ontology) with its counts.
+  expect(await screen.findByText('Gene Ontology')).toBeInTheDocument()
+  expect(screen.getByText('30 / 75')).toBeInTheDocument()   // views unique / total
+  expect(screen.getByText('4 / 9')).toBeInTheDocument()     // downloads unique / total
 })
