@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from ontoexplorer.clients.reasoning import (
     ClassNotFoundError,
@@ -500,9 +501,19 @@ async def list_ontologies(
         for row in mr.all():
             meta_by_oid[row.ontology_id] = row.resolved or {}
 
+    # Batch-load owners (with ORCID accounts) so each row can show "Added by".
+    owner_ids = {o.owner_id for o in ontologies if o.owner_id}
+    owners_by_id: dict[str, User] = {}
+    if owner_ids:
+        owners_by_id = {
+            u.id: u for u in (await db.execute(
+                select(User).where(User.id.in_(owner_ids)).options(selectinload(User.oauth_accounts))
+            )).scalars().all()
+        }
+
     rows = []
     for o in ontologies:
-        d = _ontology_dict(o)
+        d = _ontology_dict(o, owners_by_id.get(o.owner_id) if o.owner_id else None)
         v = latest_by_oid.get(o.id)
         if v:
             d["latest_version"] = _version_dict(v)
@@ -590,7 +601,12 @@ async def list_ontologies(
 @router.get("/{ontology_id}", summary="Ontology metadata")
 async def get_ontology(ontology_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     ontology = await _get_ontology_or_404(db, ontology_id)
-    data = _ontology_dict(ontology)
+    owner = None
+    if ontology.owner_id:
+        owner = (await db.execute(
+            select(User).where(User.id == ontology.owner_id).options(selectinload(User.oauth_accounts))
+        )).scalar_one_or_none()
+    data = _ontology_dict(ontology, owner)
     return _negotiate_response(request, data, subject_iri=ontology.iri)
 
 
@@ -3053,8 +3069,26 @@ async def _get_version_or_404(db: AsyncSession, ontology_id: str, version_id: st
     return version
 
 
-def _ontology_dict(o: Ontology) -> dict:
-    return {"id": o.id, "iri": o.iri, "shortname": o.shortname, "title": o.title, "groups": o.groups or [], "auto_sync": o.auto_sync, "current_version_id": o.current_version_id, "created_at": o.created_at.isoformat()}
+def _owner_public_fields(owner: User | None) -> dict:
+    """Public-safe uploader identity for the Info page.
+
+    Never exposes email (the Info/list endpoints are unauthenticated). Returns
+    the display name and, if the uploader linked ORCID, their ORCID id so the
+    frontend can link to https://orcid.org/<id>. Requires owner.oauth_accounts
+    to be eager-loaded.
+    """
+    if owner is None:
+        return {"owner_display_name": None, "owner_orcid": None}
+    orcid = None
+    for acct in (owner.oauth_accounts or []):
+        if acct.provider == "orcid" and acct.provider_user_id and acct.provider_user_id != "None":
+            orcid = acct.provider_user_id
+            break
+    return {"owner_display_name": owner.display_name, "owner_orcid": orcid}
+
+
+def _ontology_dict(o: Ontology, owner: User | None = None) -> dict:
+    return {"id": o.id, "iri": o.iri, "shortname": o.shortname, "title": o.title, "groups": o.groups or [], "auto_sync": o.auto_sync, "current_version_id": o.current_version_id, "created_at": o.created_at.isoformat(), **_owner_public_fields(owner)}
 
 
 def _version_dict(v: OntologyVersion) -> dict:

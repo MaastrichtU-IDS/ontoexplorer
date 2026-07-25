@@ -358,10 +358,12 @@ function OntologyDocMeta({ ontologyId, versionId, lang }: { ontologyId: string; 
 
 // ── Metadata + stats panel ────────────────────────────────────────────────────
 
-function OntologyMeta({ iri, version, lang }: {
+function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid }: {
   iri: string
   version: OntologyVersion | undefined
   lang?: string | null
+  ownerDisplayName?: string | null
+  ownerOrcid?: string | null
 }) {
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['version-stats', version?.ontology_id, version?.id],
@@ -437,6 +439,16 @@ function OntologyMeta({ iri, version, lang }: {
             </MetaRow>
           )}
           <MetaRow label="Ingested">{new Date(version.created_at).toLocaleString()}</MetaRow>
+          {ownerDisplayName && (
+            <MetaRow label="Added by">
+              {ownerOrcid ? (
+                <a href={`https://orcid.org/${ownerOrcid}`} target="_blank" rel="noreferrer"
+                   style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+                  {ownerDisplayName} ↗
+                </a>
+              ) : ownerDisplayName}
+            </MetaRow>
+          )}
           <MetaRow label="SHA-256">{version.sha256.slice(0, 16) + '…'}</MetaRow>
           {version.download_url && (
             <MetaRow label="Download">
@@ -1148,6 +1160,8 @@ export default function OntologyPage() {
                 iri={ontology?.iri ?? ''}
                 version={activeVersion}
                 lang={effectiveLang}
+                ownerDisplayName={ontology?.owner_display_name}
+                ownerOrcid={ontology?.owner_orcid}
               />
             ) : detailTab === 'history' ? (
               oid && activeVid && versions.length > 1

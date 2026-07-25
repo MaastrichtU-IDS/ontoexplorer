@@ -11,6 +11,8 @@ const { mockOntology, mockVersion } = vi.hoisted(() => ({
     shortname: 'go',
     title: 'Gene Ontology',
     created_at: '2024-01-01T00:00:00Z',
+    owner_display_name: 'Ada Lovelace',
+    owner_orcid: '0000-0002-1825-0097',
   },
   mockVersion: {
     id: 'v1',
@@ -86,5 +88,15 @@ describe('OntologyPage reasoner badge', () => {
     expect(row).not.toBeNull()
     expect(await screen.findByText('rustdl')).toBeInTheDocument()
     expect(row?.textContent).not.toMatch(/Reasoner:\s*rustdl/i)
+  })
+})
+
+describe('OntologyPage repository metadata', () => {
+  it('shows an "Added by" row linking to the uploader\'s ORCID', async () => {
+    wrap()
+    const label = await screen.findByText('Added by')
+    expect(label.closest('tr')).not.toBeNull()
+    const link = await screen.findByRole('link', { name: /Ada Lovelace/ })
+    expect(link).toHaveAttribute('href', 'https://orcid.org/0000-0002-1825-0097')
   })
 })
