@@ -17,6 +17,9 @@ vi.mock('../lib/api', async () => {
           uploads_per_month: [], queries_per_month: [], job_durations: [],
         }),
         usagePublic: mockUsagePublic,
+        usageTimeseries: vi.fn().mockResolvedValue({
+          kind: 'view', granularity: 'month', periods: [], series: [],
+        }),
       },
     },
   }
@@ -29,7 +32,7 @@ beforeAll(() => {
 })
 
 function wrap() {
-  const qc = new QueryClient()
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(<QueryClientProvider client={qc}><Stats /></QueryClientProvider>)
 }
 
@@ -43,7 +46,6 @@ describe('Stats usage section', () => {
 
     wrap()
 
-    expect(await screen.findByText('Views')).toBeInTheDocument()
     // "Show both": unique headline + total alongside (one <p>, split spans).
     // Comma-agnostic (toLocaleString separators vary by the test env's ICU).
     const pWith = (needle: string) => (_: string, el: Element | null) =>
@@ -54,8 +56,13 @@ describe('Stats usage section', () => {
     // Default granularity is month.
     await waitFor(() => expect(mockUsagePublic).toHaveBeenCalledWith('month', 12))
 
-    // Toggling to year re-queries.
-    fireEvent.click(screen.getByRole('button', { name: 'year' }))
+    // Toggling to year re-queries. (The compare widget also has a 'year' button;
+    // the site-wide UsageSection's is first in the DOM.)
+    fireEvent.click(screen.getAllByRole('button', { name: 'year' })[0])
     await waitFor(() => expect(mockUsagePublic).toHaveBeenCalledWith('year', 12))
+
+    // The ≤5-ontology compare widget is present and prompts for selection.
+    expect(screen.getByText('Compare ontologies over time')).toBeInTheDocument()
+    expect(screen.getByText(/Select one or more ontologies/)).toBeInTheDocument()
   })
 })

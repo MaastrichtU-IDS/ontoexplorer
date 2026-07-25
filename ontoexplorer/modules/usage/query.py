@@ -115,6 +115,41 @@ async def usage_per_ontology(db: AsyncSession, ontology_ids: list[str]) -> list[
     ]
 
 
+async def usage_timeseries(
+    db: AsyncSession, ontology_ids: list[str], kind: str, granularity: str, since: date,
+) -> dict[str, dict[date, dict]]:
+    """Per-ontology bucketed counts for one kind: {ontology_id: {bucket_date: {unique,total}}}.
+
+    Sparse — the caller zero-fills against a dense period axis.
+    """
+    if not ontology_ids:
+        return {}
+    sql = text("""
+        SELECT ontology_id, date_trunc(:g, day::timestamp) AS period,
+               COALESCE(SUM(unique_count), 0) AS uq,
+               COALESCE(SUM(total_count), 0)  AS tot
+        FROM usage_daily
+        WHERE kind = :kind AND day >= :since AND ontology_id = ANY(:ids)
+        GROUP BY ontology_id, period
+    """)
+    params = {"g": granularity, "kind": kind, "since": since, "ids": ontology_ids}
+    out: dict[str, dict[date, dict]] = {}
+    for oid, period, uq, tot in (await db.execute(sql, params)).all():
+        out.setdefault(oid, {})[period.date()] = {"unique": int(uq), "total": int(tot)}
+    return out
+
+
+def build_series(
+    granularity: str, periods: int, today: date, points: dict[date, dict],
+) -> list[dict]:
+    """Dense, labelled, ascending per-ontology series (zero-filled)."""
+    empty = {"unique": 0, "total": 0}
+    return [
+        {"period": period_label(granularity, s), **points.get(s, empty)}
+        for s in period_starts(granularity, periods, today)
+    ]
+
+
 def build_trend(granularity: str, periods: int, today: date, tmap: dict[date, dict]) -> list[dict]:
     """Zero-filled, labelled, ascending trend series over the last `periods` buckets."""
     empty = {"view_unique": 0, "view_total": 0, "download_unique": 0, "download_total": 0}

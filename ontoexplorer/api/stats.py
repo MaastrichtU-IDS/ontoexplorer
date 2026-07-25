@@ -54,6 +54,65 @@ async def get_usage_public(
     }
 
 
+@router.get("/usage/timeseries", summary="Per-ontology usage over time (<=5 ontologies)")
+async def get_usage_timeseries(
+    ontology_ids: str = Query(..., description="Comma-separated ontology ids (max 5)"),
+    kind: str = Query("view"),
+    granularity: str = Query("month"),
+    periods: int = Query(12, ge=1, le=60),
+    db: AsyncSession = Depends(get_db),
+):
+    """One dense zero-filled series per requested ontology, for the widget. Public."""
+    from datetime import UTC, datetime
+
+    from ontoexplorer.modules.usage.query import (
+        GRANULARITIES,
+        build_series,
+        period_label,
+        period_starts,
+        usage_timeseries,
+    )
+
+    if granularity not in GRANULARITIES:
+        raise HTTPException(status_code=400, detail=f"granularity must be one of {sorted(GRANULARITIES)}")
+    if kind not in ("view", "download"):
+        raise HTTPException(status_code=400, detail="kind must be 'view' or 'download'")
+
+    ids: list[str] = []
+    for x in ontology_ids.split(","):
+        x = x.strip()
+        if x and x not in ids:
+            ids.append(x)
+    if not ids:
+        raise HTTPException(status_code=400, detail="ontology_ids is required")
+    if len(ids) > 5:
+        raise HTTPException(status_code=400, detail="at most 5 ontologies")
+
+    today = datetime.now(UTC).date()
+    starts = period_starts(granularity, periods, today)
+    labels = [period_label(granularity, s) for s in starts]
+
+    # Resolve display names for the requested ids (preserve request order).
+    name_rows = (await db.execute(
+        select(Ontology.id, Ontology.shortname, Ontology.title).where(Ontology.id.in_(ids))
+    )).all()
+    names = {oid: (shortname, title) for oid, shortname, title in name_rows}
+
+    ts = await usage_timeseries(db, ids, kind, granularity, starts[0])
+    series = []
+    for oid in ids:
+        if oid not in names:
+            continue  # unknown/deleted id — skip silently
+        shortname, title = names[oid]
+        series.append({
+            "ontology_id": oid,
+            "shortname": shortname,
+            "label": title or shortname or oid,
+            "points": build_series(granularity, periods, today, ts.get(oid, {})),
+        })
+    return {"kind": kind, "granularity": granularity, "periods": labels, "series": series}
+
+
 @router.get("/usage/mine", summary="Usage for the caller's owned/maintained ontologies")
 async def get_usage_mine(
     granularity: str = Query("month"),

@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, type CSSProperties } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api, UsageCounts, UsageTrendPoint } from '../lib/api'
+import OntologyPicker from '../components/OntologyPicker'
 
 export default function Stats() {
   const { data, isLoading } = useQuery({ queryKey: ['stats'], queryFn: () => api.stats.get() })
@@ -17,6 +18,8 @@ export default function Stats() {
       <h1 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1rem' }}>Usage Stats</h1>
 
       <UsageSection />
+
+      <UsageTimeseriesWidget />
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', marginBottom: '1.25rem' }}>
         <StatCard label="Total ontologies" value={data?.total_ontologies ?? 0} />
@@ -95,6 +98,97 @@ function UsageSection() {
       </div>
     </div>
   )
+}
+
+const SERIES_COLORS = ['var(--accent-blue)', 'var(--accent)', 'var(--accent-purple)', '#e0a458', '#50c878']
+const MAX_ONTOLOGIES = 5
+
+function UsageTimeseriesWidget() {
+  const [ids, setIds] = useState<string[]>([])
+  const [kind, setKind] = useState<'view' | 'download'>('view')
+  const [gran, setGran] = useState<Granularity>('month')
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['usage-timeseries', ids, kind, gran],
+    queryFn: () => api.stats.usageTimeseries(ids, kind, gran, 12),
+    enabled: ids.length > 0,
+  })
+
+  // Merge the per-ontology series into one row-per-period array for recharts,
+  // keyed by ontology_id (plotting the unique count).
+  const series = data?.series ?? []
+  const periods = data?.periods ?? []
+  const chartData = periods.map((p, i) => {
+    const row: Record<string, string | number> = { period: p }
+    for (const s of series) row[s.ontology_id] = s.points[i]?.unique ?? 0
+    return row
+  })
+
+  return (
+    <div style={{ marginBottom: '1.5rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem', gap: 8, flexWrap: 'wrap' }}>
+        <h2 style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Compare ontologies over time
+        </h2>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {(['view', 'download'] as const).map(k => (
+              <button key={k} onClick={() => setKind(k)} style={toggleStyle(k === kind)}>
+                {k === 'view' ? 'Views' : 'Downloads'}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {GRANULARITIES.map(g => (
+              <button key={g} onClick={() => setGran(g)} style={{ ...toggleStyle(g === gran), textTransform: 'capitalize' }}>{g}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '1rem' }}>
+        <OntologyPicker
+          value={ids}
+          onChange={next => setIds(next.slice(0, MAX_ONTOLOGIES))}
+          placeholder={`Add up to ${MAX_ONTOLOGIES} ontologies to compare…`}
+        />
+        {ids.length >= MAX_ONTOLOGIES && (
+          <p style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: 4 }}>Maximum of {MAX_ONTOLOGIES} ontologies.</p>
+        )}
+
+        <div style={{ marginTop: '1rem' }}>
+          {ids.length === 0 ? (
+            <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Select one or more ontologies to compare their {kind === 'view' ? 'views' : 'downloads'} per {gran}.</p>
+          ) : isLoading ? (
+            <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                <XAxis dataKey="period" tick={{ fontSize: 11, fill: 'var(--text-dim)' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: 'var(--text-dim)' }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', color: 'var(--text)' }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                {series.map((s, i) => (
+                  <Line key={s.ontology_id} type="monotone" dataKey={s.ontology_id} name={s.label}
+                        stroke={SERIES_COLORS[i % SERIES_COLORS.length]} dot={false} strokeWidth={2} />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function toggleStyle(active: boolean): CSSProperties {
+  return {
+    fontSize: 11, cursor: 'pointer', padding: '3px 10px', borderRadius: 'var(--radius-sm)',
+    border: '1px solid var(--border)',
+    background: active ? 'var(--accent)' : 'transparent',
+    color: active ? '#fff' : 'var(--text-dim)',
+  }
 }
 
 function DualStatCard({ label, counts }: { label: string; counts?: UsageCounts }) {

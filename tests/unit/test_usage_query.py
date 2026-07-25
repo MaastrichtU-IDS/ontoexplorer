@@ -3,6 +3,7 @@ from datetime import date
 
 from ontoexplorer.modules.usage.query import (
     _add_months,
+    build_series,
     build_trend,
     period_label,
     period_starts,
@@ -46,3 +47,13 @@ def test_build_trend_zero_fills_and_orders():
     assert trend[0] == {"period": "2026-05", "view_unique": 0, "view_total": 0,
                         "download_unique": 0, "download_total": 0}
     assert trend[2]["view_unique"] == 3 and trend[2]["download_total"] == 2
+
+
+def test_build_series_zero_fills_per_ontology():
+    today = date(2026, 7, 25)
+    points = {date(2026, 6, 1): {"unique": 4, "total": 9}}
+    series = build_series("month", 3, today, points)
+    assert [p["period"] for p in series] == ["2026-05", "2026-06", "2026-07"]
+    assert series[0] == {"period": "2026-05", "unique": 0, "total": 0}
+    assert series[1] == {"period": "2026-06", "unique": 4, "total": 9}
+    assert series[2] == {"period": "2026-07", "unique": 0, "total": 0}
