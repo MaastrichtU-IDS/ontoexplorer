@@ -1531,6 +1531,25 @@ function PropertyBody({ data, slug, ontologyId, roleMap, versionId, lang }: {
         slug={slug} versionId={versionId} lang={lang}
       />
 
+      {/* Property-hierarchy / identity axioms. These predicates are in
+          PROPERTY_HANDLED_PREDICATES (excluded from the annotations table) so
+          they must be rendered here or they'd be dropped entirely. */}
+      {([
+        ['SubProperty of',  'http://www.w3.org/2000/01/rdf-schema#subPropertyOf'],
+        ['Equivalent to',   'http://www.w3.org/2002/07/owl#equivalentProperty'],
+      ] as const).map(([label, pred]) => {
+        const iris = (data.rawProperties[pred] ?? []).map(v => v.value).filter(v => v.startsWith('http'))
+        return iris.length > 0 && (
+          <Section key={pred} label={label}>
+            {iris.map(iri => (
+              <div key={iri} style={{ paddingLeft: 8, marginBottom: 2 }}>
+                <IriLink iri={iri} label={shortLabel(iri)} slug={slug} vid={versionId} />
+              </div>
+            ))}
+          </Section>
+        )
+      })}
+
       {data.characteristics.length > 0 && (
         <Section label="Characteristics">
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>

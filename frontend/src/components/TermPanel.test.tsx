@@ -246,6 +246,28 @@ describe('used-in-axioms Manchester rendering', () => {
   })
 })
 
+describe('property subPropertyOf axiom', () => {
+  test('renders a "SubProperty of" section with a clickable super-property', () => {
+    mockCurrentTerm = {
+      ...mockTerm,
+      iri: 'http://ex.org/hasFather',
+      entityType: 'object_property' as const,
+      rawProperties: {
+        'http://www.w3.org/2000/01/rdf-schema#subPropertyOf': [
+          { value: 'http://ex.org/hasParent', lang: null },
+        ],
+      },
+    } as unknown as typeof mockTerm
+
+    wrap(<TermPanel ontologyId="fam" versionId="v1" termIri="http://ex.org/hasFather" slug="fam" />)
+
+    expect(screen.getByText('SubProperty of')).toBeInTheDocument()
+    const link = screen.getByRole('link', { name: 'hasParent' })
+    expect(link).toHaveAttribute(
+      'href', `/ontologies/fam/v1?term=${encodeURIComponent('http://ex.org/hasParent')}`)
+  })
+})
+
 describe('class instances section', () => {
   test('lists a class\'s individuals, paged, and hidden when there are none', async () => {
     // mockTerm is a class; return two instances for it.
