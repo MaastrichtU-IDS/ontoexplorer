@@ -1014,6 +1014,19 @@ export interface UsagePerOntology {
 export interface UsageMine extends UsagePublic {
   per_ontology: UsagePerOntology[]
 }
+export interface UsageSeriesPoint { period: string; unique: number; total: number }
+export interface UsageSeries {
+  ontology_id: string
+  shortname: string | null
+  label: string
+  points: UsageSeriesPoint[]
+}
+export interface UsageTimeseries {
+  kind: string
+  granularity: string
+  periods: string[]
+  series: UsageSeries[]
+}
 
 export function slugFromIri(iri: string): string {
   const last = iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? iri
@@ -1455,6 +1468,11 @@ export const api = {
       request<UsagePublic>(`/stats/usage/public?granularity=${granularity}&periods=${periods}`),
     usageMine: (granularity = 'month', periods = 12) =>
       request<UsageMine>(`/stats/usage/mine?granularity=${granularity}&periods=${periods}`),
+    usageTimeseries: (ids: string[], kind = 'view', granularity = 'month', periods = 12) =>
+      request<UsageTimeseries>(
+        `/stats/usage/timeseries?ontology_ids=${encodeURIComponent(ids.join(','))}` +
+        `&kind=${kind}&granularity=${granularity}&periods=${periods}`,
+      ),
   },
 
   admin: {
