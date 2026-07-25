@@ -240,6 +240,9 @@ export interface Ontology {
   description?: string | null
   preferred_lang?: string | null
   languages?: OntologyLanguage[]
+  /** Public identity of the uploader ("Added by"). Never includes email. */
+  owner_display_name?: string | null
+  owner_orcid?: string | null
 }
 
 export interface OntologyVersion {
