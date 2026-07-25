@@ -632,9 +632,14 @@ async def get_version(ontology_id: str, version_id: str, request: Request, db: A
 # ── Download ───────────────────────────────────────────────────────────────────
 
 @router.get("/{ontology_id}/{version_id}/download", summary="Download ontology artifact")
-async def download_version(ontology_id: str, version_id: str, db: AsyncSession = Depends(get_db)):
+async def download_version(ontology_id: str, version_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     import asyncio
     version = await _get_version_or_404(db, ontology_id, version_id)
+    # Count the download at this single app-served chokepoint (the OLS route
+    # 302-redirects here, so we never double-count). Fire-and-forget; the helper
+    # swallows all errors so stats can't break a download.
+    from ontoexplorer.modules.usage.capture import KIND_DOWNLOAD, record_usage
+    await record_usage(request, ontology_id, KIND_DOWNLOAD)
     data = await asyncio.to_thread(fetch_ontology, version.minio_key)
     ext = version.minio_key.rsplit(".", 1)[-1] if "." in version.minio_key else "owl"
     content_types = {
