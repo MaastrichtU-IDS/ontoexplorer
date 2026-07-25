@@ -21,6 +21,11 @@ import { useOntologyLanguages } from '../hooks/useOntologyLanguages'
 
 const IND_PAGE_SIZE = 50
 
+// Ontology ids already view-beaconed this SPA session — guards against React
+// re-renders / StrictMode double-invoke refiring the beacon. The server also
+// dedups per visitor per day, so this is just politeness, not correctness.
+const _viewedBeacons = new Set<string>()
+
 function IndividualList({ ontologyId, versionId, selectedIri, onSelect, lang }: {
   ontologyId: string
   versionId: string
@@ -799,6 +804,14 @@ export default function OntologyPage() {
     ? versions.find(v => v.id === version) ?? versions[0]
     : versions[0]
   const activeVid = activeVersion?.id
+
+  // Fire a one-per-session view beacon once the ontology resolves.
+  useEffect(() => {
+    const id = ontology?.id
+    if (!id || _viewedBeacons.has(id)) return
+    _viewedBeacons.add(id)
+    api.ontologies.recordView(id).catch(() => {})
+  }, [ontology?.id])
   const oid = ontology?.id
 
   const selectedTermIri = searchParams.get('term')

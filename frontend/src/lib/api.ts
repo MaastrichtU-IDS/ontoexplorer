@@ -1116,6 +1116,8 @@ export const api = {
       )
     },
     get: (id: string) => request<Ontology>(`/ontologies/${id}`),
+    // Fire-and-forget page-view beacon (deduped per visitor per day server-side).
+    recordView: (id: string) => request<void>(`/ontologies/${id}/view`, { method: 'POST' }),
     patch: (id: string, body: { shortname?: string | null; title?: string | null; preferred_lang?: string | null; groups?: string[]; current_version_id?: string | null }) =>
       request<Ontology>(`/ontologies/${id}`, {
         method: 'PATCH',

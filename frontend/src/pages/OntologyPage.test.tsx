@@ -4,7 +4,8 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import OntologyPage from './OntologyPage'
 
-const { mockOntology, mockVersion } = vi.hoisted(() => ({
+const { mockOntology, mockVersion, mockRecordView } = vi.hoisted(() => ({
+  mockRecordView: vi.fn().mockResolvedValue(undefined),
   mockOntology: {
     id: 'onto-1',
     iri: 'http://example.org/go',
@@ -37,6 +38,7 @@ vi.mock('../lib/api', async () => {
       ontologies: {
         ...(actual as any).api.ontologies,
         list: vi.fn().mockResolvedValue({ ontologies: [mockOntology] }),
+        recordView: mockRecordView,
         versions: vi.fn().mockResolvedValue({ versions: [mockVersion] }),
         stats: vi.fn().mockResolvedValue({
           triple_count: 100,
@@ -88,6 +90,14 @@ describe('OntologyPage reasoner badge', () => {
     expect(row).not.toBeNull()
     expect(await screen.findByText('rustdl')).toBeInTheDocument()
     expect(row?.textContent).not.toMatch(/Reasoner:\s*rustdl/i)
+  })
+})
+
+describe('OntologyPage view beacon', () => {
+  it('POSTs a view beacon for the resolved ontology', async () => {
+    wrap()
+    await screen.findByText('Reasoner')  // wait until the page has resolved the ontology
+    expect(mockRecordView).toHaveBeenCalledWith('onto-1')
   })
 })
 
