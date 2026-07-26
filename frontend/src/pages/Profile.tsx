@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth'
 import { api } from '../lib/api'
 import { linkProvider } from '../lib/auth'
 import MaintainerAccess from '../components/MaintainerAccess'
+import ThemePicker from '../components/ThemePicker'
 
 const PROVIDER_LABELS: Record<string, string> = {
   github: 'GitHub',
@@ -135,7 +136,7 @@ export default function Profile() {
             width: 48, height: 48, borderRadius: '50%',
             background: 'var(--accent)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: '1.25rem', fontWeight: 700, color: '#0a0f1a',
+            fontSize: '1.25rem', fontWeight: 700, color: 'var(--on-accent)',
             flexShrink: 0,
           }}>
             {(user.display_name || user.email || '?')[0].toUpperCase()}
@@ -148,8 +149,8 @@ export default function Profile() {
               {user.is_admin && (
                 <span style={{
                   fontSize: '0.7rem', fontWeight: 700,
-                  background: '#f0883e22', color: '#f0883e',
-                  border: '1px solid #f0883e66',
+                  background: 'var(--orange)22', color: 'var(--orange)',
+                  border: '1px solid var(--orange)66',
                   borderRadius: 3, padding: '1px 6px',
                   letterSpacing: '0.05em', textTransform: 'uppercase',
                 }}>
@@ -166,6 +167,23 @@ export default function Profile() {
         <div style={{ padding: '1rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           <Row label="Member since" value={memberSince} />
         </div>
+      </div>
+
+      {/* Appearance / theme section */}
+      <div style={{
+        marginTop: '1.5rem',
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius)',
+        padding: '1.25rem 1.5rem',
+      }}>
+        <h2 style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text)', marginBottom: '0.25rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Appearance
+        </h2>
+        <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)', marginBottom: '1rem' }}>
+          Pick a theme. The ☀/☾ button in the nav quick-toggles between Slate and Daylight.
+        </p>
+        <ThemePicker />
       </div>
 
       {/* Connected accounts section */}
@@ -186,7 +204,7 @@ export default function Profile() {
         {mergeOffer && (
           <div style={{
             marginBottom: '1rem', padding: '12px 14px',
-            border: '1px solid #f0883e66', background: '#f0883e14',
+            border: '1px solid var(--orange)66', background: 'var(--orange)14',
             borderRadius: 'var(--radius-sm)',
           }}>
             <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text)', marginBottom: 10, lineHeight: 1.5 }}>
@@ -201,7 +219,7 @@ export default function Profile() {
                 disabled={merging}
                 style={{
                   padding: '5px 14px', borderRadius: 'var(--radius-sm)',
-                  background: '#f0883e', border: 'none', color: '#0a0f1a',
+                  background: 'var(--orange)', border: 'none', color: 'var(--on-accent)',
                   fontSize: 'var(--font-size-sm)', fontWeight: 600,
                   cursor: merging ? 'default' : 'pointer', opacity: merging ? 0.7 : 1,
                 }}
@@ -238,7 +256,7 @@ export default function Profile() {
                 <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--font-size-sm)', color: 'var(--text)' }}>
                   {PROVIDER_LABELS[provider]}
                   {connected && (
-                    <span style={{ fontSize: '0.7rem', color: '#3fb950' }}>● connected</span>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--green)' }}>● connected</span>
                   )}
                 </span>
                 {connected ? (
@@ -249,7 +267,7 @@ export default function Profile() {
                     style={{
                       padding: '4px 12px', borderRadius: 'var(--radius-sm)',
                       background: 'transparent', border: '1px solid var(--border)',
-                      color: isOnly ? 'var(--text-dim)' : 'var(--error, #e06c75)',
+                      color: isOnly ? 'var(--text-dim)' : 'var(--error)',
                       fontSize: 'var(--font-size-sm)',
                       cursor: (busy || isOnly) ? 'default' : 'pointer', opacity: (busy || isOnly) ? 0.6 : 1,
                     }}
@@ -263,7 +281,7 @@ export default function Profile() {
                     style={{
                       padding: '4px 12px', borderRadius: 'var(--radius-sm)',
                       background: 'var(--accent)', border: 'none',
-                      color: '#0a0f1a', fontSize: 'var(--font-size-sm)', fontWeight: 600,
+                      color: 'var(--on-accent)', fontSize: 'var(--font-size-sm)', fontWeight: 600,
                       cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.7 : 1,
                     }}
                   >
@@ -276,7 +294,7 @@ export default function Profile() {
         </div>
 
         {linkMsg && (
-          <p style={{ marginTop: '0.75rem', fontSize: 'var(--font-size-sm)', color: linkMsg.ok ? '#3fb950' : 'var(--error, #e06c75)' }}>
+          <p style={{ marginTop: '0.75rem', fontSize: 'var(--font-size-sm)', color: linkMsg.ok ? 'var(--green)' : 'var(--error)' }}>
             {linkMsg.text}
           </p>
         )}
@@ -347,14 +365,14 @@ export default function Profile() {
               style={{
                 padding: '6px 16px', borderRadius: 'var(--radius-sm)',
                 background: 'var(--accent)', border: 'none',
-                color: '#0a0f1a', fontSize: 'var(--font-size-sm)', fontWeight: 600,
+                color: 'var(--on-accent)', fontSize: 'var(--font-size-sm)', fontWeight: 600,
                 cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.7 : 1,
               }}
             >
               {saving ? 'Saving…' : 'Save language settings'}
             </button>
             {saveMsg && (
-              <span style={{ fontSize: 'var(--font-size-sm)', color: saveMsg === 'Saved' ? '#3fb950' : 'var(--error, #e06c75)' }}>
+              <span style={{ fontSize: 'var(--font-size-sm)', color: saveMsg === 'Saved' ? 'var(--green)' : 'var(--error)' }}>
                 {saveMsg}
               </span>
             )}

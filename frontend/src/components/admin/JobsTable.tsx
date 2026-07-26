@@ -27,7 +27,7 @@ export function JobsTable({ jobs }: { jobs: AdminJobEntry[] }) {
           <tbody>
             {paged.map(job => (
               <tr key={job.id} style={{
-                borderBottom: '1px solid rgba(255,255,255,0.04)',
+                borderBottom: '1px solid var(--overlay)',
                 background: job.status === 'failed' ? 'rgba(248,81,73,0.06)' : undefined,
               }}>
                 <td style={{ padding: '6px 10px', color: JOB_TYPE_COLOR[job.type] ?? 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase', fontWeight: 600 }}>

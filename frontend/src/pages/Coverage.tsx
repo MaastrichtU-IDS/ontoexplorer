@@ -112,7 +112,7 @@ function CoverageRow({ entry }: { entry: CoverageFleetEntry }) {
   const propsDef = propsAgg(entry, 'with_definition')
 
   return (
-    <tr data-testid="coverage-row" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+    <tr data-testid="coverage-row" style={{ borderBottom: '1px solid var(--overlay)' }}>
       <td style={{ padding: '5px 8px' }}>
         <OntologyLink slug={slug} hash="coverage" />
       </td>

@@ -176,7 +176,7 @@ export default function AdminPage() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
         <span style={{ fontWeight: 600, fontSize: 16, color: 'var(--text)' }}>System Admin</span>
         <span style={{
-          color: '#3fb950', fontSize: 11,
+          color: 'var(--green)', fontSize: 11,
           background: 'rgba(63,185,80,.1)', border: '1px solid rgba(63,185,80,.25)',
           padding: '1px 8px', borderRadius: 10,
         }}>
@@ -284,7 +284,7 @@ export default function AdminPage() {
                 background: reindexAllState === 'error' ? 'rgba(248,81,73,0.1)' : 'none',
                 border: `1px solid ${reindexAllState === 'error' ? 'rgba(248,81,73,0.3)' : 'var(--border)'}`,
                 borderRadius: 4, cursor: reindexAllState === 'queued' ? 'default' : 'pointer',
-                color: reindexAllState === 'error' ? '#f85149' : reindexAllState === 'queued' ? '#ffa657' : 'var(--text-dim)',
+                color: reindexAllState === 'error' ? 'var(--red)' : reindexAllState === 'queued' ? 'var(--orange)' : 'var(--text-dim)',
                 fontSize: 11, padding: '4px 12px',
                 opacity: reindexAllState === 'queued' ? 0.7 : 1,
               }}
@@ -348,7 +348,7 @@ export default function AdminPage() {
                 border: `1px solid ${clearJobsState === 'error' ? 'rgba(248,81,73,0.3)' : 'var(--border)'}`,
                 borderRadius: 4,
                 cursor: clearJobsState === 'working' ? 'default' : 'pointer',
-                color: clearJobsState === 'error' ? '#f85149' : clearJobsState === 'working' ? '#ffa657' : 'var(--text-dim)',
+                color: clearJobsState === 'error' ? 'var(--red)' : clearJobsState === 'working' ? 'var(--orange)' : 'var(--text-dim)',
                 fontSize: 11, padding: '4px 12px',
                 opacity: clearJobsState === 'working' ? 0.7 : 1,
               }}

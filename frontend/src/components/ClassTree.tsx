@@ -85,7 +85,7 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, focusedIri,
   // Protégé-style: unsat classes render in red. The synthetic owl:Nothing node
   // gets a softer red (orange-ish) so users can distinguish "this is the holding
   // pen for unsat classes" from "this class is itself unsatisfiable".
-  const unsatColor = isNothing ? '#e5c07b' : '#e06c75'
+  const unsatColor = isNothing ? 'var(--od-yellow)' : 'var(--error)'
   const nodeColor = isSelected
     ? 'var(--accent)'
     : (isUnsat || isNothing ? unsatColor : 'var(--text)')
@@ -116,7 +116,7 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, focusedIri,
           outlineOffset: -1,
         }}
         onMouseEnter={e => {
-          if (!isSelected) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
+          if (!isSelected) e.currentTarget.style.background = 'var(--overlay)'
           prefetchTerm()
         }}
         onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = '' }}

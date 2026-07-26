@@ -62,7 +62,7 @@ function UsageSection() {
                 padding: '3px 10px', borderRadius: 'var(--radius-sm)',
                 border: '1px solid var(--border)',
                 background: g === gran ? 'var(--accent)' : 'transparent',
-                color: g === gran ? '#fff' : 'var(--text-dim)',
+                color: g === gran ? 'var(--on-accent)' : 'var(--text-dim)',
               }}
             >{g}</button>
           ))}
@@ -100,7 +100,7 @@ function UsageSection() {
   )
 }
 
-const SERIES_COLORS = ['var(--accent-blue)', 'var(--accent)', 'var(--accent-purple)', '#e0a458', '#50c878']
+const SERIES_COLORS = ['var(--accent-blue)', 'var(--accent)', 'var(--accent-purple)', 'var(--orange)', 'var(--green)']
 const MAX_ONTOLOGIES = 5
 
 function UsageTimeseriesWidget() {
@@ -187,7 +187,7 @@ function toggleStyle(active: boolean): CSSProperties {
     fontSize: 11, cursor: 'pointer', padding: '3px 10px', borderRadius: 'var(--radius-sm)',
     border: '1px solid var(--border)',
     background: active ? 'var(--accent)' : 'transparent',
-    color: active ? '#fff' : 'var(--text-dim)',
+    color: active ? 'var(--on-accent)' : 'var(--text-dim)',
   }
 }
 
@@ -258,7 +258,7 @@ function ChartPanel({ title, data, dataKey, xKey, color }: {
                 fontSize: '0.8rem',
                 color: 'var(--text)',
               }}
-              cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+              cursor={{ fill: 'var(--overlay)' }}
             />
             <Bar dataKey={dataKey} fill={color} radius={[3, 3, 0, 0]} />
           </BarChart>

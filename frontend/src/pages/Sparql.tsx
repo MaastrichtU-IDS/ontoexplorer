@@ -332,7 +332,7 @@ export default function Sparql() {
         <div style={{
           padding: '0.4rem 1.5rem', background: 'rgba(239,68,68,0.1)',
           borderBottom: '1px solid rgba(239,68,68,0.3)',
-          color: '#f87171', fontSize: 'var(--font-size-sm)', flexShrink: 0,
+          color: 'var(--red-soft)', fontSize: 'var(--font-size-sm)', flexShrink: 0,
         }}>{queryError}</div>
       )}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden', minHeight: 0 }}>
@@ -360,7 +360,7 @@ export default function Sparql() {
             <div style={{
               position: 'absolute', left: 0, right: 0, top: 0,
               background: 'rgba(229,192,123,0.10)', borderBottom: '1px solid rgba(229,192,123,0.35)',
-              color: '#e5c07b', padding: '6px 12px', fontSize: 12, zIndex: 5,
+              color: 'var(--od-yellow)', padding: '6px 12px', fontSize: 12, zIndex: 5,
             }}>
               Diff mode supports SELECT queries only. Showing the From-side response natively.
             </div>

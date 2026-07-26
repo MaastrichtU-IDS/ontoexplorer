@@ -13,7 +13,7 @@ const STATUS_COLOR: Record<string, string> = {
   reasoning:  'var(--accent-purple)',
   indexing:   'var(--accent-purple)',
   deprecated: 'var(--text-dim)',
-  failed:     '#f87171',
+  failed:     'var(--red-soft)',
 }
 
 function StatusDot({ status }: { status: string }) {
@@ -52,11 +52,11 @@ const GROUP_LABELS: Record<string, string> = {
 }
 
 const GROUP_COLORS: Record<string, { bg: string; border: string; color: string }> = {
-  upper:       { bg: 'rgba(97,175,239,0.12)',  border: 'rgba(97,175,239,0.4)',  color: '#61afef' },
-  sulo_family: { bg: 'rgba(229,192,123,0.12)', border: 'rgba(229,192,123,0.4)', color: '#e5c07b' },
-  metadata:    { bg: 'rgba(198,120,221,0.12)', border: 'rgba(198,120,221,0.4)', color: '#c678dd' },
-  obo:         { bg: 'rgba(152,195,121,0.12)', border: 'rgba(152,195,121,0.4)', color: '#98c379' },
-  biomedical:  { bg: 'rgba(224,108,117,0.12)', border: 'rgba(224,108,117,0.4)', color: '#e06c75' },
+  upper:       { bg: 'rgba(97,175,239,0.12)',  border: 'rgba(97,175,239,0.4)',  color: 'var(--od-blue)' },
+  sulo_family: { bg: 'rgba(229,192,123,0.12)', border: 'rgba(229,192,123,0.4)', color: 'var(--od-yellow)' },
+  metadata:    { bg: 'rgba(198,120,221,0.12)', border: 'rgba(198,120,221,0.4)', color: 'var(--od-purple)' },
+  obo:         { bg: 'rgba(152,195,121,0.12)', border: 'rgba(152,195,121,0.4)', color: 'var(--od-green)' },
+  biomedical:  { bg: 'rgba(224,108,117,0.12)', border: 'rgba(224,108,117,0.4)', color: 'var(--error)' },
 }
 
 const ALL_GROUPS = Object.keys(GROUP_LABELS)
@@ -134,7 +134,7 @@ function ShortnameEditor({ ontology }: { ontology: Ontology }) {
         </button>
         <button onClick={() => setEditing(false)} style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>cancel</button>
       </span>
-      {error && <span style={{ fontSize: 'var(--font-size-sm)', color: '#f87171' }}>{error}</span>}
+      {error && <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--red-soft)' }}>{error}</span>}
     </span>
   )
 }
@@ -182,7 +182,7 @@ function TitleEditor({ ontology }: { ontology: Ontology }) {
         </button>
         <button onClick={() => setEditing(false)} style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>cancel</button>
       </span>
-      {error && <span style={{ fontSize: 'var(--font-size-sm)', color: '#f87171' }}>{error}</span>}
+      {error && <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--red-soft)' }}>{error}</span>}
     </span>
   )
 }
@@ -302,7 +302,7 @@ function DefaultVersionEditor({ ontology, versions }: { ontology: Ontology; vers
         {ready.map(v => <option key={v.id} value={v.id}>{versionLabel(v)}</option>)}
       </select>
       {value === '' && <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>auto</span>}
-      {error && <span style={{ color: 'var(--error, #e06c75)', fontSize: 11 }}>{error}</span>}
+      {error && <span style={{ color: 'var(--error)', fontSize: 11 }}>{error}</span>}
     </div>
   )
 }
@@ -459,7 +459,7 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
                 <button
                   onClick={handleCheckUpdate}
                   style={{
-                    color: checkState === 'error' ? '#f87171' : 'var(--text-dim)',
+                    color: checkState === 'error' ? 'var(--red-soft)' : 'var(--text-dim)',
                     background: 'transparent',
                     border: '1px solid var(--border)',
                     borderRadius: 20, padding: '1px 10px',
@@ -471,22 +471,22 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
               ) : checkState === 'checking' ? (
                 <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>checking…</span>
               ) : checkState === 'up_to_date' ? (
-                <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--accent-green, #3fb950)' }}>● up to date</span>
+                <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--green)' }}>● up to date</span>
               ) : checkState === 'update_queued' ? (
-                <span style={{ fontSize: 'var(--font-size-sm)', color: '#ffa657' }}>↑ update queued</span>
+                <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--orange)' }}>↑ update queued</span>
               ) : checkState === 'no_source_url' ? (
                 <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>no source URL</span>
               ) : null
             )}
             {deleteError && (
-              <span style={{ color: '#f87171', fontSize: 'var(--font-size-sm)', textAlign: 'right' }}>
+              <span style={{ color: 'var(--red-soft)', fontSize: 'var(--font-size-sm)', textAlign: 'right' }}>
                 {deleteError}
               </span>
             )}
             {confirming ? (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: 'var(--font-size-sm)' }}>
                 <button onClick={() => del.mutate()} disabled={del.isPending}
-                  style={{ color: '#fff', background: '#ef4444', border: 'none', borderRadius: 20, padding: '1px 10px', fontSize: 'var(--font-size-sm)', fontWeight: 600, cursor: 'pointer' }}>
+                  style={{ color: '#fff', background: 'var(--red)', border: 'none', borderRadius: 20, padding: '1px 10px', fontSize: 'var(--font-size-sm)', fontWeight: 600, cursor: 'pointer' }}>
                   {del.isPending ? '…' : 'yes'}
                 </button>
                 <button onClick={() => setConfirming(false)} disabled={del.isPending}
@@ -498,7 +498,7 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
               <button
                 onClick={() => { setDeleteError(null); setConfirming(true) }}
                 style={{
-                  color: '#ef4444', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+                  color: 'var(--red)', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
                   borderRadius: 20, padding: '1px 10px', fontSize: 'var(--font-size-sm)', fontWeight: 600, cursor: 'pointer',
                 }}
               >
@@ -601,7 +601,7 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
               borderRadius: 'var(--radius-sm)',
               border: '1px solid var(--border)',
               background: tab === key ? 'var(--accent)' : 'transparent',
-              color: tab === key ? '#0f172a' : 'var(--text-muted)',
+              color: tab === key ? 'var(--bg)' : 'var(--text-muted)',
               fontWeight: tab === key ? 700 : 400,
               fontSize: 'var(--font-size-sm)',
             }}
@@ -708,7 +708,7 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
             style={{
               padding: '0.4rem 0.9rem',
               background: 'var(--accent)',
-              color: '#0f172a',
+              color: 'var(--bg)',
               borderRadius: 'var(--radius-sm)',
               fontWeight: 700,
               fontSize: 'var(--font-size-sm)',
@@ -724,7 +724,7 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
         <p style={{
           marginTop: '0.5rem',
           fontSize: 'var(--font-size-sm)',
-          color: message.startsWith('Error') ? '#f87171' : 'var(--accent)',
+          color: message.startsWith('Error') ? 'var(--red-soft)' : 'var(--accent)',
         }}>
           {message}
         </p>
@@ -794,7 +794,7 @@ function MyUsageSection() {
               fontSize: 11, textTransform: 'capitalize', cursor: 'pointer', padding: '3px 10px',
               borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)',
               background: g === gran ? 'var(--accent)' : 'transparent',
-              color: g === gran ? '#fff' : 'var(--text-dim)',
+              color: g === gran ? 'var(--on-accent)' : 'var(--text-dim)',
             }}>{g}</button>
           ))}
         </div>
@@ -834,7 +834,7 @@ function MyUsageSection() {
             </thead>
             <tbody>
               {per.map(o => (
-                <tr key={o.ontology_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                <tr key={o.ontology_id} style={{ borderBottom: '1px solid var(--overlay)' }}>
                   <td style={{ ...cell, textAlign: 'left' }}>
                     <Link to={`/ontologies/${o.shortname ?? o.ontology_id}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>
                       {o.title || o.shortname || o.ontology_id}
@@ -911,7 +911,7 @@ export default function Dashboard() {
           style={{
             padding: '0.35rem 0.8rem',
             background: showForm ? 'var(--bg-secondary)' : 'var(--accent)',
-            color: showForm ? 'var(--text-muted)' : '#0f172a',
+            color: showForm ? 'var(--text-muted)' : 'var(--bg)',
             border: showForm ? '1px solid var(--border)' : 'none',
             borderRadius: 'var(--radius-sm)',
             fontWeight: 600,

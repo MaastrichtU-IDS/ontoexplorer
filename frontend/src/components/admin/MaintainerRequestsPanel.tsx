@@ -3,9 +3,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, MaintainerRequest } from '../../lib/api'
 
 const STATUS_COLOR: Record<string, string> = {
-  pending: '#f0883e',
-  approved: '#3fb950',
-  denied: 'var(--error, #e06c75)',
+  pending: 'var(--orange)',
+  approved: 'var(--green)',
+  denied: 'var(--error)',
 }
 
 function requestTarget(r: MaintainerRequest): string {
@@ -59,7 +59,7 @@ export function MaintainerRequestsPanel() {
         </select>
       </div>
 
-      {err && <p style={{ color: 'var(--error, #e06c75)', fontSize: 'var(--font-size-sm)' }}>{err}</p>}
+      {err && <p style={{ color: 'var(--error)', fontSize: 'var(--font-size-sm)' }}>{err}</p>}
       {isLoading && <p style={{ color: 'var(--text-dim)' }}>Loading…</p>}
       {!isLoading && requests.length === 0 && (
         <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>No {statusFilter === 'all' ? '' : statusFilter} requests.</p>
@@ -109,7 +109,7 @@ export function MaintainerRequestsPanel() {
                     disabled={decide.isPending}
                     style={{
                       padding: '5px 14px', borderRadius: 'var(--radius-sm)', border: 'none',
-                      background: '#3fb950', color: '#0a0f1a', fontWeight: 600,
+                      background: 'var(--green)', color: 'var(--on-accent)', fontWeight: 600,
                       fontSize: 'var(--font-size-sm)', cursor: 'pointer',
                     }}
                   >Approve</button>
@@ -119,7 +119,7 @@ export function MaintainerRequestsPanel() {
                     style={{
                       padding: '5px 14px', borderRadius: 'var(--radius-sm)',
                       background: 'transparent', border: '1px solid var(--border)',
-                      color: 'var(--error, #e06c75)', fontSize: 'var(--font-size-sm)', cursor: 'pointer',
+                      color: 'var(--error)', fontSize: 'var(--font-size-sm)', cursor: 'pointer',
                     }}
                   >Deny</button>
                 </div>

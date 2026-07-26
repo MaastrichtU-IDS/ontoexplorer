@@ -41,13 +41,13 @@ export function ontologyDisplayName(row: AdminOntologyEntry): string {
 // ── Shared colors ─────────────────────────────────────────────────────────────
 
 export const JOB_TYPE_COLOR: Record<string, string> = {
-  ingest: '#d2a8ff',
-  ingestion: '#d2a8ff',
-  index: '#79c0ff',
-  indexing: '#79c0ff',
-  reason: '#56d364',
-  reasoning: '#56d364',
-  embedding: '#ffa657',
+  ingest: 'var(--purple)',
+  ingestion: 'var(--purple)',
+  index: 'var(--blue)',
+  indexing: 'var(--blue)',
+  reason: 'var(--green-bright)',
+  reasoning: 'var(--green-bright)',
+  embedding: 'var(--orange)',
 }
 
 // ── Status badges ─────────────────────────────────────────────────────────────
@@ -55,29 +55,29 @@ export const JOB_TYPE_COLOR: Record<string, string> = {
 export function StatusDot({ status, label }: { status: string; label?: string }) {
   const text = label ?? status
   if (status === 'ok' || status === 'ingested' || status === 'done' || status === 'ready') {
-    return <span style={{ color: 'var(--accent-green, #3fb950)', fontSize: 11 }}>● {text}</span>
+    return <span style={{ color: 'var(--green)', fontSize: 11 }}>● {text}</span>
   }
   if (status === 'running') {
-    return <span style={{ color: 'var(--accent-blue, #58a6ff)', fontSize: 11 }}>⟳ {text}</span>
+    return <span style={{ color: 'var(--accent-blue)', fontSize: 11 }}>⟳ {text}</span>
   }
   if (status === 'pending' || status === 'queued') {
-    return <span style={{ color: '#d29922', fontSize: 11 }}>⏳ {text}</span>
+    return <span style={{ color: 'var(--yellow)', fontSize: 11 }}>⏳ {text}</span>
   }
   if (status === 'not_started') {
     return <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>— {text}</span>
   }
   if (status === 'failed' || status.startsWith('error')) {
-    return <span style={{ color: '#f85149', fontSize: 11 }}>✕ {text}</span>
+    return <span style={{ color: 'var(--red)', fontSize: 11 }}>✕ {text}</span>
   }
   return <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{text}</span>
 }
 
 export function DiffStatusBadge({ status }: { status: AdminVersionEntry['diff_vs_prev']['status'] }) {
   const text = status === 'missing' ? 'none' : status
-  if (status === 'ready')   return <span style={{ color: 'var(--accent-green, #3fb950)', fontSize: 11 }}>● {text}</span>
-  if (status === 'running' || status === 'pending') return <span style={{ color: '#58a6ff', fontSize: 11 }}>⟳ {text}</span>
-  if (status === 'failed')  return <span style={{ color: '#f85149', fontSize: 11 }}>✕ {text}</span>
-  if (status === 'stale')   return <span style={{ color: '#d29922', fontSize: 11 }}>↻ {text}</span>
+  if (status === 'ready')   return <span style={{ color: 'var(--green)', fontSize: 11 }}>● {text}</span>
+  if (status === 'running' || status === 'pending') return <span style={{ color: 'var(--blue)', fontSize: 11 }}>⟳ {text}</span>
+  if (status === 'failed')  return <span style={{ color: 'var(--red)', fontSize: 11 }}>✕ {text}</span>
+  if (status === 'stale')   return <span style={{ color: 'var(--yellow)', fontSize: 11 }}>↻ {text}</span>
   return <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>— {text}</span>
 }
 
@@ -112,8 +112,8 @@ export function ServiceCard({
   const isOk = status === 'ok'
   const isNum = typeof status === 'number'
   const color = isNum
-    ? (status > 0 ? '#f0883e' : 'var(--accent-green, #3fb950)')
-    : (isOk ? 'var(--accent-green, #3fb950)' : '#f85149')
+    ? (status > 0 ? 'var(--orange)' : 'var(--green)')
+    : (isOk ? 'var(--green)' : 'var(--red)')
   return (
     <div style={{
       background: 'var(--bg-secondary)', border: '1px solid var(--border)',
@@ -150,7 +150,7 @@ export function ActionButton({
   onClick: () => void
 }) {
   if (state === 'queued') {
-    return <span style={{ color: '#ffa657', fontSize: 10 }}>↑ queued</span>
+    return <span style={{ color: 'var(--orange)', fontSize: 10 }}>↑ queued</span>
   }
   const isError = state === 'error'
   return (
@@ -161,7 +161,7 @@ export function ActionButton({
         background: isError ? 'rgba(248,81,73,0.1)' : 'none',
         border: `1px solid ${isError ? 'rgba(248,81,73,0.3)' : 'var(--border)'}`,
         borderRadius: 4, cursor: 'pointer',
-        color: isError ? '#f85149' : 'var(--text-dim)',
+        color: isError ? 'var(--red)' : 'var(--text-dim)',
         fontSize: 10, padding: '2px 6px', marginTop: 3,
       }}
     >
@@ -202,7 +202,7 @@ export function CopyableIri({ iri, label }: { iri: string; label: string }) {
         borderRadius: 3,
         padding: '0 5px',
         cursor: 'pointer',
-        color: copied ? 'var(--accent-green, #3fb950)' : 'var(--text-dim)',
+        color: copied ? 'var(--green)' : 'var(--text-dim)',
         fontSize: 10,
         fontFamily: 'monospace',
         lineHeight: '14px',

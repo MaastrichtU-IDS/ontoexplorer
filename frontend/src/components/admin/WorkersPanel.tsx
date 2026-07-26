@@ -70,9 +70,9 @@ export function WorkersPanel({ versionMap }: { versionMap: Record<string, string
           </thead>
           <tbody>
             {pagedTasks.map(t => (
-              <tr key={t.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+              <tr key={t.id} style={{ borderBottom: '1px solid var(--overlay)' }}>
                 <td style={{ padding: '6px 10px' }}>
-                  <div style={{ color: JOB_TYPE_COLOR[taskLabel(t.name)] ?? '#79c0ff', fontSize: 10, textTransform: 'uppercase', fontWeight: 600 }}>
+                  <div style={{ color: JOB_TYPE_COLOR[taskLabel(t.name)] ?? 'var(--blue)', fontSize: 10, textTransform: 'uppercase', fontWeight: 600 }}>
                     {taskLabel(t.name)}
                   </div>
                   <div style={{ color: 'var(--text-dim)', fontFamily: 'monospace', fontSize: 9, marginTop: 1 }} title={t.id}>
@@ -87,9 +87,9 @@ export function WorkersPanel({ versionMap }: { versionMap: Record<string, string
                 </td>
                 <td style={{ padding: '6px 10px', textAlign: 'center' }}>
                   {t.state === 'active'
-                    ? <span style={{ color: '#58a6ff', fontSize: 11 }}>⟳ running</span>
+                    ? <span style={{ color: 'var(--blue)', fontSize: 11 }}>⟳ running</span>
                     : t.state === 'reserved'
-                    ? <span style={{ color: '#d29922', fontSize: 11 }}>⏳ next</span>
+                    ? <span style={{ color: 'var(--yellow)', fontSize: 11 }}>⏳ next</span>
                     : <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>· queued</span>
                   }
                 </td>
@@ -102,7 +102,7 @@ export function WorkersPanel({ versionMap }: { versionMap: Record<string, string
                     disabled={revoking.has(t.id)}
                     style={{
                       background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)',
-                      borderRadius: 4, color: '#f85149', fontSize: 10, padding: '2px 8px',
+                      borderRadius: 4, color: 'var(--red)', fontSize: 10, padding: '2px 8px',
                       cursor: revoking.has(t.id) ? 'default' : 'pointer',
                       opacity: revoking.has(t.id) ? 0.5 : 1,
                     }}

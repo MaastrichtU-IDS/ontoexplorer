@@ -4,9 +4,9 @@ import { useAuth } from '../hooks/useAuth'
 import { api, MaintainerRequest } from '../lib/api'
 
 const STATUS_COLOR: Record<string, string> = {
-  pending: '#f0883e',
-  approved: '#3fb950',
-  denied: 'var(--error, #e06c75)',
+  pending: 'var(--orange)',
+  approved: 'var(--green)',
+  denied: 'var(--error)',
 }
 
 const card: React.CSSProperties = {
@@ -24,7 +24,7 @@ const ta: React.CSSProperties = {
 }
 const btn: React.CSSProperties = {
   padding: '6px 16px', borderRadius: 'var(--radius-sm)', background: 'var(--accent)',
-  border: 'none', color: '#0a0f1a', fontSize: 'var(--font-size-sm)', fontWeight: 600, cursor: 'pointer',
+  border: 'none', color: 'var(--on-accent)', fontSize: 'var(--font-size-sm)', fontWeight: 600, cursor: 'pointer',
 }
 
 export default function MaintainerAccess() {
@@ -68,11 +68,11 @@ export default function MaintainerAccess() {
           Add new ontologies
         </div>
         {canUpload ? (
-          <p style={{ fontSize: 'var(--font-size-sm)', color: '#3fb950' }}>
+          <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--green)' }}>
             ● You can add ontologies{user.is_admin ? ' (admin)' : ''}.
           </p>
         ) : pendingUploader ? (
-          <p style={{ fontSize: 'var(--font-size-sm)', color: '#f0883e' }}>● Request pending review.</p>
+          <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--orange)' }}>● Request pending review.</p>
         ) : (
           <>
             <textarea
@@ -114,7 +114,7 @@ export default function MaintainerAccess() {
       </div>
 
       {msg && (
-        <p style={{ marginTop: '0.75rem', fontSize: 'var(--font-size-sm)', color: msg.ok ? '#3fb950' : 'var(--error, #e06c75)' }}>
+        <p style={{ marginTop: '0.75rem', fontSize: 'var(--font-size-sm)', color: msg.ok ? 'var(--green)' : 'var(--error)' }}>
           {msg.text}
         </p>
       )}

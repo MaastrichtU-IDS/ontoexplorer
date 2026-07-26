@@ -12,10 +12,10 @@ export default function Layout() {
   return (
     <div style={{ display: 'flex', minHeight: '100vh' }}>
       <aside style={{
-        width: 220, background: '#1e293b', color: '#94a3b8', padding: '1.5rem 1rem',
+        width: 220, background: 'var(--bg-secondary)', color: 'var(--text-muted)', padding: '1.5rem 1rem',
         display: 'flex', flexDirection: 'column', gap: '0.5rem',
       }}>
-        <Link to="/" style={{ color: '#f1f5f9', fontWeight: 700, fontSize: '1.1rem', marginBottom: '1.5rem', display: 'block' }}>
+        <Link to="/" style={{ color: 'var(--text-bright)', fontWeight: 700, fontSize: '1.1rem', marginBottom: '1.5rem', display: 'block' }}>
           OntoExplorer
         </Link>
         {nav.map(({ to, label }) => (
@@ -23,8 +23,8 @@ export default function Layout() {
             key={to}
             to={to}
             style={({ isActive }) => ({
-              color: isActive ? '#f1f5f9' : '#94a3b8',
-              background: isActive ? '#334155' : 'transparent',
+              color: isActive ? 'var(--text-bright)' : 'var(--text-muted)',
+              background: isActive ? 'var(--border)' : 'transparent',
               padding: '0.5rem 0.75rem',
               borderRadius: 6,
               display: 'block',
@@ -36,7 +36,7 @@ export default function Layout() {
         <div style={{ marginTop: 'auto' }}>
           <button
             onClick={() => logout()}
-            style={{ background: 'none', border: 'none', color: '#94a3b8', padding: '0.5rem 0.75rem', width: '100%', textAlign: 'left' }}
+            style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '0.5rem 0.75rem', width: '100%', textAlign: 'left' }}
           >
             Sign out
           </button>

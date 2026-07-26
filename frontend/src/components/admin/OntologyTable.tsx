@@ -172,7 +172,7 @@ export function OntologyTable({
               const ingestMethod = row.source_url ? 'url' : 'iri'
               return (
                 <React.Fragment key={row.version_id}>
-                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                <tr style={{ borderBottom: '1px solid var(--overlay)' }}>
                   {row.version_count > 1 ? (
                     <td style={{ padding: '6px 4px 6px 10px', textAlign: 'center', cursor: 'pointer', color: 'var(--text-dim)' }}
                         onClick={() => toggleExpanded(row.id)}>
@@ -229,7 +229,7 @@ export function OntologyTable({
                   </td>
                   <td style={{ padding: '6px 10px', textAlign: 'center' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-                      <span style={{ color: row.embed_count > 0 ? 'var(--accent-green, #3fb950)' : 'var(--text-dim)', fontSize: 11 }}>
+                      <span style={{ color: row.embed_count > 0 ? 'var(--green)' : 'var(--text-dim)', fontSize: 11 }}>
                         {row.embed_count > 0 ? fmtTriples(row.embed_count) : '—'}
                       </span>
                       {canAct && (
@@ -258,7 +258,7 @@ export function OntologyTable({
                   <td style={{ padding: '6px 10px', textAlign: 'center' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
                       {row.profile_computed
-                        ? <span style={{ color: 'var(--accent-green, #3fb950)', fontSize: 11 }}>●</span>
+                        ? <span style={{ color: 'var(--green)', fontSize: 11 }}>●</span>
                         : <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>—</span>}
                       {canAct && (
                         <ActionButton
@@ -381,7 +381,7 @@ function VersionsSubRows({
   if (isError || !data) {
     return (
       <tr>
-        <td colSpan={colSpan} style={{ padding: '8px 16px', color: '#f85149', fontSize: 11 }}>
+        <td colSpan={colSpan} style={{ padding: '8px 16px', color: 'var(--red)', fontSize: 11 }}>
           Failed to load versions
         </td>
       </tr>
@@ -443,7 +443,7 @@ function VersionsSubRows({
     <>
       {defaultRow}
       {others.map(v => (
-        <tr key={v.version_id} style={{ background: 'rgba(255,255,255,0.02)' }}>
+        <tr key={v.version_id} style={{ background: 'var(--overlay)' }}>
           <td />
           <td style={{ padding: '6px 10px', color: 'var(--text-muted)', fontSize: 11 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -456,7 +456,7 @@ function VersionsSubRows({
               </Link>
               {v.version_iri && <CopyableIri iri={v.version_iri} label="vIRI" />}
               {v.ingestion_status === 'deprecated' && (
-                <span style={{ color: '#f85149' }}>● deprecated</span>
+                <span style={{ color: 'var(--red)' }}>● deprecated</span>
               )}
             </div>
           </td>
@@ -489,7 +489,7 @@ function VersionsSubRows({
           </td>
           <td style={{ padding: '6px 10px', textAlign: 'center' }}>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-              <span style={{ color: v.embed_count > 0 ? 'var(--accent-green, #3fb950)' : 'var(--text-dim)', fontSize: 11 }}>
+              <span style={{ color: v.embed_count > 0 ? 'var(--green)' : 'var(--text-dim)', fontSize: 11 }}>
                 {v.embed_count > 0 ? fmtTriples(v.embed_count) : '—'}
               </span>
               <ActionButton
@@ -514,7 +514,7 @@ function VersionsSubRows({
           <td style={{ padding: '6px 10px', textAlign: 'center' }}>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
               {v.profile_computed
-                ? <span style={{ color: 'var(--accent-green, #3fb950)', fontSize: 11 }}>●</span>
+                ? <span style={{ color: 'var(--green)', fontSize: 11 }}>●</span>
                 : <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>—</span>}
               <ActionButton
                 label="↺ profile"

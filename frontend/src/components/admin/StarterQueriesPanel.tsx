@@ -115,7 +115,7 @@ export function StarterQueriesPanel() {
         </div>
       )}
       {error && (
-        <div style={{ fontSize: 11, color: '#f87171' }}>{error}</div>
+        <div style={{ fontSize: 11, color: 'var(--red-soft)' }}>{error}</div>
       )}
     </div>
   )

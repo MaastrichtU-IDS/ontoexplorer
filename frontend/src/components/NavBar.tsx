@@ -5,6 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useLang } from '../hooks/useLang'
 import { useRepositoryLanguages } from '../hooks/useRepositoryLanguages'
 import { logout } from '../lib/auth'
+import ThemeToggle from './ThemeToggle'
 
 const navLinks = [
   { to: '/ontologies',  label: 'Ontologies' },
@@ -138,7 +139,7 @@ export default function NavBar() {
     <nav style={{
       position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
       height: 'var(--nav-height)',
-      background: '#0a0f1a',
+      background: 'var(--bg-deep)',
       borderBottom: '1px solid var(--border)',
       display: 'flex', alignItems: 'center',
       padding: '0 1.5rem', gap: '1.5rem',
@@ -159,6 +160,7 @@ export default function NavBar() {
         </NavLink>
       ))}
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        <ThemeToggle />
         <LangPicker />
         {isAuthenticated ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -166,10 +168,10 @@ export default function NavBar() {
               <NavLink
                 to="/admin"
                 style={({ isActive }) => ({
-                  color: isActive ? '#f0883e' : 'var(--text-dim)',
+                  color: isActive ? 'var(--orange)' : 'var(--text-dim)',
                   fontSize: 'var(--font-size-sm)',
                   border: '1px solid',
-                  borderColor: isActive ? '#f0883e' : 'var(--border)',
+                  borderColor: isActive ? 'var(--orange)' : 'var(--border)',
                   borderRadius: 4,
                   padding: '2px 8px',
                 })}
@@ -180,10 +182,10 @@ export default function NavBar() {
             <NavLink
               to="/dashboard"
               style={({ isActive }) => ({
-                color: isActive ? '#c678dd' : 'var(--text-dim)',
+                color: isActive ? 'var(--od-purple)' : 'var(--text-dim)',
                 fontSize: 'var(--font-size-sm)',
                 border: '1px solid',
-                borderColor: isActive ? '#c678dd' : 'var(--border)',
+                borderColor: isActive ? 'var(--od-purple)' : 'var(--border)',
                 borderRadius: 4,
                 padding: '2px 8px',
               })}
@@ -193,9 +195,9 @@ export default function NavBar() {
             <button
               onClick={() => logout()}
               style={{
-                color: '#61afef',
+                color: 'var(--od-blue)',
                 fontSize: 'var(--font-size-sm)',
-                border: '1px solid #61afef',
+                border: '1px solid var(--od-blue)',
                 borderRadius: 4,
                 padding: '2px 8px',
               }}
@@ -207,9 +209,9 @@ export default function NavBar() {
           <Link
             to="/login"
             style={{
-              color: '#61afef',
+              color: 'var(--od-blue)',
               fontSize: 'var(--font-size-sm)',
-              border: '1px solid #61afef',
+              border: '1px solid var(--od-blue)',
               borderRadius: 4,
               padding: '2px 8px',
             }}

@@ -17,7 +17,7 @@ function ManchesterInline({ tokens }: { tokens: ManchesterToken[] }) {
           return (
             <span
               key={i}
-              style={{ color: 'var(--accent, #7eb3f5)', fontWeight: 500 }}
+              style={{ color: 'var(--accent)', fontWeight: 500 }}
             >
               {t.label ?? t.iri}
             </span>
@@ -66,14 +66,14 @@ function ProfileCard({
         {inProfile ? (
           <span
             data-testid="profile-check"
-            style={{ color: '#3fb950', fontSize: 16, fontWeight: 700 }}
+            style={{ color: 'var(--green)', fontSize: 16, fontWeight: 700 }}
           >
             ✓
           </span>
         ) : (
           <span
             data-testid="profile-x"
-            style={{ color: '#e06c75', fontSize: 16, fontWeight: 700 }}
+            style={{ color: 'var(--error)', fontSize: 16, fontWeight: 700 }}
           >
             ✗
           </span>
@@ -93,7 +93,7 @@ function ProfileCard({
         <p
           style={{
             fontSize: 11,
-            color: '#3fb950',
+            color: 'var(--green)',
             margin: 0,
           }}
         >
@@ -103,7 +103,7 @@ function ProfileCard({
         <p
           style={{
             fontSize: 11,
-            color: '#e06c75',
+            color: 'var(--error)',
             margin: 0,
           }}
         >
@@ -161,7 +161,7 @@ function ProfileCard({
                       fontSize: 11,
                       padding: '2px 0',
                       color: 'var(--text-muted)',
-                      borderBottom: '1px solid rgba(255,255,255,0.04)',
+                      borderBottom: '1px solid var(--overlay)',
                     }}
                   >
                     <code style={{ color: 'var(--text)' }}>{type}</code>
@@ -219,7 +219,7 @@ function ProfileCard({
                         <tr
                           key={i}
                           style={{
-                            borderTop: '1px solid rgba(255,255,255,0.04)',
+                            borderTop: '1px solid var(--overlay)',
                           }}
                         >
                           <td

@@ -118,7 +118,7 @@ export default function OntologyPicker({ value, onChange, placeholder = 'Search 
                   background: selected ? 'var(--bg-hover)' : 'transparent',
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8,
                 }}
-                onMouseEnter={e => { if (!selected) e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}
+                onMouseEnter={e => { if (!selected) e.currentTarget.style.background = 'var(--overlay)' }}
                 onMouseLeave={e => { if (!selected) e.currentTarget.style.background = '' }}
               >
                 <div>

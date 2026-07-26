@@ -393,7 +393,7 @@ export default function Compare() {
             background: canCompare ? 'var(--accent)' : 'var(--bg-secondary)',
             border: '1px solid var(--border)',
             borderRadius: 6, padding: '8px 18px',
-            color: canCompare ? '#0f172a' : 'var(--text-dim)',
+            color: canCompare ? 'var(--bg)' : 'var(--text-dim)',
             fontSize: 13, fontWeight: 600,
             cursor: canCompare && !trigger.isPending ? 'pointer' : 'default',
           }}
@@ -413,7 +413,7 @@ export default function Compare() {
             <PendingBanner />
           )}
           {comparison.status === 'failed' && (
-            <div style={{ padding: '1rem', color: '#f85149', fontSize: 12 }}>
+            <div style={{ padding: '1rem', color: 'var(--red)', fontSize: 12 }}>
               Comparison failed. Click Compare to retry.
             </div>
           )}

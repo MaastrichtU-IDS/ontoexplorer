@@ -707,7 +707,7 @@ function DomainPropertiesTable({ props: items, slug, vid }: { props: SchemaPrope
       </thead>
       <tbody>
         {rows.map(({ prop, ranges }, i) => (
-          <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+          <tr key={i} style={{ borderBottom: '1px solid var(--overlay)' }}>
             <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
               <IriLink iri={prop.prop_iri} label={propLabel(prop)} slug={slug} vid={vid} />
             </td>
@@ -752,7 +752,7 @@ function InheritedDomainPropertiesTable({ props: items, slug, vid }: { props: In
       </thead>
       <tbody>
         {rows.map(({ prop, ranges }, i) => (
-          <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+          <tr key={i} style={{ borderBottom: '1px solid var(--overlay)' }}>
             <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
               <IriLink iri={prop.prop_iri} label={propLabel(prop)} slug={slug} vid={vid} />
             </td>
@@ -844,7 +844,7 @@ function UsagePager<T>({ initial, initialHasMore, fetchPage, children }: {
         </div>
       )}
       {error && (
-        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--error, #e06c75)', textAlign: 'center' }}>
+        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--error)', textAlign: 'center' }}>
           {error}
         </div>
       )}
@@ -1000,7 +1000,7 @@ function UsageTable({ usage, propIri, propLabel, slug, vid }: {
       </thead>
       <tbody>
         {usage.map((u, i) => (
-          <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+          <tr key={i} style={{ borderBottom: '1px solid var(--overlay)' }}>
             <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
               <IriLink iri={u.class_iri} label={u.class_label} slug={slug} vid={vid} />
             </td>
@@ -1048,7 +1048,7 @@ function ClassUsageTable({ usage, classIri, classLabel, slug, vid }: {
       </thead>
       <tbody>
         {usage.map((u, i) => (
-          <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+          <tr key={i} style={{ borderBottom: '1px solid var(--overlay)' }}>
             <td style={{ padding: '5px 8px', verticalAlign: 'top' }}>
               <IriLink iri={u.class_iri} label={u.class_label} slug={slug} vid={vid} />
             </td>
@@ -1369,7 +1369,7 @@ function AssertionsSection({
             const filteredLiterals = filterLangLabels(literals, lang ?? null)
             const displayVals = [...iris, ...filteredLiterals]
             return (
-              <tr key={pred} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', verticalAlign: 'top' }}>
+              <tr key={pred} style={{ borderBottom: '1px solid var(--overlay)', verticalAlign: 'top' }}>
                 <td style={{ padding: '4px 10px 4px 0', color: 'var(--text-dim)', whiteSpace: 'nowrap', width: 1, fontSize: 11 }}
                     title={pred}>
                   {displayLabel}
@@ -1437,7 +1437,7 @@ function AnnotationsSection({
               const filteredLiterals = filterLangLabels(literals, lang ?? null)
               const displayVals = [...iris, ...filteredLiterals]
               return (
-                <tr key={pred} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)', verticalAlign: 'top' }}>
+                <tr key={pred} style={{ borderBottom: '1px solid var(--overlay)', verticalAlign: 'top' }}>
                   <td style={{ padding: '4px 10px 4px 0', color: 'var(--text-dim)', whiteSpace: 'nowrap', width: 1, fontSize: 11 }}
                       title={pred}>
                     {displayLabel}
@@ -1948,7 +1948,7 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
               fontSize: 10,
               background: 'rgba(224,108,117,0.12)',
               border: '1px solid rgba(224,108,117,0.4)',
-              color: '#e06c75',
+              color: 'var(--error)',
               borderRadius: 3, padding: '1px 5px',
               textTransform: 'uppercase', letterSpacing: 0.5,
               fontWeight: 700, flexShrink: 0,

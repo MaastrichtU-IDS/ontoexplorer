@@ -169,7 +169,7 @@ function InferredUnavailableNotice({
   return (
     <div
       style={{
-        background: 'var(--bg-tertiary, #1a1d24)',
+        background: 'var(--bg-tertiary)',
         border: '1px solid var(--border)',
         borderRadius: 4,
         padding: '8px 12px',
@@ -179,7 +179,7 @@ function InferredUnavailableNotice({
         gap: 8,
       }}
     >
-      <span style={{ color: '#58a6ff' }}>ⓘ</span>
+      <span style={{ color: 'var(--blue)' }}>ⓘ</span>
       <span style={{ flex: 1 }}>
         Inferred diff unavailable: reasoning is {badStatus} for {badSide}. The
         diff will refresh automatically when reasoning completes.
@@ -232,8 +232,8 @@ function EntityRow({
   fromShortname: string | null
   toShortname: string | null
 }) {
-  const opColor = op === 'added' ? 'var(--green, #3fb950)'
-    : op === 'removed' ? 'var(--red, #f85149)' : 'var(--orange, #f0883e)'
+  const opColor = op === 'added' ? 'var(--green)'
+    : op === 'removed' ? 'var(--red)' : 'var(--orange)'
   const label = entity.label ?? entity.iri.split(/[#/]/).pop() ?? entity.iri
   const opSign = op === 'added' ? '+' : op === 'removed' ? '−' : '~'
 
@@ -274,7 +274,7 @@ function EntityRow({
         <div style={{ padding: '4px 10px 10px 30px', display: 'flex', flexDirection: 'column', gap: 6 }}>
           {op === 'modified' && hasLiteral && (
             <div>
-              <div style={{ color: '#58a6ff', fontSize: 9, textTransform: 'uppercase', fontWeight: 'bold', marginBottom: 4 }}>Literal changes</div>
+              <div style={{ color: 'var(--blue)', fontSize: 9, textTransform: 'uppercase', fontWeight: 'bold', marginBottom: 4 }}>Literal changes</div>
               {literalChanges.map((lc, i) => (
                 <div key={i} style={{ fontSize: 10, marginBottom: 4 }}>
                   <div style={{ color: 'var(--text-dim)' }}>
@@ -283,12 +283,12 @@ function EntityRow({
                   <div>
                     {lc.removed != null && (
                       <div>
-                        <HighlightedText text={`− "${lc.removed}"`} query={search} color="#f85149" />
+                        <HighlightedText text={`− "${lc.removed}"`} query={search} color="var(--red)" />
                       </div>
                     )}
                     {lc.added != null && (
                       <div>
-                        <HighlightedText text={`+ "${lc.added}"`} query={search} color="#3fb950" />
+                        <HighlightedText text={`+ "${lc.added}"`} query={search} color="var(--green)" />
                       </div>
                     )}
                   </div>
@@ -298,7 +298,7 @@ function EntityRow({
           )}
           {entity.manchester_frame && (
             <div style={{ marginTop: 6 }}>
-              <div style={{ color: '#58a6ff', fontSize: 9, textTransform: 'uppercase', fontWeight: 'bold', marginBottom: 4 }}>
+              <div style={{ color: 'var(--blue)', fontSize: 9, textTransform: 'uppercase', fontWeight: 'bold', marginBottom: 4 }}>
                 {op === 'modified' ? 'Axiom changes' : op === 'added' ? 'Added entity' : 'Removed entity'}
               </div>
               <ManchesterFrame
