@@ -176,12 +176,12 @@ export default function MetaProfileEditor({
         <button
           onClick={() => detect.mutate()}
           disabled={detect.isPending}
-          style={{ padding: '6px 14px', borderRadius: 4, border: 'none', background: 'var(--accent)', color: '#000', fontSize: 12, cursor: 'pointer' }}
+          style={{ padding: '6px 14px', borderRadius: 4, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 12, cursor: 'pointer' }}
         >
           {detect.isPending ? 'Running…' : 'Detect Metadata'}
         </button>
         {detect.isError && (
-          <div style={{ marginTop: 8, color: '#f85149', fontSize: 11 }}>
+          <div style={{ marginTop: 8, color: 'var(--red)', fontSize: 11 }}>
             Detection failed: {(detect.error as Error)?.message ?? 'unknown error'}
           </div>
         )}
@@ -215,7 +215,7 @@ export default function MetaProfileEditor({
         <span style={{
           fontSize: 10, padding: '1px 8px', borderRadius: 10,
           background: profile.status === 'user_confirmed' ? 'rgba(63,185,80,0.1)' : 'rgba(88,166,255,0.1)',
-          color: profile.status === 'user_confirmed' ? '#3fb950' : '#58a6ff',
+          color: profile.status === 'user_confirmed' ? 'var(--green)' : 'var(--blue)',
           border: `1px solid ${profile.status === 'user_confirmed' ? 'rgba(63,185,80,0.25)' : 'rgba(88,166,255,0.25)'}`,
         }}>
           {profile.status === 'user_confirmed' ? '● confirmed' : '⟳ auto-detected'}
@@ -228,7 +228,7 @@ export default function MetaProfileEditor({
           {detect.isPending ? 'Re-detecting…' : 'Re-detect'}
         </button>
         {detect.isError && (
-          <span style={{ fontSize: 10, color: '#f85149' }}>
+          <span style={{ fontSize: 10, color: 'var(--red)' }}>
             {(detect.error as Error)?.message ?? 'error'}
           </span>
         )}
@@ -242,7 +242,7 @@ export default function MetaProfileEditor({
           <button
             onClick={() => detect.mutate()}
             disabled={detect.isPending}
-            style={{ padding: '6px 14px', borderRadius: 4, border: 'none', background: 'var(--accent)', color: '#000', fontSize: 12, cursor: 'pointer' }}
+            style={{ padding: '6px 14px', borderRadius: 4, border: 'none', background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 12, cursor: 'pointer' }}
           >
             {detect.isPending ? 'Scanning…' : 'Scan Now'}
           </button>
@@ -305,14 +305,14 @@ export default function MetaProfileEditor({
           style={{
             padding: '6px 16px', borderRadius: 4, border: 'none',
             background: isDirty ? 'var(--accent)' : 'var(--bg-secondary)',
-            color: isDirty ? '#000' : 'var(--text-dim)',
+            color: isDirty ? 'var(--on-accent)' : 'var(--text-dim)',
             fontSize: 12, cursor: isDirty ? 'pointer' : 'default',
           }}
         >
           {patch.isPending ? 'Saving…' : 'Save and re-index'}
         </button>
-        {patch.isSuccess && <span style={{ marginLeft: 10, color: '#3fb950', fontSize: 11 }}>✓ Saved</span>}
-        {patch.isError && <span style={{ marginLeft: 10, color: '#f85149', fontSize: 11 }}>{(patch.error as Error)?.message ?? 'Save failed'}</span>}
+        {patch.isSuccess && <span style={{ marginLeft: 10, color: 'var(--green)', fontSize: 11 }}>✓ Saved</span>}
+        {patch.isError && <span style={{ marginLeft: 10, color: 'var(--red)', fontSize: 11 }}>{(patch.error as Error)?.message ?? 'Save failed'}</span>}
       </div>
     </div>
   )

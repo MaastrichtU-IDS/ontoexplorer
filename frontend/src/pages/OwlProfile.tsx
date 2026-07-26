@@ -48,11 +48,11 @@ function OntologyLink({ slug, hash }: { slug: string; hash: string }) {
 function ProfileBadge({ inProfile, violations }: { inProfile: boolean; violations: number }) {
   if (inProfile) {
     return (
-      <span style={{ color: '#3fb950', fontWeight: 700 }}>✓</span>
+      <span style={{ color: 'var(--green)', fontWeight: 700 }}>✓</span>
     )
   }
   return (
-    <span style={{ color: '#e06c75' }}>
+    <span style={{ color: 'var(--error)' }}>
       ✗ <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>({violations.toLocaleString()})</span>
     </span>
   )
@@ -353,7 +353,7 @@ export default function OwlProfile() {
                 key={entry.version_id}
                 data-testid="owl-profile-row"
                 style={{
-                  borderBottom: '1px solid rgba(255,255,255,0.04)',
+                  borderBottom: '1px solid var(--overlay)',
                 }}
               >
                 <td style={{ padding: '5px 8px' }}>
@@ -392,7 +392,7 @@ export default function OwlProfile() {
                 >
                   {violationParts.length > 0
                     ? violationParts.join(', ')
-                    : <span style={{ color: '#3fb950' }}>All conformant</span>}
+                    : <span style={{ color: 'var(--green)' }}>All conformant</span>}
                 </td>
               </tr>
             )

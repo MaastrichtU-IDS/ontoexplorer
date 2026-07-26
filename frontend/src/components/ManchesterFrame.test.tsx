@@ -72,12 +72,12 @@ test('added/removed lines use respective color and line marker', () => {
   wrap(<ManchesterFrame frame={frame} shortname="pizza" />)
   const addedFood = screen.getByText('Food')
   const addedLine = addedFood.closest('div')!
-  expect(addedLine.style.color).toBe('rgb(63, 185, 80)')   // #3fb950
+  expect(addedLine.style.color).toBe('var(--green)')
   expect(addedLine.textContent?.startsWith('+ ')).toBe(true)
 
   const removedExternal = screen.getByText('External')
   const removedLine = removedExternal.closest('div')!
-  expect(removedLine.style.color).toBe('rgb(248, 81, 73)')  // #f85149
+  expect(removedLine.style.color).toBe('var(--red)')
   expect(removedLine.textContent?.startsWith('- ')).toBe(true)
 })
 

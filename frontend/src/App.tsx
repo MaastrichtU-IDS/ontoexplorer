@@ -38,7 +38,7 @@ export function Footer() {
   return (
     <footer style={{
       borderTop: '1px solid var(--border)',
-      background: '#0a0f1a',
+      background: 'var(--bg-deep)',
       padding: '0.6rem 1.5rem',
       display: 'flex',
       alignItems: 'center',

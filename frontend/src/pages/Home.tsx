@@ -93,7 +93,7 @@ function RelationChips({ selected, onChange, namedClass }: {
     fontSize: 12, padding: '3px 10px', borderRadius: 12,
     background: active ? 'var(--accent)' : 'var(--bg-secondary)',
     border: '1px solid ' + (active ? 'var(--accent)' : 'var(--border)'),
-    color: disabled ? 'var(--text-dim)' : active ? '#000' : 'var(--text-muted)',
+    color: disabled ? 'var(--text-dim)' : active ? 'var(--on-accent)' : 'var(--text-muted)',
     cursor: disabled ? 'not-allowed' : 'pointer', fontWeight: active ? 600 : 400,
     opacity: disabled ? 0.45 : 1,
   })
@@ -131,7 +131,7 @@ function TypeChips({ selected, onChange }: {
     fontSize: 12, padding: '3px 10px', borderRadius: 12,
     background: active ? 'var(--accent)' : 'var(--bg-secondary)',
     border: '1px solid ' + (active ? 'var(--accent)' : 'var(--border)'),
-    color: active ? '#000' : 'var(--text-muted)',
+    color: active ? 'var(--on-accent)' : 'var(--text-muted)',
     cursor: 'pointer', fontWeight: active ? 600 : 400,
   })
   return (
@@ -545,7 +545,7 @@ function MOSQuery({ relation, onRelationChange }: {
       </div>
 
       {mosQuery && errorMsg && (
-        <p style={{ color: 'var(--error, #e06c75)', fontSize: 'var(--font-size-sm)', textAlign: 'center', marginTop: '2rem' }}>
+        <p style={{ color: 'var(--error)', fontSize: 'var(--font-size-sm)', textAlign: 'center', marginTop: '2rem' }}>
           {errorMsg}
         </p>
       )}
@@ -632,7 +632,7 @@ export default function Home() {
             style={{
               padding: '7px 22px', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500,
               background: mode === m ? 'var(--accent)' : 'transparent',
-              color: mode === m ? '#000' : 'var(--text-dim)',
+              color: mode === m ? 'var(--on-accent)' : 'var(--text-dim)',
               textTransform: 'capitalize',
             }}
           >

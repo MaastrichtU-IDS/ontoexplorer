@@ -44,11 +44,11 @@ const GROUP_LABELS: Record<string, string> = {
 }
 
 const GROUP_COLORS: Record<string, { bg: string; border: string; color: string }> = {
-  upper:       { bg: 'rgba(97,175,239,0.12)',  border: 'rgba(97,175,239,0.4)',  color: '#61afef' },
-  sulo_family: { bg: 'rgba(229,192,123,0.12)', border: 'rgba(229,192,123,0.4)', color: '#e5c07b' },
-  metadata:    { bg: 'rgba(198,120,221,0.12)', border: 'rgba(198,120,221,0.4)', color: '#c678dd' },
-  obo:         { bg: 'rgba(152,195,121,0.12)', border: 'rgba(152,195,121,0.4)', color: '#98c379' },
-  biomedical:  { bg: 'rgba(224,108,117,0.12)', border: 'rgba(224,108,117,0.4)', color: '#e06c75' },
+  upper:       { bg: 'rgba(97,175,239,0.12)',  border: 'rgba(97,175,239,0.4)',  color: 'var(--od-blue)' },
+  sulo_family: { bg: 'rgba(229,192,123,0.12)', border: 'rgba(229,192,123,0.4)', color: 'var(--od-yellow)' },
+  metadata:    { bg: 'rgba(198,120,221,0.12)', border: 'rgba(198,120,221,0.4)', color: 'var(--od-purple)' },
+  obo:         { bg: 'rgba(152,195,121,0.12)', border: 'rgba(152,195,121,0.4)', color: 'var(--od-green)' },
+  biomedical:  { bg: 'rgba(224,108,117,0.12)', border: 'rgba(224,108,117,0.4)', color: 'var(--error)' },
 }
 
 function IriChip({ iri }: { iri: string }) {
@@ -81,10 +81,10 @@ function IriChip({ iri }: { iri: string }) {
 // ── Row ───────────────────────────────────────────────────────────────────────
 
 const PROFILE_BADGE_COLORS: Record<ProfileName, { bg: string; border: string; color: string }> = {
-  el: { bg: 'rgba(97,175,239,0.12)',  border: 'rgba(97,175,239,0.4)',  color: '#61afef' },
-  rl: { bg: 'rgba(152,195,121,0.12)', border: 'rgba(152,195,121,0.4)', color: '#98c379' },
-  ql: { bg: 'rgba(229,192,123,0.12)', border: 'rgba(229,192,123,0.4)', color: '#e5c07b' },
-  dl: { bg: 'rgba(198,120,221,0.12)', border: 'rgba(198,120,221,0.4)', color: '#c678dd' },
+  el: { bg: 'rgba(97,175,239,0.12)',  border: 'rgba(97,175,239,0.4)',  color: 'var(--od-blue)' },
+  rl: { bg: 'rgba(152,195,121,0.12)', border: 'rgba(152,195,121,0.4)', color: 'var(--od-green)' },
+  ql: { bg: 'rgba(229,192,123,0.12)', border: 'rgba(229,192,123,0.4)', color: 'var(--od-yellow)' },
+  dl: { bg: 'rgba(198,120,221,0.12)', border: 'rgba(198,120,221,0.4)', color: 'var(--od-purple)' },
 }
 
 function ProfileBadges({ entry }: { entry: OwlProfileFleetEntry | undefined }) {
@@ -164,7 +164,7 @@ const OntologyRow = memo(function OntologyRow({ o, profileEntry }: { o: Ontology
               <span key={l.lang} title={`${l.label_count} labels in ${l.lang}`} style={{
                 fontSize: 9, padding: '1px 6px', borderRadius: 10,
                 background: 'rgba(86,182,194,0.10)', border: '1px solid rgba(86,182,194,0.35)',
-                color: '#56b6c2', fontWeight: 600, letterSpacing: 0.3, flexShrink: 0,
+                color: 'var(--od-cyan)', fontWeight: 600, letterSpacing: 0.3, flexShrink: 0,
               }}>
                 {l.lang}
               </span>
@@ -379,7 +379,7 @@ export default function Ontologies() {
                 background: active
                   ? (c ? c.bg : 'var(--accent)')
                   : (c ? c.bg : 'var(--bg-secondary)'),
-                color: c ? c.color : (active ? '#000' : 'var(--text-dim)'),
+                color: c ? c.color : (active ? 'var(--on-accent)' : 'var(--text-dim)'),
                 fontWeight: active ? 700 : 500,
                 opacity: active || !c ? 1 : 0.65,
               }}
@@ -409,7 +409,7 @@ export default function Ontologies() {
                 background: active
                   ? (c ? c.bg : 'var(--accent)')
                   : (c ? c.bg : 'var(--bg-secondary)'),
-                color: c ? c.color : (active ? '#000' : 'var(--text-dim)'),
+                color: c ? c.color : (active ? 'var(--on-accent)' : 'var(--text-dim)'),
                 fontWeight: active ? 700 : 500,
                 opacity: active || !c ? 1 : 0.65,
               }}
@@ -435,7 +435,7 @@ export default function Ontologies() {
                   fontSize: 11, padding: '2px 8px', borderRadius: 20, cursor: 'pointer',
                   border: '1px solid rgba(86,182,194,0.35)',
                   background: 'rgba(86,182,194,0.10)',
-                  color: '#56b6c2',
+                  color: 'var(--od-cyan)',
                   fontWeight: active ? 700 : 600,
                   opacity: active ? 1 : 0.65,
                 }}

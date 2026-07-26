@@ -107,7 +107,7 @@ function IndividualList({ ontologyId, versionId, selectedIri, onSelect, lang }: 
                   fontSize: 'var(--font-size-sm)',
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}
-                onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}
+                onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = 'var(--overlay)' }}
                 onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = '' }}
                 title={t.iri}
               >
@@ -397,7 +397,7 @@ function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid }: {
     return <div style={{ padding: '2rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</div>
   }
 
-  const statusColor = version.status === 'ingested' ? '#50c878' : 'var(--text-dim)'
+  const statusColor = version.status === 'ingested' ? 'var(--green)' : 'var(--text-dim)'
 
   return (
     <div style={{ padding: '1.5rem 2rem', overflow: 'auto', flex: 1 }}>
@@ -624,7 +624,7 @@ function OntologySearchBar({
           {results.map((r, i) => {
             const isInd = r.type === 'individual'
             const isProp = r.type?.endsWith('_property')
-            const typeColor = isInd ? 'var(--accent-blue, #61afef)' : isProp ? 'var(--accent-purple, #c678dd)' : 'var(--text-dim)'
+            const typeColor = isInd ? 'var(--accent-blue)' : isProp ? 'var(--accent-purple)' : 'var(--text-dim)'
             return (
               <li
                 key={r.iri}
@@ -664,8 +664,8 @@ function OntologySearchBar({
                 const isInd = r.type === 'individual'
                 const isProp = r.type?.endsWith('_property')
                 const typeColor = isInd
-                  ? 'var(--accent-blue, #61afef)'
-                  : isProp ? 'var(--accent-purple, #c678dd)' : 'var(--text-dim)'
+                  ? 'var(--accent-blue)'
+                  : isProp ? 'var(--accent-purple)' : 'var(--text-dim)'
                 return (
                   <li
                     key={r.iri}
@@ -753,7 +753,7 @@ function MOSQueryPane({
           <p style={{ padding: '8px 12px', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Searching…</p>
         )}
         {!isFetching && errMsg && (
-          <p style={{ padding: '8px 12px', color: 'var(--error, #e06c75)', fontSize: 'var(--font-size-sm)', lineHeight: 1.5 }}>
+          <p style={{ padding: '8px 12px', color: 'var(--error)', fontSize: 'var(--font-size-sm)', lineHeight: 1.5 }}>
             {errMsg}
           </p>
         )}
@@ -771,7 +771,7 @@ function MOSQueryPane({
           {results.map(r => {
             const isProp = r.type?.endsWith('_property')
             const isInd  = r.type === 'individual'
-            const typeColor = isInd ? 'var(--accent-blue, #61afef)' : isProp ? 'var(--accent-purple, #c678dd)' : 'var(--text-dim)'
+            const typeColor = isInd ? 'var(--accent-blue)' : isProp ? 'var(--accent-purple)' : 'var(--text-dim)'
             return (
               <li key={r.iri}>
                 <div
@@ -1030,7 +1030,7 @@ export default function OntologyPage() {
                     style={{
                       padding: '2px 6px', fontSize: 10, border: 'none', cursor: 'pointer',
                       background: classMode === m ? 'var(--accent)' : 'transparent',
-                      color: classMode === m ? '#000' : 'var(--text-dim)',
+                      color: classMode === m ? 'var(--on-accent)' : 'var(--text-dim)',
                       textTransform: 'capitalize',
                     }}
                   >

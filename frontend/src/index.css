@@ -1,21 +1,280 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ============================================================
+   THEME TOKENS
+   :root is the default dark theme. Each alternative palette is a
+   full token override under :root[data-theme="<id>"]. The nav
+   toggle flips between "dark" (this :root) and "light"; the
+   Profile > Appearance picker can select any theme below.
+   "blueprint"/"arctic"/"nord"/"terminal" are adapted from
+   AuraFlow (MIT, Dehlya Studio); "nord" from Nord (MIT). Tokens
+   AuraFlow doesn't carry (categorical badges, --overlay,
+   --bg-deep, third text tier) are derived to match each palette.
+   ============================================================ */
 :root {
+  color-scheme: dark;
+
+  /* Surfaces */
   --bg: #0f172a;
   --bg-secondary: #1e293b;
   --bg-hover: #334155;
+  --bg-tertiary: #1a1d24;
+  --bg-deep: #0a0f1a;
   --border: #334155;
+
+  /* Text */
   --text: #e2e8f0;
+  --text-bright: #f1f5f9;
   --text-muted: #94a3b8;
   --text-dim: #64748b;
+  --gray: #6e7681;
+
+  /* Accents */
   --accent: #22c55e;
+  --on-accent: #0a0f1a;
   --accent-blue: #67e8f9;
   --accent-purple: #a78bfa;
+
+  /* Subtle overlay for hover backgrounds & hairline separators.
+     Light-on-dark here; flips to dark-on-light in light themes. */
+  --overlay: rgba(255, 255, 255, 0.04);
+
+  /* Semantic status (GitHub-dark family) */
+  --green: #3fb950;
+  --green-bright: #56d364;
+  --red: #f85149;
+  --red-soft: #f87171;
+  --orange: #f0883e;
+  --blue: #58a6ff;
+  --yellow: #d29922;
+  --purple: #d2a8ff;
+  --error: #e06c75;
+
+  /* Categorical palette (One-Dark family) — used for ontology
+     families, badges and syntax; kept mutually distinct. */
+  --od-red: #e06c75;
+  --od-blue: #61afef;
+  --od-purple: #c678dd;
+  --od-yellow: #e5c07b;
+  --od-green: #98c379;
+  --od-cyan: #56b6c2;
+
+  /* Metrics */
   --nav-height: 48px;
   --radius: 6px;
   --radius-sm: 4px;
   --font-size-sm: 12px;
   --font-size-base: 14px;
+}
+
+/* -------- Light (default light, green accent) -------- */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #ffffff;
+  --bg-secondary: #f6f8fa;
+  --bg-hover: #eaeef2;
+  --bg-tertiary: #f6f8fa;
+  --bg-deep: #f6f8fa;
+  --border: #d0d7de;
+
+  --text: #1f2328;
+  --text-bright: #1f2328;
+  --text-muted: #57606a;
+  --text-dim: #8c959f;
+  --gray: #8c959f;
+
+  --accent: #16a34a;
+  --on-accent: #ffffff;
+  --accent-blue: #0969da;
+  --accent-purple: #8250df;
+
+  --overlay: rgba(0, 0, 0, 0.04);
+
+  --green: #1a7f37;
+  --green-bright: #1a7f37;
+  --red: #cf222e;
+  --red-soft: #d1242f;
+  --orange: #bc4c00;
+  --blue: #0969da;
+  --yellow: #9a6700;
+  --purple: #8250df;
+  --error: #cf222e;
+
+  --od-red: #cf222e;
+  --od-blue: #0550ae;
+  --od-purple: #8250df;
+  --od-yellow: #9a6700;
+  --od-green: #1a7f37;
+  --od-cyan: #1b7c83;
+}
+
+/* -------- Blueprint (dark, cyanotype navy) -------- */
+:root[data-theme="blueprint"] {
+  color-scheme: dark;
+
+  --bg: #0a1929;
+  --bg-secondary: #112a3f;
+  --bg-hover: #1a3952;
+  --bg-tertiary: #0e2033;
+  --bg-deep: #061320;
+  --border: #2a5580;
+
+  --text: #d0e4f5;
+  --text-bright: #ffffff;
+  --text-muted: #7fa5c8;
+  --text-dim: #5c7c9c;
+  --gray: #5c7c9c;
+
+  --accent: #4fc3f7;
+  --on-accent: #0a1929;
+  --accent-blue: #81d4fa;
+  --accent-purple: #b388ff;
+
+  --overlay: rgba(255, 255, 255, 0.05);
+
+  --green: #66bb6a;
+  --green-bright: #81c784;
+  --red: #ef5350;
+  --red-soft: #e57373;
+  --orange: #ffb74d;
+  --blue: #4fc3f7;
+  --yellow: #ffca28;
+  --purple: #b388ff;
+  --error: #ef5350;
+
+  --od-red: #ef5350;
+  --od-blue: #4fc3f7;
+  --od-purple: #b388ff;
+  --od-yellow: #ffca28;
+  --od-green: #66bb6a;
+  --od-cyan: #4dd0e1;
+}
+
+/* -------- Arctic (light, cool off-white) -------- */
+:root[data-theme="arctic"] {
+  color-scheme: light;
+
+  --bg: #f8fafe;
+  --bg-secondary: #ffffff;
+  --bg-hover: #eef4fa;
+  --bg-tertiary: #eef4fa;
+  --bg-deep: #eef4fa;
+  --border: #d4e2f0;
+
+  --text: #1a2a3a;
+  --text-bright: #0d1a28;
+  --text-muted: #6a8aa8;
+  --text-dim: #93aec6;
+  --gray: #93aec6;
+
+  --accent: #2b8dd6;
+  --on-accent: #ffffff;
+  --accent-blue: #5ba4d9;
+  --accent-purple: #7e57c2;
+
+  --overlay: rgba(10, 40, 80, 0.05);
+
+  --green: #1f9d57;
+  --green-bright: #1f9d57;
+  --red: #c93b3b;
+  --red-soft: #d05a5a;
+  --orange: #b5791f;
+  --blue: #2b8dd6;
+  --yellow: #b5791f;
+  --purple: #7e57c2;
+  --error: #c93b3b;
+
+  --od-red: #c93b3b;
+  --od-blue: #1e6fb0;
+  --od-purple: #7e57c2;
+  --od-yellow: #b5791f;
+  --od-green: #1f9d57;
+  --od-cyan: #0e8a9e;
+}
+
+/* -------- Nord (dark, arctic muted) -------- */
+:root[data-theme="nord"] {
+  color-scheme: dark;
+
+  --bg: #2e3440;
+  --bg-secondary: #3b4252;
+  --bg-hover: #434c5e;
+  --bg-tertiary: #343b49;
+  --bg-deep: #292e39;
+  --border: #4c566a;
+
+  --text: #eceff4;
+  --text-bright: #ffffff;
+  --text-muted: #d8dee9;
+  --text-dim: #8894a8;
+  --gray: #8894a8;
+
+  --accent: #88c0d0;
+  --on-accent: #2e3440;
+  --accent-blue: #81a1c1;
+  --accent-purple: #b48ead;
+
+  --overlay: rgba(255, 255, 255, 0.05);
+
+  --green: #a3be8c;
+  --green-bright: #b5cfa0;
+  --red: #bf616a;
+  --red-soft: #cc888f;
+  --orange: #d08770;
+  --blue: #81a1c1;
+  --yellow: #ebcb8b;
+  --purple: #b48ead;
+  --error: #bf616a;
+
+  --od-red: #bf616a;
+  --od-blue: #81a1c1;
+  --od-purple: #b48ead;
+  --od-yellow: #ebcb8b;
+  --od-green: #a3be8c;
+  --od-cyan: #8fbcbb;
+}
+
+/* -------- Terminal (dark, green phosphor CRT) -------- */
+:root[data-theme="terminal"] {
+  color-scheme: dark;
+
+  --bg: #000000;
+  --bg-secondary: #0a0a0a;
+  --bg-hover: #111111;
+  --bg-tertiary: #0d0d0d;
+  --bg-deep: #000000;
+  --border: #1a3a1a;
+
+  --text: #33ff33;
+  --text-bright: #66ff66;
+  --text-muted: #22aa22;
+  --text-dim: #178017;
+  --gray: #178017;
+
+  --accent: #33ff33;
+  --on-accent: #000000;
+  --accent-blue: #00cc66;
+  --accent-purple: #66ff99;
+
+  --overlay: rgba(51, 255, 51, 0.06);
+
+  --green: #33ff33;
+  --green-bright: #66ff66;
+  --red: #ff3333;
+  --red-soft: #ff6666;
+  --orange: #ffcc00;
+  --blue: #00cc66;
+  --yellow: #ffcc00;
+  --purple: #66ff99;
+  --error: #ff3333;
+
+  --od-red: #ff3333;
+  --od-blue: #00cc66;
+  --od-purple: #66ff99;
+  --od-yellow: #ffcc00;
+  --od-green: #33ff33;
+  --od-cyan: #00ffaa;
 }
 
 html, body, #root {
@@ -25,6 +284,12 @@ html, body, #root {
   font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', monospace;
   font-size: var(--font-size-base);
   line-height: 1.5;
+}
+
+/* Ease the flip between themes without animating page loads. */
+html.theme-ready body,
+html.theme-ready body * {
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 a { color: var(--accent); text-decoration: none; }

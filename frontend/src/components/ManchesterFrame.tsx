@@ -11,8 +11,8 @@ interface Props {
 }
 
 const COLOR_BY_OP: Record<'added' | 'removed', string> = {
-  added:   '#3fb950',
-  removed: '#f85149',
+  added:   'var(--green)',
+  removed: 'var(--red)',
 }
 
 function markerFor(op: ManchesterLine['op']): string {

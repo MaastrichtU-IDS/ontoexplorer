@@ -64,7 +64,7 @@ export default function Browse() {
                   color: oid === o.id ? 'var(--accent)' : 'var(--text-muted)',
                   fontSize: 'var(--font-size-sm)',
                 }}
-                onMouseEnter={e => { if (oid !== o.id) e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}
+                onMouseEnter={e => { if (oid !== o.id) e.currentTarget.style.background = 'var(--overlay)' }}
                 onMouseLeave={e => { if (oid !== o.id) e.currentTarget.style.background = '' }}
               >
                 {o.id}

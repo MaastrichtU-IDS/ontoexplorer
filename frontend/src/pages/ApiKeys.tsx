@@ -34,7 +34,7 @@ export default function ApiKeys() {
           style={{
             padding: '0.35rem 0.8rem',
             background: showForm ? 'var(--bg-secondary)' : 'var(--accent)',
-            color: showForm ? 'var(--text-muted)' : '#0f172a',
+            color: showForm ? 'var(--text-muted)' : 'var(--bg)',
             border: showForm ? '1px solid var(--border)' : 'none',
             borderRadius: 'var(--radius-sm)',
             fontWeight: 600,
@@ -68,7 +68,7 @@ export default function ApiKeys() {
               style={{
                 padding: '0.4rem 0.9rem',
                 background: 'var(--accent)',
-                color: '#0f172a',
+                color: 'var(--bg)',
                 borderRadius: 'var(--radius-sm)',
                 fontWeight: 700,
                 fontSize: 'var(--font-size-sm)',
@@ -128,7 +128,7 @@ export default function ApiKeys() {
                 <td style={{ padding: '0.6rem 1rem', whiteSpace: 'nowrap' }}>
                   <button
                     onClick={() => revoke.mutate(k.id)}
-                    style={{ fontSize: 'var(--font-size-sm)', color: '#f87171' }}
+                    style={{ fontSize: 'var(--font-size-sm)', color: 'var(--red-soft)' }}
                   >
                     revoke
                   </button>

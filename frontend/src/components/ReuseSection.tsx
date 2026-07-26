@@ -134,7 +134,7 @@ export function ReuseSection({
                   {term.iri}
                 </span>
                 {term.has_imported_from && (
-                  <span style={{ color: '#3fb950', marginLeft: 4 }}>★</span>
+                  <span style={{ color: 'var(--green)', marginLeft: 4 }}>★</span>
                 )}
               </li>
             ))}

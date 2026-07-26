@@ -94,7 +94,7 @@ export default function HistoryTab({ ontologyId, shortname, currentVersionId, ve
       {diff?.status === 'failed' ? (
         <div style={{
           padding: '0.75rem 1rem', margin: '0 14px 10px 14px',
-          color: '#f85149', fontSize: 12,
+          color: 'var(--red)', fontSize: 12,
           background: 'rgba(248,81,73,0.08)', border: '1px solid rgba(248,81,73,0.3)',
           borderRadius: 4,
         }}>

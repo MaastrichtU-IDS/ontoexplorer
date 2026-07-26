@@ -20,8 +20,8 @@ const STATUS_LABEL: Record<Status, string> = {
 }
 
 const STATUS_COLOR: Record<Status, { bg: string; border: string; color: string }> = {
-  onlyFrom: { bg: 'rgba(248,81,73,0.10)',  border: 'rgba(248,81,73,0.35)',  color: '#f85149' },
-  onlyTo:   { bg: 'rgba(63,185,80,0.10)',  border: 'rgba(63,185,80,0.35)',  color: '#3fb950' },
+  onlyFrom: { bg: 'rgba(248,81,73,0.10)',  border: 'rgba(248,81,73,0.35)',  color: 'var(--red)' },
+  onlyTo:   { bg: 'rgba(63,185,80,0.10)',  border: 'rgba(63,185,80,0.35)',  color: 'var(--green)' },
   both:     { bg: 'rgba(125,133,144,0.10)', border: 'rgba(125,133,144,0.35)', color: 'var(--text-dim)' },
 }
 
@@ -110,7 +110,7 @@ export function DiffQueryView({ from, to, fromError, toError }: Props) {
       {banner && (
         <div style={{
           background: 'rgba(248,81,73,0.10)', border: '1px solid rgba(248,81,73,0.35)',
-          color: '#f85149', borderRadius: 4, padding: '6px 10px', fontSize: 12, marginBottom: 8,
+          color: 'var(--red)', borderRadius: 4, padding: '6px 10px', fontSize: 12, marginBottom: 8,
         }}>
           {banner}
         </div>
@@ -183,7 +183,7 @@ export function DiffQueryView({ from, to, fromError, toError }: Props) {
               {visible.map(({ status, row }, i) => {
                 const c = STATUS_COLOR[status]
                 return (
-                  <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                  <tr key={i} style={{ borderBottom: '1px solid var(--overlay)' }}>
                     <td style={{ padding: '4px 8px' }}>
                       <span style={{
                         fontSize: 10, padding: '1px 6px', borderRadius: 10,

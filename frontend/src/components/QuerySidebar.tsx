@@ -378,7 +378,7 @@ export default function QuerySidebar({ yasguiRef }: Props) {
           </div>
 
           {saveError && (
-            <div style={{ color: '#f87171', fontSize: '0.6rem', wordBreak: 'break-word' }}>{saveError}</div>
+            <div style={{ color: 'var(--red-soft)', fontSize: '0.6rem', wordBreak: 'break-word' }}>{saveError}</div>
           )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-muted)', fontSize: '0.7rem', cursor: 'pointer' }}>

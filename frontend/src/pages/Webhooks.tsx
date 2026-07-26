@@ -63,7 +63,7 @@ export default function Webhooks() {
           style={{
             padding: '0.35rem 0.8rem',
             background: showForm ? 'var(--bg-secondary)' : 'var(--accent)',
-            color: showForm ? 'var(--text-muted)' : '#0f172a',
+            color: showForm ? 'var(--text-muted)' : 'var(--bg)',
             border: showForm ? '1px solid var(--border)' : 'none',
             borderRadius: 'var(--radius-sm)',
             fontWeight: 600,
@@ -113,7 +113,7 @@ export default function Webhooks() {
               style={{
                 padding: '0.4rem 0.9rem',
                 background: 'var(--accent)',
-                color: '#0f172a',
+                color: 'var(--bg)',
                 borderRadius: 'var(--radius-sm)',
                 fontWeight: 700,
                 fontSize: 'var(--font-size-sm)',
@@ -122,7 +122,7 @@ export default function Webhooks() {
               {create.isPending ? 'Registering…' : 'Register'}
             </button>
             {create.isError && (
-              <span style={{ marginLeft: '0.75rem', color: '#f87171', fontSize: 'var(--font-size-sm)' }}>
+              <span style={{ marginLeft: '0.75rem', color: 'var(--red-soft)', fontSize: 'var(--font-size-sm)' }}>
                 {(create.error as Error).message}
               </span>
             )}
@@ -178,7 +178,7 @@ export default function Webhooks() {
                 </button>
                 <button
                   onClick={() => remove.mutate(wh.id)}
-                  style={{ fontSize: 'var(--font-size-sm)', color: '#f87171' }}
+                  style={{ fontSize: 'var(--font-size-sm)', color: 'var(--red-soft)' }}
                 >
                   delete
                 </button>
@@ -204,7 +204,7 @@ export default function Webhooks() {
                         {deliveries.deliveries.map((d: any) => (
                           <tr key={d.id} style={{ borderTop: '1px solid var(--border)' }}>
                             <td style={{ padding: '0.25rem 0.5rem' }}><code style={{ color: 'var(--text-muted)' }}>{d.event}</code></td>
-                            <td style={{ padding: '0.25rem 0.5rem', color: d.status === 'delivered' ? 'var(--accent)' : '#f87171' }}>{d.status}</td>
+                            <td style={{ padding: '0.25rem 0.5rem', color: d.status === 'delivered' ? 'var(--accent)' : 'var(--red-soft)' }}>{d.status}</td>
                             <td style={{ padding: '0.25rem 0.5rem', color: 'var(--text-muted)' }}>{d.response_status ?? '—'}</td>
                             <td style={{ padding: '0.25rem 0.5rem', color: 'var(--text-muted)' }}>{d.attempts}</td>
                             <td style={{ padding: '0.25rem 0.5rem', color: 'var(--text-dim)' }}>
