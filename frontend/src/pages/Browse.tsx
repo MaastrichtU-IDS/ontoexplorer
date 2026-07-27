@@ -129,6 +129,11 @@ function ListMode({ type, onType }: { type: EntityType; onType: (t: EntityType) 
           Could not load {typeLabel}. Try again.
         </p>
       )}
+      {!isError && isFetching && !data && (
+        <p style={{ color: 'var(--text-dim)', textAlign: 'center', marginTop: '2rem' }}>
+          Loading…
+        </p>
+      )}
       {!isError && approxTotal === 0 && rows.length === 0 && !isFetching && (
         <p style={{ color: 'var(--text-dim)', textAlign: 'center', marginTop: '2rem' }}>
           No {typeLabel} in the repository yet
@@ -141,10 +146,10 @@ function ListMode({ type, onType }: { type: EntityType; onType: (t: EntityType) 
           </div>
           <EntityListRows rows={rows} />
           <div style={{ display: 'flex', gap: 8, marginTop: 8, justifyContent: 'center' }}>
-            <button type="button" onClick={goPrev} disabled={stack.length === 0} style={btn(stack.length === 0)}>
+            <button type="button" onClick={goPrev} disabled={stack.length === 0 || isFetching} style={btn(stack.length === 0 || isFetching)}>
               ← Previous
             </button>
-            <button type="button" onClick={goNext} disabled={!next} style={btn(!next)}>
+            <button type="button" onClick={goNext} disabled={!next || isFetching} style={btn(!next || isFetching)}>
               Next →
             </button>
           </div>

@@ -55,6 +55,12 @@ test('list mode: switching type tab resets the cursor', () => {
   expect(lastCall.cursor ?? null).toBeNull()
 })
 
+test('list mode: Next is disabled while fetching', () => {
+  mockEntities = { data: CLASS_PAGE, isFetching: true, isError: false }
+  renderAt('/browse?type=class')
+  expect(screen.getByRole('button', { name: /Next/i })).toBeDisabled()
+})
+
 test('query mode: renders the MOS query component', () => {
   renderAt('/browse?mode=query')
   expect(screen.getByTestId('mos-query')).toBeInTheDocument()
