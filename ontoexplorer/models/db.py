@@ -355,6 +355,12 @@ class EntityIndex(Base):
     so prefix/word-suffix matches behave like the Redis-side sorted-set index.
     """
     __tablename__ = "entity_index"
+    __table_args__ = (
+        Index(
+            "ix_entity_index_type_label",
+            "type", "primary_label_norm", "iri", "version_id",
+        ),
+    )
 
     version_id: Mapped[str] = mapped_column(ForeignKey("versions.id", ondelete="CASCADE"), primary_key=True)
     iri: Mapped[str] = mapped_column(Text, primary_key=True)
