@@ -28,11 +28,12 @@ entities (or logical content) it counts, without a flat dump of millions of rows
 A new route `/browse` mirroring the Home page's existing two-mode structure
 (Keyword / Structured Query):
 
-- **List mode** — a cross-repository, paged listing of entities of one type,
-  backed by the existing Postgres `entity_index` table. Type tabs across the
-  top: Classes · Object Properties · Data Properties · Annotation Properties ·
-  Individuals. State lives in the URL (`/browse?type=class&page=2`). Each row
-  links to that term's page.
+- **List mode** — a cross-repository, cursor-paged listing of entities of one
+  type, backed by the existing Postgres `entity_index` table. Type tabs across
+  the top: Classes · Object Properties · Data Properties · Annotation Properties
+  · Individuals. `type` and `mode` live in the URL; the page position is an
+  opaque cursor advanced via Next/Previous (see "Scale" below). Each row links to
+  that term's page.
 - **Query mode** — the reasoner-backed MOS structured-query experience, reused
   from Home's `MOSQuery` component. State: `/browse?mode=query`.
 
@@ -62,32 +63,46 @@ useful. A MOS expression, by contrast, is a reasoner-backed probe of the logical
 
 ### Backend — List mode endpoint
 
-One new endpoint, one SQL query over `entity_index` (no SPARQL fan-out):
+One new endpoint, one SQL query over `entity_index`, **keyset (cursor)
+paginated** so it stays O(page) regardless of depth. This is the critical
+scaling decision: at tens-to-hundreds of millions of entities, `OFFSET` is
+O(offset) in every engine (Postgres, Oxigraph, QLever alike), so we page by a
+stable sort-key cursor instead of an offset.
 
 ```
-GET /entities?type=<t>&limit=50&offset=0&lang=en&q=
+GET /entities?type=<t>&limit=50&cursor=<opaque>&q=
 ```
 
-Listing query (empty `q`):
+Ordering / cursor key is the tuple `(primary_label_norm, iri, version_id)` —
+unique because `(version_id, iri)` is the table's primary key. The `cursor` is
+an opaque base64(JSON) blob carrying the last row's key; the client never
+constructs it, it just echoes back the `next` value.
+
+Listing query (empty `q`) — the keyset comparison is written in expanded form
+so it runs identically on Postgres and the SQLite test DB:
 
 ```sql
 SELECT ei.iri, ei.primary_label, ei.short, ei.type,
-       ei.ontology_id, ei.version_id, ei.source
+       ei.ontology_id, ei.version_id, ei.source, ei.primary_label_norm
 FROM entity_index ei
 JOIN versions v ON v.id = ei.version_id
 WHERE v.status NOT IN ('pending','failed','deprecated')
   AND ei.type = :type
-ORDER BY ei.primary_label_norm, ei.iri
-LIMIT :limit OFFSET :offset
+  -- only when a cursor is supplied:
+  AND ( ei.primary_label_norm > :al
+        OR (ei.primary_label_norm = :al AND ei.iri > :ai)
+        OR (ei.primary_label_norm = :al AND ei.iri = :ai AND ei.version_id > :av) )
+ORDER BY ei.primary_label_norm, ei.iri, ei.version_id
+LIMIT :limit
 ```
 
-A `COUNT(*)` with the same `WHERE` returns the total so the pager can compute
-page count. Response shape:
+Response shape (`next` is null when the last page is reached; `approx_total` is
+a **cached, approximate** count — see below — never used for cursor logic):
 
 ```json
 { "entities": [ { "iri": "...", "label": "...", "short": "...", "type": "class",
                   "ontology_id": "...", "version_id": "...", "source": "..." } ],
-  "total": 1234567, "limit": 50, "offset": 0 }
+  "next": "<opaque-cursor-or-null>", "approx_total": 1234567, "limit": 50 }
 ```
 
 Rules:
@@ -96,17 +111,25 @@ Rules:
   search: `class`, `object_property`, `data_property`, `annotation_property`,
   `individual`. Anything else → 422.
 - **No deduplication.** The same IRI appears across ontologies (e.g. `owl:Thing`);
-  List mode shows every occurrence, each tagged with its ontology, so the total
+  List mode shows every occurrence, each tagged with its ontology, so the count
   matches the stat-card count (which counts occurrences, not unique IRIs). The
   Home cards already display "N unique" as a subtitle, so this stays consistent.
-- **`q` (optional).** Non-empty `q` delegates to the existing
-  `pg_entity_search` (already type-aware) rather than the listing query. Empty
-  `q` = the paged listing above.
-- **Deep-offset guard.** Large `OFFSET` on a big table degrades. Cap reachable
-  offset (e.g. `offset ≤ 10_000`); beyond it the endpoint returns a flag /
-  the pager stops and the UI shows "Refine with search to go deeper."
-- **Index.** Add a btree on `entity_index (type, primary_label_norm)` to serve
-  the `ORDER BY` and `type` filter. Small Alembic migration.
+- **`approx_total`.** A `COUNT(*)` over one type at 100M+ scale is itself a full
+  scan, so it is **not** computed per request: the endpoint returns a count
+  cached in Redis (TTL ~300s), falling back to a direct `COUNT(*)` when Redis is
+  unavailable (matches the existing `terms` endpoint's best-effort Redis
+  pattern; keeps the count path testable on SQLite). The UI shows it as "~N".
+  A maintained per-type counter is a future optimisation if a single cached
+  `COUNT` ever gets too slow.
+- **`q` (optional).** Non-empty `q` delegates to the existing `pg_entity_search`
+  (already type-aware) rather than the keyset listing. Empty `q` = the listing
+  above. (List mode ships without a search box in v1; the plumbing is present
+  for a later addition.)
+- **Index.** Add a btree on `entity_index (type, primary_label_norm, iri,
+  version_id)` — equality on `type`, then the keyset range scan over the sort
+  tuple. Small Alembic migration.
+
+There is no deep-offset problem to guard against: keyset paging has no offset.
 
 ### Backend — Query mode
 
@@ -128,16 +151,19 @@ data, not new code.
 New page at route `/browse`, registered in `App.tsx` inside the public `Shell`
 (alongside `/ontologies`, `/search`). Structure:
 
-- Reads `mode` (`list` default, or `query`), `type` (default `class`), and
-  `page` from the URL via `useSearchParams`; writes them back on interaction so
-  the view is shareable and back-button friendly.
-- **Mode toggle** identical to Home's (Keyword-equivalent "List" vs "Structured
-  Query").
-- **List mode:** type tabs → a results list (reuse the row rendering pattern
-  from Home's `ResultList` — TypeBadge, label linking to
+- Reads `mode` (`list` default, or `query`) and `type` (default `class`) from
+  the URL via `useSearchParams`; writes them back on interaction. The cursor
+  position is component state (Next/Previous), not URL state — keyset cursors
+  are not meaningful to deep-link, so `type`/`mode` are shareable but a specific
+  page is not.
+- **Mode toggle** identical to Home's ("List" vs "Structured Query").
+- **List mode:** type tabs → a results list (row rendering modelled on Home's
+  `ResultList` — type badge, label linking to
   `/ontologies/<slug>/<version_id>?term=<iri>`, source badge, ontology badge) →
-  `TablePager` (existing component) driven by `total`. Switching tabs resets to
-  page 1 and updates the URL.
+  a **Next/Previous cursor pager** (not `TablePager`, which is offset/page
+  based). The component keeps a stack of cursors: Next pushes the current cursor
+  and loads `response.next`; Previous pops. Switching type resets the stack and
+  cursor. A "~N total" label uses `approx_total`.
 - **Query mode:** render the existing `MOSQuery` component. Add a one-line
   header note: "Probe the logical content with a Manchester expression, or
   [browse axioms in SPARQL →]" linking to `/sparql/gallery`.
@@ -149,29 +175,28 @@ above. No structural change to `Home.tsx`.
 
 ### Frontend — API client
 
-Add `api.entities.list({ type, limit, offset, lang, q })` in `lib/api.ts`
+Add `api.entities.list({ type, limit, cursor, lang, q })` in `lib/api.ts`
 returning the response shape above, plus a `useEntities` hook (react-query)
 mirroring the existing `useOntologies` / search hooks.
 
 ## Data flow
 
 1. User clicks "Classes" on Home → navigates to `/browse?type=class`.
-2. `Browse.tsx` reads `type=class`, `mode=list` (default), `page=1`.
-3. `useEntities({ type: 'class', limit, offset: 0 })` → `GET /entities?...`.
-4. Backend runs the listing query + count over `entity_index`, returns rows +
-   total.
-5. Rows render as links; `TablePager` uses `total` for page controls.
+2. `Browse.tsx` reads `type=class`, `mode=list` (default); cursor starts null.
+3. `useEntities({ type: 'class', limit, cursor: null })` → `GET /entities?...`.
+4. Backend runs the keyset listing query (+ cached `approx_total`), returns rows
+   and a `next` cursor.
+5. Rows render as links; Next/Previous drive the cursor stack.
 6. Clicking a row navigates to that term's page in its ontology.
 7. Clicking "Axioms" on Home → `/browse?mode=query` → `MOSQuery` mounts.
 
 ## States and error handling
 
 **List mode:**
-- Loading → skeleton rows.
-- Empty (`total === 0`) → "No <type> in the repository yet."
+- Loading → skeleton rows (keep previous rows while fetching the next page).
+- Empty (`approx_total === 0` and no rows) → "No <type> in the repository yet."
 - Error → inline message with a retry control.
-- Deep offset past the cap → pager disables "next", shows "Refine with search to
-  go deeper."
+- Last page reached (`next === null`) → Next button disabled.
 
 **Query mode:** inherits `MOSQuery`'s existing states — searching, no results,
 `not_classified` guidance, per-ontology errors.
@@ -179,21 +204,24 @@ mirroring the existing `useOntologies` / search hooks.
 ## Testing
 
 **Backend (`/entities`):**
-- Returns correct rows and `total` per type.
+- Returns correct rows per type, ordered by `(primary_label_norm, iri, version_id)`.
+- Keyset paging: page 2 (using page 1's `next` cursor) returns the following
+  rows with no overlap and no gap; `next` is null on the final page.
+- `approx_total` reflects the count for the type (direct-count fallback path,
+  Redis absent under test).
 - Type validation rejects unknown values (422).
 - Excludes `pending` / `failed` / `deprecated` versions.
-- Offset cap enforced.
-- Ordering is `(primary_label_norm, iri)`.
 
 **Frontend (`Browse.test.tsx`):**
-- Tab switch updates URL `type` and resets to page 1.
-- Pager paging issues the right offset and renders returned rows.
+- Tab switch updates URL `type` and resets the cursor/stack.
+- Next advances using the returned cursor and renders the new rows; Previous
+  returns to the prior page.
 - Empty and error states render.
 - Row click navigates to the term page URL.
 - `mode=query` renders the MOS query UI; Axioms stat card lands here.
 
-**Migration:** the new `(type, primary_label_norm)` index is created and
-reversible.
+**Migration:** the new `(type, primary_label_norm, iri, version_id)` index is
+created and reversible.
 
 ## Out of scope
 
@@ -204,3 +232,10 @@ reversible.
 - De-duplicating entities across ontologies in List mode.
 - Faceting List mode by ontology (possible future addition; the URL/endpoint
   leave room for a future `ontology_id` filter).
+- Migrating the primary triplestore (e.g. to QLever). QLever scales to
+  billions of triples and has strong text/autocomplete, but its named-graph
+  handling is "not yet efficient when a permutation sorted by G is required",
+  its SPARQL UPDATE is still WIP, and it does no OWL reasoning — all of which
+  our per-version, mutable, reasoner-backed model depends on. Keyset pagination
+  makes `/browse` scale to 100M+ on the current substrate, so the engine choice
+  is decoupled from this feature and left to a separate evaluation.
