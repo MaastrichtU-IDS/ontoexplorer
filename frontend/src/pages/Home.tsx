@@ -595,29 +595,29 @@ export default function Home() {
           <StatCard label="Ontologies" value={publicStats.total_ontologies} to="/ontologies" />
           <StatCard label="Classes" value={publicStats.total_classes}
             subtitle={publicStats.unique_classes != null ? `${publicStats.unique_classes.toLocaleString()} unique` : undefined}
-            to="/ontologies" />
+            to="/browse?type=class" />
           {publicStats.total_object_properties > 0 && (
             <StatCard label="Object Properties" value={publicStats.total_object_properties}
               subtitle={publicStats.unique_object_properties != null ? `${publicStats.unique_object_properties.toLocaleString()} unique` : undefined}
-              to="/ontologies" />
+              to="/browse?type=object_property" />
           )}
           {publicStats.total_data_properties > 0 && (
             <StatCard label="Data Properties" value={publicStats.total_data_properties}
               subtitle={publicStats.unique_data_properties != null ? `${publicStats.unique_data_properties.toLocaleString()} unique` : undefined}
-              to="/ontologies" />
+              to="/browse?type=data_property" />
           )}
           {publicStats.total_annotation_properties > 0 && (
             <StatCard label="Annotation Properties" value={publicStats.total_annotation_properties}
               subtitle={publicStats.unique_annotation_properties != null ? `${publicStats.unique_annotation_properties.toLocaleString()} unique` : undefined}
-              to="/ontologies" />
+              to="/browse?type=annotation_property" />
           )}
           {publicStats.total_individuals > 0 && (
             <StatCard label="Individuals" value={publicStats.total_individuals}
               subtitle={publicStats.unique_individuals != null ? `${publicStats.unique_individuals.toLocaleString()} unique` : undefined}
-              to="/ontologies" />
+              to="/browse?type=individual" />
           )}
           {publicStats.total_axioms > 0 && (
-            <StatCard label="Axioms" value={publicStats.total_axioms} to="/ontologies" />
+            <StatCard label="Axioms" value={publicStats.total_axioms} to="/browse?mode=query" />
           )}
         </div>
       )}

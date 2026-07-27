@@ -23,7 +23,11 @@ vi.mock('../lib/api', async (importOriginal) => {
     ...actual,
     api: {
       ...actual.api,
-      stats: { public: () => Promise.resolve({ total_ontologies: 5, total_classes: 1000, total_properties: 50 }) },
+      stats: { public: () => Promise.resolve({
+        total_ontologies: 5, total_classes: 1000,
+        total_object_properties: 50, total_data_properties: 20,
+        total_annotation_properties: 10, total_individuals: 30, total_axioms: 5000,
+      }) },
       ontologies: {
         ...actual.api.ontologies,
         versions: () => Promise.resolve({ versions: [] }),
@@ -70,4 +74,22 @@ test('switching to Structured Query tab shows search bar', () => {
   fireEvent.click(screen.getByText('Structured Query'))
   expect(screen.getByTestId('search-bar')).toBeInTheDocument()
   expect(screen.getByTestId('ontology-picker')).toBeInTheDocument()
+})
+
+test('Classes stat card links to /browse?type=class', async () => {
+  renderHome()
+  const link = await screen.findByRole('link', { name: /Classes/i })
+  expect(link).toHaveAttribute('href', '/browse?type=class')
+})
+
+test('Axioms stat card links to /browse in query mode', async () => {
+  renderHome()
+  const link = await screen.findByRole('link', { name: /Axioms/i })
+  expect(link).toHaveAttribute('href', '/browse?mode=query')
+})
+
+test('Ontologies stat card still links to /ontologies', async () => {
+  renderHome()
+  const link = await screen.findByRole('link', { name: /Ontologies/i })
+  expect(link).toHaveAttribute('href', '/ontologies')
 })
