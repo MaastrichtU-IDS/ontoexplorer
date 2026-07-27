@@ -12,6 +12,8 @@ while keeping the common path fast.
 """
 from __future__ import annotations
 
+import base64
+import json
 from typing import Any
 
 from sqlalchemy import text
@@ -452,3 +454,79 @@ async def pg_entities_by_iri(db: AsyncSession, iris: list[str], version_ids: lis
         "version_id": r.version_id, "ontology_id": r.ontology_id,
         "ontology_shortname": r.ontology_shortname, "primary_label_norm": r.primary_label_norm,
     } for r in rows[:limit]]
+
+
+_LISTABLE_TYPES = {
+    "class", "object_property", "data_property", "annotation_property", "individual",
+}
+
+
+def encode_entity_cursor(label: str, iri: str, version: str) -> str:
+    raw = json.dumps({"l": label, "i": iri, "v": version}, separators=(",", ":"))
+    return base64.urlsafe_b64encode(raw.encode()).decode()
+
+
+def decode_entity_cursor(s: str) -> tuple[str, str, str] | None:
+    """Decode an opaque cursor to (label_norm, iri, version_id); None if malformed."""
+    try:
+        d = json.loads(base64.urlsafe_b64decode(s.encode()))
+        return (d["l"], d["i"], d["v"])
+    except Exception:
+        return None
+
+
+async def list_entities_by_type(
+    db: AsyncSession,
+    entity_type: str,
+    limit: int,
+    after: tuple[str, str, str] | None,
+) -> tuple[list[dict], str | None]:
+    """Keyset-paginated cross-repository listing of one `entity_index.type`.
+
+    Ordered by (primary_label_norm, iri, version_id). `after` is the last row's
+    key from the previous page, or None for the first page. Returns (rows,
+    next_cursor); next_cursor is None on the final page. Fetches limit+1 rows to
+    detect whether a further page exists. Occurrences are NOT de-duplicated
+    across ontologies. Excludes pending/failed/deprecated versions.
+    """
+    params: dict = {"t": entity_type, "lim": limit + 1}
+    keyset = ""
+    if after is not None:
+        al, ai, av = after
+        keyset = """
+          AND ( ei.primary_label_norm > :al
+                OR (ei.primary_label_norm = :al AND ei.iri > :ai)
+                OR (ei.primary_label_norm = :al AND ei.iri = :ai AND ei.version_id > :av) )
+        """
+        params |= {"al": al, "ai": ai, "av": av}
+
+    list_sql = text(f"""
+        SELECT ei.iri, ei.primary_label, ei.short, ei.type,
+               ei.version_id, ei.ontology_id, ei.source, ei.primary_label_norm
+        FROM entity_index ei
+        JOIN versions v ON v.id = ei.version_id
+        WHERE v.status NOT IN ('pending','failed','deprecated')
+          AND ei.type = :t
+          {keyset}
+        ORDER BY ei.primary_label_norm, ei.iri, ei.version_id
+        LIMIT :lim
+    """)
+    rows = (await db.execute(list_sql, params)).all()
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    next_cursor = None
+    if has_more and page:
+        last = page[-1]
+        next_cursor = encode_entity_cursor(last.primary_label_norm, last.iri, last.version_id)
+    return [_row_to_dict(r) for r in page], next_cursor
+
+
+async def count_entities_by_type(db: AsyncSession, entity_type: str) -> int:
+    count_sql = text("""
+        SELECT COUNT(*)
+        FROM entity_index ei
+        JOIN versions v ON v.id = ei.version_id
+        WHERE v.status NOT IN ('pending','failed','deprecated')
+          AND ei.type = :t
+    """)
+    return int((await db.execute(count_sql, {"t": entity_type})).scalar_one())

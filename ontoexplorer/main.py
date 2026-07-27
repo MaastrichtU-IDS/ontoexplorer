@@ -9,6 +9,7 @@ from ontoexplorer.api.api_keys import router as api_keys_router
 from ontoexplorer.api.maintainers import admin_router as maintainer_admin_router
 from ontoexplorer.api.maintainers import router as maintainer_router
 from ontoexplorer.api.global_search import router as global_search_router
+from ontoexplorer.api.entities import router as entities_router
 from ontoexplorer.api.auth import router as auth_router
 from ontoexplorer.api.health import router as health_router
 from ontoexplorer.api.jobs import router as jobs_router
@@ -68,6 +69,7 @@ def create_app() -> FastAPI:
     # global_search_router before ontologies_router: static /search segment must match
     # before ontologies_router's /{ontology_id}/{version_id} parameterized route
     app.include_router(global_search_router)
+    app.include_router(entities_router)
     # meta_profile_router before profile_router and ontologies_router: static /meta
     # segments must match before ontologies_router's parameterized sub-routes
     app.include_router(meta_profile_router)
