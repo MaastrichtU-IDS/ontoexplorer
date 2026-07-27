@@ -401,7 +401,7 @@ function useMOSFanout(pairs: { oid: string; vid: string }[], query: string, dire
   })
 }
 
-function MOSQuery({ relation, onRelationChange }: {
+export function MOSQuery({ relation, onRelationChange }: {
   relation: MosRelation
   onRelationChange: (next: MosRelation) => void
 }) {
