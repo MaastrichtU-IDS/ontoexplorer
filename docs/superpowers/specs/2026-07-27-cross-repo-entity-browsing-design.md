@@ -1,7 +1,7 @@
 # Cross-repository entity browsing (`/browse`)
 
 **Date:** 2026-07-27
-**Status:** Design — approved, pending implementation plan
+**Status:** Design - approved, pending implementation plan
 
 ## Problem
 
@@ -28,13 +28,13 @@ entities (or logical content) it counts, without a flat dump of millions of rows
 A new route `/browse` mirroring the Home page's existing two-mode structure
 (Keyword / Structured Query):
 
-- **List mode** — a cross-repository, cursor-paged listing of entities of one
+- **List mode** - a cross-repository, cursor-paged listing of entities of one
   type, backed by the existing Postgres `entity_index` table. Type tabs across
   the top: Classes · Object Properties · Data Properties · Annotation Properties
   · Individuals. `type` and `mode` live in the URL; the page position is an
   opaque cursor advanced via Next/Previous (see "Scale" below). Each row links to
   that term's page.
-- **Query mode** — the reasoner-backed MOS structured-query experience, reused
+- **Query mode** - the reasoner-backed MOS structured-query experience, reused
   from Home's `MOSQuery` component. State: `/browse?mode=query`.
 
 ### Stat-card routing (Home)
@@ -53,7 +53,7 @@ A new route `/browse` mirroring the Home page's existing two-mode structure
 
 **Why Axioms → Query mode:** the "Axioms" stat is in fact the summed triple
 count (`api/stats.py` sums each version's `triple_count`), not a count of OWL
-axioms. There is no bulk axiom store — per-term Manchester axioms are computed
+axioms. There is no bulk axiom store - per-term Manchester axioms are computed
 on demand by scanning a single graph for a single term (`_sparql_usage` +
 `modules/diff/manchester`). A flat list of ~200M triples is neither feasible nor
 useful. A MOS expression, by contrast, is a reasoner-backed probe of the logical
@@ -61,7 +61,7 @@ useful. A MOS expression, by contrast, is a reasoner-backed probe of the logical
 
 ## Components
 
-### Backend — List mode endpoint
+### Backend - List mode endpoint
 
 One new endpoint, one SQL query over `entity_index`, **keyset (cursor)
 paginated** so it stays O(page) regardless of depth. This is the critical
@@ -73,12 +73,11 @@ stable sort-key cursor instead of an offset.
 GET /entities?type=<t>&limit=50&cursor=<opaque>&q=
 ```
 
-Ordering / cursor key is the tuple `(primary_label_norm, iri, version_id)` —
-unique because `(version_id, iri)` is the table's primary key. The `cursor` is
+Ordering / cursor key is the tuple `(primary_label_norm, iri, version_id)` - unique because `(version_id, iri)` is the table's primary key. The `cursor` is
 an opaque base64(JSON) blob carrying the last row's key; the client never
 constructs it, it just echoes back the `next` value.
 
-Listing query (empty `q`) — the keyset comparison is written in expanded form
+Listing query (empty `q`) - the keyset comparison is written in expanded form
 so it runs identically on Postgres and the SQLite test DB:
 
 ```sql
@@ -97,7 +96,7 @@ LIMIT :limit
 ```
 
 Response shape (`next` is null when the last page is reached; `approx_total` is
-a **cached, approximate** count — see below — never used for cursor logic):
+a **cached, approximate** count - see below - never used for cursor logic):
 
 ```json
 { "entities": [ { "iri": "...", "label": "...", "short": "...", "type": "class",
@@ -126,39 +125,39 @@ Rules:
   above. (List mode ships without a search box in v1; the plumbing is present
   for a later addition.)
 - **Index.** Add a btree on `entity_index (type, primary_label_norm, iri,
-  version_id)` — equality on `type`, then the keyset range scan over the sort
+  version_id)` - equality on `type`, then the keyset range scan over the sort
   tuple. Small Alembic migration.
 
 There is no deep-offset problem to guard against: keyset paging has no offset.
 
-### Backend — Query mode
+### Backend - Query mode
 
 No new backend. Query mode reuses the existing global MOS search fan-out
 (`api/global_search.py` expression path) exactly as Home's Structured Query tab
 does today, including the `not_classified` (503) handling.
 
-### Backend — Axiom fallback
+### Backend - Axiom fallback
 
 No new backend. The "browse axioms without writing an expression" fallback is a
 link from Query mode to the existing SPARQL page / starter-query gallery
 (`/sparql`, `/sparql/gallery`), which is the tool built for raw triples. If
 useful, a small set of axiom-oriented starter queries (e.g. "all SubClassOf
-axioms in an ontology") can be added to the existing starter-query set — that is
+axioms in an ontology") can be added to the existing starter-query set - that is
 data, not new code.
 
-### Frontend — `Browse.tsx`
+### Frontend - `Browse.tsx`
 
 New page at route `/browse`, registered in `App.tsx` inside the public `Shell`
 (alongside `/ontologies`, `/search`). Structure:
 
 - Reads `mode` (`list` default, or `query`) and `type` (default `class`) from
   the URL via `useSearchParams`; writes them back on interaction. The cursor
-  position is component state (Next/Previous), not URL state — keyset cursors
+  position is component state (Next/Previous), not URL state - keyset cursors
   are not meaningful to deep-link, so `type`/`mode` are shareable but a specific
   page is not.
 - **Mode toggle** identical to Home's ("List" vs "Structured Query").
 - **List mode:** type tabs → a results list (row rendering modelled on Home's
-  `ResultList` — type badge, label linking to
+  `ResultList` - type badge, label linking to
   `/ontologies/<slug>/<version_id>?term=<iri>`, source badge, ontology badge) →
   a **Next/Previous cursor pager** (not `TablePager`, which is offset/page
   based). The component keeps a stack of cursors: Next pushes the current cursor
@@ -168,12 +167,12 @@ New page at route `/browse`, registered in `App.tsx` inside the public `Shell`
   header note: "Probe the logical content with a Manchester expression, or
   [browse axioms in SPARQL →]" linking to `/sparql/gallery`.
 
-### Frontend — Home wiring
+### Frontend - Home wiring
 
 Change only the `to` targets of the seven `StatCard`s per the routing table
 above. No structural change to `Home.tsx`.
 
-### Frontend — API client
+### Frontend - API client
 
 Add `api.entities.list({ type, limit, cursor, lang, q })` in `lib/api.ts`
 returning the response shape above, plus a `useEntities` hook (react-query)
@@ -198,7 +197,7 @@ mirroring the existing `useOntologies` / search hooks.
 - Error → inline message with a retry control.
 - Last page reached (`next === null`) → Next button disabled.
 
-**Query mode:** inherits `MOSQuery`'s existing states — searching, no results,
+**Query mode:** inherits `MOSQuery`'s existing states - searching, no results,
 `not_classified` guidance, per-ontology errors.
 
 ## Testing
@@ -225,7 +224,7 @@ created and reversible.
 
 ## Out of scope
 
-- A cross-repository raw-axiom (triple) listing — deliberately delegated to
+- A cross-repository raw-axiom (triple) listing - deliberately delegated to
   SPARQL.
 - A per-ontology "all axioms in Manchester" listing endpoint (considered,
   rejected in favour of SPARQL starter queries).
@@ -235,7 +234,7 @@ created and reversible.
 - Migrating the primary triplestore (e.g. to QLever). QLever scales to
   billions of triples and has strong text/autocomplete, but its named-graph
   handling is "not yet efficient when a permutation sorted by G is required",
-  its SPARQL UPDATE is still WIP, and it does no OWL reasoning — all of which
+  its SPARQL UPDATE is still WIP, and it does no OWL reasoning - all of which
   our per-version, mutable, reasoner-backed model depends on. Keyset pagination
   makes `/browse` scale to 100M+ on the current substrate, so the engine choice
   is decoupled from this feature and left to a separate evaluation.

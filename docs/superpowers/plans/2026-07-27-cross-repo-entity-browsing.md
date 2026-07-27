@@ -4,7 +4,7 @@
 
 **Goal:** Give every clickable repository-wide statistic on the Home page a destination that actually surfaces the entities (or logical content) it counts, via a new two-mode `/browse` page.
 
-**Architecture:** A new `/browse` route mirrors Home's two-mode layout. **List mode** is a cross-repository, **keyset-paginated** listing of one entity type, served by one new public endpoint `GET /api/v1/entities` that runs a single SQL query over the existing Postgres `entity_index` table. Keyset (cursor) pagination — not `OFFSET` — is used so the listing stays O(page) at 100M+ entities. **Query mode** reuses Home's existing MOS structured-query component. The seven Home stat cards get rewired: Ontologies → `/ontologies`, the five entity types → `/browse?type=<t>`, Axioms → `/browse?mode=query`.
+**Architecture:** A new `/browse` route mirrors Home's two-mode layout. **List mode** is a cross-repository, **keyset-paginated** listing of one entity type, served by one new public endpoint `GET /api/v1/entities` that runs a single SQL query over the existing Postgres `entity_index` table. Keyset (cursor) pagination - not `OFFSET` - is used so the listing stays O(page) at 100M+ entities. **Query mode** reuses Home's existing MOS structured-query component. The seven Home stat cards get rewired: Ontologies → `/ontologies`, the five entity types → `/browse?type=<t>`, Axioms → `/browse?mode=query`.
 
 **Tech Stack:** FastAPI + SQLAlchemy (async) + Alembic (backend), React + react-router + @tanstack/react-query + Vitest/testing-library (frontend), pytest (backend tests, SQLite in-memory).
 
@@ -13,7 +13,7 @@
 - Backend API prefix is `/api/v1`. The new endpoint is **public** (no auth dependency), like `GET /api/v1/stats/public`.
 - Entity type allow-list (exact strings): `class`, `object_property`, `data_property`, `annotation_property`, `individual`.
 - Version-status filter (mirror existing `pg_search`): exclude versions whose `status` is in `('pending','failed','deprecated')`.
-- Pagination is **keyset (cursor)**, never `OFFSET`. Sort/cursor key is the tuple `(primary_label_norm, iri, version_id)` (unique — `(version_id, iri)` is the PK). The `cursor` query param is an opaque `base64(json)` blob; the client only echoes back the `next` value the server returned.
+- Pagination is **keyset (cursor)**, never `OFFSET`. Sort/cursor key is the tuple `(primary_label_norm, iri, version_id)` (unique - `(version_id, iri)` is the PK). The `cursor` query param is an opaque `base64(json)` blob; the client only echoes back the `next` value the server returned.
 - The keyset comparison is written in **expanded** form (`a > :a OR (a = :a AND b > :b) OR ...`), not SQL row-value syntax, so it runs identically on Postgres and the SQLite test DB.
 - `approx_total` is a **cached** count (best-effort Redis, TTL 300s) with a direct `COUNT(*)` fallback when Redis is unavailable; it is display-only and never drives paging.
 - Default page size: `50`.
@@ -32,7 +32,7 @@
 
 **Interfaces:**
 - Produces: `encode_entity_cursor(label: str, iri: str, version: str) -> str` and `decode_entity_cursor(s: str) -> tuple[str, str, str] | None` (returns `None` on any malformed input).
-- Produces: `list_entities_by_type(db, entity_type: str, limit: int, after: tuple[str, str, str] | None) -> tuple[list[dict], str | None]` — returns `(rows, next_cursor)`; each row a dict with keys `iri, label, short, type, version_id, ontology_id, source`; `next_cursor` is `None` on the last page.
+- Produces: `list_entities_by_type(db, entity_type: str, limit: int, after: tuple[str, str, str] | None) -> tuple[list[dict], str | None]` - returns `(rows, next_cursor)`; each row a dict with keys `iri, label, short, type, version_id, ontology_id, source`; `next_cursor` is `None` on the last page.
 - Produces: `count_entities_by_type(db, entity_type: str) -> int`.
 - Produces: HTTP `GET /api/v1/entities?type=<t>&limit=<n>&cursor=<opaque>` → `{ "entities": [...], "next": str|null, "approx_total": int, "limit": int }`.
 - Consumes: existing `_row_to_dict` and `text` in `pg_search.py`; `get_db` from `ontoexplorer.database`; `_get_redis` from `ontoexplorer.modules.search.indexer`.
@@ -75,7 +75,7 @@ async def _seed(db_session):
         _ei("v-ready", "http://ex.org/Apoptosis", "class", "apoptosis"),
         _ei("v-ready", "http://ex.org/Nucleus", "class", "nucleus"),
         _ei("v-ready", "http://ex.org/hasPart", "object_property", "has part"),
-        # under a deprecated version — must be excluded
+        # under a deprecated version - must be excluded
         _ei("v-dep", "http://ex.org/Ghost", "class", "ghost"),
     ])
     await db_session.commit()
@@ -124,7 +124,7 @@ async def test_bad_cursor_is_rejected(client, db_session):
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `.venv/bin/pytest tests/integration/test_entities.py -q`
-Expected: FAIL — `404` responses (route not registered) / import errors.
+Expected: FAIL - `404` responses (route not registered) / import errors.
 
 - [ ] **Step 3: Add the cursor codec + query/count functions to `pg_search.py`**
 
@@ -210,7 +210,7 @@ async def count_entities_by_type(db: AsyncSession, entity_type: str) -> int:
 - [ ] **Step 4: Create the endpoint router `ontoexplorer/api/entities.py`**
 
 ```python
-"""Cross-repository entity listing — GET /api/v1/entities."""
+"""Cross-repository entity listing - GET /api/v1/entities."""
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -303,7 +303,7 @@ git commit -m "feat(entities): keyset-paginated cross-repository entity listing 
 - Test: `tests/unit/test_entity_index_type_label_index.py`
 
 **Interfaces:**
-- Produces: a btree index `ix_entity_index_type_label` on `entity_index (type, primary_label_norm, iri, version_id)` — equality on `type` then the keyset range scan over the sort tuple. Declared in ORM metadata (so the SQLite test DB builds it) and as an Alembic migration (for Postgres).
+- Produces: a btree index `ix_entity_index_type_label` on `entity_index (type, primary_label_norm, iri, version_id)` - equality on `type` then the keyset range scan over the sort tuple. Declared in ORM metadata (so the SQLite test DB builds it) and as an Alembic migration (for Postgres).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -325,7 +325,7 @@ def test_type_label_index_declared():
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `.venv/bin/pytest tests/unit/test_entity_index_type_label_index.py -q`
-Expected: FAIL — `ix_entity_index_type_label` not in the index set.
+Expected: FAIL - `ix_entity_index_type_label` not in the index set.
 
 - [ ] **Step 3: Add the Index to the `EntityIndex` model**
 
@@ -547,7 +547,7 @@ test('list mode empty state', () => {
 - [ ] **Step 5: Run the test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/pages/Browse.test.tsx`
-Expected: FAIL — cannot resolve `./Browse`.
+Expected: FAIL - cannot resolve `./Browse`.
 
 - [ ] **Step 6: Create the page `frontend/src/pages/Browse.tsx`**
 
@@ -635,7 +635,7 @@ function EntityListRows({ rows }: { rows: EntityRow[] }) {
 
 function ListMode({ type, onType }: { type: EntityType; onType: (t: EntityType) => void }) {
   // Cursor stack: `stack` holds the cursors for previous pages; `cursor` is the
-  // current page's start (null = first page). Keyset paging — no offset.
+  // current page's start (null = first page). Keyset paging - no offset.
   const [cursor, setCursor] = useState<string | null>(null)
   const [stack, setStack] = useState<(string | null)[]>([])
   const { data, isFetching, isError } = useEntities({ type, limit: PAGE_SIZE, cursor })
@@ -841,7 +841,7 @@ test('Ontologies stat card still links to /ontologies', async () => {
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `cd frontend && npx vitest run src/pages/Home.test.tsx`
-Expected: FAIL — the Classes/Axioms links still point to `/ontologies`.
+Expected: FAIL - the Classes/Axioms links still point to `/ontologies`.
 
 - [ ] **Step 3: Update the `StatCard` `to` targets in `Home.tsx`**
 
@@ -905,9 +905,9 @@ git commit -m "feat(home): point entity stat cards at /browse (Axioms -> query m
 - Empty / error / last-page states → Task 3 `ListMode` ✓
 - Testing: keyset paging (no overlap/gap, `next` null on last page), approx count, migration/index, frontend page + Home wiring → Tasks 1-4 ✓
 
-**Optional `q` search box:** the endpoint and client accept `q`, but List mode v1 ships without a search input (YAGNI — the spec marks it conditional). Plumbing is present for a later addition; no task depends on it. Not a gap.
+**Optional `q` search box:** the endpoint and client accept `q`, but List mode v1 ships without a search input (YAGNI - the spec marks it conditional). Plumbing is present for a later addition; no task depends on it. Not a gap.
 
-**Placeholder scan:** the only intentional fill-ins are the Alembic `revision`/`down_revision` ids in Task 2, resolved by the `alembic heads` command in Steps 5/7 — not code placeholders.
+**Placeholder scan:** the only intentional fill-ins are the Alembic `revision`/`down_revision` ids in Task 2, resolved by the `alembic heads` command in Steps 5/7 - not code placeholders.
 
 **Type consistency:**
 - Cursor codec ↔ query fn: `encode_entity_cursor(label, iri, version)` produces what `decode_entity_cursor` returns as `(label, iri, version)`, matching the `after` tuple `list_entities_by_type` consumes. The endpoint passes `decode_entity_cursor(cursor)` straight into `after`. ✓
@@ -921,5 +921,5 @@ git commit -m "feat(home): point entity stat cards at /browse (Axioms -> query m
 - A List-mode free-text search box (plumbing exists; UI deferred).
 - A NavBar link to `/browse` (entry is via Home stat cards).
 - Faceting List mode by ontology.
-- Any cross-repo raw-axiom (triple) listing — delegated to SPARQL.
-- Migrating the primary triplestore to QLever — a separate strategic evaluation; keyset pagination makes `/browse` scale on the current substrate.
+- Any cross-repo raw-axiom (triple) listing - delegated to SPARQL.
+- Migrating the primary triplestore to QLever - a separate strategic evaluation; keyset pagination makes `/browse` scale on the current substrate.
