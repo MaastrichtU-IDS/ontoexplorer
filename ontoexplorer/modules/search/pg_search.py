@@ -47,7 +47,8 @@ async def pg_entity_search(
     """Cross-ontology entity search via Postgres `entity_index`.
 
     Deduplicates by IRI (first-seen-wins across ontologies). Result list is already
-    globally tier-ranked: exact label match first, then prefix, then word-suffix.
+    globally tier-ranked: exact primary-label match, then primary-label prefix,
+    then primary-label word-match, then synonym/alt-label-only matches.
 
     `types`, if given, restricts to those entity_index.type values
     (e.g. ['class', 'object_property']). None or empty = no type filter.
@@ -96,24 +97,35 @@ async def pg_entity_search(
         if len(merged) >= limit:
             return merged[:limit]
 
-    # Stage 2: word-suffix fallback via tsvector. Only runs if prefix tier didn't fill.
+    # Stage 2: word-match fallback via tsvector. Only runs if prefix tier didn't fill.
     # Multi-word queries are AND'd; the last token is prefix-matched (user may
     # still be typing it).
+    #
+    # The tsvector covers the primary label AND all synonyms/alt-labels, so a term
+    # can match on a synonym alone (e.g. "cytolysis" has the synonym "holin lysin
+    # activity"). Rank rows whose PRIMARY label contains the query above those that
+    # matched only via a synonym — otherwise a short primary label with a matching
+    # synonym outranks a term literally named "... <query>". `label_hit` = 0 when
+    # the query text appears in the primary label, 1 when the match is synonym-only.
     if len(merged) < limit:
         tsv_sql = text(f"""
             SELECT ei.iri, ei.primary_label, ei.short, ei.type,
                    ei.version_id, ei.ontology_id, ei.source,
-                   ei.primary_label_norm
+                   ei.primary_label_norm,
+                   CASE WHEN ei.primary_label_norm LIKE :contains THEN 0 ELSE 1 END AS label_hit
             FROM entity_index ei
             JOIN versions v ON v.id = ei.version_id
             WHERE v.status NOT IN ('pending','failed','deprecated')
               AND ei.search_tsv @@ to_tsquery('simple', :tsq)
               AND ei.primary_label_norm NOT LIKE :prefix
               {type_filter_sql}
-            ORDER BY LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
+            ORDER BY label_hit, LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
             LIMIT :over
         """)
-        params2: dict = {"tsq": _build_tsquery(norm), "prefix": norm + "%", "over": over}
+        params2: dict = {
+            "tsq": _build_tsquery(norm), "prefix": norm + "%",
+            "contains": f"%{norm}%", "over": over,
+        }
         if types:
             params2["types"] = list(types)
         result = await db.execute(tsv_sql, params2)
