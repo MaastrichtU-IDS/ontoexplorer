@@ -59,10 +59,17 @@ async def pg_entity_search(
     if not norm:
         return []
 
+    # Scope to each ontology's default version (pin-/version-aware), the same set
+    # the /entities listing uses. This keeps search and browse consistent: a hit
+    # links to the version that actually serves the term, and a multi-version
+    # ontology can't surface the same IRI once per version.
+    vids = await _latest_version_ids(db)
+    if not vids:
+        return []
+
     type_filter_sql = "AND ei.type = ANY(:types)" if types else ""
 
     # Stage 1: prefix-on-primary-label. Uses the text_pattern_ops btree.
-    # Filter to ready non-deprecated versions via the JOIN.
     # Within tier-1 (prefix match), sort by label LENGTH then alphabetically so
     # the label closest in length to the query wins. Without this, an unrelated
     # short label that happens to be lex-earlier sorts above the obvious target:
@@ -73,15 +80,14 @@ async def pg_entity_search(
                ei.primary_label_norm,
                CASE WHEN ei.primary_label_norm = :norm THEN 0 ELSE 1 END AS tier
         FROM entity_index ei
-        JOIN versions v ON v.id = ei.version_id
-        WHERE v.status NOT IN ('pending','failed','deprecated')
+        WHERE ei.version_id = ANY(:vids)
           AND ei.primary_label_norm LIKE :prefix
           {type_filter_sql}
         ORDER BY tier, LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
         LIMIT :over
     """)
     over = limit * _OVERSAMPLE
-    params: dict = {"norm": norm, "prefix": norm + "%", "over": over}
+    params: dict = {"norm": norm, "prefix": norm + "%", "over": over, "vids": vids}
     if types:
         params["types"] = list(types)
     result = await db.execute(prefix_sql, params)
@@ -114,8 +120,7 @@ async def pg_entity_search(
                    ei.primary_label_norm,
                    CASE WHEN ei.primary_label_norm LIKE :contains THEN 0 ELSE 1 END AS label_hit
             FROM entity_index ei
-            JOIN versions v ON v.id = ei.version_id
-            WHERE v.status NOT IN ('pending','failed','deprecated')
+            WHERE ei.version_id = ANY(:vids)
               AND ei.search_tsv @@ to_tsquery('simple', :tsq)
               AND ei.primary_label_norm NOT LIKE :prefix
               {type_filter_sql}
@@ -124,7 +129,7 @@ async def pg_entity_search(
         """)
         params2: dict = {
             "tsq": _build_tsquery(norm), "prefix": norm + "%",
-            "contains": f"%{norm}%", "over": over,
+            "contains": f"%{norm}%", "over": over, "vids": vids,
         }
         if types:
             params2["types"] = list(types)
