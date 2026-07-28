@@ -47,6 +47,16 @@ function EntityListRows({ rows }: { rows: EntityRow[] }) {
     const ont = ontById(occ.ontology_id)
     return ont ? ontDisplayName(ont) : occ.ontology_id.slice(0, 8)
   }
+  // The defining ontology owns the term's namespace: its IRI is a namespace
+  // prefix of the term IRI (e.g. sulo owns https://w3id.org/sulo/hasValue).
+  // Everything else that has the term merely reuses it.
+  function defines(occ: EntityOccurrence, termIri: string): boolean {
+    const ont = ontById(occ.ontology_id)
+    if (!ont || !termIri.startsWith(ont.iri)) return false
+    if (/[/#]$/.test(ont.iri)) return true
+    const next = termIri.charAt(ont.iri.length)
+    return next === '' || next === '/' || next === '#'
+  }
   return (
     <ul style={{ listStyle: 'none', marginTop: '0.5rem' }}>
       {rows.map(r => {
@@ -71,16 +81,30 @@ function EntityListRows({ rows }: { rows: EntityRow[] }) {
               ? <Link to={soloPath} style={{ color: 'var(--accent)', fontWeight: 500, textDecoration: 'none' }}>{r.label}</Link>
               : <span style={{ color: 'var(--text)', fontWeight: 500 }}>{r.label}</span>}
             <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{r.short}</span>
-            {/* One clickable badge per ontology whose default version has this term. */}
+            {/* One clickable badge per ontology whose default version has this term.
+                When a term is shared across ontologies, the defining ontology
+                (namespace owner) is filled/accented and sorted first, reusers are
+                outlined. For a single ontology there is nothing to contrast, so the
+                badge stays neutral (avoids mislabeling a native term as "reuse"
+                when the owner can't be proven, e.g. OBO PURLs). */}
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-              {r.ontologies.map(occ => {
-                const p = termPath(occ, r.iri)
-                const nm = occName(occ)
-                return p
-                  ? <Link key={occ.version_id} to={p} title={`Open in ${nm}`}
-                      style={{ ...badgeBase, color: 'var(--accent)' }}>{nm}</Link>
-                  : <span key={occ.version_id} style={{ ...badgeBase, color: 'var(--text-dim)' }}>{nm}</span>
-              })}
+              {[...r.ontologies]
+                .sort((a, b) => Number(defines(b, r.iri)) - Number(defines(a, r.iri)))
+                .map(occ => {
+                  const p = termPath(occ, r.iri)
+                  const nm = occName(occ)
+                  const multi = r.ontologies.length > 1
+                  const isDef = multi && defines(occ, r.iri)
+                  const style: React.CSSProperties = isDef
+                    ? { ...badgeBase, background: 'var(--accent)', border: '1px solid var(--accent)', color: 'var(--on-accent)', fontWeight: 600 }
+                    : { ...badgeBase, color: p ? 'var(--accent)' : 'var(--text-dim)' }
+                  const title = !multi ? `Open in ${nm}`
+                    : isDef ? `Defines this term — open in ${nm}`
+                    : `Reuses this term — open in ${nm}`
+                  return p
+                    ? <Link key={occ.version_id} to={p} title={title} style={style}>{nm}</Link>
+                    : <span key={occ.version_id} title={title} style={style}>{nm}</span>
+                })}
             </span>
           </li>
         )

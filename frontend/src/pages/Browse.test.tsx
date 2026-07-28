@@ -84,6 +84,24 @@ test('list mode empty state', () => {
   expect(screen.getByText(/No data properties in the repository yet/i)).toBeInTheDocument()
 })
 
+test('defining ontology badge is highlighted and sorted before reusers', () => {
+  // term IRI lives under o1's namespace (http://ex.org/onto) -> o1 defines it,
+  // o2 (pizza) reuses it. o2 is listed first to prove the sort reorders it.
+  mockEntities = { data: {
+    entities: [
+      { iri: 'http://ex.org/onto/Foo', label: 'foo', short: 'Foo', type: 'class', source: '',
+        ontologies: [{ ontology_id: 'o2', version_id: 'v2' }, { ontology_id: 'o1', version_id: 'v1' }] },
+    ], next: null, approx_total: 1, limit: 50,
+  }, isFetching: false, isError: false }
+  renderAt('/browse?type=class')
+  const def = screen.getByTitle(/Defines this term/i)
+  const reuse = screen.getByTitle(/Reuses this term/i)
+  expect(def).toHaveTextContent('onto')
+  expect(reuse).toHaveTextContent('pizza')
+  // definer appears before the reuser in the DOM (sorted first)
+  expect(def.compareDocumentPosition(reuse) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+})
+
 test('collapsed row renders one clickable badge per ontology', () => {
   mockEntities = { data: SHARED_COLLAPSED, isFetching: false, isError: false }
   renderAt('/browse?type=class')

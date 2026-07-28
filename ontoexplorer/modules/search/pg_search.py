@@ -90,18 +90,40 @@ async def pg_entity_search(
     params: dict = {"norm": norm, "prefix": norm + "%", "over": over, "vids": vids}
     if types:
         params["types"] = list(types)
-    result = await db.execute(prefix_sql, params)
-    prefix_rows = result.all()
+    prefix_rows = (await db.execute(prefix_sql, params)).all()
 
-    seen_iris: set[str] = set()
-    merged: list[dict] = []
-    for row in prefix_rows:
-        if row.iri in seen_iris:
-            continue
-        seen_iris.add(row.iri)
-        merged.append(_row_to_dict(row))
-        if len(merged) >= limit:
-            return merged[:limit]
+    # Load ontology namespaces once so a shared IRI is attributed to its DEFINING
+    # ontology — the one whose IRI is a namespace-prefix of the term IRI — instead
+    # of whichever copy sorts first (e.g. sulo:hasValue reused by pizza is
+    # attributed to sulo, not pizza).
+    from sqlalchemy import select as _select
+    from ontoexplorer.models.db import Ontology
+    ont_iri = {r.id: r.iri for r in (await db.execute(_select(Ontology.id, Ontology.iri))).all()}
+
+    def _defines(term_iri: str, ontology_id: str) -> bool:
+        base = ont_iri.get(ontology_id)
+        if not base or not term_iri.startswith(base):
+            return False
+        if base[-1] in "/#":
+            return True
+        return term_iri[len(base):len(base) + 1] in ("", "/", "#")
+
+    # Dedup by IRI. Position = first-seen (rank) order; the representative
+    # occurrence is the defining ontology's when one is present among the
+    # candidates. Keep scanning past `limit` so a later-ranked defining copy can
+    # still upgrade an already-included IRI, but never add new IRIs beyond `limit`.
+    chosen: dict[str, dict] = {}
+
+    def _consider(rows):
+        for row in rows:
+            iri = row.iri
+            if iri in chosen:
+                if _defines(iri, row.ontology_id) and not _defines(iri, chosen[iri]["ontology_id"]):
+                    chosen[iri] = _row_to_dict(row)  # same key -> keeps position
+            elif len(chosen) < limit:
+                chosen[iri] = _row_to_dict(row)
+
+    _consider(prefix_rows)
 
     # Stage 2: word-match fallback via tsvector. Only runs if prefix tier didn't fill.
     # Multi-word queries are AND'd; the last token is prefix-matched (user may
@@ -113,7 +135,7 @@ async def pg_entity_search(
     # matched only via a synonym — otherwise a short primary label with a matching
     # synonym outranks a term literally named "... <query>". `label_hit` = 0 when
     # the query text appears in the primary label, 1 when the match is synonym-only.
-    if len(merged) < limit:
+    if len(chosen) < limit:
         tsv_sql = text(f"""
             SELECT ei.iri, ei.primary_label, ei.short, ei.type,
                    ei.version_id, ei.ontology_id, ei.source,
@@ -133,16 +155,9 @@ async def pg_entity_search(
         }
         if types:
             params2["types"] = list(types)
-        result = await db.execute(tsv_sql, params2)
-        for row in result.all():
-            if row.iri in seen_iris:
-                continue
-            seen_iris.add(row.iri)
-            merged.append(_row_to_dict(row))
-            if len(merged) >= limit:
-                break
+        _consider((await db.execute(tsv_sql, params2)).all())
 
-    return merged[:limit]
+    return list(chosen.values())[:limit]
 
 
 async def pg_autocomplete_entities(
