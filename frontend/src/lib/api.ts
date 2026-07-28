@@ -427,14 +427,20 @@ export type ClassExprNode =
   | { type: 'datatype_restriction'; datatype: ClassExprNode; facets: { facet: string; value: string }[] }
   | { type: 'unknown' }
 
+export interface EntityOccurrence {
+  ontology_id: string
+  version_id: string
+}
+
 export interface EntityRow {
   iri: string
   label: string
   short: string
   type: string
-  version_id: string
-  ontology_id: string
   source: string
+  // One entry per ontology whose default version has this IRI. In the default
+  // (expanded) listing there is exactly one; in collapsed mode there may be many.
+  ontologies: EntityOccurrence[]
 }
 
 export interface SearchResult {
@@ -1339,12 +1345,12 @@ export const api = {
   },
 
   entities: {
-    list: (params: { type: string; limit: number; cursor?: string | null; lang?: string | null; q?: string }) => {
+    list: (params: { type: string; limit: number; cursor?: string | null; q?: string; collapse?: boolean }) => {
       const p = new URLSearchParams({ type: params.type, limit: String(params.limit) })
       if (params.cursor) p.set('cursor', params.cursor)
-      if (params.lang) p.set('lang', params.lang)
       if (params.q) p.set('q', params.q)
-      return request<{ entities: EntityRow[]; next: string | null; approx_total: number; limit: number }>(
+      if (params.collapse) p.set('collapse', 'true')
+      return request<{ entities: EntityRow[]; next: string | null; approx_total: number; limit: number; query?: string }>(
         `/entities?${p}`
       )
     },

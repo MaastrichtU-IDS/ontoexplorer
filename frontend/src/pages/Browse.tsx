@@ -1,8 +1,9 @@
 import { Link, useSearchParams } from 'react-router-dom'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useEntities } from '../hooks/useEntities'
 import { useOntologies } from '../hooks/useOntologies'
-import { EntityRow, slugFromIri } from '../lib/api'
+import { useDebounced } from '../hooks/useDebounced'
+import { EntityRow, EntityOccurrence, Ontology, slugFromIri } from '../lib/api'
 import { MOSQuery } from './Home'
 
 const PAGE_SIZE = 50
@@ -22,57 +23,66 @@ const TYPE_BADGE: Record<string, string> = {
   annotation_property: 'AP', individual: 'IND',
 }
 
+function ontDisplayName(ont: Ontology): string {
+  if (ont.shortname) return ont.shortname
+  const last = ont.iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? ont.iri
+  return last.replace(/\.(owl|ttl|rdf|obo|json|xml|nt)$/i, '')
+}
+
+const badgeBase: React.CSSProperties = {
+  fontSize: 10, padding: '1px 6px', borderRadius: 3,
+  background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+  fontWeight: 500, flexShrink: 0, textDecoration: 'none',
+}
+
 function EntityListRows({ rows }: { rows: EntityRow[] }) {
   const { ontologies } = useOntologies()
-  function pathFor(r: EntityRow): string | null {
-    const ont = ontologies.find(o => o.id === r.ontology_id)
-    if (!ont || !r.version_id) return null
-    return `/ontologies/${slugFromIri(ont.iri)}/${r.version_id}?term=${encodeURIComponent(r.iri)}`
+  const ontById = (id: string) => ontologies.find(o => o.id === id)
+  function termPath(occ: EntityOccurrence, iri: string): string | null {
+    const ont = ontById(occ.ontology_id)
+    if (!ont || !occ.version_id) return null
+    return `/ontologies/${slugFromIri(ont.iri)}/${occ.version_id}?term=${encodeURIComponent(iri)}`
   }
-  function ontName(r: EntityRow): string | null {
-    const ont = ontologies.find(o => o.id === r.ontology_id)
-    if (!ont) return null
-    if (ont.shortname) return ont.shortname
-    const last = ont.iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? ont.iri
-    return last.replace(/\.(owl|ttl|rdf|obo|json|xml|nt)$/i, '')
+  function occName(occ: EntityOccurrence): string {
+    const ont = ontById(occ.ontology_id)
+    return ont ? ontDisplayName(ont) : occ.ontology_id.slice(0, 8)
   }
   return (
     <ul style={{ listStyle: 'none', marginTop: '0.5rem' }}>
       {rows.map(r => {
-        const path = pathFor(r)
-        const name = ontName(r)
-        const inner = (
-          <>
+        const single = r.ontologies.length === 1
+        const soloPath = single ? termPath(r.ontologies[0], r.iri) : null
+        return (
+          <li key={`${r.iri}:${r.ontologies.map(o => o.version_id).join(',')}`}
+            style={{
+              padding: '8px 10px', borderRadius: 'var(--radius-sm)',
+              display: 'flex', gap: 10, alignItems: 'baseline',
+              borderBottom: '1px solid var(--border)',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
+            onMouseLeave={e => (e.currentTarget.style.background = '')}
+          >
             <span style={{
               fontSize: 9, padding: '1px 5px', borderRadius: 3,
               background: 'var(--bg-secondary)', border: '1px solid var(--border)',
               color: 'var(--text-dim)', flexShrink: 0, fontWeight: 600, letterSpacing: 0.3,
             }}>{TYPE_BADGE[r.type] ?? r.type}</span>
-            <span style={{ color: 'var(--accent)', fontWeight: 500 }}>{r.label}</span>
+            {soloPath
+              ? <Link to={soloPath} style={{ color: 'var(--accent)', fontWeight: 500, textDecoration: 'none' }}>{r.label}</Link>
+              : <span style={{ color: 'var(--text)', fontWeight: 500 }}>{r.label}</span>}
             <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{r.short}</span>
-            {name && (
-              <span style={{
-                fontSize: 10, padding: '1px 6px', borderRadius: 3,
-                background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-                color: 'var(--text-dim)', marginLeft: 'auto', flexShrink: 0, fontWeight: 500,
-              }}>{name}</span>
-            )}
-          </>
-        )
-        const style: React.CSSProperties = {
-          padding: '8px 10px', borderRadius: 'var(--radius-sm)',
-          display: 'flex', gap: 10, alignItems: 'baseline',
-          borderBottom: '1px solid var(--border)', textDecoration: 'none',
-        }
-        return path ? (
-          <li key={`${r.version_id}:${r.iri}`}>
-            <Link to={path} style={style}
-              onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
-              onMouseLeave={e => (e.currentTarget.style.background = '')}
-            >{inner}</Link>
+            {/* One clickable badge per ontology whose default version has this term. */}
+            <span style={{ marginLeft: 'auto', display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {r.ontologies.map(occ => {
+                const p = termPath(occ, r.iri)
+                const nm = occName(occ)
+                return p
+                  ? <Link key={occ.version_id} to={p} title={`Open in ${nm}`}
+                      style={{ ...badgeBase, color: 'var(--accent)' }}>{nm}</Link>
+                  : <span key={occ.version_id} style={{ ...badgeBase, color: 'var(--text-dim)' }}>{nm}</span>
+              })}
+            </span>
           </li>
-        ) : (
-          <li key={`${r.version_id}:${r.iri}`} style={{ ...style, color: 'var(--text-dim)' }}>{inner}</li>
         )
       })}
     </ul>
@@ -80,13 +90,29 @@ function EntityListRows({ rows }: { rows: EntityRow[] }) {
 }
 
 function ListMode({ type, onType }: { type: EntityType; onType: (t: EntityType) => void }) {
-  // Cursor stack: `stack` holds the cursors for previous pages; `cursor` is the
-  // current page's start (null = first page). Keyset paging - no offset.
+  // Keyset paging: `stack` holds prior pages' cursors; `cursor` is the current
+  // page's start (null = first page). No offset.
   const [cursor, setCursor] = useState<string | null>(null)
   const [stack, setStack] = useState<(string | null)[]>([])
-  const { data, isFetching, isError } = useEntities({ type, limit: PAGE_SIZE, cursor })
+  const [collapse, setCollapse] = useState(false)
+  const [queryText, setQueryText] = useState('')
+  const q = useDebounced(queryText.trim(), 250)
+  const searching = q.length >= 2
+
+  // Changing the search text or the collapse toggle changes the result set, so
+  // reset pagination to the first page.
+  useEffect(() => { setCursor(null); setStack([]) }, [q, collapse])
+
+  const { data, isFetching, isError } = useEntities({
+    type, limit: PAGE_SIZE,
+    // While searching, the endpoint returns a single ranked page (no cursor /
+    // collapse); otherwise it's the keyset listing.
+    cursor: searching ? null : cursor,
+    q: searching ? q : undefined,
+    collapse: searching ? false : collapse,
+  })
   const rows = data?.entities ?? []
-  const next = data?.next ?? null
+  const next = searching ? null : (data?.next ?? null)
   const approxTotal = data?.approx_total ?? 0
   const typeLabel = TYPE_TABS.find(t => t.value === type)?.label.toLowerCase() ?? 'entities'
 
@@ -112,7 +138,7 @@ function ListMode({ type, onType }: { type: EntityType; onType: (t: EntityType) 
 
   return (
     <>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: '1rem' }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: '0.75rem' }}>
         {TYPE_TABS.map(t => (
           <button key={t.value} type="button" onClick={() => switchType(t.value)} style={{
             fontSize: 12, padding: '4px 12px', borderRadius: 12,
@@ -124,35 +150,66 @@ function ListMode({ type, onType }: { type: EntityType; onType: (t: EntityType) 
         ))}
       </div>
 
+      {/* Search + collapse controls */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: '0.75rem' }}>
+        <input
+          value={queryText}
+          onChange={e => setQueryText(e.target.value)}
+          placeholder={`Search ${typeLabel}… (exact + fuzzy)`}
+          aria-label="Search entities"
+          style={{
+            flex: 1, padding: '8px 12px', fontSize: 14,
+            background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)', color: 'var(--text)', outline: 'none',
+          }}
+          onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+          onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')}
+        />
+        {queryText && (
+          <button type="button" onClick={() => setQueryText('')} title="Clear" style={btn(false)}>✕</button>
+        )}
+        <label title="Show each term once, aggregating the ontologies that use it"
+          style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12,
+            color: searching ? 'var(--text-dim)' : 'var(--text-muted)',
+            cursor: searching ? 'not-allowed' : 'pointer', flexShrink: 0 }}>
+          <input type="checkbox" checked={collapse} disabled={searching}
+            onChange={e => setCollapse(e.target.checked)}
+            style={{ cursor: searching ? 'not-allowed' : 'pointer', accentColor: 'var(--accent)' }} />
+          Collapse duplicates
+        </label>
+      </div>
+
       {isError && (
         <p style={{ color: 'var(--error)', textAlign: 'center', marginTop: '2rem' }}>
           Could not load {typeLabel}. Try again.
         </p>
       )}
       {!isError && isFetching && !data && (
+        <p style={{ color: 'var(--text-dim)', textAlign: 'center', marginTop: '2rem' }}>Loading…</p>
+      )}
+      {!isError && !isFetching && rows.length === 0 && (
         <p style={{ color: 'var(--text-dim)', textAlign: 'center', marginTop: '2rem' }}>
-          Loading…
+          {searching ? `No ${typeLabel} matching "${q}"` : `No ${typeLabel} in the repository yet`}
         </p>
       )}
-      {!isError && approxTotal === 0 && rows.length === 0 && !isFetching && (
-        <p style={{ color: 'var(--text-dim)', textAlign: 'center', marginTop: '2rem' }}>
-          No {typeLabel} in the repository yet
-        </p>
-      )}
-      {!isError && (rows.length > 0 || approxTotal > 0) && (
+      {!isError && rows.length > 0 && (
         <>
           <div style={{ color: 'var(--text-dim)', fontSize: 11, marginBottom: 4 }}>
-            ~{approxTotal.toLocaleString()} {typeLabel}
+            {searching
+              ? `${rows.length} result${rows.length === 1 ? '' : 's'} for "${q}"`
+              : `~${approxTotal.toLocaleString()} ${typeLabel}${collapse ? ' (deduplicated)' : ''}`}
           </div>
           <EntityListRows rows={rows} />
-          <div style={{ display: 'flex', gap: 8, marginTop: 8, justifyContent: 'center' }}>
-            <button type="button" onClick={goPrev} disabled={stack.length === 0 || isFetching} style={btn(stack.length === 0 || isFetching)}>
-              ← Previous
-            </button>
-            <button type="button" onClick={goNext} disabled={!next || isFetching} style={btn(!next || isFetching)}>
-              Next →
-            </button>
-          </div>
+          {!searching && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 8, justifyContent: 'center' }}>
+              <button type="button" onClick={goPrev} disabled={stack.length === 0 || isFetching} style={btn(stack.length === 0 || isFetching)}>
+                ← Previous
+              </button>
+              <button type="button" onClick={goNext} disabled={!next || isFetching} style={btn(!next || isFetching)}>
+                Next →
+              </button>
+            </div>
+          )}
         </>
       )}
     </>
