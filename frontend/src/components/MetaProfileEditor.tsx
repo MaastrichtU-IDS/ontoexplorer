@@ -309,7 +309,7 @@ export default function MetaProfileEditor({
             fontSize: 12, cursor: isDirty ? 'pointer' : 'default',
           }}
         >
-          {patch.isPending ? 'Saving…' : 'Save and re-index'}
+          {patch.isPending ? 'Saving…' : 'Save'}
         </button>
         {patch.isSuccess && <span style={{ marginLeft: 10, color: 'var(--green)', fontSize: 11 }}>✓ Saved</span>}
         {patch.isError && <span style={{ marginLeft: 10, color: 'var(--red)', fontSize: 11 }}>{(patch.error as Error)?.message ?? 'Save failed'}</span>}

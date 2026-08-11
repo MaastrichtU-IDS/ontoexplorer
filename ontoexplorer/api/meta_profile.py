@@ -151,7 +151,8 @@ async def trigger_meta_detect(
 
     await _get_version_or_404(version_id, db)
     from ontoexplorer.modules.meta_profile.detector import run_meta_detection
-    await run_meta_detection(db, version_id, ontology_id=ontology_id)
+    # Explicit user action → override even a user_confirmed profile.
+    await run_meta_detection(db, version_id, ontology_id=ontology_id, force=True)
     profile = await _get_meta_profile_or_404(version_id, db)
     return _meta_profile_response(profile)
 

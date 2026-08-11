@@ -19,9 +19,16 @@ _RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
 
 
 async def run_meta_detection(
-    db: AsyncSession, version_id: str, ontology_id: str = ""
+    db: AsyncSession, version_id: str, ontology_id: str = "", force: bool = False
 ) -> None:
-    """Detect ontology-level metadata from the owl:Ontology node and write profile row."""
+    """Detect ontology-level metadata from the owl:Ontology node and write profile row.
+
+    `force=False` (auto paths: ingestion, admin reindex) preserves a
+    `user_confirmed` profile — it refreshes only the candidate list and leaves the
+    user's role mappings/resolved values untouched, so a reindex never silently
+    reverts a manual mapping. `force=True` (the explicit Re-detect action) always
+    re-derives.
+    """
     if not ontology_id:
         r = await db.execute(
             select(OntologyVersion.ontology_id).where(OntologyVersion.id == version_id)
@@ -64,6 +71,13 @@ async def run_meta_detection(
             select(OntologyMetaProfile).where(OntologyMetaProfile.version_id == version_id)
         )
     ).scalar_one_or_none()
+
+    if existing and existing.status == "user_confirmed" and not force:
+        # Preserve the user's confirmed mapping across re-index / auto re-detect;
+        # only refresh candidates so the editor still lists current predicates.
+        existing.candidates_data = candidates
+        await db.commit()
+        return
 
     if existing:
         for col, val in row_kwargs.items():

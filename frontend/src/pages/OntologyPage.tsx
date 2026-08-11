@@ -18,6 +18,7 @@ import { ReuseSection } from '../components/ReuseSection'
 import SearchBar from '../components/SearchBar'
 import { useLang } from '../hooks/useLang'
 import { useOntologyLanguages } from '../hooks/useOntologyLanguages'
+import { useOntologyMeta } from '../hooks/useOntologyMeta'
 
 const IND_PAGE_SIZE = 50
 
@@ -352,9 +353,24 @@ function OntologyDocMeta({ ontologyId, versionId, lang }: { ontologyId: string; 
     staleTime: 300_000,
   })
 
+  // The meta profile decides which header predicates are "relevant": show only
+  // those mapped to a role, hiding ones the user unmapped ('-'). Until the
+  // profile loads (or if absent), fall back to showing everything so we never
+  // flash an empty table. Subscribing here also means a Save on the profile tab
+  // (which updates the ['meta-profile'] cache) re-filters this table live.
+  const { data: metaProfile } = useOntologyMeta(ontologyId, versionId)
+  const mapped: Set<string> | null = metaProfile
+    ? new Set(
+        Object.entries(metaProfile)
+          .filter(([k]) => k.endsWith('_props'))
+          .flatMap(([, v]) => (Array.isArray(v) ? (v as string[]) : [])),
+      )
+    : null
+
   const predicates = data?.predicates ?? {}
   const entries = Object.entries(predicates)
     .filter(([p]) => !SKIP_PREDICATES.has(p))
+    .filter(([p]) => mapped === null || mapped.has(p))
     .sort(([a], [b]) => {
       const ai = PRED_ORDER.indexOf(a)
       const bi = PRED_ORDER.indexOf(b)
