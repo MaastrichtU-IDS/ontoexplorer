@@ -249,7 +249,7 @@ async def admin_overview(
         profile_computed = await asyncio.to_thread(
             lambda: bool(search_r.exists(f"owl_profile:{vid}"))
         )
-        reasoning = await _reasoning_status(vid)
+        reasoning = await _reasoning_status(vid, row.get("reasoner"))
         created = row["version_created_at"]
         meta_resolved = row["meta_resolved"] or {}
         label = row["ont_title"] or meta_resolved.get("title") or None

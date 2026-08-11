@@ -38,11 +38,24 @@ def _search_redis() -> redis_sync.Redis:
     return redis_sync.from_url(get_settings().redis_url, decode_responses=True)
 
 
-async def _reasoning_status(version_id: str) -> str:
-    """Return 'ready', 'running', or 'not_started' for a version."""
+async def _reasoning_status(version_id: str, reasoner: str | None = None) -> str:
+    """Return 'ready', 'running', or 'not_started' for a version.
+
+    The reasoner-service caches classification per (version, reasoner) under
+    `classification:{vid}:{reasoner}` (DB 2). We check that first for the
+    version's current reasoner; the bare `classification:{vid}` is a legacy
+    fallback, and a scan covers any reasoner as a last resort.
+    """
     try:
         elk_r = await asyncio.to_thread(_elk_redis)
+        if reasoner and await asyncio.to_thread(elk_r.exists, f"classification:{version_id}:{reasoner}"):
+            return "ready"
         if await asyncio.to_thread(elk_r.exists, f"classification:{version_id}"):
+            return "ready"
+        hit = await asyncio.to_thread(
+            lambda: next(elk_r.scan_iter(match=f"classification:{version_id}:*", count=50), None)
+        )
+        if hit is not None:
             return "ready"
     except Exception:
         pass
