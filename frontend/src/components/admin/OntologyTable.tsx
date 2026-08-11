@@ -29,8 +29,7 @@ export interface OntologyTableProps {
   onReindex: (id: string) => void
   embedStates: Record<string, UpdateState>
   onEmbed: (id: string) => void
-  reasonStates: Record<string, UpdateState>
-  onReason: (id: string) => void
+  onReasoned?: () => void
   profileStates: Record<string, UpdateState>
   onDetectProfile: (id: string) => void
   versionProfileStates: Record<string, UpdateState>
@@ -43,8 +42,6 @@ export interface OntologyTableProps {
   onVersionIndex: (versionId: string) => void
   versionEmbedStates: Record<string, UpdateState>
   onVersionEmbed: (versionId: string) => void
-  versionReasonStates: Record<string, UpdateState>
-  onVersionReason: (versionId: string) => void
   versionIngestStates: Record<string, UpdateState>
   onVersionIngest: (versionId: string) => void
 }
@@ -54,14 +51,13 @@ export function OntologyTable({
   updateStates, onUpdate,
   reindexStates, onReindex,
   embedStates, onEmbed,
-  reasonStates, onReason,
+  onReasoned,
   profileStates, onDetectProfile,
   versionProfileStates, onVersionDetectProfile,
   recomputeStates, onRecomputeAll,
   pairDiffStates, onPairDiff,
   versionIndexStates, onVersionIndex,
   versionEmbedStates, onVersionEmbed,
-  versionReasonStates, onVersionReason,
   versionIngestStates, onVersionIngest,
 }: OntologyTableProps) {
   const [search, setSearch] = useState('')
@@ -247,18 +243,11 @@ export function OntologyTable({
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
                       <StatusDot status={row.reasoning_status} label={row.reasoning_status.replace('_', ' ')} />
                       {canAct && (
-                        <ActionButton
-                          label="⚙ reason"
-                          title="Re-run classification with the current reasoner"
-                          state={reasonStates[row.id] ?? 'idle'}
-                          onClick={() => onReason(row.id)}
-                        />
-                      )}
-                      {canAct && (
                         <ReindexWithReasoner
                           ontologyId={row.id}
                           versionId={row.version_id}
                           currentReasoner={row.reasoner}
+                          onQueued={onReasoned}
                         />
                       )}
                     </div>
@@ -303,8 +292,7 @@ export function OntologyTable({
                     onVersionIndex={onVersionIndex}
                     versionEmbedStates={versionEmbedStates}
                     onVersionEmbed={onVersionEmbed}
-                    versionReasonStates={versionReasonStates}
-                    onVersionReason={onVersionReason}
+                    onReasoned={onReasoned}
                     versionProfileStates={versionProfileStates}
                     onVersionDetectProfile={onVersionDetectProfile}
                     versionIngestStates={versionIngestStates}
@@ -344,8 +332,7 @@ interface VersionsSubRowsProps {
   onVersionIndex: (versionId: string) => void
   versionEmbedStates: Record<string, UpdateState>
   onVersionEmbed: (versionId: string) => void
-  versionReasonStates: Record<string, UpdateState>
-  onVersionReason: (versionId: string) => void
+  onReasoned?: () => void
   versionProfileStates: Record<string, UpdateState>
   onVersionDetectProfile: (versionId: string) => void
   versionIngestStates: Record<string, UpdateState>
@@ -357,7 +344,7 @@ function VersionsSubRows({
   pairDiffStates, onPairDiff,
   versionIndexStates, onVersionIndex,
   versionEmbedStates, onVersionEmbed,
-  versionReasonStates, onVersionReason,
+  onReasoned,
   versionProfileStates, onVersionDetectProfile,
   versionIngestStates, onVersionIngest,
 }: VersionsSubRowsProps) {
@@ -511,11 +498,11 @@ function VersionsSubRows({
           <td style={{ padding: '6px 10px', textAlign: 'center' }}>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
               <StatusDot status={v.reasoning_status} label={v.reasoning_status.replace('_', ' ')} />
-              <ActionButton
-                label="⚙ reason"
-                title="Run OWL-EL classification for this specific version"
-                state={versionReasonStates[v.version_id] ?? 'idle'}
-                onClick={() => onVersionReason(v.version_id)}
+              <ReindexWithReasoner
+                ontologyId={ontologyId}
+                versionId={v.version_id}
+                currentReasoner={v.reasoner}
+                onQueued={onReasoned}
               />
             </div>
           </td>

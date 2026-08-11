@@ -42,14 +42,12 @@ export default function AdminPage() {
   const [reindexStates, setReindexStates] = useState<Record<string, UpdateState>>({})
   const [reindexAllState, setReindexAllState] = useState<'idle' | 'queued' | 'error'>('idle')
   const [embedStates, setEmbedStates] = useState<Record<string, UpdateState>>({})
-  const [reasonStates, setReasonStates] = useState<Record<string, UpdateState>>({})
   const [profileStates, setProfileStates] = useState<Record<string, UpdateState>>({})
   const [versionProfileStates, setVersionProfileStates] = useState<Record<string, UpdateState>>({})
   const [recomputeStates, setRecomputeStates] = useState<Record<string, UpdateState>>({})
   const [pairDiffStates, setPairDiffStates] = useState<Record<string, UpdateState>>({})
   const [versionIndexStates, setVersionIndexStates] = useState<Record<string, UpdateState>>({})
   const [versionEmbedStates, setVersionEmbedStates] = useState<Record<string, UpdateState>>({})
-  const [versionReasonStates, setVersionReasonStates] = useState<Record<string, UpdateState>>({})
   const [versionIngestStates, setVersionIngestStates] = useState<Record<string, UpdateState>>({})
   const [clearJobsState, setClearJobsState] = useState<'idle' | 'working' | 'error'>('idle')
 
@@ -69,12 +67,6 @@ export default function AdminPage() {
     setEmbedStates(s => ({ ...s, [ontologyId]: 'queued' }))
     try { await api.admin.queueEmbed(ontologyId) }
     catch { setEmbedStates(s => ({ ...s, [ontologyId]: 'error' })) }
-  }
-
-  async function handleReason(ontologyId: string) {
-    setReasonStates(s => ({ ...s, [ontologyId]: 'queued' }))
-    try { await api.admin.queueReason(ontologyId) }
-    catch { setReasonStates(s => ({ ...s, [ontologyId]: 'error' })) }
   }
 
   async function handleDetectProfile(ontologyId: string) {
@@ -117,11 +109,6 @@ export default function AdminPage() {
     setVersionEmbedStates(s => ({ ...s, [versionId]: 'queued' }))
     try { await api.admin.queueEmbedForVersion(versionId) }
     catch { setVersionEmbedStates(s => ({ ...s, [versionId]: 'error' })) }
-  }
-  async function handleVersionReason(versionId: string) {
-    setVersionReasonStates(s => ({ ...s, [versionId]: 'queued' }))
-    try { await api.admin.queueReasonForVersion(versionId) }
-    catch { setVersionReasonStates(s => ({ ...s, [versionId]: 'error' })) }
   }
   async function handleVersionIngest(versionId: string) {
     setVersionIngestStates(s => ({ ...s, [versionId]: 'queued' }))
@@ -300,8 +287,7 @@ export default function AdminPage() {
             onReindex={handleReindex}
             embedStates={embedStates}
             onEmbed={handleEmbed}
-            reasonStates={reasonStates}
-            onReason={handleReason}
+            onReasoned={refetch}
             profileStates={profileStates}
             onDetectProfile={handleDetectProfile}
             versionProfileStates={versionProfileStates}
@@ -314,8 +300,6 @@ export default function AdminPage() {
             onVersionIndex={handleVersionIndex}
             versionEmbedStates={versionEmbedStates}
             onVersionEmbed={handleVersionEmbed}
-            versionReasonStates={versionReasonStates}
-            onVersionReason={handleVersionReason}
             versionIngestStates={versionIngestStates}
             onVersionIngest={handleVersionIngest}
           />

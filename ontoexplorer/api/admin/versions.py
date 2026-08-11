@@ -72,7 +72,7 @@ async def admin_ontology_versions(
         profile_computed = await asyncio.to_thread(
             lambda: bool(search_r.exists(f"owl_profile:{vid}"))
         )
-        reasoning = await _reasoning_status(vid, v.reasoner)
+        reasoning = await _reasoning_status(vid, v.reasoner, db)
 
         prev_version_id = versions[idx + 1].id if idx + 1 < len(versions) else None
         if prev_version_id is not None:
