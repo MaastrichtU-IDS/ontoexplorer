@@ -12,8 +12,12 @@ interface NodeProps {
   versionId: string
   term: Term
   depth: number
+  // Unique path key for THIS rendered occurrence. In the inferred tree a class
+  // can appear under several parents (a DAG), so the IRI is not unique per row;
+  // keyboard focus is tracked by nodeKey to avoid landing on the wrong copy.
+  nodeKey: string
   selectedIri: string | null
-  focusedIri: string | null
+  focusedKey: string | null
   onSelect: (iri: string) => void
   entityType: EntityType
   mode: Mode
@@ -25,7 +29,7 @@ interface NodeProps {
   lang?: string | null
 }
 
-function TreeNode({ ontologyId, versionId, term, depth, selectedIri, focusedIri, onSelect, entityType, mode, expandSet, hideInverse, hideObsolete, expandSignal, collapseSignal, lang }: NodeProps) {
+function TreeNode({ ontologyId, versionId, term, depth, nodeKey, selectedIri, focusedKey, onSelect, entityType, mode, expandSet, hideInverse, hideObsolete, expandSignal, collapseSignal, lang }: NodeProps) {
   const qc = useQueryClient()
   // Prefetch term detail on hover so the click is served from the in-memory
   // queryCache (or the backend's 5-min Redis response cache, whichever fires
@@ -70,7 +74,7 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, focusedIri,
   const children: Term[] = (childData as any)?.terms ?? []
 
   const isSelected = selectedIri === term.iri
-  const isFocused = focusedIri === term.iri
+  const isFocused = focusedKey === nodeKey
   const isUnsat = term.is_unsatisfiable === true
   const isNothing = term.iri === 'http://www.w3.org/2002/07/owl#Nothing'
   const label = term.label ?? term.iri.split(/[#/]/).pop() ?? term.iri
@@ -100,6 +104,7 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, focusedIri,
     <li>
       <div
         data-iri={term.iri}
+        data-nodekey={nodeKey}
         data-expandable={canExpand ? 'true' : 'false'}
         data-expanded={expanded ? 'true' : 'false'}
         onClick={() => onSelect(term.iri)}
@@ -159,8 +164,9 @@ function TreeNode({ ontologyId, versionId, term, depth, selectedIri, focusedIri,
               versionId={versionId}
               term={child}
               depth={depth + 1}
+              nodeKey={`${nodeKey}${child.iri}`}
               selectedIri={selectedIri}
-              focusedIri={focusedIri}
+              focusedKey={focusedKey}
               onSelect={onSelect}
               entityType={entityType}
               mode={mode}
@@ -249,7 +255,7 @@ export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect
     return () => { observer.disconnect(); clearTimeout(giveUp) }
   }, [revealIri, ancestorData])
 
-  const [focusedIri, setFocusedIri] = useState<string | null>(null)
+  const [focusedKey, setFocusedKey] = useState<string | null>(null)
 
   function handleKeyDown(e: React.KeyboardEvent) {
     const container = containerRef.current
@@ -259,33 +265,33 @@ export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect
     if (!navKeys.includes(e.key)) return
     e.preventDefault()
 
-    const visible = Array.from(container.querySelectorAll('[data-iri]'))
-      .map(el => (el as HTMLElement).dataset.iri!)
-      .filter(Boolean)
-    if (visible.length === 0) return
+    // Navigate over the actual rendered rows (unique per DOM occurrence). The
+    // inferred tree is a DAG, so the same IRI can appear on several rows —
+    // indexing by IRI would land on the wrong copy and loop. Rows carry a
+    // unique data-nodekey; we move between elements by that key.
+    const els = Array.from(container.querySelectorAll('[data-nodekey]')) as HTMLElement[]
+    if (els.length === 0) return
+    let idx = focusedKey ? els.findIndex(el => el.dataset.nodekey === focusedKey) : -1
+    // Seed from the current selection (first matching occurrence) when nothing
+    // is focused yet.
+    if (idx === -1 && selectedIri) idx = els.findIndex(el => el.dataset.iri === selectedIri)
 
-    const currentIri = focusedIri ?? selectedIri
-    const idx = currentIri ? visible.indexOf(currentIri) : -1
+    function focus(el: HTMLElement) {
+      setFocusedKey(el.dataset.nodekey ?? null)
+      el.scrollIntoView({ block: 'nearest' })
+    }
 
     if (e.key === 'ArrowDown') {
-      const next = idx === -1 ? visible[0] : visible[Math.min(idx + 1, visible.length - 1)]
-      setFocusedIri(next)
-      ;(container.querySelector(`[data-iri="${CSS.escape(next)}"]`) as HTMLElement | null)
-        ?.scrollIntoView({ block: 'nearest' })
+      focus(idx === -1 ? els[0] : els[Math.min(idx + 1, els.length - 1)])
       return
     }
-
     if (e.key === 'ArrowUp') {
-      const prev = idx === -1 ? visible[visible.length - 1] : visible[Math.max(idx - 1, 0)]
-      setFocusedIri(prev)
-      ;(container.querySelector(`[data-iri="${CSS.escape(prev)}"]`) as HTMLElement | null)
-        ?.scrollIntoView({ block: 'nearest' })
+      focus(idx === -1 ? els[els.length - 1] : els[Math.max(idx - 1, 0)])
       return
     }
 
-    if (!currentIri) return
-    const nodeDiv = container.querySelector(`[data-iri="${CSS.escape(currentIri)}"]`) as HTMLElement | null
-    if (!nodeDiv) return
+    if (idx === -1) return
+    const nodeDiv = els[idx]
 
     if (e.key === 'ArrowRight') {
       if (nodeDiv.dataset.expandable === 'true' && nodeDiv.dataset.expanded === 'false') {
@@ -293,16 +299,14 @@ export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect
       }
       return
     }
-
     if (e.key === 'ArrowLeft') {
       if (nodeDiv.dataset.expandable === 'true' && nodeDiv.dataset.expanded === 'true') {
         ;(nodeDiv.querySelector('[data-toggle]') as HTMLElement | null)?.click()
       }
       return
     }
-
-    if (e.key === 'Enter') {
-      onSelect(currentIri)
+    if (e.key === 'Enter' && nodeDiv.dataset.iri) {
+      onSelect(nodeDiv.dataset.iri)
     }
   }
 
@@ -339,8 +343,9 @@ export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect
             versionId={versionId}
             term={term}
             depth={0}
+            nodeKey={term.iri}
             selectedIri={selectedIri}
-            focusedIri={focusedIri}
+            focusedKey={focusedKey}
             onSelect={onSelect}
             entityType={entityType}
             mode={mode}
