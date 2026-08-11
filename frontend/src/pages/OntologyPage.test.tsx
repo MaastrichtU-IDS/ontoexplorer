@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import OntologyPage from './OntologyPage'
@@ -48,8 +48,24 @@ vi.mock('../lib/api', async () => {
           annotation_property_count: 1,
           individual_count: 0,
         }),
-        ontologyMetadata: vi.fn().mockResolvedValue({ predicates: {} }),
+        ontologyMetadata: vi.fn().mockResolvedValue({
+          predicates: {
+            'http://purl.org/dc/terms/title': [{ value: 'GO', type: 'literal', language: null, datatype: null }],
+            'http://www.w3.org/2000/01/rdf-schema#comment': [{ value: 'a comment', type: 'literal', language: null, datatype: null }],
+          },
+        }),
         languages: vi.fn().mockResolvedValue([]),
+        // Meta profile maps dcterms:title (Title) but NOT rdfs:comment → comment
+        // is unmapped and must be hidden from the Info metadata table.
+        meta: {
+          ...(actual as any).api.ontologies.meta,
+          get: vi.fn().mockResolvedValue({
+            version_id: 'v1', status: 'user_confirmed',
+            title_props: ['http://purl.org/dc/terms/title'],
+            description_props: [],
+            resolved: {},
+          }),
+        },
       },
     },
   }
@@ -98,6 +114,15 @@ describe('OntologyPage view beacon', () => {
     wrap()
     await screen.findByText('Reasoner')  // wait until the page has resolved the ontology
     expect(mockRecordView).toHaveBeenCalledWith('onto-1')
+  })
+})
+
+describe('OntologyPage document metadata honors the meta profile', () => {
+  it('shows mapped predicates and hides unmapped ones', async () => {
+    wrap()
+    // dcterms:title is mapped (Title) → shown; rdfs:comment is unmapped → hidden.
+    expect(await screen.findByText('Title')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('Comment')).not.toBeInTheDocument())
   })
 })
 
