@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AdminOntologyEntry, AdminVersionEntry, api, slugFromIri } from '../../lib/api'
 import { usePagedTable } from '../../hooks/usePagedTable'
 import { TablePager } from '../TablePager'
+import ReindexWithReasoner from '../ReindexWithReasoner'
 import {
   ActionButton,
   CopyableIri,
@@ -248,9 +249,16 @@ export function OntologyTable({
                       {canAct && (
                         <ActionButton
                           label="⚙ reason"
-                          title="Run classification"
+                          title="Re-run classification with the current reasoner"
                           state={reasonStates[row.id] ?? 'idle'}
                           onClick={() => onReason(row.id)}
+                        />
+                      )}
+                      {canAct && (
+                        <ReindexWithReasoner
+                          ontologyId={row.id}
+                          versionId={row.version_id}
+                          currentReasoner={row.reasoner}
                         />
                       )}
                     </div>

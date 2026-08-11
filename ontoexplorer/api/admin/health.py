@@ -196,7 +196,7 @@ async def admin_overview(
                    o.current_version_id,
                    v.id AS version_id, v.version_iri, v.triple_count,
                    v.status AS ingestion_status,
-                   v.created_at AS version_created_at, v.source_url,
+                   v.created_at AS version_created_at, v.source_url, v.reasoner,
                    mp.resolved AS meta_resolved,
                    (SELECT COUNT(*) FROM versions WHERE ontology_id = o.id) AS version_count
             FROM ontologies o
@@ -222,6 +222,7 @@ async def admin_overview(
             r["version_iri"] = d.version_iri
             r["triple_count"] = d.triple_count
             r["ingestion_status"] = d.status
+            r["reasoner"] = d.reasoner
             r["version_created_at"] = d.created_at
 
     version_ids = [str(r["version_id"]) for r in rows]
@@ -268,6 +269,7 @@ async def admin_overview(
             "profile_computed": profile_computed,
             "embed_count": embed_counts.get(vid, 0),
             "reasoning_status": reasoning,
+            "reasoner": row.get("reasoner"),
             "version_created_at": created.isoformat() if created else None,
         }
 

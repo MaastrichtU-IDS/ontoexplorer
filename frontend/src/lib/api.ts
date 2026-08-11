@@ -902,6 +902,7 @@ export interface AdminOntologyEntry {
   profile_computed: boolean
   embed_count: number
   reasoning_status: 'ready' | 'running' | 'not_started'
+  reasoner?: string | null
   version_created_at: string | null
 }
 
@@ -932,6 +933,7 @@ export interface AdminVersionEntry {
   profile_computed: boolean
   embed_count: number
   reasoning_status: 'ready' | 'running' | 'not_started'
+  reasoner?: string | null
   version_created_at: string | null
   source_url: string | null
   is_latest: boolean
@@ -1158,6 +1160,12 @@ export const api = {
     get: (id: string) => request<Ontology>(`/ontologies/${id}`),
     // Fire-and-forget page-view beacon (deduped per visitor per day server-side).
     recordView: (id: string) => request<void>(`/ontologies/${id}/view`, { method: 'POST' }),
+    // Re-reason a version with a chosen reasoner (owner/maintainer/admin).
+    reason: (oid: string, vid: string, reasoner?: string) =>
+      request<{ status: string; reasoner: string; version_id: string }>(
+        `/ontologies/${oid}/${vid}/reason`,
+        { method: 'POST', body: JSON.stringify({ reasoner: reasoner ?? null }) },
+      ),
     patch: (id: string, body: { shortname?: string | null; title?: string | null; preferred_lang?: string | null; groups?: string[]; current_version_id?: string | null }) =>
       request<Ontology>(`/ontologies/${id}`, {
         method: 'PATCH',
