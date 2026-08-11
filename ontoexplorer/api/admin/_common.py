@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 
-import httpx
 import redis as redis_sync
 from fastapi import Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,13 +37,23 @@ def _search_redis() -> redis_sync.Redis:
     return redis_sync.from_url(get_settings().redis_url, decode_responses=True)
 
 
-async def _reasoning_status(version_id: str, reasoner: str | None = None) -> str:
+async def _reasoning_status(
+    version_id: str,
+    reasoner: str | None = None,
+    db: AsyncSession | None = None,
+) -> str:
     """Return 'ready', 'running', or 'not_started' for a version.
 
-    The reasoner-service caches classification per (version, reasoner) under
-    `classification:{vid}:{reasoner}` (DB 2). We check that first for the
-    version's current reasoner; the bare `classification:{vid}` is a legacy
-    fallback, and a scan covers any reasoner as a last resort.
+    'ready' — the reasoner-service has cached a classification. It caches per
+    (version, reasoner) under `classification:{vid}:{reasoner}` (DB 2); we check
+    that first for the version's current reasoner, then the legacy bare
+    `classification:{vid}`, then a scan covering any reasoner.
+
+    'running' — no cached classification yet, but there is a pending/running
+    reason Job for this version (requires ``db``). This replaces the old probe
+    against the reasoner-service `/classify/{vid}` endpoint, which now returns
+    403 (so it could never report progress) and cost a 5s-timeout HTTP call per
+    ontology on every overview load.
     """
     try:
         elk_r = await asyncio.to_thread(_elk_redis)
@@ -60,18 +69,22 @@ async def _reasoning_status(version_id: str, reasoner: str | None = None) -> str
     except Exception:
         pass
 
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(
-                f"{get_settings().reasoner_service_url}/classify/{version_id}"
-            )
-        if resp.status_code == 200:
-            return "ready"
-        if resp.status_code == 409:
-            body = resp.text
-            return "running" if "in progress" in body.lower() else "not_started"
-    except Exception:
-        pass
+    if db is not None:
+        try:
+            from sqlalchemy import select
+            from ontoexplorer.models.db import Job
+            active = (await db.execute(
+                select(Job.id).where(
+                    Job.version_id == version_id,
+                    Job.type == "reason",
+                    Job.status.in_(("pending", "running")),
+                ).limit(1)
+            )).first()
+            if active is not None:
+                return "running"
+        except Exception:
+            pass
+
     return "not_started"
 
 

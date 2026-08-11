@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { api } from '../lib/api'
 
@@ -35,6 +35,16 @@ export default function ReindexWithReasoner({
     mutationFn: () => api.ontologies.reason(ontologyId, versionId, chosen || undefined),
     onSuccess: () => onQueued?.(),
   })
+
+  // The 'queued'/'failed' badge is transient click-feedback, not a live status —
+  // the reasoning StatusDot (which polls) reflects the real state. Clear it after
+  // a few seconds so it doesn't linger as a stale "queued" long after the job ran.
+  const settled = mutation.isSuccess || mutation.isError
+  useEffect(() => {
+    if (!settled) return
+    const t = setTimeout(() => mutation.reset(), 4000)
+    return () => clearTimeout(t)
+  }, [settled, mutation])
 
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
