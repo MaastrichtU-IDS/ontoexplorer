@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api, slugFromIri, type Ontology, type OntologyVersion, type ReasonerInfo, type UsageCounts } from '../lib/api'
 import { useAuth } from '../hooks/useAuth'
+import ReindexWithReasoner from '../components/ReindexWithReasoner'
 
 // ── Status dot ────────────────────────────────────────────────────────────────
 
@@ -453,6 +454,17 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
               >
                 ↓ {latest.format}
               </a>
+            )}
+            {latest && (
+              <ReindexWithReasoner
+                ontologyId={ontology.id}
+                versionId={latest.id}
+                currentReasoner={latest.reasoner}
+                onQueued={() => {
+                  qc.invalidateQueries({ queryKey: ['versions', ontology.id] })
+                  qc.invalidateQueries({ queryKey: ['version-stats', ontology.id, latest.id] })
+                }}
+              />
             )}
             {user?.is_admin && (
               checkState === 'idle' || checkState === 'error' ? (

@@ -95,6 +95,7 @@ async def admin_ontology_versions(
             "profile_computed": profile_computed,
             "embed_count": embed_counts.get(vid, 0),
             "reasoning_status": reasoning,
+            "reasoner": v.reasoner,
             "version_created_at": v.created_at.isoformat() if v.created_at else None,
             "source_url": v.source_url,
             "is_latest": vid == latest_id,

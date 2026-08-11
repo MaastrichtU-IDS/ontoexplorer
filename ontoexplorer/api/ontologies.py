@@ -679,6 +679,47 @@ async def download_version(ontology_id: str, version_id: str, request: Request, 
     )
 
 
+class _ReasonRequest(BaseModel):
+    reasoner: str | None = None
+
+
+@router.post("/{ontology_id}/{version_id}/reason", summary="Re-reason a version with a chosen reasoner")
+async def reason_version(
+    ontology_id: str,
+    version_id: str,
+    body: _ReasonRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_auth),
+):
+    """Re-classify a version with the chosen reasoner (owner / maintainer / admin).
+
+    Persists the choice on the version row and queues reasoning; the inferred
+    tree + classification cache are recomputed for that reasoner. Falls back to
+    the version's current reasoner, then the app default, if none is given.
+    """
+    from ontoexplorer.clients import reasoning as _reasoning
+    from ontoexplorer.config import get_settings as _get_settings
+    from ontoexplorer.modules.auth.permissions import can_edit_ontology_id
+
+    if not await can_edit_ontology_id(db, user, ontology_id):
+        raise HTTPException(status_code=403, detail="You are not allowed to reindex this ontology")
+
+    version = await _get_version_or_404(db, ontology_id, version_id)
+    chosen = body.reasoner or version.reasoner or _get_settings().default_reasoner
+    available = await _reasoning.available_reasoner_names()
+    if chosen not in available:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown or unavailable reasoner '{chosen}'; available: {sorted(available)}",
+        )
+
+    version.reasoner = chosen
+    await db.commit()
+    from ontoexplorer.modules.jobs.tasks import reason_ontology
+    reason_ontology.delay(version.id)
+    return {"status": "queued", "reasoner": chosen, "version_id": version.id}
+
+
 @router.get("/{ontology_id}/{version_id}/stats", summary="VoID statistics for a version")
 async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = Depends(get_db)):
     import asyncio
