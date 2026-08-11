@@ -21,3 +21,8 @@ class MockResizeObserver {
   disconnect() {}
 }
 ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = MockResizeObserver
+
+// jsdom doesn't implement scrollIntoView; keyboard nav / reveal call it.
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = function () {}
+}
