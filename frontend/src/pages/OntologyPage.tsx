@@ -277,17 +277,45 @@ function predLabel(iri: string): string {
   return frag.includes('#') ? frag.split('#').pop()! : frag.split('/').pop()!
 }
 
+// Return a safe href for a value that is (entirely) a web/email URL, else null.
+// Only http(s) and mailto — never javascript:/data:/etc. Requires the whole
+// trimmed value to be a single URL token (no whitespace), so prose that merely
+// mentions a URL is left as plain text rather than partially linkified.
+export function linkHref(value: string): string | null {
+  const v = value.trim()
+  if (/^https?:\/\/\S+$/i.test(v)) return v
+  if (/^mailto:\S+$/i.test(v)) return v
+  return null
+}
+
+// Inline external link for a bare URL/mailto value (truncated display).
+function ExternalValueLink({ value }: { value: string }) {
+  const href = linkHref(value)!
+  const display = value.length > 80 ? value.slice(0, 77) + '…' : value
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer"
+      style={{ color: 'var(--accent)', wordBreak: 'break-all' }}>
+      {display} ↗
+    </a>
+  )
+}
+
 function MetaValue({ entry }: { entry: OntologyMetadataEntry }) {
+  // Hyperlink any value (IRI- or literal-typed) that is a bare http(s)/mailto
+  // URL — e.g. license, homepage, seeAlso, citation stored as plain literals.
+  if (linkHref(entry.value)) {
+    return (
+      <span style={{ wordBreak: 'break-all' }}>
+        <ExternalValueLink value={entry.value} />
+        {entry.type === 'literal' && entry.language && (
+          <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--text-dim)', fontStyle: 'italic' }}>
+            @{entry.language}
+          </span>
+        )}
+      </span>
+    )
+  }
   if (entry.type === 'iri') {
-    const display = entry.value.length > 80 ? entry.value.slice(0, 77) + '…' : entry.value
-    if (entry.value.startsWith('http://') || entry.value.startsWith('https://')) {
-      return (
-        <a href={entry.value} target="_blank" rel="noreferrer"
-          style={{ color: 'var(--accent)', wordBreak: 'break-all' }}>
-          {display} ↗
-        </a>
-      )
-    }
     return <span style={{ wordBreak: 'break-all' }}>{entry.value}</span>
   }
   return (
@@ -435,8 +463,12 @@ function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid }: {
       </h3>
       <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 28 }}>
         <tbody>
-          <MetaRow label="Ontology IRI">{iri}</MetaRow>
-          {version.version_iri && <MetaRow label="Version IRI">{version.version_iri}</MetaRow>}
+          <MetaRow label="Ontology IRI">{linkHref(iri) ? <ExternalValueLink value={iri} /> : iri}</MetaRow>
+          {version.version_iri && (
+            <MetaRow label="Version IRI">
+              {linkHref(version.version_iri) ? <ExternalValueLink value={version.version_iri} /> : version.version_iri}
+            </MetaRow>
+          )}
           <MetaRow label="Format">{version.format?.toUpperCase() ?? '—'}</MetaRow>
           <MetaRow label="Status">
             <span style={{
