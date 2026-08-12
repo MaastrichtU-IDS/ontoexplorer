@@ -13,6 +13,14 @@ from ontoexplorer.config import get_settings
 
 log = logging.getLogger(__name__)
 
+
+class ReasoningFailed(Exception):
+    """The reasoner-service recorded a deterministic classification failure for
+    this (version, reasoner) — a backend crash/OOM, an unsupported-axiom error,
+    or a classification timeout. Surfaced by classify_v2 (GET /classify → 500
+    'Classification failed: …') so callers can fail fast instead of retrying a
+    doomed classification."""
+
 # In-process cache for get_classification: avoids re-fetching the (often 40+ MB)
 # classification JSON on every inferred-tree or MOS-search request.
 # Keyed by version_id → (fetched_at, data). TTL is 10 minutes; classification
@@ -118,6 +126,17 @@ async def classify_v2(
             poll = await client.get(_elk_url(f"/classify/{version_id}?reasoner={reasoner}"))
         if poll.status_code == 200:
             return poll.json()
+        if poll.status_code == 500:
+            # The service recorded a deterministic classification failure (crash,
+            # OOM, unsupported axioms, or its own timeout). Retrying just re-runs
+            # the same doomed classification, so fail fast with a distinct error.
+            detail = ""
+            try:
+                detail = poll.json().get("detail", "")
+            except Exception:
+                detail = (poll.text or "")[:500]
+            if "Classification failed" in detail:
+                raise ReasoningFailed(detail)
         if poll.status_code != 409:
             poll.raise_for_status()
 
