@@ -15,9 +15,7 @@ from cache import (
     load_classification_error,
     load_input_axioms,
     load_justification,
-    store_classification,
     store_classification_error,
-    store_input_axioms,
     store_justification,
 )
 from registry import default_reasoner, get_backend, list_reasoners
@@ -82,7 +80,7 @@ def run_classify(req: ClassifyRequest):
     """Start OWL-EL classification in background; poll GET /classify/{version_id} for result."""
     reasoner = req.reasoner or default_reasoner()
     try:
-        backend = get_backend(reasoner)
+        get_backend(reasoner)  # validate; the isolated worker resolves it again
     except KeyError:
         raise HTTPException(422, f"unknown reasoner '{reasoner}'")
 
@@ -96,29 +94,67 @@ def run_classify(req: ClassifyRequest):
     _in_progress.add((req.version_id, reasoner))
 
     def _run(version_id: str) -> None:
+        # Classify in an ISOLATED child process (classify_worker.py). A backend
+        # that segfaults, aborts, or exhausts memory (e.g. rustdl on certain
+        # large ontologies) then only kills that short-lived child — it can't
+        # take down this service or trigger a crash-restart loop. The child
+        # writes the result (input_axioms then classification, same ordering as
+        # before) straight to Redis; here we only watch its exit / timeout and
+        # record a clean error on failure so GET /classify returns 500 instead
+        # of hanging at 409 forever.
+        import os
+        import subprocess
+        import sys
+        import tempfile
+
+        timeout_s = int(os.getenv("REASONER_CLASSIFY_TIMEOUT_S", "3300"))
+        tmp_path = None
         try:
-            result = backend.classify_ntriples(
-                req.ntriples, version_id, saturation_only=req.saturation_only
-            )
-            # IMPORTANT: store input_axioms BEFORE classification. GET /classify/
-            # {vid} returns 200 as soon as the classification cache key exists
-            # (it doesn't gate on _in_progress when the result is already in
-            # Redis). If we wrote classification first, a follow-up
-            # /justification call could race ahead of the input_axioms write
-            # — which is exactly what bit ordo: 80 MB gzip takes ~5 s, leaving
-            # a window where the inference looks "done" but justification
-            # gets an empty input graph and returns no justifications.
-            store_input_axioms(version_id, req.ntriples, reasoner)
-            store_classification(result, reasoner)
+            with tempfile.NamedTemporaryFile(
+                "w", suffix=".nt", delete=False, encoding="utf-8"
+            ) as tmp:
+                tmp.write(req.ntriples)
+                tmp_path = tmp.name
+
+            worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "classify_worker.py")
+            try:
+                proc = subprocess.run(
+                    [sys.executable, worker, tmp_path, version_id, reasoner,
+                     str(req.saturation_only)],
+                    timeout=timeout_s, capture_output=True, text=True,
+                )
+            except subprocess.TimeoutExpired:
+                log.error("classify_timeout version_id=%s reasoner=%s after=%ss",
+                          version_id, reasoner, timeout_s)
+                store_classification_error(
+                    version_id,
+                    f"classification timed out after {timeout_s}s", reasoner,
+                )
+                return
+
+            if proc.returncode != 0:
+                tail = (proc.stderr or "").strip()[-600:]
+                log.error("classify_worker_failed version_id=%s reasoner=%s rc=%s stderr=%s",
+                          version_id, reasoner, proc.returncode, tail)
+                store_classification_error(
+                    version_id,
+                    f"classifier process exited {proc.returncode} "
+                    f"(crash/OOM/abort): {tail}"[:1000],
+                    reasoner,
+                )
+            # returncode 0 → the child already stored input_axioms + classification.
         except Exception as exc:
             log.exception("classify_background_error", extra={"version_id": version_id})
-            # Surface the failure via the cache so /classify GET can return
-            # 500 instead of staying at 409 forever (the previous behaviour).
             store_classification_error(
                 version_id, f"{type(exc).__name__}: {exc}"[:1000], reasoner,
             )
         finally:
             _in_progress.discard((version_id, reasoner))
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     _classifier_pool.submit(_run, req.version_id)
     return {"version_id": req.version_id, "reasoner": reasoner, "status": "running"}
