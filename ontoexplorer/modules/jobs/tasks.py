@@ -482,6 +482,13 @@ def reason_ontology(self, version_id: str) -> dict:
         from ontoexplorer import metrics
         metrics.reasoning_jobs_total.labels(status="failed").inc()
         log.error("reasoning_failed", version_id=version_id, error=str(exc))
+        # A classification timeout is deterministic (the ontology is too large /
+        # too hard for this reasoner within reasoner_service_timeout) — retrying
+        # just burns another full timeout window. Fail fast instead; the job row
+        # is already marked failed by _run_reasoning. Other errors may be
+        # transient (worker/service blip), so those still retry.
+        if isinstance(exc, TimeoutError):
+            raise
         raise self.retry(exc=exc, countdown=120) from exc
 
 
@@ -489,12 +496,8 @@ async def _run_reasoning(db, version_id: str) -> dict:
     """Async body of the reasoning task."""
     from sqlalchemy import select
 
-
-    from ontoexplorer.clients import reasoning as reasoning_client
-    from ontoexplorer.clients.oxigraph import get_store, graph_iri
     from ontoexplorer.models.db import OntologyVersion
     from ontoexplorer.modules.jobs import tracker
-    from ontoexplorer.modules.webhooks.delivery import broadcast_event
 
     # Look up the version so we have ontology_id
     result = await db.execute(select(OntologyVersion).where(OntologyVersion.id == version_id))
@@ -507,6 +510,31 @@ async def _run_reasoning(db, version_id: str) -> dict:
     # Create / mark job as running
     job = await tracker.create_job(db, version_id=version_id, job_type="reason")
     await tracker.mark_running(db, job.id)
+
+    try:
+        return await _reason_and_persist(db, version, version_id, ontology_id, job.id)
+    except Exception as exc:
+        # Mark this attempt failed so a crash/timeout doesn't leave a zombie
+        # 'running' row (e.g. classify_v2 TimeoutError on very large ontologies
+        # such as GO). The outer task may still retry; each attempt then ends
+        # 'failed' rather than lingering forever as 'running'.
+        try:
+            await tracker.mark_failed(db, job.id, str(exc)[:1000])
+        except Exception:
+            log.exception("reason_mark_failed_failed", version_id=version_id)
+        raise
+
+
+async def _reason_and_persist(db, version, version_id: str, ontology_id: str, job_id: str) -> dict:
+    """Classify the asserted graph, persist inferred triples, and mark the job done.
+
+    Split out from _run_reasoning so its caller can mark the job 'failed' on any
+    exception instead of leaving it 'running'.
+    """
+    from ontoexplorer.clients import reasoning as reasoning_client
+    from ontoexplorer.clients.oxigraph import get_store, graph_iri
+    from ontoexplorer.modules.jobs import tracker
+    from ontoexplorer.modules.webhooks.delivery import broadcast_event
 
     # Fetch asserted triples from Oxigraph
     store = get_store()
@@ -575,7 +603,7 @@ async def _run_reasoning(db, version_id: str) -> dict:
         )
 
     # Update job status
-    await tracker.mark_done(db, job.id)
+    await tracker.mark_done(db, job_id)
 
     # Fire webhook
     await broadcast_event(db, "reasoning.completed", {
