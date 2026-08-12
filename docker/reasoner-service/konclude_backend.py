@@ -67,7 +67,9 @@ class KoncludeBackend:
         available=_KONCLUDE_BIN is not None,
     )
 
-    def classify_ntriples(self, ntriples: str, version_id: str) -> ClassificationResult:
+    def classify_ntriples(
+        self, ntriples: str, version_id: str, saturation_only: bool = False
+    ) -> ClassificationResult:
         import io, time, tempfile, subprocess, os, shutil as _sh
         from collections import defaultdict
         from datetime import datetime, timezone

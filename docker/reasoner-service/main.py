@@ -39,6 +39,12 @@ class ClassifyRequest(BaseModel):
     ntriples: str
     version_id: str
     reasoner: str | None = None
+    # EL-closure fast path: when True, a DL backend (rustdl) skips the SROIQ
+    # tableau and classifies via EL saturation only — complete for EL-profile
+    # ontologies and orders of magnitude faster on large ones (e.g. GO). The
+    # API sets this when the ontology is in the OWL 2 EL profile. Ignored by
+    # backends that don't support it.
+    saturation_only: bool = False
 
 
 class JustificationRequest(BaseModel):
@@ -91,7 +97,9 @@ def run_classify(req: ClassifyRequest):
 
     def _run(version_id: str) -> None:
         try:
-            result = backend.classify_ntriples(req.ntriples, version_id)
+            result = backend.classify_ntriples(
+                req.ntriples, version_id, saturation_only=req.saturation_only
+            )
             # IMPORTANT: store input_axioms BEFORE classification. GET /classify/
             # {vid} returns 200 as soon as the classification cache key exists
             # (it doesn't gate on _in_progress when the result is already in

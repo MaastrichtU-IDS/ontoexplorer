@@ -13,7 +13,9 @@ class RustdlBackend:
         available=importlib.util.find_spec("rustdl") is not None,
     )
 
-    def classify_ntriples(self, ntriples: str, version_id: str) -> ClassificationResult:
+    def classify_ntriples(
+        self, ntriples: str, version_id: str, saturation_only: bool = False
+    ) -> ClassificationResult:
         import io, time, os, logging
         from collections import defaultdict
         from datetime import datetime, timezone
@@ -33,10 +35,19 @@ class RustdlBackend:
             format=pyoxigraph.RdfFormat.RDF_XML,
         )
 
+        # saturation_only skips the SROIQ tableau and classifies via EL closure
+        # only — complete for EL-profile ontologies and dramatically faster on
+        # large ones (the per-pair tableau is O(n²) and OOMs/times out on e.g.
+        # GO's tens of thousands of classes). The API sets this for EL-profile
+        # ontologies; the per-pair/global bounds are irrelevant in that mode.
+        if saturation_only:
+            logging.getLogger("reasoner-service").info(
+                "rustdl_saturation_only version_id=%s", version_id)
         cls = rustdl.classify_bytes(
             rdfxml, format="rdf-xml",
             per_pair_timeout_ms=int(os.getenv("RUSTDL_PER_PAIR_TIMEOUT_MS", "200")),
-            global_deadline_ms=int(os.getenv("RUSTDL_GLOBAL_DEADLINE_MS", "60000")),
+            global_timeout_ms=int(os.getenv("RUSTDL_GLOBAL_DEADLINE_MS", "60000")),
+            saturation_only=saturation_only,
         )
 
         # Asserted subClassOf pairs (to exclude from the inferred `superclasses`).

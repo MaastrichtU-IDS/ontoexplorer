@@ -29,7 +29,9 @@ class KmBackend:
         available=_KM_BIN is not None,
     )
 
-    def classify_ntriples(self, ntriples: str, version_id: str) -> ClassificationResult:
+    def classify_ntriples(
+        self, ntriples: str, version_id: str, saturation_only: bool = False
+    ) -> ClassificationResult:
         import io, json, time, tempfile, subprocess, os, logging, shutil as _sh
         from collections import defaultdict
         from datetime import datetime, timezone
