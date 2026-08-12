@@ -482,12 +482,15 @@ def reason_ontology(self, version_id: str) -> dict:
         from ontoexplorer import metrics
         metrics.reasoning_jobs_total.labels(status="failed").inc()
         log.error("reasoning_failed", version_id=version_id, error=str(exc))
-        # A classification timeout is deterministic (the ontology is too large /
-        # too hard for this reasoner within reasoner_service_timeout) — retrying
-        # just burns another full timeout window. Fail fast instead; the job row
-        # is already marked failed by _run_reasoning. Other errors may be
-        # transient (worker/service blip), so those still retry.
-        if isinstance(exc, TimeoutError):
+        # Deterministic failures shouldn't retry — retrying just re-runs the same
+        # doomed classification. TimeoutError = the ontology is too large/hard for
+        # this reasoner within reasoner_service_timeout; ReasoningFailed = the
+        # reasoner-service recorded a backend crash/OOM/unsupported-axiom/timeout
+        # error. Both fail fast (the job row is already marked failed by
+        # _run_reasoning). Other errors may be transient (worker/service blip) and
+        # still retry.
+        from ontoexplorer.clients.reasoning import ReasoningFailed
+        if isinstance(exc, (TimeoutError, ReasoningFailed)):
             raise
         raise self.retry(exc=exc, countdown=120) from exc
 
