@@ -525,6 +525,25 @@ async def _run_reasoning(db, version_id: str) -> dict:
         raise
 
 
+def _version_is_el_profile(version_id: str) -> bool:
+    """True if the version's cached OWL 2 profile report marks it in the EL profile.
+
+    The report is computed during indexing and cached in Redis by owl_profile.
+    Returns False if it's missing or unreadable (safe default: full DL path).
+    """
+    import json
+    try:
+        from ontoexplorer.modules.owl_profile.cache import owl_profile_cache_key
+        from ontoexplorer.modules.search.indexer import _get_redis
+        raw = _get_redis().get(owl_profile_cache_key(version_id))
+        if not raw:
+            return False
+        return bool(json.loads(raw).get("el", {}).get("in_profile"))
+    except Exception:
+        log.exception("el_profile_lookup_failed", version_id=version_id)
+        return False
+
+
 async def _reason_and_persist(db, version, version_id: str, ontology_id: str, job_id: str) -> dict:
     """Classify the asserted graph, persist inferred triples, and mark the job done.
 
@@ -566,10 +585,18 @@ async def _reason_and_persist(db, version, version_id: str, ontology_id: str, jo
     if len(asserted_graph) == 0:
         log.warning("reasoning_empty_graph", version_id=version_id, graph=asserted_iri)
 
-    # Call ELK service — classify_v2 POSTs to /classify and caches in Redis
+    # Call ELK service — classify_v2 POSTs to /classify and caches in Redis.
+    # rustdl (SROIQ tableau) is O(n²) in class pairs and blows up on large
+    # EL ontologies (e.g. GO); when the version is in the OWL 2 EL profile we
+    # ask it to classify via EL saturation only — complete for EL and fast.
     import httpx as _httpx
     from ontoexplorer.config import get_settings as _get_settings
-    await reasoning_client.classify_v2(asserted_graph, version_id, reasoner=version.reasoner)
+    saturation_only = version.reasoner == "rustdl" and _version_is_el_profile(version_id)
+    if saturation_only:
+        log.info("reasoning_el_saturation", version_id=version_id, reasoner=version.reasoner)
+    await reasoning_client.classify_v2(
+        asserted_graph, version_id, reasoner=version.reasoner, saturation_only=saturation_only
+    )
 
     # Fetch the full inferred graph from ELK classification result for Oxigraph persistence
     async with _httpx.AsyncClient(timeout=60.0) as client:

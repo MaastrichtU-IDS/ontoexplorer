@@ -29,7 +29,9 @@ class ReasonerInfo:
 class Backend(Protocol):
     info: ReasonerInfo
 
-    def classify_ntriples(self, ntriples: str, version_id: str) -> ClassificationResult: ...
+    def classify_ntriples(
+        self, ntriples: str, version_id: str, saturation_only: bool = False
+    ) -> ClassificationResult: ...
 
     def justify(self, ntriples: str, sub: str, sup: str,
                 max_justifications: int) -> tuple[list[list[str]], str]: ...
@@ -48,7 +50,8 @@ class _WhelkBackend:
         available=_import_ok("pywhelk"),
     )
 
-    def classify_ntriples(self, ntriples, version_id):
+    def classify_ntriples(self, ntriples, version_id, saturation_only=False):
+        # whelk is already a pure EL reasoner; saturation_only is a no-op here.
         from whelk_classifier import classify_ntriples
         return classify_ntriples(ntriples, version_id)
 
@@ -110,7 +113,7 @@ class _RdflibBackend:
         available=True,
     )
 
-    def classify_ntriples(self, ntriples, version_id):
+    def classify_ntriples(self, ntriples, version_id, saturation_only=False):
         from classifier import classify
         g = rdflib.Graph()
         g.parse(io.StringIO(ntriples), format="nt")

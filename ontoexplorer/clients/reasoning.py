@@ -63,13 +63,22 @@ def _get_redis_client():
     return _get_redis()
 
 
-async def classify_v2(graph: rdflib.Graph, version_id: str, reasoner: str = "whelk") -> dict:
+async def classify_v2(
+    graph: rdflib.Graph,
+    version_id: str,
+    reasoner: str = "whelk",
+    saturation_only: bool = False,
+) -> dict:
     """
     POST N-Triples to ELK service (returns 202 immediately), then poll until done.
     Max wait is reasoner_service_timeout seconds (default 3600); raises TimeoutError if exceeded.
 
     Re-submits the job every RESUBMIT_INTERVAL seconds if still getting 409 — this handles
     ELK service restarts that clear the in-progress set but not the Redis cache.
+
+    ``saturation_only`` asks a DL backend (rustdl) to classify via EL closure
+    only (fast, complete for EL ontologies). Set by the caller for EL-profile
+    ontologies; ignored by backends that don't support it.
     """
     ntriples = graph.serialize(format="nt")
     RESUBMIT_INTERVAL = 120  # re-POST if job still missing after this many seconds
@@ -77,7 +86,8 @@ async def classify_v2(graph: rdflib.Graph, version_id: str, reasoner: str = "whe
     async def _submit() -> dict:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(_elk_url("/classify"),
-                                     json={"ntriples": ntriples, "version_id": version_id, "reasoner": reasoner})
+                                     json={"ntriples": ntriples, "version_id": version_id,
+                                           "reasoner": reasoner, "saturation_only": saturation_only})
             resp.raise_for_status()
             return resp.json()
 
