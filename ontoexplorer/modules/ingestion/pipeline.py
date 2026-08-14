@@ -77,7 +77,7 @@ class IngestionRequest:
     content_type: str | None = None
     owner_id: str | None = None
     groups: list[str] = None  # type: ignore[assignment]
-    reasoner: str = "whelk"
+    reasoner: str = "rustdl"
 
     def __post_init__(self):
         if self.groups is None:

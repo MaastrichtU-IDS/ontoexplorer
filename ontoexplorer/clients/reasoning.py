@@ -39,7 +39,7 @@ def _elk_url(path: str) -> str:
     return f"{get_settings().reasoner_service_url}{path}"
 
 
-_KNOWN_REASONERS = {"whelk", "rdflib", "rustdl", "konclude"}
+_KNOWN_REASONERS = {"rdflib", "rustdl", "konclude"}
 
 
 async def list_reasoners() -> list[dict]:
@@ -74,7 +74,7 @@ def _get_redis_client():
 async def classify_v2(
     graph: rdflib.Graph,
     version_id: str,
-    reasoner: str = "whelk",
+    reasoner: str = "rustdl",
     saturation_only: bool = False,
 ) -> dict:
     """
@@ -143,7 +143,7 @@ async def classify_v2(
     raise TimeoutError(f"ELK classification for {version_id} did not complete within {max_wait}s")
 
 
-async def superclasses(version_id: str, class_iri: str, direct: bool = False, reasoner: str = "whelk") -> dict:
+async def superclasses(version_id: str, class_iri: str, direct: bool = False, reasoner: str = "rustdl") -> dict:
     """Return all (or direct-only) inferred superclasses of class_iri.
 
     Cached in Redis under `elk:super:{version_id}:…` with a 24-hour TTL.
@@ -171,7 +171,7 @@ async def superclasses(version_id: str, class_iri: str, direct: bool = False, re
     return data
 
 
-async def subclasses(version_id: str, class_iri: str, direct: bool = False, reasoner: str = "whelk") -> dict:
+async def subclasses(version_id: str, class_iri: str, direct: bool = False, reasoner: str = "rustdl") -> dict:
     """Return all (or direct-only) inferred subclasses of class_iri.
 
     Cached identically to `superclasses` — see that docstring.
@@ -197,7 +197,7 @@ async def subclasses(version_id: str, class_iri: str, direct: bool = False, reas
     return data
 
 
-async def consistency(version_id: str, reasoner: str = "whelk") -> dict:
+async def consistency(version_id: str, reasoner: str = "rustdl") -> dict:
     """Return consistency check result including unsatisfiable classes."""
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(_elk_url(f"/classify/{version_id}/consistency?reasoner={reasoner}"))
@@ -212,7 +212,7 @@ async def request_justification(
     sub: str,
     sup: str | None,
     max_justifications: int = 1,
-    reasoner: str = "whelk",
+    reasoner: str = "rustdl",
 ) -> dict:
     """
     Synchronously request justification computation from ELK service.
@@ -266,7 +266,7 @@ async def health_check() -> bool:
         return False
 
 
-async def get_classification(version_id: str, reasoner: str = "whelk") -> dict:
+async def get_classification(version_id: str, reasoner: str = "rustdl") -> dict:
     """Fetch the full ClassificationResult JSON from the ELK service cache.
 
     Returns the raw dict with keys: superclasses, subclasses, direct_superclasses,

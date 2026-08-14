@@ -203,7 +203,7 @@ async def evaluate(
     ontology_id: str,
     lang: str | None = None,
     direct: bool = False,
-    reasoner: str = "whelk",
+    reasoner: str = "rustdl",
 ) -> list[SearchResult]:
     """Evaluate a MOS AST node against the given version, returning matching classes.
 
@@ -348,7 +348,7 @@ async def evaluate_relation(
     relation: str = "subclasses",
     lang: str | None = None,
     direct: bool = False,
-    reasoner: str = "whelk",
+    reasoner: str = "rustdl",
 ) -> list[SearchResult]:
     """Evaluate a MOS AST node for a given relationship to the expression.
 

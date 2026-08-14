@@ -27,13 +27,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# py-whelk: vendored patched 0.1.0 wheel. Upstream py-whelk 0.4.0 (PyPI) routes
-# through pyhornedowl.reasoning's native plugin, but SIGSEGVs on any classify with
-# py-horned-owl 1.4.1 (the latest) — an ABI mismatch in that plugin interface
-# (verified on v0.3.48: whelk crashed on a 3-class ontology, while rustdl/konclude/km
-# classified fine). So whelk stays on the working vendored 0.1.0 wheel until 0.4.x
-# is ABI-compatible; see test_pywhelk_flush_after_remove.py for the patch it carries.
-COPY wheels/ /tmp/wheels/
+# whelk removed: py-whelk's reasoner.inferred_axioms() SIGSEGVs on this amd64 build
+# (both vendored 0.1.0 and PyPI 0.4.0 — it never produced a classification here).
+# py-horned-owl is kept: the km and konclude backends use open_ontology_from_string.
 RUN pip install --no-cache-dir \
     "fastapi==0.111.*" \
     "uvicorn[standard]" \
@@ -41,10 +37,8 @@ RUN pip install --no-cache-dir \
     "redis>=5.0" \
     "requests>=2.31" \
     "py-horned-owl==1.4.*" \
-    /tmp/wheels/py_whelk-*.whl \
     "pyoxigraph>=0.4" \
-    "rustdl==0.4.17" \
- && rm -rf /tmp/wheels
+    "rustdl==0.4.17"
 
 # Konclude: bundle the prebuilt binary from the official image (linux/amd64).
 # It links only libstdc++.so.6 at runtime (TBB is statically linked).
@@ -57,7 +51,7 @@ RUN chmod +x /usr/local/bin/Konclude \
 COPY --from=km-build /km /usr/local/bin/km
 RUN chmod +x /usr/local/bin/km
 
-COPY main.py classify_worker.py classifier.py whelk_classifier.py cache.py justification.py \
+COPY main.py classify_worker.py classifier.py cache.py \
      registry.py rustdl_backend.py konclude_backend.py km_backend.py ./
 
 EXPOSE 8001

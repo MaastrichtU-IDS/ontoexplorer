@@ -194,7 +194,7 @@ def _asserted_descendants_sync(ontology_id: str, vid: str, iri: str) -> list[str
 # Fetcher signature: (ontology_id, vid, iri) -> list[str]
 # ---------------------------------------------------------------------------
 
-async def _inferred_parents_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "whelk") -> list[str]:
+async def _inferred_parents_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
     """Direct inferred parents via ELK `direct_superclasses`; fallback: asserted."""
     try:
         from ontoexplorer.clients.reasoning import get_classification
@@ -209,7 +209,7 @@ async def _inferred_parents_fetcher(ontology_id: str, vid: str, iri: str, reason
     return await asyncio.to_thread(_asserted_parents_sync, ontology_id, vid, iri)
 
 
-async def _inferred_children_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "whelk") -> list[str]:
+async def _inferred_children_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
     """Direct inferred children via ELK `direct_subclasses`; fallback: asserted."""
     try:
         from ontoexplorer.clients.reasoning import get_classification
@@ -223,7 +223,7 @@ async def _inferred_children_fetcher(ontology_id: str, vid: str, iri: str, reaso
     return await asyncio.to_thread(_asserted_children_sync, ontology_id, vid, iri)
 
 
-async def _inferred_ancestors_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "whelk") -> list[str]:
+async def _inferred_ancestors_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
     """All inferred ancestors via ELK `superclasses`; fallback: asserted-BFS."""
     try:
         from ontoexplorer.clients.reasoning import get_classification
@@ -237,7 +237,7 @@ async def _inferred_ancestors_fetcher(ontology_id: str, vid: str, iri: str, reas
     return await asyncio.to_thread(_asserted_ancestors_sync, ontology_id, vid, iri)
 
 
-async def _inferred_descendants_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "whelk") -> list[str]:
+async def _inferred_descendants_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
     """All inferred descendants via ELK `subclasses`; fallback: asserted-BFS."""
     try:
         from ontoexplorer.clients.reasoning import get_classification
@@ -255,15 +255,15 @@ async def _inferred_descendants_fetcher(ontology_id: str, vid: str, iri: str, re
 # Asserted-only fetchers (hierarchical* variants)
 # ---------------------------------------------------------------------------
 
-async def _hierarchical_parents_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "whelk") -> list[str]:
+async def _hierarchical_parents_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
     return await asyncio.to_thread(_asserted_parents_sync, ontology_id, vid, iri)
 
 
-async def _hierarchical_ancestors_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "whelk") -> list[str]:
+async def _hierarchical_ancestors_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
     return await asyncio.to_thread(_asserted_ancestors_sync, ontology_id, vid, iri)
 
 
-async def _hierarchical_descendants_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "whelk") -> list[str]:
+async def _hierarchical_descendants_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
     return await asyncio.to_thread(_asserted_descendants_sync, ontology_id, vid, iri)
 
 
