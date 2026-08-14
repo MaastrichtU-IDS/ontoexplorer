@@ -63,7 +63,7 @@ RUN cp "$(find /src -type f -name Konclude -path '*[Rr]elease*' | head -1)" /Kon
 
 # --- km-build: compile kobayashi-marust's `km` binary natively for aarch64 ---
 FROM rust:1-slim-bookworm AS km-build
-ARG KM_REV=787a9d22c2a328e701beed3c959181e29b08185a
+ARG KM_REV=v0.2.21
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 RUN git clone https://github.com/bio-ontology-research-group/kobayashi-marust.git /src \
@@ -88,8 +88,10 @@ RUN pip install --no-cache-dir \
     /tmp/wheels/py_horned_owl-*.whl \
     /tmp/wheels/py_whelk-*aarch64.whl \
     "pyoxigraph>=0.4" \
-    "rustdl==0.3.41" \
+    "rustdl==0.4.17" \
  && rm -rf /tmp/wheels
+# NOTE: py-whelk 0.4.0 (PyPI) ships no aarch64 wheel, so this dev-only arm64 image
+# stays on the vendored aarch64 0.1.0 wheel; the amd64 release image uses 0.4.0.
 
 # Konclude (native aarch64): the binary dynamically links the Qt5 runtime libs
 # it was built against (Core/Xml/Network/Concurrent). shutil.which finds it on

@@ -15,7 +15,7 @@
 
 # --- km-build: compile kobayashi-marust's `km` binary (Rust) ---
 FROM rust:1-slim-bookworm AS km-build
-ARG KM_REV=787a9d22c2a328e701beed3c959181e29b08185a
+ARG KM_REV=v0.2.21
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 RUN git clone https://github.com/bio-ontology-research-group/kobayashi-marust.git /src \
@@ -27,12 +27,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Patched py-whelk wheel (vendored locally). Adds remove-handling to the
-# index_remove stub so reasoner.flush() actually invalidates the cached
-# classification after onto.remove_axiom() — required by the persistent-
-# reasoner path in justification.py. Switch back to PyPI once the upstream
-# PR lands; see test_pywhelk_flush_after_remove.py for the regression.
-COPY wheels/ /tmp/wheels/
+# py-whelk 0.4.0 (PyPI): plugs into pyhornedowl.reasoning (PyReasoner) and bundles
+# its whelk .so. Supersedes the previously-vendored patched 0.1.0 wheel (the
+# remove-handling fix it carried is covered upstream; test_pywhelk_flush_after_remove.py
+# remains the regression guard).
 RUN pip install --no-cache-dir \
     "fastapi==0.111.*" \
     "uvicorn[standard]" \
@@ -40,10 +38,9 @@ RUN pip install --no-cache-dir \
     "redis>=5.0" \
     "requests>=2.31" \
     "py-horned-owl==1.4.*" \
-    /tmp/wheels/py_whelk-*.whl \
+    "py-whelk==0.4.0" \
     "pyoxigraph>=0.4" \
-    "rustdl==0.3.41" \
- && rm -rf /tmp/wheels
+    "rustdl==0.4.17"
 
 # Konclude: bundle the prebuilt binary from the official image (linux/amd64).
 # It links only libstdc++.so.6 at runtime (TBB is statically linked).
