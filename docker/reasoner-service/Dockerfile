@@ -27,10 +27,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# py-whelk 0.4.0 (PyPI): plugs into pyhornedowl.reasoning (PyReasoner) and bundles
-# its whelk .so. Supersedes the previously-vendored patched 0.1.0 wheel (the
-# remove-handling fix it carried is covered upstream; test_pywhelk_flush_after_remove.py
-# remains the regression guard).
+# py-whelk: vendored patched 0.1.0 wheel. Upstream py-whelk 0.4.0 (PyPI) routes
+# through pyhornedowl.reasoning's native plugin, but SIGSEGVs on any classify with
+# py-horned-owl 1.4.1 (the latest) — an ABI mismatch in that plugin interface
+# (verified on v0.3.48: whelk crashed on a 3-class ontology, while rustdl/konclude/km
+# classified fine). So whelk stays on the working vendored 0.1.0 wheel until 0.4.x
+# is ABI-compatible; see test_pywhelk_flush_after_remove.py for the patch it carries.
+COPY wheels/ /tmp/wheels/
 RUN pip install --no-cache-dir \
     "fastapi==0.111.*" \
     "uvicorn[standard]" \
@@ -38,9 +41,10 @@ RUN pip install --no-cache-dir \
     "redis>=5.0" \
     "requests>=2.31" \
     "py-horned-owl==1.4.*" \
-    "py-whelk==0.4.0" \
+    /tmp/wheels/py_whelk-*.whl \
     "pyoxigraph>=0.4" \
-    "rustdl==0.4.17"
+    "rustdl==0.4.17" \
+ && rm -rf /tmp/wheels
 
 # Konclude: bundle the prebuilt binary from the official image (linux/amd64).
 # It links only libstdc++.so.6 at runtime (TBB is statically linked).
