@@ -75,9 +75,8 @@ RUN cargo build --release --bin km && cp target/release/km /km
 FROM python:3.12-slim-bookworm
 WORKDIR /app
 
-# arm64-only artifacts (native aarch64 py-whelk wheel) live in wheels-arm64/ so
-# the base amd64 Dockerfile's wheels/ stays x86_64-only and byte-identical.
-COPY wheels-arm64/ /tmp/wheels/
+# py-horned-owl compiled to an aarch64 wheel by the builder stage (km/konclude use
+# open_ontology_from_string). whelk removed — py-whelk segfaulted here.
 COPY --from=builder /wheels/py_horned_owl-*.whl /tmp/wheels/
 RUN pip install --no-cache-dir \
     "fastapi==0.111.*" \
@@ -86,12 +85,9 @@ RUN pip install --no-cache-dir \
     "redis>=5.0" \
     "requests>=2.31" \
     /tmp/wheels/py_horned_owl-*.whl \
-    /tmp/wheels/py_whelk-*aarch64.whl \
     "pyoxigraph>=0.4" \
     "rustdl==0.4.17" \
  && rm -rf /tmp/wheels
-# NOTE: py-whelk 0.4.0 (PyPI) ships no aarch64 wheel, so this dev-only arm64 image
-# stays on the vendored aarch64 0.1.0 wheel; the amd64 release image uses 0.4.0.
 
 # Konclude (native aarch64): the binary dynamically links the Qt5 runtime libs
 # it was built against (Core/Xml/Network/Concurrent). shutil.which finds it on
@@ -106,7 +102,7 @@ RUN chmod +x /usr/local/bin/Konclude
 COPY --from=km-build /km /usr/local/bin/km
 RUN chmod +x /usr/local/bin/km
 
-COPY main.py classify_worker.py classifier.py whelk_classifier.py cache.py justification.py \
+COPY main.py classify_worker.py classifier.py cache.py \
      registry.py rustdl_backend.py konclude_backend.py km_backend.py ./
 
 EXPOSE 8001

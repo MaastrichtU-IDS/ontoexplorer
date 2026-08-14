@@ -74,7 +74,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("REASONER_SERVICE_TIMEOUT", "ELK_SERVICE_TIMEOUT"),
     )
     # Reasoner selected for an ontology when the ingest request omits one.
-    default_reasoner: str = "whelk"
+    default_reasoner: str = "rustdl"
 
     # Anthropic
     anthropic_api_key: str = ""

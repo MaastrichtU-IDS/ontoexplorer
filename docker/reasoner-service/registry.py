@@ -42,67 +42,9 @@ def _import_ok(mod: str) -> bool:
     return importlib.util.find_spec(mod) is not None
 
 
-# ── whelk ──────────────────────────────────────────────────────────────────
-class _WhelkBackend:
-    info = ReasonerInfo(
-        name="whelk", profile="EL",
-        capabilities=frozenset({"classify", "consistency", "justify"}),
-        available=_import_ok("pywhelk"),
-    )
-
-    def classify_ntriples(self, ntriples, version_id, saturation_only=False):
-        # whelk is already a pure EL reasoner; saturation_only is a no-op here.
-        from whelk_classifier import classify_ntriples
-        return classify_ntriples(ntriples, version_id)
-
-    def justify(self, ntriples, sub, sup, max_justifications):
-        import logging
-        import tempfile
-        import pyoxigraph
-        import rustdl
-        from justification import compute_justifications
-        g = rdflib.Graph()
-        g.parse(io.StringIO(ntriples), format="nt")
-        # compute_justifications has an entry guard that checks the PASSED-IN
-        # result's unsatisfiable/superclasses/direct_superclasses to confirm
-        # the inference actually holds before doing any work — an empty
-        # result always fails that guard and silently returns []. So we must
-        # classify first and pass the REAL result, mirroring the main.py
-        # /classify/{version_id}/justification call site (result = the
-        # cached classification, g = the input graph).
-        result = self.classify_ntriples(ntriples, "_justify")
-        nt_sets = compute_justifications(g, result, sub, sup, max_justifications)
-
-        # Render each N-Triple axiom set to Manchester via rustdl's
-        # horned-owl renderer, so whelk-backed justifications look the same
-        # as rustdl's (which are natively Manchester). Round-trip: NT ->
-        # RDF/XML (pyoxigraph) -> temp .rdf file -> rustdl.render_manchester.
-        # If a set fails to round-trip (e.g. blank nodes rustdl can't
-        # render), fall back to the original N-Triple set for that entry
-        # rather than dropping the justification.
-        manchester_sets: list[list[str]] = []
-        for nt_axioms in nt_sets:
-            try:
-                store = pyoxigraph.Store()
-                store.bulk_load(io.BytesIO("\n".join(nt_axioms).encode()),
-                                format=pyoxigraph.RdfFormat.N_TRIPLES)
-                rdfxml = pyoxigraph.serialize(
-                    (q.triple for q in store.quads_for_pattern(None, None, None, None)),
-                    format=pyoxigraph.RdfFormat.RDF_XML)
-                fd, path = tempfile.mkstemp(suffix=".rdf")
-                try:
-                    with os.fdopen(fd, "wb") as fh:
-                        fh.write(rdfxml)
-                    manchester_sets.append(rustdl.render_manchester(path))
-                finally:
-                    os.unlink(path)
-            except Exception:
-                logging.getLogger("reasoner-service").warning(
-                    "whelk_justify_manchester_render_failed: falling back to "
-                    "ntriples for one axiom set (%d axioms)", len(nt_axioms),
-                    exc_info=True)
-                manchester_sets.append(nt_axioms)
-        return manchester_sets, "manchester"
+# whelk removed: py-whelk segfaults in reasoner.inferred_axioms() on this amd64
+# build (never produced a classification here), so it is no longer registered.
+# The EL role is covered by rustdl in saturation_only mode.
 
 
 # ── rdflib (legacy) ──────────────────────────────────────────────────────────
@@ -126,7 +68,7 @@ class _RdflibBackend:
 # Backends registered lazily so importing rustdl/konclude modules (which may be
 # absent) does not break the registry import.
 def _build_registry() -> dict[str, Backend]:
-    reg: dict[str, Backend] = {"whelk": _WhelkBackend(), "rdflib": _RdflibBackend()}
+    reg: dict[str, Backend] = {"rdflib": _RdflibBackend()}
     from rustdl_backend import RustdlBackend
     from konclude_backend import KoncludeBackend
     from km_backend import KmBackend
@@ -155,4 +97,4 @@ def list_reasoners() -> list[ReasonerInfo]:
 
 
 def default_reasoner() -> str:
-    return os.getenv("DEFAULT_REASONER", "whelk")
+    return os.getenv("DEFAULT_REASONER", "rustdl")

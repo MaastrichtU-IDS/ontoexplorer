@@ -404,7 +404,7 @@ def ingest_ontology(
     content_type: str | None = None,
     owner_id: str | None = None,
     groups: list[str] | None = None,
-    reasoner: str = "whelk",
+    reasoner: str = "rustdl",
 ) -> dict:
     """Celery task: run the full ingestion pipeline for one ontology submission."""
     from ontoexplorer.database import make_celery_db_session
@@ -854,7 +854,7 @@ def compute_justification(
                     select(OntologyVersion).where(OntologyVersion.id == version_id)
                 )
                 version = version_result.scalar_one_or_none()
-                reasoner = version.reasoner if version else "whelk"
+                reasoner = version.reasoner if version else "rustdl"
                 result = await reasoning_client.request_justification(
                     version_id, sub, sup, max_justifications, reasoner=reasoner
                 )
