@@ -27,6 +27,19 @@ class KmBackend:
         name="km", profile="SROIQ / OWL 2 DL",
         capabilities=frozenset({"classify", "consistency"}),
         available=_KM_BIN is not None,
+        param_schema=(
+            {"key": "route", "type": "enum", "default": "auto",
+             "choices": ["auto", "manual", "default", "default8", "default1",
+                         "production_all", "production_all8", "production_all1",
+                         "cb_plain16", "cb_plain8", "cb_plain1",
+                         "cb_absorb16", "cb_absorb8", "cb_absorb1",
+                         "cb_trigger16", "cb_trigger8", "cb_trigger1",
+                         "cb_absorb_portfolio16", "elc", "elc_cert"],
+             "label": "Route",
+             "help": "km reasoning strategy (km classify --route). 'auto' picks a "
+                     "route from the ontology profile; the cb_*/elc/production_all "
+                     "variants select specific consequence-based engines."},
+        ),
     )
 
     def classify_ntriples(

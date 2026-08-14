@@ -9,15 +9,17 @@ import { OntologyTable } from '../components/admin/OntologyTable'
 import { WorkersPanel } from '../components/admin/WorkersPanel'
 import { StarterQueriesPanel } from '../components/admin/StarterQueriesPanel'
 import { MaintainerRequestsPanel } from '../components/admin/MaintainerRequestsPanel'
+import { ReasonerProfilesPanel } from '../components/admin/ReasonerProfilesPanel'
 import { SectionLabel, ServiceCard, UpdateState, ontologyDisplayName } from '../components/admin/shared'
 
-type Tab = 'ontology' | 'sparql' | 'jobs' | 'maintainers'
-const TAB_VALUES: Tab[] = ['ontology', 'sparql', 'jobs', 'maintainers']
+type Tab = 'ontology' | 'sparql' | 'jobs' | 'maintainers' | 'reasoners'
+const TAB_VALUES: Tab[] = ['ontology', 'sparql', 'jobs', 'maintainers', 'reasoners']
 const TAB_LABELS: Record<Tab, string> = {
   ontology: 'Ontology',
   sparql: 'SPARQL queries',
   jobs: 'Jobs',
   maintainers: 'Maintainer requests',
+  reasoners: 'Reasoners',
 }
 
 export default function AdminPage() {
@@ -346,6 +348,10 @@ export default function AdminPage() {
 
       {tab === 'maintainers' && (
         <MaintainerRequestsPanel />
+      )}
+
+      {tab === 'reasoners' && (
+        <ReasonerProfilesPanel />
       )}
 
     </div>

@@ -455,11 +455,46 @@ export interface JustificationResult {
   labels?: Record<string, string>
 }
 
+export interface ReasonerParamSpec {
+  key: string
+  type: 'bool' | 'int' | 'enum'
+  default: boolean | number | string
+  label?: string
+  help?: string
+  min?: number
+  max?: number
+  choices?: string[]
+}
+
 export interface ReasonerInfo {
   name: string
   profile: string
   capabilities: string[]
   available: boolean
+  /** Tunable parameters this reasoner accepts; drives the profile-editor form. */
+  param_schema?: ReasonerParamSpec[]
+}
+
+export interface ReasonerProfile {
+  id: string
+  name: string
+  reasoner: string
+  params: Record<string, boolean | number | string>
+  dashboard_selectable: boolean
+  is_default: boolean
+  archived: boolean
+  description: string | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface ReasonerProfileInput {
+  name: string
+  reasoner: string
+  params: Record<string, boolean | number | string>
+  dashboard_selectable: boolean
+  is_default: boolean
+  description?: string | null
 }
 
 export interface AutocompleteCompletion {
@@ -1364,6 +1399,11 @@ export const api = {
     list: () => request<ReasonerInfo[]>('/reasoners'),
   },
 
+  // Dashboard-selectable reasoner profiles (non-archived). Admin CRUD lives under api.admin.
+  reasonerProfiles: {
+    list: () => request<{ profiles: ReasonerProfile[] }>('/reasoner-profiles'),
+  },
+
   jobs: {
     list: (params?: { type?: string; status?: string; limit?: number }) => {
       const q = new URLSearchParams()
@@ -1485,6 +1525,23 @@ export const api = {
 
   admin: {
     overview: () => request<AdminOverview>('/admin/overview'),
+
+    // Reasoner profiles (admin CRUD; delete = soft-archive).
+    reasonerProfiles: () => request<{ profiles: ReasonerProfile[] }>('/admin/reasoner-profiles'),
+    createReasonerProfile: (body: ReasonerProfileInput) =>
+      request<ReasonerProfile>('/admin/reasoner-profiles', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    updateReasonerProfile: (id: string, body: Partial<ReasonerProfileInput>) =>
+      request<ReasonerProfile>(`/admin/reasoner-profiles/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    archiveReasonerProfile: (id: string) =>
+      request<{ id: string; archived: boolean }>(`/admin/reasoner-profiles/${id}`, {
+        method: 'DELETE',
+      }),
     maintainerRequests: (status?: string) =>
       request<{ requests: MaintainerRequest[] }>(
         `/admin/maintainer-requests${status ? `?status=${encodeURIComponent(status)}` : ''}`,

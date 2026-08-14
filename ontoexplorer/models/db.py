@@ -443,3 +443,30 @@ class UsageDaily(Base):
     total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ReasonerProfile(Base):
+    """An admin-defined, named reasoner configuration: a reasoner backend plus the
+    parameters passed to it at reasoning time. Selectable when adding an ontology
+    (dashboard/admin) and in the re-index control.
+
+    `dashboard_selectable` gates visibility in the user dashboard (admins always
+    see all). Exactly one profile should have `is_default` = true (used when none
+    is chosen). Deletion is soft (`archived` = true): the row is kept for
+    provenance and existing references still resolve, but it is dropped from all
+    selection lists. Name uniqueness among non-archived profiles is enforced in
+    the API layer.
+    """
+    __tablename__ = "reasoner_profiles"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    reasoner: Mapped[str] = mapped_column(String, nullable=False)  # backend name (rustdl/konclude/km/rdflib)
+    params: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict, server_default="{}")
+    dashboard_selectable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
