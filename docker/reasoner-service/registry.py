@@ -24,6 +24,11 @@ class ReasonerInfo:
     profile: str
     capabilities: frozenset[str]
     available: bool
+    # Tunable parameters this backend accepts, as a tuple of specs the admin UI
+    # renders into typed, validated form fields. Each spec is a dict:
+    #   {key, type: 'bool'|'int'|'enum', default, label, help,
+    #    min?/max? (int), choices? (enum)}. Empty tuple = no tunable params.
+    param_schema: tuple[dict, ...] = ()
 
 
 class Backend(Protocol):

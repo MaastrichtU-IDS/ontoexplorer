@@ -11,6 +11,20 @@ class RustdlBackend:
         name="rustdl", profile="DL (SROIQ)",
         capabilities=frozenset({"classify", "consistency", "justify"}),
         available=importlib.util.find_spec("rustdl") is not None,
+        param_schema=(
+            {"key": "saturation_only", "type": "bool", "default": False,
+             "label": "EL saturation only",
+             "help": "Skip the SROIQ tableau and classify via EL closure only — "
+                     "complete for EL-profile ontologies and far faster. Auto-enabled "
+                     "for EL-profile ontologies even when unset."},
+            {"key": "per_pair_timeout_ms", "type": "int", "default": 200, "min": 0,
+             "label": "Per-pair timeout (ms)",
+             "help": "Max time per pairwise subsumption test in tableau mode. 0 = unbounded."},
+            {"key": "global_timeout_ms", "type": "int", "default": 60000, "min": 0,
+             "label": "Global timeout (ms)",
+             "help": "Max total wall time in tableau mode; a run exceeding it returns "
+                     "incomplete. 0 = unbounded."},
+        ),
     )
 
     def classify_ntriples(
