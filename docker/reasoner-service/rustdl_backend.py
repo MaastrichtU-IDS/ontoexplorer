@@ -74,10 +74,53 @@ class RustdlBackend:
                         direct_sup[s].append(o)
 
         classes = [c for c in cls.classes if c not in (OWL_THING, OWL_NOTHING)]
+
+        # Build the inferred transitive `superclasses` closure.
+        #
+        # We must NOT call cls.superclasses_of(c) per class: that recomputes a
+        # traversal each call (~48 ms/call measured on GO), so ~52k classes take
+        # ~40 min and several GB — the reason GO appeared to "hang". Instead read
+        # the precomputed DIRECT inferred subsumers (cls.direct_subsumers(c) is
+        # ~0.003 ms/call) once, then compute the transitive closure ourselves in
+        # a single near-linear pass. Verified on GO to reproduce superclasses_of
+        # exactly (0 mismatches over a 1.4k-class sample) in ~0.5s total.
+        direct_inf: dict[str, list[str]] = {
+            c: [s for s in cls.direct_subsumers(c) if s != c and s != OWL_THING]
+            for c in classes
+        }
+        _closure: dict[str, set[str]] = {}
+        _state: dict[str, int] = {}  # 0/absent = unvisited, 1 = on-stack, 2 = done
+
+        def _ancestors(start: str) -> set[str]:
+            # Iterative DFS post-order so deep GO hierarchies can't blow the
+            # Python recursion limit; memoized so each node is expanded once.
+            stack = [(start, iter(direct_inf.get(start, ())))]
+            _state[start] = 1
+            while stack:
+                node, it = stack[-1]
+                advanced = False
+                for parent in it:
+                    if _state.get(parent, 0) == 0:
+                        _state[parent] = 1
+                        stack.append((parent, iter(direct_inf.get(parent, ()))))
+                        advanced = True
+                        break
+                if advanced:
+                    continue
+                stack.pop()
+                acc: set[str] = set()
+                for parent in direct_inf.get(node, ()):  # noqa: PLR1704
+                    acc.add(parent)
+                    acc |= _closure.get(parent, set())
+                _closure[node] = acc
+                _state[node] = 2
+            return _closure[start]
+
         superclasses: dict[str, list[str]] = {}
         for c in classes:
-            inferred = [s for s in cls.superclasses_of(c)
-                        if s != c and s not in (OWL_THING,) and (c, s) not in asserted]
+            if _state.get(c, 0) != 2:
+                _ancestors(c)
+            inferred = [s for s in _closure[c] if s != c and s != OWL_THING and (c, s) not in asserted]
             if inferred:
                 superclasses[c] = inferred
 
