@@ -13,7 +13,7 @@ _CATALOG = [
     {"name": "km", "param_schema": [
         {"key": "route", "type": "enum", "default": "auto", "choices": ["auto", "elc", "cb_plain16"]},
     ]},
-    {"name": "rdflib", "param_schema": []},
+    {"name": "konclude", "param_schema": []},
 ]
 
 

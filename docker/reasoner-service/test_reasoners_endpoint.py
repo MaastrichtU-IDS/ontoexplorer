@@ -22,7 +22,7 @@ def test_reasoners_endpoint_lists_capabilities(client):
     resp = client.get("/reasoners")
     assert resp.status_code == 200
     by_name = {r["name"]: r for r in resp.json()}
-    assert {"whelk", "rdflib", "rustdl", "konclude"} <= set(by_name)
+    assert {"rustdl", "konclude", "km"} <= set(by_name)
     assert "justify" in by_name["rustdl"]["capabilities"]
     assert "justify" not in by_name["konclude"]["capabilities"]
     assert "profile" in by_name["whelk"] and "available" in by_name["whelk"]

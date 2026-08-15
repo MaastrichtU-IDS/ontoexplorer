@@ -5,9 +5,9 @@ import pytest
 import registry
 
 
-def test_all_four_reasoners_registered():
+def test_reasoners_registered():
     names = {r.name for r in registry.list_reasoners()}
-    assert {"whelk", "rdflib", "rustdl", "konclude"} <= names
+    assert {"rustdl", "konclude", "km"} <= names
 
 
 def test_capabilities_are_correct():

@@ -12,7 +12,7 @@ const { mockProfiles, mockReasoners, mockCreate } = vi.hoisted(() => ({
       { key: 'saturation_only', type: 'bool', default: false, label: 'EL saturation only' },
       { key: 'per_pair_timeout_ms', type: 'int', default: 200, min: 0, label: 'Per-pair timeout (ms)' },
     ] },
-    { name: 'rdflib', profile: 'EL', capabilities: ['classify'], available: true, param_schema: [] },
+    { name: 'km', profile: 'EL++', capabilities: ['classify'], available: true, param_schema: [] },
   ]),
   mockCreate: vi.fn().mockResolvedValue({ id: 'p2' }),
 }))

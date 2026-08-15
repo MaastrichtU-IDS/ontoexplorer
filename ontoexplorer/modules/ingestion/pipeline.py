@@ -495,6 +495,10 @@ def _extract_ontology_iri_fast(data: bytes, fmt: OntologyFormat) -> str | None:
         # fall through to the parse-based extractor.
         m = re.search(r'Ontology:\s*<([^>]+)>', snippet)
         return m.group(1) if m else None
+    elif fmt == OntologyFormat.OWL_FUNCTIONAL:
+        # `Ontology(<iri> ...)` header; pyoxigraph can't parse OWL functional.
+        m = re.search(r'Ontology\(\s*<([^>]+)>', snippet)
+        return m.group(1) if m else None
     elif fmt == OntologyFormat.OBO:
         # The ontology IRI is derived during horned-convert (an OBO PURL); let the
         # post-load SPARQL safety net set it. pyoxigraph can't parse OBO.

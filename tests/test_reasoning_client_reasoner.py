@@ -154,9 +154,9 @@ async def test_get_classification_reasoner_reaches_wire(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_classification_defaults_to_whelk(monkeypatch):
+async def test_get_classification_defaults_to_rustdl(monkeypatch):
     calls: list[str] = []
     monkeypatch.setattr(reasoning.httpx, "AsyncClient", _client_capturing_get_url(calls))
     await reasoning.get_classification("v-get-classification-default")
     assert len(calls) == 1
-    assert "reasoner=whelk" in calls[0]
+    assert "reasoner=rustdl" in calls[0]

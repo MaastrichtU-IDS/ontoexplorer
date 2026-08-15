@@ -4,7 +4,7 @@ A next-generation FAIR ontology repository — ingest, browse, query, and reason
 
 ## What it does
 
-- **Ingest** ontologies by IRI, URL, or file upload (OWL/XML, Turtle, RDF/XML, OBO, JSON-LD)
+- **Ingest** ontologies by IRI, URL, or file upload (OWL/XML, RDF/XML, Turtle, N-Triples, N-Quads, TriG, JSON-LD, OBO, Manchester, OWL Functional)
 - **Browse** class and property hierarchies with asserted and OWL-EL inferred views; keyboard-navigable (↑↓→←→, Enter)
 - **Search** across all ontologies from the home page — keyword prefix search, structured MOS expression query, and **vector semantic search** (type ≥ 3 characters to get semantically similar results alongside prefix matches); a "Searching…" indicator replaces "No results" while queries are in flight
 - **Semantic search** — nomic-ai/nomic-embed-text-v1.5 embeddings stored in pgvector; cosine-similarity search over term labels, definitions, synonyms, and ontological context (superclasses/subclasses)

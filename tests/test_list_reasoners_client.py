@@ -36,4 +36,4 @@ async def test_available_reasoner_names_falls_back_when_unreachable(monkeypatch)
 
     monkeypatch.setattr(reasoning.httpx, "AsyncClient", lambda *a, **k: _Client())
     names = await reasoning.available_reasoner_names()
-    assert names == {"rdflib", "rustdl", "konclude"}   # known-names fallback (whelk removed)
+    assert names == {"rustdl", "konclude", "km"}   # known-names fallback

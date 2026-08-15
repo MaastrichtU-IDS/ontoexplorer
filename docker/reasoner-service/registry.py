@@ -6,12 +6,9 @@ the app decide what a given reasoner can do (e.g. Konclude cannot justify).
 """
 from __future__ import annotations
 
-import io
 import os
 from dataclasses import dataclass
 from typing import Literal, Protocol
-
-import rdflib
 
 from classifier import ClassificationResult
 
@@ -51,30 +48,16 @@ def _import_ok(mod: str) -> bool:
 # whelk removed: py-whelk segfaults in reasoner.inferred_axioms() on this amd64
 # build (never produced a classification here), so it is no longer registered.
 # The EL role is covered by rustdl in saturation_only mode.
-
-
-# ── rdflib (legacy) ──────────────────────────────────────────────────────────
-class _RdflibBackend:
-    info = ReasonerInfo(
-        name="rdflib", profile="EL (legacy)",
-        capabilities=frozenset({"classify", "consistency"}),
-        available=True,
-    )
-
-    def classify_ntriples(self, ntriples, version_id, params=None):
-        from classifier import classify
-        g = rdflib.Graph()
-        g.parse(io.StringIO(ntriples), format="nt")
-        return classify(g, version_id)
-
-    def justify(self, ntriples, sub, sup, max_justifications, version_id=None):
-        raise NotImplementedError("rdflib backend does not expose justifications in SP1")
+#
+# rdflib (legacy) removed: the pure-Python CR1–CR6 EL classifier is retired —
+# rustdl (EL saturation) + km cover EL, rustdl/konclude cover DL. It was slow,
+# unmaintained, and never the default.
 
 
 # Backends registered lazily so importing rustdl/konclude modules (which may be
 # absent) does not break the registry import.
 def _build_registry() -> dict[str, Backend]:
-    reg: dict[str, Backend] = {"rdflib": _RdflibBackend()}
+    reg: dict[str, Backend] = {}
     from rustdl_backend import RustdlBackend
     from konclude_backend import KoncludeBackend
     from km_backend import KmBackend
