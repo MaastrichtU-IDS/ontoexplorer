@@ -223,14 +223,26 @@ def compute_justification_endpoint(version_id: str, req: JustificationRequest):
     Synchronously compute justification(s) and cache result.
     Long-running; called by the compute_justification Celery task.
     """
+    import os
     import time
+    # `reasoner` is the CLASSIFYING reasoner — used only to locate the version's
+    # input axioms and to key the justification cache. Justification itself is a
+    # property of the ontology + entailment, not of the classifier, so we run it
+    # through a dedicated justifier (rustdl by default) that works for every
+    # version — including konclude/km/rdflib ones, which have no native justify.
     reasoner = req.reasoner or default_reasoner()
     try:
-        backend = get_backend(reasoner)
+        get_backend(reasoner)
     except KeyError:
         raise HTTPException(422, f"unknown reasoner '{reasoner}'")
-    if "justify" not in backend.info.capabilities:
-        raise HTTPException(422, f"reasoner '{reasoner}' does not support justifications")
+
+    justifier_name = os.getenv("JUSTIFY_REASONER", "rustdl")
+    try:
+        justifier = get_backend(justifier_name)
+    except KeyError:
+        raise HTTPException(422, f"justifier '{justifier_name}' is not registered")
+    if not justifier.info.available or "justify" not in justifier.info.capabilities:
+        raise HTTPException(422, f"justifier '{justifier_name}' is unavailable")
 
     _load_or_404(version_id, reasoner)  # ensure classification exists
 
@@ -253,11 +265,12 @@ def compute_justification_endpoint(version_id: str, req: JustificationRequest):
     # request lifetime is still bounded by the client's HTTP timeout, and
     # the per-step is_entailed calls are bounded by ontology size.
     try:
-        sets, fmt = backend.justify(ntriples, req.sub, sup, req.max_justifications)
+        sets, fmt = justifier.justify(ntriples, req.sub, sup, req.max_justifications)
     except Exception:
         sets, fmt = [], "ntriples"
         log.exception("justification_compute_failed", extra={
             "version_id": version_id, "sub": req.sub, "sup": sup,
+            "justifier": justifier_name,
         })
 
     elapsed_ms = round((time.monotonic() - t0) * 1000, 1)
@@ -265,7 +278,8 @@ def compute_justification_endpoint(version_id: str, req: JustificationRequest):
     response = {
         "justification_id": str(uuid.uuid4()),
         "version_id": version_id,
-        "reasoner": reasoner,
+        "reasoner": reasoner,        # the classifying reasoner
+        "justifier": justifier_name,  # the reasoner that produced the justification
         "sub": req.sub,
         "sup": sup,
         "format": fmt,

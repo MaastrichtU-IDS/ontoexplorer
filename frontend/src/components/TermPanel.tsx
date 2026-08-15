@@ -42,10 +42,9 @@ interface Props {
   slug: string
   singlePane?: boolean
   lang?: string | null
-  /** The version's reasoner (e.g. "whelk", "rustdl", "konclude"), used to
-   *  decide whether the "inference" explain buttons can be enabled — looked
-   *  up against `api.reasoners.list()` capabilities. Undefined means unknown
-   *  (defaults to enabled rather than wrongly disabling). */
+  /** @deprecated Justification is now reasoner-agnostic (computed via a
+   *  dedicated justifier in the reasoner-service), so the version's own reasoner
+   *  no longer gates the explain buttons. Accepted but ignored. */
   versionReasoner?: string | null
 }
 
@@ -344,7 +343,7 @@ function JustificationDisplay({ justifications, labelMap, labels, slug, vid }: {
 }
 
 // Tooltip/disabled styling shared by both "inference" explain toggles.
-const NO_JUSTIFY_TITLE = 'This reasoner does not produce explanations'
+const NO_JUSTIFY_TITLE = 'Justification unavailable — no justify-capable reasoner is up'
 
 function InferredClassRow({ c, slug, vid, ontologyId, versionId, termIri, canJustify, labelMap }: {
   c: ClassRef; slug: string; vid: string; ontologyId: string; versionId: string; termIri: string
@@ -1693,7 +1692,7 @@ function PropertyBody({ data, slug, ontologyId, roleMap, versionId, lang }: {
   )
 }
 
-export default function TermPanel({ ontologyId, versionId, termIri, slug, singlePane = false, lang, versionReasoner }: Props) {
+export default function TermPanel({ ontologyId, versionId, termIri, slug, singlePane = false, lang }: Props) {
   const { data: baseData, isLoading, error } = useTerm(ontologyId, versionId, termIri, lang)
   // Lazy fetch of the three expensive sections deferred by the backend. Merged
   // into `data` once it arrives so the rendering below doesn't need to branch.
@@ -1713,10 +1712,13 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
     queryFn: () => api.reasoners.list(),
     staleTime: 5 * 60_000,
   })
-  const reasonerInfo = versionReasoner ? reasonersData?.find(r => r.name === versionReasoner) : undefined
-  // Unknown reasoner (not yet loaded, or not found in the list) defaults to
-  // enabled — only a confirmed missing `justify` capability disables it.
-  const canJustify = !reasonerInfo || reasonerInfo.capabilities.includes('justify')
+  // Justification is reasoner-agnostic: the reasoner-service computes it via a
+  // dedicated justifier (rustdl) regardless of which reasoner classified this
+  // version, so explanations are available for ANY version as long as a
+  // justify-capable reasoner is up. While the catalog is still loading, default
+  // to enabled (unknown → enabled, never wrongly disable).
+  const canJustify = reasonersData === undefined
+    || reasonersData.some(r => r.available && r.capabilities.includes('justify'))
 
   if (isLoading) return <div style={{ padding: '1rem', color: 'var(--text-dim)' }}>Loading…</div>
   if (error || !baseData) return <div style={{ padding: '1rem', color: 'var(--text-dim)' }}>Term not found</div>
