@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { api } from '../lib/api'
+import IriAutocomplete from './IriAutocomplete'
 
 /**
  * Incremental EL++ reasoning workbench (km) for one ontology version. Start a
@@ -79,9 +80,11 @@ export default function IncrementalReasoningPanel({ ontologyId, versionId }: {
       {session && (
         <>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <input style={input} placeholder="sub class IRI" value={sub} onChange={e => setSub(e.target.value)} />
+            <IriAutocomplete ontologyId={ontologyId} versionId={versionId}
+              value={sub} onChange={setSub} placeholder="sub class (name or IRI)" style={input} />
             <span style={{ color: 'var(--text-dim)' }}>⊑</span>
-            <input style={input} placeholder="super class IRI" value={sup} onChange={e => setSup(e.target.value)} />
+            <IriAutocomplete ontologyId={ontologyId} versionId={versionId}
+              value={sup} onChange={setSup} placeholder="super class (name or IRI)" style={input} />
             <button type="button" style={btn} onClick={() => ask.mutate()} disabled={!canQuery || ask.isPending}>
               {ask.isPending ? '…' : 'Ask'}
             </button>
