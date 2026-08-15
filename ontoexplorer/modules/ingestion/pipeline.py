@@ -43,7 +43,7 @@ from ontoexplorer.modules.ingestion.format_detect import OntologyFormat, detect_
 from ontoexplorer.modules.ingestion.horned_convert import (
     CONVERTIBLE,
     HornedConvertError,
-    to_ntriples,
+    to_turtle,
 )
 from ontoexplorer.modules.ingestion.import_resolver import resolve_imports, resolve_imports_sparql
 from ontoexplorer.modules.ingestion.parser import parse_ontology
@@ -157,14 +157,15 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
 
     # ── Step 2+6: Load into Oxigraph (streaming, horned-convert, or rdflib) ────
     if fmt in CONVERTIBLE:
-        # Manchester/OBO: no RDF parser in the stack reads these, so convert to
-        # N-Triples with horned-convert and stream those into Oxigraph via the
-        # normal fast path. OBO is also parseable by rdflib (lower fidelity), so
-        # fall back to it if conversion fails; Manchester has no fallback.
+        # Manchester/OBO/OWL-Functional: no RDF parser in the stack reads these,
+        # so convert to Turtle with horned-convert and stream that into Oxigraph
+        # via the normal fast path (Turtle so relative IRIs resolve against the
+        # loader's base_iri). OBO is also parseable by rdflib (lower fidelity),
+        # so fall back to it if conversion fails; the others have no fallback.
         try:
-            nt_bytes = to_ntriples(source.data, fmt)
+            ttl_bytes = to_turtle(source.data, fmt)
             triple_count = bulk_load_bytes(
-                ontology_id, version_id, nt_bytes, "application/n-triples")
+                ontology_id, version_id, ttl_bytes, "text/turtle")
             log.info("horned_converted", fmt=fmt.value, triples=triple_count)
             graph = None
         except HornedConvertError as exc:
