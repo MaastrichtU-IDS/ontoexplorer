@@ -433,7 +433,7 @@ describe('justification explain UI', () => {
     expect(screen.queryByText(`<${A}>`)).not.toBeInTheDocument()
   })
 
-  test('disables the inference button with a tooltip when the reasoner has no justify capability (konclude)', async () => {
+  test('disables the inference button with a tooltip when NO justify-capable reasoner is up', async () => {
     mockCurrentTerm = mockTermWithInferredSuper
     mockReasonersList.mockResolvedValue([
       { name: 'konclude', profile: 'DL', capabilities: ['classify', 'consistency'], available: true },
@@ -443,13 +443,14 @@ describe('justification explain UI', () => {
 
     const button = await screen.findByRole('button', { name: 'inference' })
     await waitFor(() => expect(button).toBeDisabled())
-    expect(button).toHaveAttribute('title', 'This reasoner does not produce explanations')
+    expect(button).toHaveAttribute('title', 'Justification unavailable — no justify-capable reasoner is up')
   })
 
-  test.each(['whelk', 'rustdl'])('enables the inference button for %s (has justify)', async (reasonerName) => {
+  // Justification is reasoner-agnostic: even a konclude-classified version can be
+  // explained as long as a justify-capable reasoner (rustdl) is in the catalog.
+  test.each(['whelk', 'rustdl', 'konclude'])('enables the inference button for a %s version when a justifier is up', async (reasonerName) => {
     mockCurrentTerm = mockTermWithInferredSuper
     mockReasonersList.mockResolvedValue([
-      { name: 'whelk', profile: 'EL', capabilities: ['classify', 'consistency', 'justify'], available: true },
       { name: 'rustdl', profile: 'DL', capabilities: ['classify', 'consistency', 'justify'], available: true },
       { name: 'konclude', profile: 'DL', capabilities: ['classify', 'consistency'], available: true },
     ])
