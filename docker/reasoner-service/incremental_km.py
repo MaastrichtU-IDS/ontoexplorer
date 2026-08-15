@@ -148,7 +148,9 @@ class KmSession:
             "remove_clause_ids": remove_clause_ids or [],
         })
         if r.get("status") == "ok":
-            self.revision = r.get("revision", self.revision)
+            # km nests the IncrementalChange (revision, added_clause_ids, …) under
+            # `update`; `inconsistent` is reported at the top level.
+            self.revision = r.get("update", {}).get("revision", self.revision)
             self.inconsistent = r.get("inconsistent", self.inconsistent)
         return r
 
