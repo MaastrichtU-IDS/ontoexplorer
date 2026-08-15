@@ -151,6 +151,39 @@ async def classify_v2(
     raise TimeoutError(f"ELK classification for {version_id} did not complete within {max_wait}s")
 
 
+# ── Incremental EL++ reasoning sessions (km) — thin proxies to the reasoner-service ──
+
+async def incremental_create(version_id: str, reasoner: str) -> dict:
+    async with httpx.AsyncClient(timeout=600.0) as client:
+        resp = await client.post(_elk_url("/incremental"),
+                                 json={"version_id": version_id, "reasoner": reasoner})
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def incremental_subsumed(session_id: str, sub: str, sup: str) -> dict:
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(_elk_url(f"/incremental/{session_id}/subsumed"),
+                                 json={"sub": sub, "sup": sup})
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def incremental_assert(session_id: str, sub: str, sup: str) -> dict:
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(_elk_url(f"/incremental/{session_id}/assert"),
+                                 json={"sub": sub, "sup": sup})
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def incremental_close(session_id: str) -> dict:
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.delete(_elk_url(f"/incremental/{session_id}"))
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def superclasses(version_id: str, class_iri: str, direct: bool = False, reasoner: str = "rustdl") -> dict:
     """Return all (or direct-only) inferred superclasses of class_iri.
 
