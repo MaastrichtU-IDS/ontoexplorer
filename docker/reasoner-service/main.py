@@ -30,6 +30,10 @@ _classifier_pool = ThreadPoolExecutor(max_workers=1)
 # Track (version_id, reasoner) pairs in progress so GET /classify/{id} returns 409 while running
 _in_progress: set[tuple[str, str]] = set()
 
+# km-backed incremental EL++ reasoning sessions (transient, in-memory).
+from incremental_km import KmError, OutOfFragment, SessionStore  # noqa: E402
+_incremental_sessions = SessionStore()
+
 
 # ── Request / Response models ─────────────────────────────────────────────────
 
@@ -305,6 +309,92 @@ def get_justification(version_id: str, justification_id: str):
 def invalidate(version_id: str):
     invalidate_version(version_id)
     return {"detail": f"Cache invalidated for version {version_id}"}
+
+
+# ── Incremental EL++ reasoning (km) ───────────────────────────────────────────
+# A stateful session over one ontology: add/remove/change axioms and query
+# subsumption without re-classifying. EL++ only (km rejects non-EL fragments).
+# Sessions are transient (in-memory; dropped on restart).
+
+class IncrementalCreateRequest(BaseModel):
+    version_id: str | None = None
+    reasoner: str | None = None   # which classification's input axioms to load
+    ntriples: str | None = None   # or supply the ontology directly
+
+
+class ChangeRequest(BaseModel):
+    add_clauses: list = []
+    remove_clause_ids: list = []
+
+
+class SubsumedRequest(BaseModel):
+    sub: str
+    sup: str
+
+
+@app.post("/incremental", status_code=201)
+def incremental_create(req: IncrementalCreateRequest):
+    if req.ntriples:
+        ntriples = req.ntriples
+    elif req.version_id:
+        ntriples = load_input_axioms(req.version_id, req.reasoner or default_reasoner())
+        if not ntriples:
+            raise HTTPException(404, "no cached input axioms for that version/reasoner — classify it first")
+    else:
+        raise HTTPException(422, "provide ntriples or version_id")
+    try:
+        sid, session = _incremental_sessions.create(ntriples)
+    except OutOfFragment as exc:
+        raise HTTPException(422, f"ontology is outside km's EL++ fragment: {exc}")
+    except KmError as exc:
+        raise HTTPException(500, f"km session error: {exc}")
+    stats = session.stats()
+    return {
+        "session_id": sid,
+        "revision": session.revision,
+        "inconsistent": session.inconsistent,
+        "clause_ids": stats.get("clause_ids", []),
+        "total_clauses": stats.get("total_clauses"),
+    }
+
+
+def _get_session(session_id: str):
+    session = _incremental_sessions.get(session_id)
+    if session is None:
+        raise HTTPException(404, "session not found (unknown, closed, or evicted)")
+    return session
+
+
+@app.post("/incremental/{session_id}/subsumed")
+def incremental_subsumed(session_id: str, req: SubsumedRequest):
+    session = _get_session(session_id)
+    try:
+        entailed = session.is_subsumed_by(req.sub, req.sup)
+    except KmError as exc:
+        raise HTTPException(500, f"km session error: {exc}")
+    return {"sub": req.sub, "sup": req.sup, "entailed": entailed, "revision": session.revision}
+
+
+@app.post("/incremental/{session_id}/change")
+def incremental_change(session_id: str, req: ChangeRequest):
+    session = _get_session(session_id)
+    try:
+        result = session.change(add_clauses=req.add_clauses, remove_clause_ids=req.remove_clause_ids)
+    except KmError as exc:
+        raise HTTPException(500, f"km session error: {exc}")
+    if result.get("status") != "ok":
+        raise HTTPException(422, f"change rejected: {result}")
+    return {"revision": session.revision, "inconsistent": session.inconsistent, "update": result.get("update")}
+
+
+@app.get("/incremental/{session_id}/stats")
+def incremental_stats(session_id: str):
+    return _get_session(session_id).stats()
+
+
+@app.delete("/incremental/{session_id}")
+def incremental_close(session_id: str):
+    return {"closed": _incremental_sessions.close(session_id)}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
