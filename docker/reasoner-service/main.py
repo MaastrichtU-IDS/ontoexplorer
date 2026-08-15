@@ -341,6 +341,10 @@ class SubsumedRequest(BaseModel):
     sup: str
 
 
+class AssertAxiomsRequest(BaseModel):
+    ofn: str          # one or more OWL functional-syntax axioms (full IRIs)
+
+
 @app.post("/incremental", status_code=201)
 def incremental_create(req: IncrementalCreateRequest):
     if req.ntriples:
@@ -396,6 +400,22 @@ def incremental_assert(session_id: str, req: SubsumedRequest):
         raise HTTPException(422, f"assert rejected: {result}")
     # Surface the clause id(s) km assigned so the caller can retract this exact
     # axiom later via /change {remove_clause_ids}. km nests them under `update`.
+    return {"revision": session.revision, "inconsistent": session.inconsistent,
+            "clause_ids": result.get("update", {}).get("added_clause_ids", [])}
+
+
+@app.post("/incremental/{session_id}/assert_axioms")
+def incremental_assert_axioms(session_id: str, req: AssertAxiomsRequest):
+    """Add arbitrary EL++ axioms (OWL functional syntax, full IRIs) to the session."""
+    session = _get_session(session_id)
+    try:
+        result = session.assert_axioms(req.ofn)
+    except OutOfFragment as exc:
+        raise HTTPException(422, f"not EL++ (out of fragment): {exc}")
+    except KmError as exc:
+        raise HTTPException(422, str(exc))
+    if result.get("status") != "ok":
+        raise HTTPException(422, f"assert rejected: {result}")
     return {"revision": session.revision, "inconsistent": session.inconsistent,
             "clause_ids": result.get("update", {}).get("added_clause_ids", [])}
 

@@ -16,7 +16,8 @@ export default function IncrementalReasoningPanel({ ontologyId, versionId }: {
   const [sub, setSub] = useState('')
   const [sup, setSup] = useState('')
   const [result, setResult] = useState<{ sub: string; sup: string; entailed: boolean | null } | null>(null)
-  const [asserted, setAsserted] = useState<{ sub: string; sup: string; clauseIds: number[] }[]>([])
+  const [asserted, setAsserted] = useState<{ label: string; clauseIds: number[] }[]>([])
+  const [axiomText, setAxiomText] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   // Close the session when the panel unmounts.
@@ -43,12 +44,28 @@ export default function IncrementalReasoningPanel({ ontologyId, versionId }: {
       setSession(s => s ? { ...s, revision: r.revision, inconsistent: r.inconsistent } : s)
       const a = ctx as { sub: string; sup: string }
       if (r.clause_ids?.length) {
-        setAsserted(list => [...list, { sub: a.sub, sup: a.sup, clauseIds: r.clause_ids }])
+        setAsserted(list => [...list, { label: `${a.sub} ⊑ ${a.sup}`, clauseIds: r.clause_ids }])
       }
       ask.mutate()   // re-run the query so the flip is visible
     },
     onMutate: () => ({ sub: sub.trim(), sup: sup.trim() }),
     onError: (e: unknown) => setError((e as Error)?.message ?? 'Assert failed'),
+  })
+
+  const assertAxioms = useMutation({
+    mutationFn: () => api.ontologies.incremental.assertAxioms(ontologyId, versionId, session!.id, axiomText.trim()),
+    onSuccess: (r, _v, ctx) => {
+      setError(null)
+      setSession(s => s ? { ...s, revision: r.revision, inconsistent: r.inconsistent } : s)
+      const text = ctx as string
+      if (r.clause_ids?.length) {
+        setAsserted(list => [...list, { label: text.replace(/\s+/g, ' ').slice(0, 120), clauseIds: r.clause_ids }])
+      }
+      setAxiomText('')
+      if (canQuery) ask.mutate()   // refresh the current query if one is set
+    },
+    onMutate: () => axiomText.trim(),
+    onError: (e: unknown) => setError((e as Error)?.message ?? 'Assert failed (is it valid EL++ functional syntax?)'),
   })
 
   const retract = useMutation({
@@ -129,18 +146,44 @@ export default function IncrementalReasoningPanel({ ontologyId, versionId }: {
               </span>
               {asserted.map((a, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                  <code style={{ fontSize: 11 }}>{a.sub}</code> ⊑ <code style={{ fontSize: 11 }}>{a.sup}</code>
+                  <code style={{ fontSize: 11, wordBreak: 'break-all' }}>{a.label}</code>
                   <button type="button"
                           onClick={() => retract.mutate(a.clauseIds)}
                           disabled={retract.isPending}
                           title="Retract this hypothetical axiom"
-                          style={{ ...btn, fontSize: 11, padding: '1px 6px', color: 'var(--red)' }}>
+                          style={{ ...btn, fontSize: 11, padding: '1px 6px', color: 'var(--red)', flexShrink: 0 }}>
                     ✕ retract
                   </button>
                 </div>
               ))}
             </div>
           )}
+
+          <details style={{ fontSize: 12 }}>
+            <summary style={{ cursor: 'pointer', color: 'var(--text-dim)' }}>
+              Advanced: assert arbitrary axioms (OWL functional syntax)
+            </summary>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
+              <textarea
+                value={axiomText}
+                onChange={e => setAxiomText(e.target.value)}
+                placeholder={'SubClassOf(<http://…/A> ObjectSomeValuesFrom(<http://…/r> <http://…/B>))\nDisjointClasses(<http://…/A> <http://…/C>)'}
+                rows={3}
+                style={{ ...input, fontFamily: 'var(--font-mono, monospace)', resize: 'vertical' }}
+              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button type="button" style={btn}
+                        onClick={() => assertAxioms.mutate()}
+                        disabled={!session || !axiomText.trim() || assertAxioms.isPending}
+                        title="Normalize and add these axioms to the live session (must be EL++)">
+                  {assertAxioms.isPending ? '…' : '+ Assert axioms'}
+                </button>
+                <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+                  one or more axioms, full IRIs; EL++ only
+                </span>
+              </div>
+            </div>
+          </details>
         </>
       )}
 

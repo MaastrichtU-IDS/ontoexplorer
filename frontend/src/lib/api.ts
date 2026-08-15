@@ -1227,6 +1227,10 @@ export const api = {
         request<{ revision: number; inconsistent: boolean; clause_ids: number[] }>(
           `/ontologies/${oid}/${vid}/incremental/${sid}/assert`,
           { method: 'POST', body: JSON.stringify({ sub, sup }) }),
+      assertAxioms: (oid: string, vid: string, sid: string, ofn: string) =>
+        request<{ revision: number; inconsistent: boolean; clause_ids: number[] }>(
+          `/ontologies/${oid}/${vid}/incremental/${sid}/assert-axioms`,
+          { method: 'POST', body: JSON.stringify({ ofn }) }),
       retract: (oid: string, vid: string, sid: string, clauseIds: number[]) =>
         request<{ revision: number; inconsistent: boolean }>(
           `/ontologies/${oid}/${vid}/incremental/${sid}/retract`,

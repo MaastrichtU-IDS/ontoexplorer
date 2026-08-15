@@ -177,6 +177,15 @@ async def incremental_assert(session_id: str, sub: str, sup: str) -> dict:
         return resp.json()
 
 
+async def incremental_assert_axioms(session_id: str, ofn: str) -> dict:
+    """Add arbitrary EL++ axioms (OWL functional syntax) to the session."""
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(_elk_url(f"/incremental/{session_id}/assert_axioms"),
+                                 json={"ofn": ofn})
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def incremental_retract(session_id: str, clause_ids: list[int]) -> dict:
     """Remove previously-asserted clauses (by the ids assert returned)."""
     async with httpx.AsyncClient(timeout=60.0) as client:

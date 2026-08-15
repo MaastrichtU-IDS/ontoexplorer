@@ -53,8 +53,17 @@ def ontology_to_clauses(ntriples: str) -> tuple[list, dict]:
     ).decode("utf-8")
     onto = pyhornedowl.open_ontology_from_string(rdfxml, serialization="rdf")
     ofn = onto.save_to_string(serialization="ofn")
+    return _run_km_ofn(ofn)
 
+
+def _run_km_ofn(ofn: str) -> tuple[list, dict]:
+    """Run `km ofn` on OWL-functional text → (normalized clauses, iri_map).
+
+    iri_map is {km-internal-name: full IRI} for the concepts and roles the input
+    mentions. Raises OutOfFragment when km rejects a non-EL++ input.
+    """
     import tempfile
+
     fd, path = tempfile.mkstemp(suffix=".ofn")
     try:
         with os.fdopen(fd, "w") as fh:
@@ -96,6 +105,10 @@ class KmSession:
             raise KmError(f"km init failed: {init}")
         self.revision = init.get("revision", 0)
         self.inconsistent = init.get("inconsistent", False)
+        # Monotonic counter giving each assert_axioms batch a unique name prefix
+        # so km's normalization-introduced names (Q_n, skolem f_) never collide
+        # with the session's or a prior batch's names.
+        self._assert_seq = 0
 
     def _cmd(self, payload: dict) -> dict:
         with self._lock:
@@ -140,6 +153,62 @@ class KmSession:
             "head": [{"kind": "concept", "concept": sup, "term": {"kind": "var", "name": "x"}}],
         }
         return self.change(add_clauses=[clause])
+
+    def assert_axioms(self, ofn_axioms: str) -> dict:
+        """Incrementally add arbitrary EL++ axioms given as OWL functional-syntax
+        text (one or more axioms, full IRIs). km normalizes them to EL clauses;
+        we remap those clauses into this session's namespace — real entities by
+        IRI (minting a fresh name for any not already in the signature), and
+        km's normalization-introduced names (Q_n, skolem functions) to
+        batch-unique names. Raises OutOfFragment for non-EL++ input, KmError on
+        parse failure or if nothing parsed."""
+        wrapped = "Ontology(\n" + ofn_axioms.strip() + "\n)"
+        clauses, ax_map = _run_km_ofn(wrapped)  # ax_map: {local_name: full_iri}
+        if not clauses:
+            raise KmError("no axioms parsed from input")
+
+        self._assert_seq += 1
+        prefix = f"u{self._assert_seq}_"
+        name_remap: dict[str, str] = {}
+        # Real entities: map to the session's internal name by IRI; a new IRI
+        # (not yet in the ontology) gets a fresh name registered in the signature.
+        for local, iri in ax_map.items():
+            sess = self._iri_to_name.get(iri)
+            if sess is None:
+                sess = prefix + local
+                self._iri_to_name[iri] = sess
+                self._name_to_iri[sess] = iri
+            name_remap[local] = sess
+
+        def rname(n: str) -> str:
+            # Normalization-introduced (e.g. Q_0): batch-prefixed, stable in-batch.
+            if n not in name_remap:
+                name_remap[n] = prefix + n
+            return name_remap[n]
+
+        fn_remap: dict[str, str] = {}
+
+        def rterm(t: dict) -> dict:
+            if t.get("kind") == "fun":
+                f = t["function"]
+                fn_remap.setdefault(f, prefix + f)
+                return {"kind": "fun", "function": fn_remap[f], "arg": rterm(t["arg"])}
+            return t
+
+        def relem(e: dict) -> dict:
+            if e.get("kind") == "concept":
+                return {"kind": "concept", "concept": rname(e["concept"]),
+                        "term": rterm(e["term"])}
+            if e.get("kind") == "role":
+                return {"kind": "role", "role": rname(e["role"]),
+                        "source": rterm(e["source"]), "target": rterm(e["target"])}
+            return e
+
+        remapped = [
+            {"body": [relem(e) for e in c["body"]], "head": [relem(e) for e in c["head"]]}
+            for c in clauses
+        ]
+        return self.change(add_clauses=remapped)
 
     def change(self, add_clauses: list | None = None, remove_clause_ids: list | None = None) -> dict:
         r = self._cmd({

@@ -31,6 +31,10 @@ class _ClauseIds(BaseModel):
     clause_ids: list[int]
 
 
+class _Axioms(BaseModel):
+    ofn: str
+
+
 async def _version_reasoner(db: AsyncSession, ontology_id: str, version_id: str) -> str:
     v = (await db.execute(
         select(OntologyVersion).where(
@@ -85,6 +89,18 @@ async def assert_axiom(
 ):
     try:
         return await _reasoning.incremental_assert(session_id, body.sub, body.sup)
+    except httpx.HTTPStatusError as exc:
+        raise _proxy_error(exc)
+
+
+@router.post("/ontologies/{ontology_id}/{version_id}/incremental/{session_id}/assert-axioms",
+             summary="Assert arbitrary EL++ axioms (OWL functional syntax) into the session")
+async def assert_axioms(
+    ontology_id: str, version_id: str, session_id: str, body: _Axioms,
+    _: User = Depends(require_auth),
+):
+    try:
+        return await _reasoning.incremental_assert_axioms(session_id, body.ofn)
     except httpx.HTTPStatusError as exc:
         raise _proxy_error(exc)
 
