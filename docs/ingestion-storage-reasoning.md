@@ -104,3 +104,9 @@ non-blocking justification flow (peek cache → dispatch background job → poll
 - **Original upload** → MinIO (unconverted).
 - **Triples** → Oxigraph (raw bytes for RDF families; Turtle for Manchester/OBO/OFN).
 - **Reasoning** → N-Triples over HTTP; results + a per-version `.ofn` cached in Redis.
+
+## See also
+
+- [`reasoning-at-scale.md`](reasoning-at-scale.md) — forward-looking design for
+  how the reasoning tier should evolve under "many users × many ontologies"
+  (sharded workers, affinity routing, precompute-at-ingest). Not current state.
