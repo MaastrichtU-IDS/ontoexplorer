@@ -29,8 +29,8 @@ describe('IncrementalReasoningPanel', () => {
     await waitFor(() => expect(mockStart).toHaveBeenCalledWith('o1', 'v1'))
     expect(await screen.findByText(/session live/)).toBeInTheDocument()
 
-    fireEvent.change(screen.getByPlaceholderText('sub class IRI'), { target: { value: 'A' } })
-    fireEvent.change(screen.getByPlaceholderText('super class IRI'), { target: { value: 'B' } })
+    fireEvent.change(screen.getByPlaceholderText('sub class (name or IRI)'), { target: { value: 'A' } })
+    fireEvent.change(screen.getByPlaceholderText('super class (name or IRI)'), { target: { value: 'B' } })
 
     fireEvent.click(screen.getByRole('button', { name: 'Ask' }))
     await waitFor(() => expect(mockSubsumed).toHaveBeenCalledWith('o1', 'v1', 's1', 'A', 'B'))
