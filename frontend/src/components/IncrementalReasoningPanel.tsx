@@ -25,6 +25,19 @@ export default function IncrementalReasoningPanel({ ontologyId, versionId }: {
     if (session) api.ontologies.incremental.close(ontologyId, versionId, session.id).catch(() => {})
   }, [session, ontologyId, versionId])
 
+  // Sessions live in the reasoner-service's memory, so they vanish if it
+  // restarts (deploy/crash) or evicts them. Detect that and reset to the
+  // Start-session state instead of surfacing a raw error.
+  const handleError = (e: unknown, fallback: string) => {
+    const msg = (e as Error)?.message ?? fallback
+    if (/session not found/i.test(msg)) {
+      setSession(null); setResult(null); setAsserted([])
+      setError('Your session ended (the reasoner restarted or it expired) — click "Start session" to begin again.')
+    } else {
+      setError(msg)
+    }
+  }
+
   const start = useMutation({
     mutationFn: () => api.ontologies.incremental.start(ontologyId, versionId),
     onSuccess: r => { setError(null); setSession({ id: r.session_id, revision: r.revision, inconsistent: r.inconsistent, total: r.total_clauses }) },
@@ -34,7 +47,7 @@ export default function IncrementalReasoningPanel({ ontologyId, versionId }: {
   const ask = useMutation({
     mutationFn: () => api.ontologies.incremental.subsumed(ontologyId, versionId, session!.id, sub.trim(), sup.trim()),
     onSuccess: r => { setError(null); setResult({ sub: r.sub, sup: r.sup, entailed: r.entailed }) },
-    onError: (e: unknown) => setError((e as Error)?.message ?? 'Query failed'),
+    onError: (e: unknown) => handleError(e, 'Query failed'),
   })
 
   const assertAxiom = useMutation({
@@ -49,7 +62,7 @@ export default function IncrementalReasoningPanel({ ontologyId, versionId }: {
       ask.mutate()   // re-run the query so the flip is visible
     },
     onMutate: () => ({ sub: sub.trim(), sup: sup.trim() }),
-    onError: (e: unknown) => setError((e as Error)?.message ?? 'Assert failed'),
+    onError: (e: unknown) => handleError(e, 'Assert failed'),
   })
 
   const assertAxioms = useMutation({
@@ -65,7 +78,7 @@ export default function IncrementalReasoningPanel({ ontologyId, versionId }: {
       if (canQuery) ask.mutate()   // refresh the current query if one is set
     },
     onMutate: () => axiomText.trim(),
-    onError: (e: unknown) => setError((e as Error)?.message ?? 'Assert failed (is it valid EL++ functional syntax?)'),
+    onError: (e: unknown) => handleError(e, 'Assert failed (is it valid EL++ functional syntax?)'),
   })
 
   const retract = useMutation({
@@ -77,12 +90,12 @@ export default function IncrementalReasoningPanel({ ontologyId, versionId }: {
       setAsserted(list => list.filter(a => a.clauseIds !== clauseIds))
       ask.mutate()   // re-run the query so the flip back is visible
     },
-    onError: (e: unknown) => setError((e as Error)?.message ?? 'Retract failed'),
+    onError: (e: unknown) => handleError(e, 'Retract failed'),
   })
 
   const canQuery = !!session && !!sub.trim() && !!sup.trim()
   const input: React.CSSProperties = {
-    fontSize: 13, padding: '5px 8px', borderRadius: 'var(--radius-sm)',
+    fontSize: 14, padding: '9px 11px', borderRadius: 'var(--radius-sm)',
     border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', flex: 1, minWidth: 0,
   }
   const btn: React.CSSProperties = {
@@ -114,19 +127,23 @@ export default function IncrementalReasoningPanel({ ontologyId, versionId }: {
 
       {session && (
         <>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <IriAutocomplete ontologyId={ontologyId} versionId={versionId}
-              value={sub} onChange={setSub} placeholder="sub class (name or IRI)" style={input} />
-            <span style={{ color: 'var(--text-dim)' }}>⊑</span>
-            <IriAutocomplete ontologyId={ontologyId} versionId={versionId}
-              value={sup} onChange={setSup} placeholder="super class (name or IRI)" style={input} />
-            <button type="button" style={btn} onClick={() => ask.mutate()} disabled={!canQuery || ask.isPending}>
-              {ask.isPending ? '…' : 'Ask'}
-            </button>
-            <button type="button" style={btn} onClick={() => assertAxiom.mutate()} disabled={!canQuery || assertAxiom.isPending}
-                    title="Add this subclass axiom to the live session (hypothetical)">
-              {assertAxiom.isPending ? '…' : '+ Assert ⊑'}
-            </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <IriAutocomplete ontologyId={ontologyId} versionId={versionId}
+                value={sub} onChange={setSub} placeholder="sub class" style={input} />
+              <span style={{ color: 'var(--text-dim)' }}>⊑</span>
+              <IriAutocomplete ontologyId={ontologyId} versionId={versionId}
+                value={sup} onChange={setSup} placeholder="super class" style={input} />
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" style={btn} onClick={() => ask.mutate()} disabled={!canQuery || ask.isPending}>
+                {ask.isPending ? '…' : 'Ask'}
+              </button>
+              <button type="button" style={btn} onClick={() => assertAxiom.mutate()} disabled={!canQuery || assertAxiom.isPending}
+                      title="Add this subclass axiom to the live session (hypothetical)">
+                {assertAxiom.isPending ? '…' : '+ Assert ⊑'}
+              </button>
+            </div>
           </div>
 
           {result && (
