@@ -259,6 +259,7 @@ export interface OntologyVersion {
    *  "rustdl", "konclude"). Look it up in `api.reasoners.list()` to find its
    *  capabilities — e.g. whether it supports `justify`. */
   reasoner?: string | null
+  reasoner_profile_id?: string | null
 }
 
 export interface Term {
@@ -938,6 +939,7 @@ export interface AdminOntologyEntry {
   embed_count: number
   reasoning_status: 'ready' | 'running' | 'not_started'
   reasoner?: string | null
+  reasoner_profile_id?: string | null
   version_created_at: string | null
 }
 
@@ -969,6 +971,7 @@ export interface AdminVersionEntry {
   embed_count: number
   reasoning_status: 'ready' | 'running' | 'not_started'
   reasoner?: string | null
+  reasoner_profile_id?: string | null
   version_created_at: string | null
   source_url: string | null
   is_latest: boolean
@@ -1196,10 +1199,10 @@ export const api = {
     // Fire-and-forget page-view beacon (deduped per visitor per day server-side).
     recordView: (id: string) => request<void>(`/ontologies/${id}/view`, { method: 'POST' }),
     // Re-reason a version with a chosen reasoner (owner/maintainer/admin).
-    reason: (oid: string, vid: string, reasoner?: string) =>
-      request<{ status: string; reasoner: string; version_id: string }>(
+    reason: (oid: string, vid: string, profileId?: string) =>
+      request<{ status: string; reasoner: string; profile_id: string | null; version_id: string }>(
         `/ontologies/${oid}/${vid}/reason`,
-        { method: 'POST', body: JSON.stringify({ reasoner: reasoner ?? null }) },
+        { method: 'POST', body: JSON.stringify({ profile_id: profileId ?? null }) },
       ),
     patch: (id: string, body: { shortname?: string | null; title?: string | null; preferred_lang?: string | null; groups?: string[]; current_version_id?: string | null }) =>
       request<Ontology>(`/ontologies/${id}`, {
@@ -1304,29 +1307,29 @@ export const api = {
         `/ontologies/${oid}/${vid}/justification?sub=${encodeURIComponent(sub)}&sup=${encodeURIComponent(sup)}&max_justifications=${max}`
       ),
 
-    submitByIri: (iri: string, reasoner?: string) =>
+    submitByIri: (iri: string, profileId?: string) =>
       request<{ task_id: string; status: string }>('/ontologies', {
         method: 'POST',
-        body: JSON.stringify({ iri, ...(reasoner ? { reasoner } : {}) }),
+        body: JSON.stringify({ iri, ...(profileId ? { profile_id: profileId } : {}) }),
       }),
-    submitByUrl: (url: string, reasoner?: string) =>
+    submitByUrl: (url: string, profileId?: string) =>
       request<{ task_id: string; status: string }>('/ontologies', {
         method: 'POST',
-        body: JSON.stringify({ url, ...(reasoner ? { reasoner } : {}) }),
+        body: JSON.stringify({ url, ...(profileId ? { profile_id: profileId } : {}) }),
       }),
-    submitFile: (file: File, reasoner?: string) => {
+    submitFile: (file: File, profileId?: string) => {
       const fd = new FormData()
       fd.append('file', file)
-      if (reasoner) fd.append('reasoner', reasoner)
+      if (profileId) fd.append('profile_id', profileId)
       return request<{ task_id: string; status: string }>('/ontologies', {
         method: 'POST',
         body: fd,
       })
     },
-    submitByContent: (content: string, format?: string, reasoner?: string) =>
+    submitByContent: (content: string, format?: string, profileId?: string) =>
       request<{ task_id: string; status: string }>('/ontologies', {
         method: 'POST',
-        body: JSON.stringify({ content, format, ...(reasoner ? { reasoner } : {}) }),
+        body: JSON.stringify({ content, format, ...(profileId ? { profile_id: profileId } : {}) }),
       }),
     delete: (id: string) =>
       request<void>(`/ontologies/${id}`, { method: 'DELETE' }),

@@ -75,7 +75,8 @@ async def classify_v2(
     graph: rdflib.Graph,
     version_id: str,
     reasoner: str = "rustdl",
-    saturation_only: bool = False,
+    params: dict | None = None,
+    force: bool = False,
 ) -> dict:
     """
     POST N-Triples to ELK service (returns 202 immediately), then poll until done.
@@ -84,22 +85,29 @@ async def classify_v2(
     Re-submits the job every RESUBMIT_INTERVAL seconds if still getting 409 — this handles
     ELK service restarts that clear the in-progress set but not the Redis cache.
 
-    ``saturation_only`` asks a DL backend (rustdl) to classify via EL closure
-    only (fast, complete for EL ontologies). Set by the caller for EL-profile
-    ontologies; ignored by backends that don't support it.
+    ``params`` is the reasoner profile's parameter dict (e.g. rustdl
+    {saturation_only, per_pair_timeout_ms, global_timeout_ms}, km {route}); each
+    backend reads the keys it knows. ``force`` invalidates any cached
+    classification first so changed params take effect — applied only to the
+    initial submit, never the periodic re-POSTs (which would otherwise discard a
+    result that completed mid-poll).
     """
+    params = params or {}
     ntriples = graph.serialize(format="nt")
     RESUBMIT_INTERVAL = 120  # re-POST if job still missing after this many seconds
 
-    async def _submit() -> dict:
+    async def _submit(force_now: bool) -> dict:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(_elk_url("/classify"),
                                      json={"ntriples": ntriples, "version_id": version_id,
-                                           "reasoner": reasoner, "saturation_only": saturation_only})
+                                           "reasoner": reasoner, "params": params,
+                                           "force": force_now,
+                                           # deprecated alias for a rolling deploy window
+                                           "saturation_only": bool(params.get("saturation_only", False))})
             resp.raise_for_status()
             return resp.json()
 
-    posted = await _submit()
+    posted = await _submit(force)
 
     # If already cached (status="done"), we're done
     if posted.get("status") == "done":
@@ -118,7 +126,7 @@ async def classify_v2(
         # Re-POST periodically to recover from ELK restarts that lose the in-progress state
         if elapsed - last_resubmit >= RESUBMIT_INTERVAL:
             last_resubmit = elapsed
-            posted = await _submit()
+            posted = await _submit(False)
             if posted.get("status") == "done":
                 break
 

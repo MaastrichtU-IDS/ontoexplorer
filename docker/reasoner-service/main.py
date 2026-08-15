@@ -37,12 +37,16 @@ class ClassifyRequest(BaseModel):
     ntriples: str
     version_id: str
     reasoner: str | None = None
-    # EL-closure fast path: when True, a DL backend (rustdl) skips the SROIQ
-    # tableau and classifies via EL saturation only — complete for EL-profile
-    # ontologies and orders of magnitude faster on large ones (e.g. GO). The
-    # API sets this when the ontology is in the OWL 2 EL profile. Ignored by
-    # backends that don't support it.
+    # Reasoner-specific parameters (from the selected reasoner profile), e.g.
+    # rustdl {saturation_only, per_pair_timeout_ms, global_timeout_ms} or km
+    # {route}. Each backend reads the keys it knows; others ignore them.
+    params: dict = {}
+    # Deprecated alias, folded into params.saturation_only when params omits it —
+    # kept so an older API still triggers EL saturation during a rolling deploy.
     saturation_only: bool = False
+    # Force recomputation: invalidate any cached classification for this version
+    # first (params changed → the (version, reasoner) cache key alone is stale).
+    force: bool = False
 
 
 class JustificationRequest(BaseModel):
@@ -84,6 +88,18 @@ def run_classify(req: ClassifyRequest):
     except KeyError:
         raise HTTPException(422, f"unknown reasoner '{reasoner}'")
 
+    # Effective params: profile params, with the deprecated saturation_only flag
+    # folded in when the caller didn't put it in params.
+    params = dict(req.params or {})
+    if req.saturation_only and "saturation_only" not in params:
+        params["saturation_only"] = True
+
+    # A forced (re)reason drops any cached classification/error for the version so
+    # new params actually take effect (the cache key is (version, reasoner) only).
+    if req.force:
+        from cache import invalidate_version
+        invalidate_version(req.version_id)
+
     # If already cached, this is a no-op re-submit — return 202 and the caller will GET it
     if load_classification(req.version_id, reasoner) is not None:
         return {"version_id": req.version_id, "reasoner": reasoner, "status": "done"}
@@ -102,6 +118,7 @@ def run_classify(req: ClassifyRequest):
         # before) straight to Redis; here we only watch its exit / timeout and
         # record a clean error on failure so GET /classify returns 500 instead
         # of hanging at 409 forever.
+        import json
         import os
         import subprocess
         import sys
@@ -120,7 +137,7 @@ def run_classify(req: ClassifyRequest):
             try:
                 proc = subprocess.run(
                     [sys.executable, worker, tmp_path, version_id, reasoner,
-                     str(req.saturation_only)],
+                     json.dumps(params)],
                     timeout=timeout_s, capture_output=True, text=True,
                 )
             except subprocess.TimeoutExpired:

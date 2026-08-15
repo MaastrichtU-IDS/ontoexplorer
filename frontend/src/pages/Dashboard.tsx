@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { api, slugFromIri, type Ontology, type OntologyVersion, type ReasonerInfo, type UsageCounts } from '../lib/api'
+import { api, slugFromIri, type Ontology, type OntologyVersion, type UsageCounts } from '../lib/api'
 import { useAuth } from '../hooks/useAuth'
 import ReindexWithReasoner from '../components/ReindexWithReasoner'
 
@@ -459,7 +459,7 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
               <ReindexWithReasoner
                 ontologyId={ontology.id}
                 versionId={latest.id}
-                currentReasoner={latest.reasoner}
+                currentProfileId={latest.reasoner_profile_id}
                 onQueued={() => {
                   qc.invalidateQueries({ queryKey: ['versions', ontology.id] })
                   qc.invalidateQueries({ queryKey: ['version-stats', ontology.id, latest.id] })
@@ -546,15 +546,15 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [showAdvanced, setShowAdvanced] = useState(false)
-  const [reasoner, setReasoner] = useState<string | undefined>(undefined)
+  const [profileId, setProfileId] = useState<string | undefined>(undefined)
 
-  const { data: reasonersData } = useQuery({
-    queryKey: ['reasoners'],
-    queryFn: () => api.reasoners.list(),
+  const { data: profilesData } = useQuery({
+    queryKey: ['reasoner-profiles'],
+    queryFn: () => api.reasonerProfiles.list(),
     enabled: showAdvanced,
     staleTime: 300_000,
   })
-  const availableReasoners: ReasonerInfo[] = (reasonersData ?? []).filter(r => r.available)
+  const profiles = profilesData?.profiles ?? []
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -563,14 +563,14 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
     try {
       let result: { task_id: string }
       if (tab === 'iri') {
-        result = await api.ontologies.submitByIri(value, reasoner)
+        result = await api.ontologies.submitByIri(value, profileId)
       } else if (tab === 'url') {
-        result = await api.ontologies.submitByUrl(value, reasoner)
+        result = await api.ontologies.submitByUrl(value, profileId)
       } else if (tab === 'upload') {
         if (!file) return
-        result = await api.ontologies.submitFile(file, reasoner)
+        result = await api.ontologies.submitFile(file, profileId)
       } else {
-        result = await api.ontologies.submitByContent(pasteContent, pasteFormat, reasoner)
+        result = await api.ontologies.submitByContent(pasteContent, pasteFormat, profileId)
       }
       setMessage(`Queued — task ID: ${result.task_id}`)
       setValue('')
@@ -690,10 +690,10 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
           {showAdvanced && (
             <div style={{ marginTop: '0.4rem' }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>
-                Reasoner
+                Reasoner profile
                 <select
-                  value={reasoner ?? ''}
-                  onChange={e => setReasoner(e.target.value || undefined)}
+                  value={profileId ?? ''}
+                  onChange={e => setProfileId(e.target.value || undefined)}
                   style={{
                     fontSize: 'var(--font-size-sm)',
                     background: 'var(--bg)',
@@ -704,8 +704,8 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
                   }}
                 >
                   <option value="">(default)</option>
-                  {availableReasoners.map(r => (
-                    <option key={r.name} value={r.name}>{r.name}</option>
+                  {profiles.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
               </label>

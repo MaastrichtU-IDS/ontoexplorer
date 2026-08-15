@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import Dashboard from './Dashboard'
@@ -60,19 +60,18 @@ vi.mock('../lib/api', () => ({
     admin: {
       checkUpdate: vi.fn().mockResolvedValue({ status: 'up_to_date' }),
     },
-    reasoners: {
-      list: vi.fn().mockResolvedValue([
-        { name: 'whelk', profile: 'EL', capabilities: ['classify'], available: true },
-        { name: 'rustdl', profile: 'DL', capabilities: ['classify', 'justify'], available: true },
-        { name: 'unavailable-one', profile: 'DL', capabilities: [], available: false },
-      ]),
+    reasonerProfiles: {
+      list: vi.fn().mockResolvedValue({ profiles: [
+        { id: 'p1', name: 'rustdl (default)', reasoner: 'rustdl', params: {}, is_default: true, description: null },
+        { id: 'p2', name: 'konclude', reasoner: 'konclude', params: {}, is_default: false, description: null },
+      ] }),
     },
   },
 }))
 
 import { api } from '../lib/api'
 const mockSubmitByIri = api.ontologies.submitByIri as ReturnType<typeof vi.fn>
-const mockReasonersList = api.reasoners.list as ReturnType<typeof vi.fn>
+const mockProfilesList = api.reasonerProfiles.list as ReturnType<typeof vi.fn>
 
 function wrap() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -128,20 +127,21 @@ test('Advanced disclosure is collapsed by default and hides the reasoner select'
   expect(screen.queryByLabelText(/reasoner/i)).not.toBeInTheDocument()
 })
 
-test('expanding Advanced reveals a reasoner select populated from reasoners.list, filtered to available', async () => {
+test('expanding Advanced reveals a reasoner-profile select populated from reasonerProfiles.list', async () => {
   wrap()
   fireEvent.click(screen.getByText('+ Add Ontology'))
   fireEvent.click(screen.getByText(/Advanced/))
 
-  await waitFor(() => expect(mockReasonersList).toHaveBeenCalled())
-  const select = await screen.findByLabelText(/reasoner/i)
+  await waitFor(() => expect(mockProfilesList).toHaveBeenCalled())
+  const select = await screen.findByLabelText(/reasoner profile/i) as HTMLSelectElement
   expect(select).toBeInTheDocument()
 
-  expect(screen.getByRole('option', { name: '(default)' })).toBeInTheDocument()
-  expect(screen.getByRole('option', { name: 'whelk' })).toBeInTheDocument()
-  expect(screen.getByRole('option', { name: 'rustdl' })).toBeInTheDocument()
-  // Unavailable reasoners must not be offered.
-  expect(screen.queryByRole('option', { name: 'unavailable-one' })).not.toBeInTheDocument()
+  // Scope option assertions to the add-form select (ontology-card reindex
+  // controls also render profile dropdowns on this page).
+  const opts = within(select)
+  expect(opts.getByRole('option', { name: '(default)' })).toBeInTheDocument()
+  expect(await opts.findByRole('option', { name: 'rustdl (default)' })).toBeInTheDocument()
+  expect(opts.getByRole('option', { name: 'konclude' })).toBeInTheDocument()
 })
 
 test('submitting with Advanced left collapsed calls submitByIri with no reasoner', async () => {
@@ -157,14 +157,14 @@ test('submitting with Advanced left collapsed calls submitByIri with no reasoner
   )
 })
 
-test('choosing a reasoner under Advanced threads it into the submit call', async () => {
+test('choosing a reasoner profile under Advanced threads it into the submit call', async () => {
   wrap()
   fireEvent.click(screen.getByText('+ Add Ontology'))
   fireEvent.click(screen.getByText(/Advanced/))
 
-  const select = await screen.findByLabelText(/reasoner/i)
-  await waitFor(() => expect(screen.getByRole('option', { name: 'rustdl' })).toBeInTheDocument())
-  fireEvent.change(select, { target: { value: 'rustdl' } })
+  const select = await screen.findByLabelText(/reasoner profile/i)
+  await waitFor(() => expect(screen.getByRole('option', { name: 'konclude' })).toBeInTheDocument())
+  fireEvent.change(select, { target: { value: 'p2' } })
 
   fireEvent.change(screen.getByPlaceholderText(/purl.obolibrary/), {
     target: { value: 'https://purl.obolibrary.org/obo/go.owl' },
@@ -172,7 +172,7 @@ test('choosing a reasoner under Advanced threads it into the submit call', async
   fireEvent.click(screen.getByText('Add'))
 
   await waitFor(() =>
-    expect(mockSubmitByIri).toHaveBeenCalledWith('https://purl.obolibrary.org/obo/go.owl', 'rustdl')
+    expect(mockSubmitByIri).toHaveBeenCalledWith('https://purl.obolibrary.org/obo/go.owl', 'p2')
   )
 })
 

@@ -78,6 +78,7 @@ class IngestionRequest:
     owner_id: str | None = None
     groups: list[str] = None  # type: ignore[assignment]
     reasoner: str = "rustdl"
+    reasoner_profile_id: str | None = None
 
     def __post_init__(self):
         if self.groups is None:
@@ -209,6 +210,7 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
         triple_count=triple_count,
         source_url=source.final_url or request.url or request.iri,
         reasoner=request.reasoner,
+        reasoner_profile_id=request.reasoner_profile_id,
     )
     db.add(version)
 
