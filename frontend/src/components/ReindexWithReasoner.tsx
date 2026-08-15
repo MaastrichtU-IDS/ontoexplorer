@@ -3,33 +3,34 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { api } from '../lib/api'
 
 /**
- * Reasoner dropdown + an index/re-reason icon button for a single ontology
- * version. Defaults the dropdown to the version's previously-selected reasoner.
- * Used on both the owner Dashboard and the Admin dashboard — both hit the same
- * owner-scoped endpoint (can_edit gates it; admins pass).
+ * Reasoner-profile dropdown + a re-reason icon button for a single ontology
+ * version. Picks a reasoner PROFILE (reasoner + params) and re-classifies with it.
+ * On the owner Dashboard it offers dashboard-selectable profiles; on the Admin
+ * dashboard (admin) it offers all non-archived profiles.
  */
 export default function ReindexWithReasoner({
-  ontologyId, versionId, currentReasoner, onQueued,
+  ontologyId, versionId, currentProfileId, admin = false, onQueued,
 }: {
   ontologyId: string
   versionId: string
-  currentReasoner?: string | null
+  currentProfileId?: string | null
+  admin?: boolean
   onQueued?: () => void
 }) {
   const { data } = useQuery({
-    queryKey: ['reasoners'],
-    queryFn: () => api.reasoners.list(),
-    staleTime: 300_000,
+    queryKey: admin ? ['admin', 'reasoner-profiles'] : ['reasoner-profiles'],
+    queryFn: () => (admin ? api.admin.reasonerProfiles() : api.reasonerProfiles.list()),
+    staleTime: 60_000,
   })
-  // Only reasoners that are up and can classify are usable for (re)reasoning.
-  const usable = (data ?? []).filter(r => r.available && r.capabilities.includes('classify'))
+  const profiles = (data?.profiles ?? []).filter(p => !p.archived)
 
   const [picked, setPicked] = useState('')
-  // Effective choice: explicit pick → the version's previous reasoner → first usable.
-  const chosen = picked || currentReasoner || usable[0]?.name || ''
-  // Keep the current reasoner selectable even if the service didn't list it.
-  const names = usable.map(r => r.name)
-  const options = chosen && !names.includes(chosen) ? [chosen, ...names] : names
+  // Effective choice: explicit pick → the version's bound profile → default → first.
+  const chosen = picked
+    || (currentProfileId && profiles.some(p => p.id === currentProfileId) ? currentProfileId : '')
+    || profiles.find(p => p.is_default)?.id
+    || profiles[0]?.id
+    || ''
 
   const mutation = useMutation({
     mutationFn: () => api.ontologies.reason(ontologyId, versionId, chosen || undefined),
@@ -51,29 +52,29 @@ export default function ReindexWithReasoner({
       <select
         value={chosen}
         onChange={e => setPicked(e.target.value)}
-        disabled={mutation.isPending || options.length === 0}
-        title="Reasoner"
+        disabled={mutation.isPending || profiles.length === 0}
+        title="Reasoner profile"
         style={{
           fontSize: 11, padding: '2px 4px', borderRadius: 'var(--radius-sm)',
           border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)',
-          maxWidth: 120,
+          maxWidth: 150,
         }}
       >
-        {options.length === 0 && <option value="">—</option>}
-        {options.map(n => <option key={n} value={n}>{n}</option>)}
+        {profiles.length === 0 && <option value="">—</option>}
+        {profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
       <button
         type="button"
         onClick={() => mutation.mutate()}
         disabled={mutation.isPending || !chosen}
-        title={chosen ? `Re-index with ${chosen}` : 'No reasoner available'}
+        title={chosen ? 'Re-index with this profile' : 'No reasoner profile available'}
         style={{
           display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           width: 24, height: 22, cursor: mutation.isPending || !chosen ? 'default' : 'pointer',
           borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)',
           background: 'var(--bg-secondary)', color: 'var(--accent-blue)', fontSize: 12,
         }}
-        aria-label="Re-index with reasoner"
+        aria-label="Re-index with reasoner profile"
       >
         {mutation.isPending ? '…' : '⟳'}
       </button>

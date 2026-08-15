@@ -55,11 +55,15 @@ def _apply_memory_cap() -> None:
 
 def main() -> int:
     if len(sys.argv) != 5:
-        print(f"usage: {sys.argv[0]} <ntriples_path> <version_id> <reasoner> <saturation_only>",
+        print(f"usage: {sys.argv[0]} <ntriples_path> <version_id> <reasoner> <params_json>",
               file=sys.stderr)
         return 2
-    ntriples_path, version_id, reasoner, saturation_flag = sys.argv[1:5]
-    saturation_only = saturation_flag == "True"
+    import json
+    ntriples_path, version_id, reasoner, params_json = sys.argv[1:5]
+    try:
+        params = json.loads(params_json) if params_json else {}
+    except json.JSONDecodeError:
+        params = {}
 
     stack_bytes = _configure_native_stacks()
     _apply_memory_cap()
@@ -78,8 +82,7 @@ def main() -> int:
             from cache import store_classification, store_input_axioms
             from registry import get_backend
             backend = get_backend(reasoner)
-            result = backend.classify_ntriples(
-                ntriples, version_id, saturation_only=saturation_only)
+            result = backend.classify_ntriples(ntriples, version_id, params)
             # Mirror main.py's ordering: input axioms BEFORE the classification
             # result, so a follow-up /justification never races the input write.
             store_input_axioms(version_id, ntriples, reasoner)

@@ -249,9 +249,16 @@ async def submit_ontology(
         except Exception:
             body = {}
 
-    # Reasoner: from body/form, else app default; validate against the service.
+    # Reasoner profile (preferred) or a raw reasoner, else app default; validate.
+    req_profile_id = form.get("profile_id") if form is not None else body.get("profile_id")
     req_reasoner = form.get("reasoner") if form is not None else body.get("reasoner")
-    chosen_reasoner = req_reasoner or _get_settings().default_reasoner
+    reasoner_profile_id = None
+    if req_profile_id:
+        profile = await _resolve_reason_profile(db, req_profile_id, user)
+        chosen_reasoner = profile.reasoner
+        reasoner_profile_id = profile.id
+    else:
+        chosen_reasoner = req_reasoner or _get_settings().default_reasoner
     available = await _reasoning.available_reasoner_names()
     if chosen_reasoner not in available:
         raise HTTPException(
@@ -283,7 +290,7 @@ async def submit_ontology(
                 filename=file.filename,
                 content_type=file.content_type,
                 owner_id=owner_id,
-                reasoner=reasoner,
+                reasoner=reasoner, reasoner_profile_id=reasoner_profile_id,
             ),
         )
         return {"task_id": task.id, "status": "queued"}
@@ -292,12 +299,12 @@ async def submit_ontology(
     if "iri" in body:
         task = await loop.run_in_executor(
             None,
-            lambda: ingest_ontology.delay(iri=body["iri"], owner_id=owner_id, groups=groups, reasoner=reasoner),
+            lambda: ingest_ontology.delay(iri=body["iri"], owner_id=owner_id, groups=groups, reasoner=reasoner, reasoner_profile_id=reasoner_profile_id),
         )
     elif "url" in body:
         task = await loop.run_in_executor(
             None,
-            lambda: ingest_ontology.delay(url=body["url"], owner_id=owner_id, groups=groups, reasoner=reasoner),
+            lambda: ingest_ontology.delay(url=body["url"], owner_id=owner_id, groups=groups, reasoner=reasoner, reasoner_profile_id=reasoner_profile_id),
         )
     elif "content" in body:
         raw = body["content"].encode()
@@ -308,7 +315,7 @@ async def submit_ontology(
                 content_type=body.get("format"),
                 owner_id=owner_id,
                 groups=groups,
-                reasoner=reasoner,
+                reasoner=reasoner, reasoner_profile_id=reasoner_profile_id,
             ),
         )
     else:
@@ -680,10 +687,11 @@ async def download_version(ontology_id: str, version_id: str, request: Request, 
 
 
 class _ReasonRequest(BaseModel):
-    reasoner: str | None = None
+    profile_id: str | None = None
+    reasoner: str | None = None   # deprecated: raw reasoner (no profile binding)
 
 
-@router.post("/{ontology_id}/{version_id}/reason", summary="Re-reason a version with a chosen reasoner")
+@router.post("/{ontology_id}/{version_id}/reason", summary="Re-reason a version with a chosen reasoner profile")
 async def reason_version(
     ontology_id: str,
     version_id: str,
@@ -691,11 +699,10 @@ async def reason_version(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_auth),
 ):
-    """Re-classify a version with the chosen reasoner (owner / maintainer / admin).
-
-    Persists the choice on the version row and queues reasoning; the inferred
-    tree + classification cache are recomputed for that reasoner. Falls back to
-    the version's current reasoner, then the app default, if none is given.
+    """Re-classify a version with the chosen reasoner profile (owner / maintainer /
+    admin). Binds the profile to the version (reference-binding) and queues
+    reasoning; the effective params are resolved at run time. Falls back to a raw
+    ``reasoner`` (no profile) or the version's current reasoner if no profile is given.
     """
     from ontoexplorer.clients import reasoning as _reasoning
     from ontoexplorer.config import get_settings as _get_settings
@@ -705,7 +712,15 @@ async def reason_version(
         raise HTTPException(status_code=403, detail="You are not allowed to reindex this ontology")
 
     version = await _get_version_or_404(db, ontology_id, version_id)
-    chosen = body.reasoner or version.reasoner or _get_settings().default_reasoner
+
+    profile = await _resolve_reason_profile(db, body.profile_id, user) if body.profile_id else None
+    if profile is not None:
+        chosen = profile.reasoner
+        version.reasoner_profile_id = profile.id
+    else:
+        chosen = body.reasoner or version.reasoner or _get_settings().default_reasoner
+        version.reasoner_profile_id = None
+
     available = await _reasoning.available_reasoner_names()
     if chosen not in available:
         raise HTTPException(
@@ -717,7 +732,23 @@ async def reason_version(
     await db.commit()
     from ontoexplorer.modules.jobs.tasks import reason_ontology
     reason_ontology.delay(version.id)
-    return {"status": "queued", "reasoner": chosen, "version_id": version.id}
+    return {"status": "queued", "reasoner": chosen,
+            "profile_id": profile.id if profile else None, "version_id": version.id}
+
+
+async def _resolve_reason_profile(db: AsyncSession, profile_id: str, user: User):
+    """Load a non-archived reasoner profile; non-admins may only use
+    dashboard-selectable ones."""
+    from ontoexplorer.config import is_admin as _is_admin
+    from ontoexplorer.models.db import ReasonerProfile
+    prof = (await db.execute(
+        select(ReasonerProfile).where(ReasonerProfile.id == profile_id)
+    )).scalar_one_or_none()
+    if prof is None or prof.archived:
+        raise HTTPException(status_code=404, detail="reasoner profile not found")
+    if not _is_admin(user) and not prof.dashboard_selectable:
+        raise HTTPException(status_code=403, detail="that reasoner profile is not selectable")
+    return prof
 
 
 @router.get("/{ontology_id}/{version_id}/stats", summary="VoID statistics for a version")

@@ -43,7 +43,7 @@ class KmBackend:
     )
 
     def classify_ntriples(
-        self, ntriples: str, version_id: str, saturation_only: bool = False
+        self, ntriples: str, version_id: str, params: dict | None = None
     ) -> ClassificationResult:
         import io, json, time, tempfile, subprocess, os, logging, shutil as _sh
         from collections import defaultdict
@@ -51,6 +51,7 @@ class KmBackend:
         import pyoxigraph
         import pyhornedowl
 
+        route = (params or {}).get("route", "auto")
         OWL_THING = "http://www.w3.org/2002/07/owl#Thing"
         OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing"
         t0 = time.monotonic()
@@ -74,7 +75,8 @@ class KmBackend:
             with open(in_owx, "w") as fh:
                 fh.write(owx)
             proc = subprocess.run(
-                [os.getenv("KM_BIN", "km"), "classify", "--format", "owlxml", in_owx],
+                [os.getenv("KM_BIN", "km"), "classify", "--route", route,
+                 "--format", "owlxml", in_owx],
                 capture_output=True, text=True, timeout=600,
             )
         finally:

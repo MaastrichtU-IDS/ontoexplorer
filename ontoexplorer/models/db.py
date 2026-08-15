@@ -137,6 +137,11 @@ class OntologyVersion(Base):
     format: Mapped[str] = mapped_column(String)              # "owl", "turtle", "obo", etc.
     status: Mapped[str] = mapped_column(String, default="ingested")  # ingested | reasoning | ready | deprecated
     reasoner: Mapped[str] = mapped_column(String, nullable=False, server_default="rustdl")
+    # Reference-binding to the reasoner profile chosen at add/reindex time; each
+    # (re)reason resolves the profile's current params. `reasoner` stays the
+    # denormalized effective backend name. Null = no profile (raw reasoner + auto).
+    reasoner_profile_id: Mapped[str | None] = mapped_column(
+        ForeignKey("reasoner_profiles.id", ondelete="SET NULL"), nullable=True)
     source_url: Mapped[str | None] = mapped_column(String, nullable=True)
     triple_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -168,6 +173,9 @@ class Job(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Provenance for reasoning runs: the effective {reasoner, params, profile_id}
+    # actually used (reference-binding resolves params at run time, so we snapshot).
+    meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     version: Mapped[OntologyVersion] = relationship(back_populates="jobs", passive_deletes=True)

@@ -68,7 +68,7 @@ class KoncludeBackend:
     )
 
     def classify_ntriples(
-        self, ntriples: str, version_id: str, saturation_only: bool = False
+        self, ntriples: str, version_id: str, params: dict | None = None
     ) -> ClassificationResult:
         import io, time, tempfile, subprocess, os, shutil as _sh
         from collections import defaultdict

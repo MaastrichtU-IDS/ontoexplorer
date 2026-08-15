@@ -28,13 +28,20 @@ class RustdlBackend:
     )
 
     def classify_ntriples(
-        self, ntriples: str, version_id: str, saturation_only: bool = False
+        self, ntriples: str, version_id: str, params: dict | None = None
     ) -> ClassificationResult:
         import io, time, os, logging
         from collections import defaultdict
         from datetime import datetime, timezone
         import pyoxigraph
         import rustdl
+
+        params = params or {}
+        saturation_only = bool(params.get("saturation_only", False))
+        per_pair_timeout_ms = int(params.get(
+            "per_pair_timeout_ms", os.getenv("RUSTDL_PER_PAIR_TIMEOUT_MS", "200")))
+        global_timeout_ms = int(params.get(
+            "global_timeout_ms", os.getenv("RUSTDL_GLOBAL_DEADLINE_MS", "60000")))
 
         OWL_THING = "http://www.w3.org/2002/07/owl#Thing"
         OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing"
@@ -59,8 +66,8 @@ class RustdlBackend:
                 "rustdl_saturation_only version_id=%s", version_id)
         cls = rustdl.classify_bytes(
             rdfxml, format="rdf-xml",
-            per_pair_timeout_ms=int(os.getenv("RUSTDL_PER_PAIR_TIMEOUT_MS", "200")),
-            global_timeout_ms=int(os.getenv("RUSTDL_GLOBAL_DEADLINE_MS", "60000")),
+            per_pair_timeout_ms=per_pair_timeout_ms,
+            global_timeout_ms=global_timeout_ms,
             saturation_only=saturation_only,
         )
 

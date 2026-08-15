@@ -246,7 +246,7 @@ export function OntologyTable({
                         <ReindexWithReasoner
                           ontologyId={row.id}
                           versionId={row.version_id}
-                          currentReasoner={row.reasoner}
+                          admin currentProfileId={row.reasoner_profile_id}
                           onQueued={onReasoned}
                         />
                       )}
@@ -501,7 +501,7 @@ function VersionsSubRows({
               <ReindexWithReasoner
                 ontologyId={ontologyId}
                 versionId={v.version_id}
-                currentReasoner={v.reasoner}
+                admin currentProfileId={v.reasoner_profile_id}
                 onQueued={onReasoned}
               />
             </div>

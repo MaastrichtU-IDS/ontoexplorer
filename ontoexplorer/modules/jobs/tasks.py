@@ -405,6 +405,7 @@ def ingest_ontology(
     owner_id: str | None = None,
     groups: list[str] | None = None,
     reasoner: str = "rustdl",
+    reasoner_profile_id: str | None = None,
 ) -> dict:
     """Celery task: run the full ingestion pipeline for one ontology submission."""
     from ontoexplorer.database import make_celery_db_session
@@ -421,7 +422,7 @@ def ingest_ontology(
     request = IngestionRequest(
         iri=iri, url=url, raw_bytes=raw_bytes,
         filename=filename, content_type=content_type, owner_id=owner_id, groups=groups or [],
-        reasoner=reasoner,
+        reasoner=reasoner, reasoner_profile_id=reasoner_profile_id,
     )
 
     async def _run():
@@ -588,17 +589,36 @@ async def _reason_and_persist(db, version, version_id: str, ontology_id: str, jo
     if len(asserted_graph) == 0:
         log.warning("reasoning_empty_graph", version_id=version_id, graph=asserted_iri)
 
-    # Call ELK service — classify_v2 POSTs to /classify and caches in Redis.
-    # rustdl (SROIQ tableau) is O(n²) in class pairs and blows up on large
-    # EL ontologies (e.g. GO); when the version is in the OWL 2 EL profile we
-    # ask it to classify via EL saturation only — complete for EL and fast.
+    # Resolve the version's reasoner profile (reference-binding) into the effective
+    # parameter dict passed to the reasoner. A profile's params win; when it's
+    # silent we still auto-enable rustdl EL-saturation for EL-profile ontologies
+    # (rustdl's SROIQ tableau is O(n²) and blows up on large EL ontologies like GO).
+    from sqlalchemy import select as _select
+    from ontoexplorer.models.db import Job, ReasonerProfile
+    params: dict = {}
+    if version.reasoner_profile_id:
+        prof = (await db.execute(
+            _select(ReasonerProfile).where(ReasonerProfile.id == version.reasoner_profile_id)
+        )).scalar_one_or_none()
+        if prof:
+            params = dict(prof.params or {})
+    if version.reasoner == "rustdl" and "saturation_only" not in params and _version_is_el_profile(version_id):
+        params["saturation_only"] = True
+
+    # Record the effective run on the job for provenance (reference-binding
+    # resolves params at run time, so snapshot what was actually used).
+    from sqlalchemy import update as _update
+    await db.execute(_update(Job).where(Job.id == job_id).values(
+        meta={"reasoner": version.reasoner, "params": params,
+              "profile_id": version.reasoner_profile_id}))
+    await db.commit()
+    log.info("reasoning_params", version_id=version_id, reasoner=version.reasoner,
+             params=params, profile_id=version.reasoner_profile_id)
+
     import httpx as _httpx
     from ontoexplorer.config import get_settings as _get_settings
-    saturation_only = version.reasoner == "rustdl" and _version_is_el_profile(version_id)
-    if saturation_only:
-        log.info("reasoning_el_saturation", version_id=version_id, reasoner=version.reasoner)
     await reasoning_client.classify_v2(
-        asserted_graph, version_id, reasoner=version.reasoner, saturation_only=saturation_only
+        asserted_graph, version_id, reasoner=version.reasoner, params=params, force=True
     )
 
     # Fetch the full inferred graph from ELK classification result for Oxigraph persistence

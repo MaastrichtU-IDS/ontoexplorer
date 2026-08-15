@@ -35,7 +35,7 @@ class Backend(Protocol):
     info: ReasonerInfo
 
     def classify_ntriples(
-        self, ntriples: str, version_id: str, saturation_only: bool = False
+        self, ntriples: str, version_id: str, params: dict | None = None
     ) -> ClassificationResult: ...
 
     def justify(self, ntriples: str, sub: str, sup: str,
@@ -60,7 +60,7 @@ class _RdflibBackend:
         available=True,
     )
 
-    def classify_ntriples(self, ntriples, version_id, saturation_only=False):
+    def classify_ntriples(self, ntriples, version_id, params=None):
         from classifier import classify
         g = rdflib.Graph()
         g.parse(io.StringIO(ntriples), format="nt")
