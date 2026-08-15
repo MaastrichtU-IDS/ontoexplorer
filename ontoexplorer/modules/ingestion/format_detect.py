@@ -10,8 +10,8 @@ class OntologyFormat(StrEnum):
     N_TRIPLES = "nt"         # N-Triples → rdflib
     N_QUADS = "nq"           # N-Quads  → rdflib
     JSON_LD = "jsonld"       # JSON-LD  → rdflib
-    OBO = "obo"              # OBO flat file → rdflib (via plugin)
-    MANCHESTER = "omn"       # Manchester Syntax → detected but unsupported (no parser)
+    OBO = "obo"              # OBO flat file → horned-convert → N-Triples (rdflib fallback)
+    MANCHESTER = "omn"       # Manchester Syntax → horned-convert → N-Triples
     TRIG = "trig"            # TriG → rdflib
 
 

@@ -40,6 +40,11 @@ from ontoexplorer.modules.metadata.void import compute_void_stats_sparql
 from ontoexplorer.modules.storage.minio_client import ontology_download_url
 from ontoexplorer.modules.ingestion.deduplicator import compute_sha256_bytes
 from ontoexplorer.modules.ingestion.format_detect import OntologyFormat, detect_format
+from ontoexplorer.modules.ingestion.horned_convert import (
+    CONVERTIBLE,
+    HornedConvertError,
+    to_ntriples,
+)
 from ontoexplorer.modules.ingestion.import_resolver import resolve_imports, resolve_imports_sparql
 from ontoexplorer.modules.ingestion.parser import parse_ontology
 from ontoexplorer.modules.ingestion.source_resolver import (
@@ -150,15 +155,34 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     version_id = str(uuid.uuid4())
     minio_key = store_ontology(ontology_id, version_id, sha256, fmt.value, source.data)
 
-    # ── Step 2+6: Load into Oxigraph (streaming or via rdflib) ────────────────
-    if fmt in _DIRECT_MIME:
+    # ── Step 2+6: Load into Oxigraph (streaming, horned-convert, or rdflib) ────
+    if fmt in CONVERTIBLE:
+        # Manchester/OBO: no RDF parser in the stack reads these, so convert to
+        # N-Triples with horned-convert and stream those into Oxigraph via the
+        # normal fast path. OBO is also parseable by rdflib (lower fidelity), so
+        # fall back to it if conversion fails; Manchester has no fallback.
+        try:
+            nt_bytes = to_ntriples(source.data, fmt)
+            triple_count = bulk_load_bytes(
+                ontology_id, version_id, nt_bytes, "application/n-triples")
+            log.info("horned_converted", fmt=fmt.value, triples=triple_count)
+            graph = None
+        except HornedConvertError as exc:
+            if fmt != OntologyFormat.OBO:
+                raise
+            log.warning("horned_convert_failed_fallback_rdflib",
+                        fmt=fmt.value, error=str(exc))
+            graph = parse_ontology(source.data, fmt)
+            log.info("parsed_triples", count=len(graph))
+            triple_count = load_graph(ontology_id, version_id, graph)
+    elif fmt in _DIRECT_MIME:
         # Fast path: stream bytes directly into Oxigraph, skip rdflib parse entirely
         mime = _DIRECT_MIME[fmt]
         triple_count = bulk_load_bytes(ontology_id, version_id, source.data, mime)
         log.info("bulk_loaded_bytes", fmt=fmt.value, mime=mime, triples=triple_count)
         graph = None
     else:
-        # Slow path: OBO needs rdflib first (Manchester is rejected by parse_ontology)
+        # Slow path: rdflib parse for any remaining non-direct, non-convertible format.
         graph = parse_ontology(source.data, fmt)
         log.info("parsed_triples", count=len(graph))
         triple_count = load_graph(ontology_id, version_id, graph)
@@ -466,6 +490,15 @@ def _extract_ontology_iri_fast(data: bytes, fmt: OntologyFormat) -> str | None:
         m = re.search(r'<([^>]+)>\s+(?:rdf:type|a)\s+(?:owl:Ontology|<http://www\.w3\.org/2002/07/owl#Ontology>)', snippet)
         if m:
             return m.group(1)
+    elif fmt == OntologyFormat.MANCHESTER:
+        # `Ontology: <iri>` header; pyoxigraph can't parse Manchester, so don't
+        # fall through to the parse-based extractor.
+        m = re.search(r'Ontology:\s*<([^>]+)>', snippet)
+        return m.group(1) if m else None
+    elif fmt == OntologyFormat.OBO:
+        # The ontology IRI is derived during horned-convert (an OBO PURL); let the
+        # post-load SPARQL safety net set it. pyoxigraph can't parse OBO.
+        return None
     return _extract_ontology_iri_by_parsing(data, fmt)
 
 
