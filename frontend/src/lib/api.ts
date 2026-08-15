@@ -450,6 +450,14 @@ export interface JustificationResult {
   format: string
   timed_out: boolean
   reasoning_available: boolean
+  /** True while the real reasoner justification is being computed in the
+   *  background. When set, `justifications` holds a provisional asserted-chain
+   *  (BFS) result; the client should poll until this clears and the full
+   *  justification replaces it. */
+  computing?: boolean
+  /** True when the returned `justifications` are the provisional asserted-chain
+   *  fallback rather than the reasoner's formal justification. */
+  provisional?: boolean
   /** IRI→display-label for every IRI mentioned in `justifications`, resolved
    *  server-side from the ontology's label index (incl. OBO labels). Lets the
    *  UI render clickable, human-readable entity tokens. */

@@ -39,7 +39,8 @@ class Backend(Protocol):
     ) -> ClassificationResult: ...
 
     def justify(self, ntriples: str, sub: str, sup: str,
-                max_justifications: int) -> tuple[list[list[str]], str]: ...
+                max_justifications: int, version_id: str | None = None
+                ) -> tuple[list[list[str]], str]: ...
 
 
 def _import_ok(mod: str) -> bool:
@@ -66,7 +67,7 @@ class _RdflibBackend:
         g.parse(io.StringIO(ntriples), format="nt")
         return classify(g, version_id)
 
-    def justify(self, ntriples, sub, sup, max_justifications):
+    def justify(self, ntriples, sub, sup, max_justifications, version_id=None):
         raise NotImplementedError("rdflib backend does not expose justifications in SP1")
 
 

@@ -254,18 +254,26 @@ async def request_justification(
     sup: str | None,
     max_justifications: int = 1,
     reasoner: str = "rustdl",
+    cache_only: bool = False,
 ) -> dict:
     """
-    Synchronously request justification computation from ELK service.
-    Long-running — always called from a Celery task, not an HTTP handler.
+    Request justification computation from the reasoner service.
+
+    With ``cache_only`` the service returns the cached result if present, or a
+    ``{"cached": False}`` miss marker without computing — cheap enough to call
+    from a live HTTP handler. Without it the call is long-running and must be
+    driven from a Celery task, never an HTTP handler.
     """
     body: dict = {"sub": sub, "max_justifications": max_justifications, "reasoner": reasoner}
     if sup:
         body["sup"] = sup
     else:
         body["type"] = "unsatisfiable"
+    if cache_only:
+        body["cache_only"] = True
 
-    timeout = get_settings().reasoner_service_timeout + 60  # extra buffer over time limit
+    # A cache peek is a fast Redis read; the full compute needs the long buffer.
+    timeout = 10 if cache_only else get_settings().reasoner_service_timeout + 60
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(
             _elk_url(f"/classify/{version_id}/justification"),

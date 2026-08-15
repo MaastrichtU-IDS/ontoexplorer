@@ -198,6 +198,82 @@ async def test_empty_justifications_falls_back_to_bfs(client, make_version):
 
 
 @pytest.mark.asyncio
+async def test_cache_miss_dispatches_job_and_reports_computing(client, make_version):
+    """On a genuine cache miss (reasoner-service reports cached:False), the
+    endpoint dispatches a background justification job (never computing inline)
+    and returns the provisional asserted-chain flagged computing=true so the
+    client polls until the real justification lands."""
+    version = await make_version(reasoner="rustdl", status="ready")
+    miss = {"cached": False, "computing": False, "justifications": []}
+    known_path = [[
+        {
+            "sub": {"type": "named", "iri": "http://x/A", "label": "A"},
+            "rel": "subClassOf",
+            "sup": {"type": "named", "iri": "http://x/C", "label": "C"},
+        },
+    ]]
+    fake_redis = MagicMock()
+    fake_redis.hgetall.return_value = {}
+    fake_redis.set.return_value = True  # win the inflight slot → dispatch
+    fake_task = MagicMock()
+    with patch(
+        "ontoexplorer.api.ontologies.elk_request_justification",
+        new=AsyncMock(return_value=miss),
+    ), patch(
+        "ontoexplorer.clients.oxigraph.get_store", return_value=object(),
+    ), patch(
+        "ontoexplorer.api.ontologies._find_subclass_path", return_value=known_path,
+    ), patch(
+        "ontoexplorer.modules.search.indexer._get_redis", return_value=fake_redis,
+    ), patch(
+        "ontoexplorer.modules.jobs.tasks.compute_justification", fake_task,
+    ):
+        r = await client.get(
+            f"/api/v1/ontologies/{version.ontology_id}/{version.id}"
+            f"/justification?sub=http://x/A&sup=http://x/C"
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["computing"] is True
+    assert body["reasoning_available"] is True
+    # Provisional asserted-chain is shown meanwhile.
+    assert body["justifications"] == [["<http://x/A> SubClassOf <http://x/C>"]]
+    fake_task.delay.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_cache_miss_deduplicates_dispatch(client, make_version):
+    """When a job is already in flight (SET NX returns False), a poll must not
+    dispatch a second job but still reports computing=true."""
+    version = await make_version(reasoner="rustdl", status="ready")
+    miss = {"cached": False, "computing": False, "justifications": []}
+    fake_redis = MagicMock()
+    fake_redis.hgetall.return_value = {}
+    fake_redis.set.return_value = False  # inflight slot already taken
+    fake_task = MagicMock()
+    with patch(
+        "ontoexplorer.api.ontologies.elk_request_justification",
+        new=AsyncMock(return_value=miss),
+    ), patch(
+        "ontoexplorer.clients.oxigraph.get_store", return_value=object(),
+    ), patch(
+        "ontoexplorer.api.ontologies._find_subclass_path", return_value=[],
+    ), patch(
+        "ontoexplorer.modules.search.indexer._get_redis", return_value=fake_redis,
+    ), patch(
+        "ontoexplorer.modules.jobs.tasks.compute_justification", fake_task,
+    ):
+        r = await client.get(
+            f"/api/v1/ontologies/{version.ontology_id}/{version.id}"
+            f"/justification?sub=http://x/A&sup=http://x/C"
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["computing"] is True
+    fake_task.delay.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_no_justify_response_includes_format_and_timed_out(client, make_version):
     """SP3 final fix: the reasoning_available:False (no-justify) return must
     include format/timed_out for uniformity with the other branches, since the
