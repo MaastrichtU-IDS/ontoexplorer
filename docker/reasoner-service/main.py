@@ -59,6 +59,7 @@ class JustificationRequest(BaseModel):
     type: str | None = None          # "unsatisfiable" when sup is omitted
     max_justifications: int = 1      # 0 = find all
     reasoner: str | None = None
+    cache_only: bool = False         # return cached result or a miss marker; never compute
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -248,14 +249,21 @@ def compute_justification_endpoint(version_id: str, req: JustificationRequest):
     if not justifier.info.available or "justify" not in justifier.info.capabilities:
         raise HTTPException(422, f"justifier '{justifier_name}' is unavailable")
 
-    _load_or_404(version_id, reasoner)  # ensure classification exists
-
     sup = req.sup if req.sup else str(rdflib.OWL.Nothing)
 
-    # Check cache first
+    # Check cache first (cheap Redis read — do this before the classification
+    # existence check so a cache-only peek stays fast and side-effect free).
     cached = load_justification(version_id, req.sub, sup, req.max_justifications, reasoner)
     if cached:
         return cached
+
+    # cache_only: the caller just wants to know whether a result is ready. Never
+    # run the (long) computation — return a miss marker so the app can dispatch a
+    # background job instead of blocking the request.
+    if req.cache_only:
+        return {"cached": False, "computing": False, "justifications": []}
+
+    _load_or_404(version_id, reasoner)  # ensure classification exists
 
     ntriples = load_input_axioms(version_id, reasoner) or ""
 
@@ -269,7 +277,8 @@ def compute_justification_endpoint(version_id: str, req: JustificationRequest):
     # request lifetime is still bounded by the client's HTTP timeout, and
     # the per-step is_entailed calls are bounded by ontology size.
     try:
-        sets, fmt = justifier.justify(ntriples, req.sub, sup, req.max_justifications)
+        sets, fmt = justifier.justify(ntriples, req.sub, sup, req.max_justifications,
+                                      version_id=version_id)
     except Exception:
         sets, fmt = [], "ntriples"
         log.exception("justification_compute_failed", extra={

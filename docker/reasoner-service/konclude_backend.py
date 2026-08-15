@@ -180,5 +180,5 @@ class KoncludeBackend:
             duration_ms=round((time.monotonic() - t0) * 1000, 1),
         )
 
-    def justify(self, ntriples, sub, sup, max_justifications):
+    def justify(self, ntriples, sub, sup, max_justifications, version_id=None):
         raise NotImplementedError("Konclude has no justification facility")

@@ -36,6 +36,12 @@ def _justification_key(version_id: str, sub: str, sup: str | None, max_j: int, r
     return f"justification:{version_id}:{reasoner}:{h}"
 
 
+def _ofn_key(version_id: str) -> str:
+    # The OWL-functional serialization is reasoner-independent (it's just the
+    # ontology), so it is NOT keyed by reasoner — one .ofn per version.
+    return f"ofn:{version_id}"
+
+
 def store_classification(result: ClassificationResult, reasoner: str) -> None:
     key = _classification_key(result.version_id, reasoner)
     data = json.dumps(asdict(result)).encode()
@@ -72,6 +78,23 @@ def load_input_axioms(version_id: str, reasoner: str) -> str | None:
     return gzip.decompress(raw).decode("utf-8") if raw is not None else None
 
 
+def store_ontology_ofn(version_id: str, ofn: str) -> None:
+    """Cache the OWL-functional (.ofn) serialization of a version's ontology.
+
+    rustdl's justify re-parses and re-classifies the ontology on every call
+    (no reuse API), and .ofn (OWL functional) is ~2.5x smaller than the RDF/XML
+    we'd otherwise materialise and parses substantially faster in rustdl — so we
+    build it once (lazily, on first justify) and reuse it for every subsequent
+    justify of the same version. Same TTL as classification/input axioms."""
+    _redis.setex(_ofn_key(version_id), _CLASSIFICATION_TTL,
+                 gzip.compress(ofn.encode("utf-8")))
+
+
+def load_ontology_ofn(version_id: str) -> str | None:
+    raw = _redis.get(_ofn_key(version_id))
+    return gzip.decompress(raw).decode("utf-8") if raw is not None else None
+
+
 def store_classification_error(version_id: str, message: str, reasoner: str) -> None:
     """Surface a failed classification as a 500 via the GET endpoint instead of a permanent 409."""
     _redis.setex(_classification_error_key(version_id, reasoner),
@@ -91,7 +114,8 @@ def invalidate_version(version_id: str) -> None:
     """Remove ALL cache entries for a version across every reasoner variant. Called on version deprecation."""
     keys = set()
     for pat in (f"classification:{version_id}:*", f"input_axioms:{version_id}:*",
-                f"classification_error:{version_id}:*", f"justification:{version_id}:*"):
+                f"classification_error:{version_id}:*", f"justification:{version_id}:*",
+                f"ofn:{version_id}"):
         keys.update(_redis.scan_iter(pat))
     if keys:
         _redis.delete(*keys)

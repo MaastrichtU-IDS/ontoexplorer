@@ -66,3 +66,31 @@ def test_justify_returns_manchester_axiom_set():
     joined = " ".join(sets[0])
     # The A⊑B, B⊑C axioms are the responsible set for A⊑C.
     assert "A" in joined and "B" in joined and "C" in joined
+
+
+def test_justify_builds_then_reuses_cached_ofn(monkeypatch):
+    # rustdl.justify has no reuse API, so justify feeds it a per-version .ofn
+    # cached in Redis: built once on a miss, reused on subsequent calls.
+    pytest.importorskip("pyhornedowl")
+    import cache
+
+    state = {"stored": None, "writes": 0}
+
+    def fake_load(vid):
+        return state["stored"]
+
+    def fake_store(vid, ofn):
+        state["writes"] += 1
+        state["stored"] = ofn
+
+    monkeypatch.setattr(cache, "load_ontology_ofn", fake_load)
+    monkeypatch.setattr(cache, "store_ontology_ofn", fake_store)
+
+    b = RustdlBackend()
+    sets1, _ = b.justify(NT, f"{EX}A", f"{EX}C", 1, version_id="v1")  # miss → build+store
+    assert len(sets1) >= 1
+    assert state["writes"] == 1 and state["stored"] is not None
+
+    sets2, _ = b.justify(NT, f"{EX}A", f"{EX}C", 1, version_id="v1")  # hit → reuse
+    assert len(sets2) >= 1
+    assert state["writes"] == 1  # not rebuilt or re-stored

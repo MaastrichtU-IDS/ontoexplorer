@@ -2942,6 +2942,34 @@ class JustificationRequest(BaseModel):
     max_justifications: int = 1     # 0 = find all
 
 
+def _dispatch_justification_if_absent(
+    version_id: str, ontology_id: str, sub: str, sup: str, max_justifications: int
+) -> bool:
+    """Dispatch the background justification job unless one is already in flight
+    for this (version, sub, sup, max). Returns True (a job is now, or already,
+    computing). Deduplicated with a short-lived Redis flag so the frontend's poll
+    loop doesn't spawn a fresh multi-minute job on every request."""
+    import hashlib
+    from ontoexplorer.modules.search.indexer import _get_redis
+
+    h = hashlib.sha256(f"{sub}|{sup}|{max_justifications}".encode()).hexdigest()[:16]
+    key = f"justify_inflight:{version_id}:{h}"
+    try:
+        # First caller wins the dispatch; TTL matches the Celery task hard limit
+        # (660s) so a crashed job frees the slot. Once the job caches its result,
+        # later polls hit the cache before reaching here and the flag just expires.
+        acquired = bool(_get_redis().set(key, "1", nx=True, ex=660))
+    except Exception:
+        acquired = True  # Redis unavailable → dispatch anyway (better than never)
+    if acquired:
+        from ontoexplorer.modules.jobs.tasks import compute_justification
+        compute_justification.delay(
+            version_id=version_id, ontology_id=ontology_id,
+            sub=sub, sup=sup, max_justifications=max_justifications,
+        )
+    return True
+
+
 @router.get("/{ontology_id}/{version_id}/justification", summary="Justifications for a subclass inference")
 async def get_justification(
     ontology_id: str,
@@ -2979,15 +3007,17 @@ async def get_justification(
                 iris.update(_JUST_IRI_RE.findall(line))
         return {iri: _label(iri) for iri in iris}
 
-    # The reasoner-service renders every reasoner's justification to Manchester
-    # syntax now (whelk and rustdl alike), so this is a uniform passthrough.
-    rendered: list[list[str]] = []
+    # Justification can take minutes in the reasoner (rustdl re-parses and
+    # re-classifies per call, with no reuse API) — far longer than a live HTTP
+    # request should block. So this endpoint never computes inline: it peeks the
+    # cache, and on a genuine miss dispatches a background job and returns the
+    # provisional asserted-chain (BFS) fallback with computing=true. The frontend
+    # polls until the real justification lands in the cache.
+    computing = False
     try:
-        elk_result = await asyncio.wait_for(
-            elk_request_justification(
-                version_id, sub, sup, max_justifications, reasoner=version.reasoner
-            ),
-            timeout=60.0,
+        elk_result = await elk_request_justification(
+            version_id, sub, sup, max_justifications,
+            reasoner=version.reasoner, cache_only=True,
         )
         if elk_result.get("reasoning_available") is False:
             return {
@@ -2998,31 +3028,34 @@ async def get_justification(
                 "reason": elk_result.get("reason", "reasoner has no explanations"),
             }
         justifications = elk_result.get("justifications", [])
-        timed_out = bool(elk_result.get("timed_out"))
-        if justifications or timed_out:
+        if justifications:
             return {
                 "justifications": justifications,
                 "format": "manchester",
-                "timed_out": timed_out,
+                "timed_out": False,
                 "reasoning_available": True,
+                "computing": False,
                 "labels": _labels_for(justifications),
             }
-        # Reasoner ran successfully but found no formal justification (and
-        # didn't time out): fall through to the BFS asserted-chain fallback
-        # below instead of returning an empty result.
+        # `cached is False` = never computed → dispatch a background job. A cache
+        # hit with no justifications is a real "no formal justification" answer,
+        # so we don't re-dispatch — we just show the asserted-chain fallback.
+        if elk_result.get("cached") is False:
+            computing = _dispatch_justification_if_absent(
+                version_id, ontology_id, sub, sup, max_justifications)
     except Exception:
-        pass  # Fall through to BFS
+        pass  # reasoner-service unreachable → provisional BFS only, no polling
 
-    # Fallback: BFS over asserted subClassOf edges in Oxigraph
-    # Covers transitive chains even when ELK proof traces are unavailable,
-    # or when the reasoner ran but returned no justification.
+    # Provisional fallback: BFS over asserted subClassOf edges in Oxigraph so the
+    # user sees the asserted chain immediately while the reasoner works.
     store  = get_store()
     g_iri  = graph_iri(ontology_id, version_id)
     paths  = await asyncio.to_thread(_find_subclass_path, store, g_iri, sub, sup, _label)
     rendered = _bfs_as_manchester(paths)
 
     return {"justifications": rendered, "format": "manchester", "timed_out": False,
-            "reasoning_available": True, "labels": _labels_for(rendered)}
+            "reasoning_available": True, "computing": computing,
+            "provisional": computing, "labels": _labels_for(rendered)}
 
 
 @router.post("/{ontology_id}/{version_id}/justification", summary="Request async justification computation")

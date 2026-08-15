@@ -342,6 +342,18 @@ function JustificationDisplay({ justifications, labelMap, labels, slug, vid }: {
   )
 }
 
+// Shown while the reasoner computes the full justification in the background.
+// On large ontologies this can take minutes; the server returns a provisional
+// asserted-chain immediately (rendered below this note) and the client polls
+// until the formal justification replaces it.
+function ComputingNote({ provisional }: { provisional: boolean }) {
+  return (
+    <span style={{ color: 'var(--text-dim)', fontSize: 11, display: 'block', marginBottom: provisional ? 4 : 0 }}>
+      Computing full justification…{provisional ? ' showing the asserted chain meanwhile.' : ''}
+    </span>
+  )
+}
+
 // Tooltip/disabled styling shared by both "inference" explain toggles.
 const NO_JUSTIFY_TITLE = 'Justification unavailable — no justify-capable reasoner is up'
 
@@ -356,6 +368,8 @@ function InferredClassRow({ c, slug, vid, ontologyId, versionId, termIri, canJus
     enabled: expanded && canJustify,
     staleTime: 0,
     retry: false,
+    // Poll while the reasoner computes the full justification in the background.
+    refetchInterval: q => (q.state.data?.computing ? 4000 : false),
   })
 
   return (
@@ -382,10 +396,9 @@ function InferredClassRow({ c, slug, vid, ontologyId, versionId, termIri, canJus
         <div style={{ marginLeft: 4 }}>
           {isLoading && <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>Computing…</span>}
           {isError && <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>Unavailable</span>}
-          {data?.justifications.length === 0 && (
-            <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>
-              {data.timed_out ? 'Still computing — try again' : 'No justification available'}
-            </span>
+          {data?.computing && <ComputingNote provisional={data.justifications.length > 0} />}
+          {data && data.justifications.length === 0 && !data.computing && (
+            <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>No justification available</span>
           )}
           {data?.justifications && data.justifications.length > 0 && (
             <JustificationDisplay justifications={data.justifications} labelMap={labelMap}
@@ -588,6 +601,8 @@ function InferredExprRow({ entry, slug, vid, ontologyId, versionId, termIri, can
     enabled: expanded && canJustify,
     staleTime: 0,
     retry: false,
+    // Poll while the reasoner computes the full justification in the background.
+    refetchInterval: q => (q.state.data?.computing ? 4000 : false),
   })
 
   const displayJusts = data?.justifications
@@ -626,10 +641,9 @@ function InferredExprRow({ entry, slug, vid, ontologyId, versionId, termIri, can
         <div style={{ marginLeft: 4 }}>
           {isLoading && <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>Computing…</span>}
           {isError && <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>Unavailable</span>}
-          {displayJusts?.length === 0 && (
-            <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>
-              {data?.timed_out ? 'Still computing — try again' : 'No justification available'}
-            </span>
+          {data?.computing && <ComputingNote provisional={(displayJusts?.length ?? 0) > 0} />}
+          {data && displayJusts?.length === 0 && !data.computing && (
+            <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>No justification available</span>
           )}
           {displayJusts && displayJusts.length > 0 && (
             <JustificationDisplay justifications={displayJusts} labelMap={labelMap}

@@ -174,14 +174,55 @@ class RustdlBackend:
         )
 
     def justify(self, ntriples: str, sub: str, sup: str,
-                max_justifications: int) -> tuple[list[list[str]], str]:
-        import io, os, tempfile
-        import pyoxigraph
+                max_justifications: int, version_id: str | None = None
+                ) -> tuple[list[list[str]], str]:
+        import logging
+        import os
+        import tempfile
         import rustdl
 
         OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing"
+        query = ["unsat", sub] if sup == OWL_NOTHING else ["subclass", sub, sup]
 
-        # rustdl.justify takes a file path; materialise the NT as RDF/XML (.rdf).
+        def _run(path: str) -> list[list[str]]:
+            if max_justifications == 1:
+                one = rustdl.justify(path, query)
+                return [one] if one else []
+            return rustdl.justify_all(path, query, max_justifications)
+
+        # rustdl.justify re-parses + re-classifies on every call (no reuse API).
+        # Feeding it the OWL-functional (.ofn) serialization instead of RDF/XML
+        # is materially faster (smaller source, faster parser) — measured ~45s ->
+        # ~32s of internal time on GO — and we cache the .ofn per version so the
+        # ~14s pyhornedowl build is paid once, not per justify. On any failure of
+        # the .ofn path we fall back to the original RDF/XML materialisation, so
+        # correctness never depends on the round-trip succeeding.
+        ofn = self._version_ofn(ntriples, version_id)
+        if ofn is not None:
+            fd, path = tempfile.mkstemp(suffix=".ofn")
+            try:
+                with os.fdopen(fd, "w") as fh:
+                    fh.write(ofn)
+                return _run(path), "manchester"
+            except Exception:
+                logging.getLogger("reasoner-service").warning(
+                    "rustdl_justify_ofn_fallback version_id=%s", version_id,
+                    exc_info=True)
+            finally:
+                os.unlink(path)
+
+        # Fallback: materialise the NT as RDF/XML (.rdf) and justify from that.
+        path = self._materialise_rdfxml(ntriples)
+        try:
+            return _run(path), "manchester"
+        finally:
+            os.unlink(path)
+
+    @staticmethod
+    def _materialise_rdfxml(ntriples: str) -> str:
+        """NT -> RDF/XML on disk; returns the temp file path (caller unlinks)."""
+        import io, os, tempfile
+        import pyoxigraph
         store = pyoxigraph.Store()
         store.bulk_load(io.BytesIO(ntriples.encode("utf-8")),
                         format=pyoxigraph.RdfFormat.N_TRIPLES)
@@ -190,15 +231,51 @@ class RustdlBackend:
             format=pyoxigraph.RdfFormat.RDF_XML,
         )
         fd, path = tempfile.mkstemp(suffix=".rdf")
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(rdfxml)
+        return path
+
+    @staticmethod
+    def _version_ofn(ntriples: str, version_id: str | None) -> str | None:
+        """The version's OWL-functional serialization, cached in Redis. Built
+        lazily (NT -> RDF/XML -> pyhornedowl -> .ofn) on first use, then reused.
+        Returns None if it cannot be built or pyhornedowl is unavailable."""
+        import logging
+        log = logging.getLogger("reasoner-service")
         try:
-            with os.fdopen(fd, "wb") as fh:
-                fh.write(rdfxml)
-            query = ["unsat", sub] if sup == OWL_NOTHING else ["subclass", sub, sup]
-            if max_justifications == 1:
-                one = rustdl.justify(path, query)
-                sets = [one] if one else []
-            else:
-                sets = rustdl.justify_all(path, query, max_justifications)
-            return sets, "manchester"
-        finally:
-            os.unlink(path)
+            from cache import load_ontology_ofn, store_ontology_ofn
+        except Exception:
+            return None
+        if version_id:
+            try:
+                cached = load_ontology_ofn(version_id)
+                if cached is not None:
+                    return cached
+            except Exception:
+                log.warning("rustdl_ofn_cache_read_failed version_id=%s",
+                            version_id, exc_info=True)
+        try:
+            import io
+            import pyoxigraph
+            import pyhornedowl
+            store = pyoxigraph.Store()
+            store.bulk_load(io.BytesIO(ntriples.encode("utf-8")),
+                            format=pyoxigraph.RdfFormat.N_TRIPLES)
+            rdfxml = pyoxigraph.serialize(
+                (q.triple for q in store.quads_for_pattern(None, None, None, None)),
+                format=pyoxigraph.RdfFormat.RDF_XML,
+            )
+            onto = pyhornedowl.open_ontology_from_string(
+                bytes(rdfxml).decode("utf-8", "replace"), "rdf")
+            ofn = onto.save_to_string("ofn")
+        except Exception:
+            log.warning("rustdl_ofn_build_failed version_id=%s", version_id,
+                        exc_info=True)
+            return None
+        if version_id:
+            try:
+                store_ontology_ofn(version_id, ofn)
+            except Exception:
+                log.warning("rustdl_ofn_cache_write_failed version_id=%s",
+                            version_id, exc_info=True)
+        return ofn
