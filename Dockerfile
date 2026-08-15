@@ -1,10 +1,11 @@
 # --- horned-build: compile horned-convert (Rust) — used at ingestion to convert
 # Manchester (.omn) and OBO (.obo) uploads to N-Triples, which no RDF parser in
-# the Python stack can read. horned-owl's OBO (#217) and Manchester (#176) I/O is
-# merged to `devel` (v3.0.0), not yet a crates.io release, so pin the commit and
-# build the CLI. ---
+# the Python stack can read. horned-owl's OBO (#217), Manchester (#176) I/O, and
+# the OBO ontology-IRI fix (#288, so `ontology: <id>` expands to a PURL instead of
+# a relative IRI) are on `devel` (v3.0.0), not yet a crates.io release, so pin the
+# commit and build the CLI. ---
 FROM rust:1-slim-bookworm AS horned-build
-ARG HORNED_REV=85fa1efbfefc4f9ee6e070c06bc70a925c10a152
+ARG HORNED_REV=48d95234b5218e78defd70bb29620f2c6f9b28af
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 RUN git clone https://github.com/phillord/horned-owl.git /src \
