@@ -3,17 +3,18 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import IncrementalReasoningPanel from './IncrementalReasoningPanel'
 
-const { mockStart, mockSubsumed, mockAssert, mockClose } = vi.hoisted(() => ({
+const { mockStart, mockSubsumed, mockAssert, mockRetract, mockClose } = vi.hoisted(() => ({
   mockStart: vi.fn().mockResolvedValue({ session_id: 's1', revision: 0, inconsistent: false, total_clauses: 3, clause_ids: [1, 2, 3] }),
   mockSubsumed: vi.fn()
     .mockResolvedValueOnce({ sub: 'A', sup: 'B', entailed: false, revision: 0 })
     .mockResolvedValue({ sub: 'A', sup: 'B', entailed: true, revision: 1 }),
-  mockAssert: vi.fn().mockResolvedValue({ revision: 1, inconsistent: false }),
+  mockAssert: vi.fn().mockResolvedValue({ revision: 1, inconsistent: false, clause_ids: [42] }),
+  mockRetract: vi.fn().mockResolvedValue({ revision: 2, inconsistent: false }),
   mockClose: vi.fn().mockResolvedValue({ closed: true }),
 }))
 
 vi.mock('../lib/api', () => ({
-  api: { ontologies: { incremental: { start: mockStart, subsumed: mockSubsumed, assert: mockAssert, close: mockClose } } },
+  api: { ontologies: { incremental: { start: mockStart, subsumed: mockSubsumed, assert: mockAssert, retract: mockRetract, close: mockClose } } },
 }))
 
 function wrap(ui: React.ReactElement) {
@@ -40,5 +41,10 @@ describe('IncrementalReasoningPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: '+ Assert ⊑' }))
     await waitFor(() => expect(mockAssert).toHaveBeenCalledWith('o1', 'v1', 's1', 'A', 'B'))
     expect(await screen.findByText('entailed')).toBeInTheDocument()
+
+    // The asserted axiom is tracked and can be retracted by its clause ids.
+    const retractBtn = await screen.findByRole('button', { name: /retract/ })
+    fireEvent.click(retractBtn)
+    await waitFor(() => expect(mockRetract).toHaveBeenCalledWith('o1', 'v1', 's1', [42]))
   })
 })

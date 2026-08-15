@@ -394,7 +394,10 @@ def incremental_assert(session_id: str, req: SubsumedRequest):
         raise HTTPException(422, str(exc))
     if result.get("status") != "ok":
         raise HTTPException(422, f"assert rejected: {result}")
-    return {"revision": session.revision, "inconsistent": session.inconsistent}
+    # Surface the clause id(s) km assigned so the caller can retract this exact
+    # axiom later via /change {remove_clause_ids}.
+    return {"revision": session.revision, "inconsistent": session.inconsistent,
+            "clause_ids": result.get("added_clause_ids", [])}
 
 
 @app.post("/incremental/{session_id}/change")
