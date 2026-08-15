@@ -1,5 +1,15 @@
 # Justifications in OntoExplorer
 
+> ⚠️ **Historical (2026-05-21). Superseded — kept for the algorithm write-up only.**
+> The `elk-service` / ELK / ROBOT split described below no longer exists.
+> Current state:
+> - The reasoner lives in `docker/reasoner-service/` (not `elk-service`); reasoners are **rustdl** (default), **konclude**, and **km** (ELK, whelk, and the legacy rdflib classifier have all been removed).
+> - Justification is **reasoner-agnostic**: `GET /justification` runs through a dedicated justifier (**rustdl**'s native `justify`/`justify_all`) regardless of which reasoner classified the version, so konclude/km versions get justifications too.
+> - The app flow is **non-blocking**: peek the cache → dispatch a background Celery job (deduplicated) → poll; a provisional asserted-chain (BFS) is shown meanwhile. A per-version `.ofn` is cached to speed repeat justify/classify calls.
+> - See [`../ingestion-storage-reasoning.md`](../ingestion-storage-reasoning.md) for the current reasoning + storage data flow.
+>
+> The greedy-shrink + hitting-set algorithm below still describes how black-box justification works in principle.
+
 This is a status report on how OntoExplorer computes *justifications* (minimal axiom sets that prove an OWL entailment) and a recommendation for unifying the two systems that currently exist in parallel.
 
 ## Summary

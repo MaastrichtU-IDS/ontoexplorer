@@ -41,21 +41,26 @@ A next-generation FAIR ontology repository — ingest, browse, query, and reason
       │  OWL files   │        │  FAIR metadata   │       │   reasoning) │
       └──────────────┘        └──────────────────┘       └──────────────┘
                                                                    │
-                                                          ┌────────▼────────┐
-                                                          │   ELK Service   │
-                                                          │   (port 8001)   │
-                                                          │  OWL-EL reasoner│
-                                                          └─────────────────┘
+                                                          ┌────────▼───────────┐
+                                                          │  Reasoner service  │
+                                                          │    (port 8001)     │
+                                                          │ rustdl·konclude·km │
+                                                          └────────────────────┘
 ```
 
 **Storage split:**
 | Store | Purpose |
 |---|---|
 | MinIO | Raw ontology files and cached `owl:imports` |
-| Oxigraph (embedded) | Asserted + inferred RDF triples, SPARQL content queries |
+| Oxigraph (embedded) | Asserted + inferred RDF triples, SPARQL content queries (RDF-family uploads stream in as-is; Manchester/OBO/OWL-Functional are converted to Turtle first) |
 | Fuseki | DCAT/VoID/PROV-O metadata, federation-ready SPARQL endpoint |
 | Postgres (pgvector) | Users, versions, jobs, webhooks, API keys, annotation profiles, **term embeddings** |
-| Redis | Celery broker, search index, stats cache, ELK classification cache |
+| Redis | Celery broker, search/label index, stats cache, reasoner-service cache (input axioms as N-Triples, classification/justification results, per-version `.ofn`) |
+
+Reasoning is handled by the reasoner service (rustdl / konclude / km — the legacy
+rdflib and whelk reasoners have been retired). For the full format-and-storage
+data flow — what is sent to Oxigraph, what is cached in Redis, and how uploads
+are converted — see [`docs/ingestion-storage-reasoning.md`](docs/ingestion-storage-reasoning.md).
 
 ## Quickstart
 
@@ -167,6 +172,12 @@ curl -X POST http://localhost:8000/api/v1/ontologies \
 curl -X POST http://localhost:8000/api/v1/ontologies \
   -F "file=@ontology.owl"
 ```
+
+Accepted formats: RDF/XML, OWL/XML, Turtle, N-Triples, N-Quads, TriG, JSON-LD
+(parsed directly), plus OBO, Manchester, and OWL Functional (converted to Turtle
+via `horned-convert` at ingest). See
+[`docs/ingestion-storage-reasoning.md`](docs/ingestion-storage-reasoning.md) for
+the full format/data flow.
 
 Check job status:
 ```bash
