@@ -12,6 +12,7 @@ class OntologyFormat(StrEnum):
     JSON_LD = "jsonld"       # JSON-LD  → rdflib
     OBO = "obo"              # OBO flat file → horned-convert → N-Triples (rdflib fallback)
     MANCHESTER = "omn"       # Manchester Syntax → horned-convert → N-Triples
+    OWL_FUNCTIONAL = "ofn"   # OWL 2 Functional Syntax → horned-convert → N-Triples
     TRIG = "trig"            # TriG → rdflib
 
 
@@ -28,6 +29,7 @@ _EXT_MAP: dict[str, OntologyFormat] = {
     ".json": OntologyFormat.JSON_LD,
     ".obo": OntologyFormat.OBO,
     ".omn": OntologyFormat.MANCHESTER,
+    ".ofn": OntologyFormat.OWL_FUNCTIONAL,
     ".trig": OntologyFormat.TRIG,
 }
 
@@ -53,6 +55,11 @@ _SIGNATURES: list[tuple[bytes, OntologyFormat]] = [
     (b"@base", OntologyFormat.TURTLE),
     (b"PREFIX", OntologyFormat.TURTLE),
     (b"format-version:", OntologyFormat.OBO),
+    # OWL Functional Syntax: `Prefix(:=<...>)` / `Ontology(<iri> ...)`. The
+    # parenthesis distinguishes it from Turtle's `PREFIX`/`@prefix` and
+    # Manchester's `Prefix:`.
+    (b"Prefix(", OntologyFormat.OWL_FUNCTIONAL),
+    (b"Ontology(", OntologyFormat.OWL_FUNCTIONAL),
     (b"{", OntologyFormat.JSON_LD),
 ]
 

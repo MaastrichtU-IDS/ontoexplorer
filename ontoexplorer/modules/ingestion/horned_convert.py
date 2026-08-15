@@ -22,7 +22,7 @@ from ontoexplorer.modules.ingestion.format_detect import OntologyFormat
 # fidelity (canonical OBO PURLs + oboInOwl annotations); Manchester has no other
 # parser in the stack at all.
 CONVERTIBLE: frozenset[OntologyFormat] = frozenset(
-    {OntologyFormat.MANCHESTER, OntologyFormat.OBO}
+    {OntologyFormat.MANCHESTER, OntologyFormat.OBO, OntologyFormat.OWL_FUNCTIONAL}
 )
 
 # File extension handed to horned-convert so its content/extension sniffing picks
@@ -30,6 +30,7 @@ CONVERTIBLE: frozenset[OntologyFormat] = frozenset(
 _EXT: dict[OntologyFormat, str] = {
     OntologyFormat.MANCHESTER: ".omn",
     OntologyFormat.OBO: ".obo",
+    OntologyFormat.OWL_FUNCTIONAL: ".ofn",
 }
 
 _BIN = os.getenv("HORNED_CONVERT_BIN", "horned-convert")

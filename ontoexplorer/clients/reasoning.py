@@ -39,7 +39,7 @@ def _elk_url(path: str) -> str:
     return f"{get_settings().reasoner_service_url}{path}"
 
 
-_KNOWN_REASONERS = {"rdflib", "rustdl", "konclude"}
+_KNOWN_REASONERS = {"rustdl", "konclude", "km"}
 
 
 async def list_reasoners() -> list[dict]:

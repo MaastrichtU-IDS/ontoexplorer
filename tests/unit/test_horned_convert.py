@@ -31,9 +31,19 @@ name: dog
 is_a: TEST:0001 ! animal
 """
 
+_OFN = b"""Prefix(:=<http://example.org/>)
+Ontology(<http://example.org/test>
+  Declaration(Class(:Animal))
+  Declaration(Class(:Dog))
+  SubClassOf(:Dog :Animal)
+)
+"""
+
 
 def test_convertible_set():
-    assert CONVERTIBLE == frozenset({OntologyFormat.MANCHESTER, OntologyFormat.OBO})
+    assert CONVERTIBLE == frozenset({
+        OntologyFormat.MANCHESTER, OntologyFormat.OBO, OntologyFormat.OWL_FUNCTIONAL,
+    })
 
 
 def test_rejects_non_convertible_format():
@@ -68,4 +78,14 @@ def test_obo_converts_to_ntriples():
     nt = to_ntriples(_OBO, OntologyFormat.OBO).decode()
     # horned-owl emits canonical OBO PURLs + oboInOwl annotations.
     assert "http://purl.obolibrary.org/obo/TEST_0002" in nt
+    assert "http://www.w3.org/2000/01/rdf-schema#subClassOf" in nt
+
+
+@pytest.mark.skipif(
+    shutil.which("horned-convert") is None,
+    reason="horned-convert binary not on PATH (present in the built image)",
+)
+def test_owl_functional_converts_to_ntriples():
+    nt = to_ntriples(_OFN, OntologyFormat.OWL_FUNCTIONAL).decode()
+    assert "http://example.org/Dog" in nt
     assert "http://www.w3.org/2000/01/rdf-schema#subClassOf" in nt

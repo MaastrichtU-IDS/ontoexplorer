@@ -234,7 +234,7 @@ def compute_justification_endpoint(version_id: str, req: JustificationRequest):
     # input axioms and to key the justification cache. Justification itself is a
     # property of the ontology + entailment, not of the classifier, so we run it
     # through a dedicated justifier (rustdl by default) that works for every
-    # version — including konclude/km/rdflib ones, which have no native justify.
+    # version — including konclude/km ones, which have no native justify.
     reasoner = req.reasoner or default_reasoner()
     try:
         get_backend(reasoner)
