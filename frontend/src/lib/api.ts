@@ -1204,6 +1204,24 @@ export const api = {
         `/ontologies/${oid}/${vid}/reason`,
         { method: 'POST', body: JSON.stringify({ profile_id: profileId ?? null }) },
       ),
+
+    // Incremental EL++ reasoning session (km): ask subsumption on demand + assert
+    // hypothetical axioms and watch entailments change. EL++ only.
+    incremental: {
+      start: (oid: string, vid: string) =>
+        request<{ session_id: string; revision: number; inconsistent: boolean; total_clauses: number; clause_ids: number[] }>(
+          `/ontologies/${oid}/${vid}/incremental`, { method: 'POST' }),
+      subsumed: (oid: string, vid: string, sid: string, sub: string, sup: string) =>
+        request<{ sub: string; sup: string; entailed: boolean | null; revision: number }>(
+          `/ontologies/${oid}/${vid}/incremental/${sid}/subsumed`,
+          { method: 'POST', body: JSON.stringify({ sub, sup }) }),
+      assert: (oid: string, vid: string, sid: string, sub: string, sup: string) =>
+        request<{ revision: number; inconsistent: boolean }>(
+          `/ontologies/${oid}/${vid}/incremental/${sid}/assert`,
+          { method: 'POST', body: JSON.stringify({ sub, sup }) }),
+      close: (oid: string, vid: string, sid: string) =>
+        request<{ closed: boolean }>(`/ontologies/${oid}/${vid}/incremental/${sid}`, { method: 'DELETE' }),
+    },
     patch: (id: string, body: { shortname?: string | null; title?: string | null; preferred_lang?: string | null; groups?: string[]; current_version_id?: string | null }) =>
       request<Ontology>(`/ontologies/${id}`, {
         method: 'PATCH',

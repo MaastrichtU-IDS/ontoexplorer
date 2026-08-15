@@ -14,6 +14,7 @@ from ontoexplorer.api.health import router as health_router
 from ontoexplorer.api.jobs import router as jobs_router
 from ontoexplorer.api.ontologies import router as ontologies_router, reasoners_router
 from ontoexplorer.api.reasoner_profiles import router as reasoner_profiles_router
+from ontoexplorer.api.incremental import router as incremental_router
 from ontoexplorer.api.search import router as search_router
 from ontoexplorer.api.sparql import router as sparql_router
 from ontoexplorer.api.sparql_queries import router as sparql_queries_router, starters_router as sparql_starters_router
@@ -91,6 +92,7 @@ def create_app() -> FastAPI:
     app.include_router(ontologies_router)
     app.include_router(reasoners_router)
     app.include_router(reasoner_profiles_router)
+    app.include_router(incremental_router)
     app.include_router(search_router)
     app.include_router(webhooks_router)
     app.include_router(inbound_router)

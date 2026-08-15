@@ -375,6 +375,19 @@ def incremental_subsumed(session_id: str, req: SubsumedRequest):
     return {"sub": req.sub, "sup": req.sup, "entailed": entailed, "revision": session.revision}
 
 
+@app.post("/incremental/{session_id}/assert")
+def incremental_assert(session_id: str, req: SubsumedRequest):
+    """Add a hypothetical `sub ⊑ sup` axiom (between two existing named classes)."""
+    session = _get_session(session_id)
+    try:
+        result = session.assert_subclass(req.sub, req.sup)
+    except KmError as exc:
+        raise HTTPException(422, str(exc))
+    if result.get("status") != "ok":
+        raise HTTPException(422, f"assert rejected: {result}")
+    return {"revision": session.revision, "inconsistent": session.inconsistent}
+
+
 @app.post("/incremental/{session_id}/change")
 def incremental_change(session_id: str, req: ChangeRequest):
     session = _get_session(session_id)

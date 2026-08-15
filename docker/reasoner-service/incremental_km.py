@@ -126,6 +126,21 @@ class KmSession:
         r = self._cmd({"op": "is_subsumed_by", "sub": self._to_name(sub), "sup": self._to_name(sup)})
         return r.get("entailed")
 
+    def assert_subclass(self, sub_iri: str, sup_iri: str) -> dict:
+        """Incrementally add a hypothetical `sub ⊑ sup` axiom between two existing
+        named classes. Builds the EL normal-form clause `sub(x) → sup(x)` using
+        km's internal concept names. Raises KmError if either class is unknown."""
+        sub = self._iri_to_name.get(sub_iri)
+        sup = self._iri_to_name.get(sup_iri)
+        if sub is None or sup is None:
+            missing = sub_iri if sub is None else sup_iri
+            raise KmError(f"class not in this ontology's signature: {missing}")
+        clause = {
+            "body": [{"kind": "concept", "concept": sub, "term": {"kind": "var", "name": "x"}}],
+            "head": [{"kind": "concept", "concept": sup, "term": {"kind": "var", "name": "x"}}],
+        }
+        return self.change(add_clauses=[clause])
+
     def change(self, add_clauses: list | None = None, remove_clause_ids: list | None = None) -> dict:
         r = self._cmd({
             "op": "change",
