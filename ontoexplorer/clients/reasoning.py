@@ -177,6 +177,15 @@ async def incremental_assert(session_id: str, sub: str, sup: str) -> dict:
         return resp.json()
 
 
+async def incremental_retract(session_id: str, clause_ids: list[int]) -> dict:
+    """Remove previously-asserted clauses (by the ids assert returned)."""
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(_elk_url(f"/incremental/{session_id}/change"),
+                                 json={"add_clauses": [], "remove_clause_ids": clause_ids})
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def incremental_close(session_id: str) -> dict:
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.delete(_elk_url(f"/incremental/{session_id}"))

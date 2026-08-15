@@ -1224,9 +1224,13 @@ export const api = {
           `/ontologies/${oid}/${vid}/incremental/${sid}/subsumed`,
           { method: 'POST', body: JSON.stringify({ sub, sup }) }),
       assert: (oid: string, vid: string, sid: string, sub: string, sup: string) =>
-        request<{ revision: number; inconsistent: boolean }>(
+        request<{ revision: number; inconsistent: boolean; clause_ids: number[] }>(
           `/ontologies/${oid}/${vid}/incremental/${sid}/assert`,
           { method: 'POST', body: JSON.stringify({ sub, sup }) }),
+      retract: (oid: string, vid: string, sid: string, clauseIds: number[]) =>
+        request<{ revision: number; inconsistent: boolean }>(
+          `/ontologies/${oid}/${vid}/incremental/${sid}/retract`,
+          { method: 'POST', body: JSON.stringify({ clause_ids: clauseIds }) }),
       close: (oid: string, vid: string, sid: string) =>
         request<{ closed: boolean }>(`/ontologies/${oid}/${vid}/incremental/${sid}`, { method: 'DELETE' }),
     },

@@ -16,6 +16,7 @@ export default function IncrementalReasoningPanel({ ontologyId, versionId }: {
   const [sub, setSub] = useState('')
   const [sup, setSup] = useState('')
   const [result, setResult] = useState<{ sub: string; sup: string; entailed: boolean | null } | null>(null)
+  const [asserted, setAsserted] = useState<{ sub: string; sup: string; clauseIds: number[] }[]>([])
   const [error, setError] = useState<string | null>(null)
 
   // Close the session when the panel unmounts.
@@ -37,12 +38,29 @@ export default function IncrementalReasoningPanel({ ontologyId, versionId }: {
 
   const assertAxiom = useMutation({
     mutationFn: () => api.ontologies.incremental.assert(ontologyId, versionId, session!.id, sub.trim(), sup.trim()),
-    onSuccess: r => {
+    onSuccess: (r, _v, ctx) => {
       setError(null)
       setSession(s => s ? { ...s, revision: r.revision, inconsistent: r.inconsistent } : s)
+      const a = ctx as { sub: string; sup: string }
+      if (r.clause_ids?.length) {
+        setAsserted(list => [...list, { sub: a.sub, sup: a.sup, clauseIds: r.clause_ids }])
+      }
       ask.mutate()   // re-run the query so the flip is visible
     },
+    onMutate: () => ({ sub: sub.trim(), sup: sup.trim() }),
     onError: (e: unknown) => setError((e as Error)?.message ?? 'Assert failed'),
+  })
+
+  const retract = useMutation({
+    mutationFn: (clauseIds: number[]) =>
+      api.ontologies.incremental.retract(ontologyId, versionId, session!.id, clauseIds),
+    onSuccess: (r, clauseIds) => {
+      setError(null)
+      setSession(s => s ? { ...s, revision: r.revision, inconsistent: r.inconsistent } : s)
+      setAsserted(list => list.filter(a => a.clauseIds !== clauseIds))
+      ask.mutate()   // re-run the query so the flip back is visible
+    },
+    onError: (e: unknown) => setError((e as Error)?.message ?? 'Retract failed'),
   })
 
   const canQuery = !!session && !!sub.trim() && !!sup.trim()
@@ -101,6 +119,26 @@ export default function IncrementalReasoningPanel({ ontologyId, versionId }: {
               <strong style={{ color: result.entailed ? 'var(--green)' : (result.entailed === false ? 'var(--red)' : 'var(--text-dim)') }}>
                 {result.entailed === null ? 'unknown class' : result.entailed ? 'entailed' : 'not entailed'}
               </strong>
+            </div>
+          )}
+
+          {asserted.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Asserted this session
+              </span>
+              {asserted.map((a, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                  <code style={{ fontSize: 11 }}>{a.sub}</code> ⊑ <code style={{ fontSize: 11 }}>{a.sup}</code>
+                  <button type="button"
+                          onClick={() => retract.mutate(a.clauseIds)}
+                          disabled={retract.isPending}
+                          title="Retract this hypothetical axiom"
+                          style={{ ...btn, fontSize: 11, padding: '1px 6px', color: 'var(--red)' }}>
+                    ✕ retract
+                  </button>
+                </div>
+              ))}
             </div>
           )}
         </>

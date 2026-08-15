@@ -27,6 +27,10 @@ class _Pair(BaseModel):
     sup: str
 
 
+class _ClauseIds(BaseModel):
+    clause_ids: list[int]
+
+
 async def _version_reasoner(db: AsyncSession, ontology_id: str, version_id: str) -> str:
     v = (await db.execute(
         select(OntologyVersion).where(
@@ -81,6 +85,18 @@ async def assert_axiom(
 ):
     try:
         return await _reasoning.incremental_assert(session_id, body.sub, body.sup)
+    except httpx.HTTPStatusError as exc:
+        raise _proxy_error(exc)
+
+
+@router.post("/ontologies/{ontology_id}/{version_id}/incremental/{session_id}/retract",
+             summary="Retract previously-asserted axioms by their clause ids")
+async def retract_axioms(
+    ontology_id: str, version_id: str, session_id: str, body: _ClauseIds,
+    _: User = Depends(require_auth),
+):
+    try:
+        return await _reasoning.incremental_retract(session_id, body.clause_ids)
     except httpx.HTTPStatusError as exc:
         raise _proxy_error(exc)
 
