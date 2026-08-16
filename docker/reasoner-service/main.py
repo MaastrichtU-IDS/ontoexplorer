@@ -66,6 +66,12 @@ class JustificationRequest(BaseModel):
     cache_only: bool = False         # return cached result or a miss marker; never compute
 
 
+class ConsistencyRequest(BaseModel):
+    ntriples: str
+    ofn: str = ""
+    reasoner: str = "rustdl"
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -86,6 +92,39 @@ def get_reasoners():
         {**asdict(info), "capabilities": sorted(info.capabilities)}
         for info in list_reasoners()
     ]
+
+
+def _ofn_to_ntriples(ofn: str) -> str:
+    """OWL functional-syntax axioms -> N-Triples (via py-horned-owl + pyoxigraph),
+    wrapping in Ontology(...) exactly like the incremental assert path."""
+    import io
+    import pyhornedowl
+    import pyoxigraph
+    wrapped = "Ontology(\n" + ofn.strip() + "\n)"
+    onto = pyhornedowl.open_ontology_from_string(wrapped, serialization="ofn")
+    rdfxml = onto.save_to_string(serialization="rdf")
+    store = pyoxigraph.Store()
+    store.bulk_load(io.BytesIO(rdfxml.encode("utf-8")), format=pyoxigraph.RdfFormat.RDF_XML)
+    return pyoxigraph.serialize(
+        (q.triple for q in store.quads_for_pattern(None, None, None, None)),
+        format=pyoxigraph.RdfFormat.N_TRIPLES,
+    ).decode("utf-8")
+
+
+@app.post("/consistency")
+def consistency(req: ConsistencyRequest):
+    reasoner = req.reasoner or default_reasoner()
+    try:
+        backend = get_backend(reasoner)
+    except KeyError:
+        raise HTTPException(422, f"unknown reasoner '{reasoner}'")
+    combined = req.ntriples
+    if req.ofn.strip():
+        combined = (req.ntriples or "") + "\n" + _ofn_to_ntriples(req.ofn)
+    result = backend.classify_ntriples(combined, version_id="_adhoc_consistency_", params={})
+    unsat = list(result.unsatisfiable)
+    inconsistent = "http://www.w3.org/2002/07/owl#Thing" in unsat
+    return {"inconsistent": inconsistent, "unsatisfiable_classes": unsat, "reasoner": reasoner}
 
 
 @app.post("/classify", status_code=202)
