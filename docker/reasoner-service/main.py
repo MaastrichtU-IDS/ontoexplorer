@@ -120,7 +120,10 @@ def consistency(req: ConsistencyRequest):
         raise HTTPException(422, f"unknown reasoner '{reasoner}'")
     combined = req.ntriples
     if req.ofn.strip():
-        combined = (req.ntriples or "") + "\n" + _ofn_to_ntriples(req.ofn)
+        try:
+            combined = (req.ntriples or "") + "\n" + _ofn_to_ntriples(req.ofn)
+        except Exception as exc:
+            raise HTTPException(422, f"invalid OFN: {exc}")
     result = backend.classify_ntriples(combined, version_id="_adhoc_consistency_", params={})
     unsat = list(result.unsatisfiable)
     inconsistent = "http://www.w3.org/2002/07/owl#Thing" in unsat

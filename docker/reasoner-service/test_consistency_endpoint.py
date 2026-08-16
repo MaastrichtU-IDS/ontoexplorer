@@ -30,3 +30,20 @@ def test_consistency_reports_thing_as_inconsistent(monkeypatch):
     r = c.post("/consistency", json={"ntriples": "", "reasoner": "rustdl"})
     assert r.json()["inconsistent"] is True
     assert "http://x/C" in r.json()["unsatisfiable_classes"]
+
+
+def test_consistency_merges_ofn(monkeypatch):
+    monkeypatch.setattr(main, "get_backend", lambda name: _FakeBackend([]))
+    c = TestClient(main.app)
+    ofn = ("Declaration(Class(<http://x#DemoRole>))\n"
+           "SubClassOf(<http://x#DemoRole> <https://w3id.org/sulo/Role>)")
+    r = c.post("/consistency", json={"ntriples": "", "ofn": ofn, "reasoner": "rustdl"})
+    assert r.status_code == 200
+    assert r.json()["inconsistent"] is False
+
+
+def test_consistency_bad_ofn_returns_422(monkeypatch):
+    monkeypatch.setattr(main, "get_backend", lambda name: _FakeBackend([]))
+    c = TestClient(main.app)
+    r = c.post("/consistency", json={"ntriples": "", "ofn": "this is not valid OFN ((", "reasoner": "rustdl"})
+    assert r.status_code == 422
