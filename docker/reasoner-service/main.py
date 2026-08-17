@@ -72,6 +72,11 @@ class ConsistencyRequest(BaseModel):
     reasoner: str = "rustdl"
 
 
+class MergeRequest(BaseModel):
+    ntriples: str
+    ofn: str = ""
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -128,6 +133,17 @@ def consistency(req: ConsistencyRequest):
     unsat = list(result.unsatisfiable)
     inconsistent = "http://www.w3.org/2002/07/owl#Thing" in unsat
     return {"inconsistent": inconsistent, "unsatisfiable_classes": unsat, "reasoner": reasoner}
+
+
+@app.post("/merge")
+def merge(req: MergeRequest):
+    combined = req.ntriples or ""
+    if req.ofn.strip():
+        try:
+            combined = (req.ntriples or "") + "\n" + _ofn_to_ntriples(req.ofn)
+        except Exception as exc:
+            raise HTTPException(422, f"invalid OFN: {exc}")
+    return {"ntriples": combined}
 
 
 @app.post("/classify", status_code=202)
