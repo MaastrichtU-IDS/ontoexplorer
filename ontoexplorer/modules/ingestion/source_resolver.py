@@ -11,6 +11,8 @@ from enum import StrEnum
 
 import httpx
 
+from ontoexplorer.config import get_settings
+
 # Accept header for IRI mode — prefer OWL/XML, then Turtle, then RDF/XML, then anything
 _RDF_ACCEPT = (
     "application/owl+xml;q=1.0,"
@@ -22,7 +24,6 @@ _RDF_ACCEPT = (
 )
 
 _TIMEOUT = httpx.Timeout(60.0)
-_MAX_SIZE = 512 * 1024 * 1024  # 512 MB hard limit
 
 
 class SourceMode(StrEnum):
@@ -41,30 +42,18 @@ class ResolvedSource:
 
 def resolve_iri(iri: str) -> ResolvedSource:
     """Fetch ontology by canonical IRI with RDF content negotiation."""
-    with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
-        resp = client.get(iri, headers={"Accept": _RDF_ACCEPT})
-        resp.raise_for_status()
-        _check_size(resp)
-        return ResolvedSource(
-            data=resp.content,
-            content_type=resp.headers.get("content-type"),
-            final_url=str(resp.url),
-            mode=SourceMode.IRI,
-        )
+    data, content_type, final_url = _fetch(iri, headers={"Accept": _RDF_ACCEPT})
+    return ResolvedSource(
+        data=data, content_type=content_type, final_url=final_url, mode=SourceMode.IRI,
+    )
 
 
 def resolve_url(url: str) -> ResolvedSource:
     """Fetch ontology from a direct file URL without content negotiation."""
-    with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
-        resp = client.get(url)
-        resp.raise_for_status()
-        _check_size(resp)
-        return ResolvedSource(
-            data=resp.content,
-            content_type=resp.headers.get("content-type"),
-            final_url=str(resp.url),
-            mode=SourceMode.URL,
-        )
+    data, content_type, final_url = _fetch(url, headers=None)
+    return ResolvedSource(
+        data=data, content_type=content_type, final_url=final_url, mode=SourceMode.URL,
+    )
 
 
 def resolve_bytes(data: bytes, content_type: str | None = None) -> ResolvedSource:
@@ -77,9 +66,38 @@ def resolve_bytes(data: bytes, content_type: str | None = None) -> ResolvedSourc
     )
 
 
-def _check_size(resp: httpx.Response) -> None:
-    content_length = resp.headers.get("content-length")
-    if content_length and int(content_length) > _MAX_SIZE:
-        raise ValueError(f"Response exceeds size limit ({_MAX_SIZE} bytes)")
-    if len(resp.content) > _MAX_SIZE:
-        raise ValueError(f"Downloaded content exceeds size limit ({_MAX_SIZE} bytes)")
+def _fetch(
+    url: str, headers: dict[str, str] | None
+) -> tuple[bytes, str | None, str]:
+    """GET `url`, streaming the body so the size cap can abort the transfer.
+
+    The cap is checked twice: once against the declared Content-Length (so an
+    oversized source costs nothing but the response headers) and again against
+    the running byte count while reading (so a chunked response without a
+    declared length is abandoned as soon as it crosses the limit) — rather than
+    buffering the whole body first and rejecting it afterwards.
+    """
+    max_size = get_settings().ingest_max_source_bytes
+    with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
+        with client.stream("GET", url, headers=headers) as resp:
+            resp.raise_for_status()
+
+            declared = resp.headers.get("content-length")
+            if declared and int(declared) > max_size:
+                raise ValueError(
+                    f"Response exceeds size limit ({int(declared)} bytes, "
+                    f"limit {max_size} bytes)"
+                )
+
+            # iter_bytes() with no chunk size yields each decoded network chunk
+            # as it arrives, so the cap is tested at the earliest opportunity
+            # instead of after re-buffering to a fixed block size.
+            buf = bytearray()
+            for chunk in resp.iter_bytes():
+                buf.extend(chunk)
+                if len(buf) > max_size:
+                    raise ValueError(
+                        f"Downloaded content exceeds size limit ({max_size} bytes)"
+                    )
+
+            return bytes(buf), resp.headers.get("content-type"), str(resp.url)

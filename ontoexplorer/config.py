@@ -121,6 +121,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     json_logs: bool = True
 
+    # Ingestion — hard ceiling on a fetched ontology source (IRI/URL download).
+    # Enforced while streaming, so an oversized source is abandoned mid-transfer
+    # rather than buffered in full. Sized to admit the largest OBO ontologies
+    # (DRON is ~674 MiB and growing); raise via INGEST_MAX_SOURCE_BYTES.
+    ingest_max_source_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GiB
+
     # MOD-API
     mod_catalogue_title: str = "OntoExplorer Catalogue"
     mod_catalogue_description: str = "A FAIR ontology repository"
