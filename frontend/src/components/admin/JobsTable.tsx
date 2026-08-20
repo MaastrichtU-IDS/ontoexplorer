@@ -1,3 +1,4 @@
+import React from 'react'
 import { AdminJobEntry } from '../../lib/api'
 import { usePagedTable } from '../../hooks/usePagedTable'
 import { TablePager } from '../TablePager'
@@ -26,8 +27,9 @@ export function JobsTable({ jobs }: { jobs: AdminJobEntry[] }) {
           </thead>
           <tbody>
             {paged.map(job => (
-              <tr key={job.id} style={{
-                borderBottom: '1px solid var(--overlay)',
+              <React.Fragment key={job.id}>
+              <tr style={{
+                borderBottom: job.error ? undefined : '1px solid var(--overlay)',
                 background: job.status === 'failed' ? 'rgba(248,81,73,0.06)' : undefined,
               }}>
                 <td style={{ padding: '6px 10px', color: JOB_TYPE_COLOR[job.type] ?? 'var(--text-muted)', fontSize: 10, textTransform: 'uppercase', fontWeight: 600 }}>
@@ -47,6 +49,27 @@ export function JobsTable({ jobs }: { jobs: AdminJobEntry[] }) {
                   {fmtAge(job.started_at)}
                 </td>
               </tr>
+              {job.error && (
+                // The only place the UI accounts for *why* a job failed. An
+                // ingestion that died before producing a version has no
+                // ontology page to carry the message.
+                <tr style={{
+                  borderBottom: '1px solid var(--overlay)',
+                  background: job.status === 'failed' ? 'rgba(248,81,73,0.06)' : undefined,
+                }}>
+                  <td colSpan={5} style={{
+                    padding: '0 10px 7px 10px',
+                    color: 'var(--danger, #f85149)',
+                    fontFamily: 'var(--font-mono, monospace)',
+                    fontSize: 11,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                  }}>
+                    {job.error}
+                  </td>
+                </tr>
+              )}
+              </React.Fragment>
             ))}
             {paged.length === 0 && (
               <tr>

@@ -267,6 +267,21 @@ async def submit_ontology(
         )
     reasoner = chosen_reasoner
 
+    # An explicit serialisation, canonicalised here so the worker receives a
+    # known OntologyFormat value. Absent/empty => auto-detect. Read from the
+    # form for uploads and the JSON body otherwise, so every submission route
+    # can override detection. Previously this was forwarded as the
+    # Content-Type, where no value it carried was a real MIME type, so it was
+    # silently ignored.
+    from ontoexplorer.modules.ingestion.format_detect import parse_format
+    try:
+        parsed = parse_format(
+            form.get("format") if form is not None else body.get("format")
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    fmt = parsed.value if parsed else None
+
     if is_multipart:
         # Stream the upload straight to MinIO and pass the ingest task only the
         # object key. Avoids reading the whole file into memory + hex-encoding
@@ -289,6 +304,7 @@ async def submit_ontology(
                 upload_key=upload_key,
                 filename=file.filename,
                 content_type=file.content_type,
+                format=fmt,
                 owner_id=owner_id,
                 reasoner=reasoner, reasoner_profile_id=reasoner_profile_id,
             ),
@@ -296,15 +312,16 @@ async def submit_ontology(
         return {"task_id": task.id, "status": "queued"}
 
     groups = [g for g in (body.get("groups") or []) if g] or None
+
     if "iri" in body:
         task = await loop.run_in_executor(
             None,
-            lambda: ingest_ontology.delay(iri=body["iri"], owner_id=owner_id, groups=groups, reasoner=reasoner, reasoner_profile_id=reasoner_profile_id),
+            lambda: ingest_ontology.delay(iri=body["iri"], format=fmt, owner_id=owner_id, groups=groups, reasoner=reasoner, reasoner_profile_id=reasoner_profile_id),
         )
     elif "url" in body:
         task = await loop.run_in_executor(
             None,
-            lambda: ingest_ontology.delay(url=body["url"], owner_id=owner_id, groups=groups, reasoner=reasoner, reasoner_profile_id=reasoner_profile_id),
+            lambda: ingest_ontology.delay(url=body["url"], format=fmt, owner_id=owner_id, groups=groups, reasoner=reasoner, reasoner_profile_id=reasoner_profile_id),
         )
     elif "content" in body:
         raw = body["content"].encode()
@@ -312,7 +329,7 @@ async def submit_ontology(
             None,
             lambda: ingest_ontology.delay(
                 raw_bytes_hex=raw.hex(),
-                content_type=body.get("format"),
+                format=fmt,
                 owner_id=owner_id,
                 groups=groups,
                 reasoner=reasoner, reasoner_profile_id=reasoner_profile_id,

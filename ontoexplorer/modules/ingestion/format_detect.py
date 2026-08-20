@@ -60,8 +60,64 @@ _SIGNATURES: list[tuple[bytes, OntologyFormat]] = [
     # Manchester's `Prefix:`.
     (b"Prefix(", OntologyFormat.OWL_FUNCTIONAL),
     (b"Ontology(", OntologyFormat.OWL_FUNCTIONAL),
+    # Manchester Syntax: colon-terminated frame keywords. The colon is what
+    # separates it from Functional's `Prefix(` / `Ontology(` above, and the
+    # mixed case separates it from Turtle's `@prefix` / SPARQL-style `PREFIX`.
+    # Listed after the Functional entries so `Prefix(` is matched first.
+    (b"Prefix: ", OntologyFormat.MANCHESTER),
+    (b"Ontology: ", OntologyFormat.MANCHESTER),
+    (b"Class: ", OntologyFormat.MANCHESTER),
     (b"{", OntologyFormat.JSON_LD),
 ]
+
+
+# Friendly spellings a caller may send for an explicit format, on top of the
+# OntologyFormat values themselves. Keeps the labels the paste form used to
+# submit ("turtle", "n-triples", …) working for existing API callers.
+_FORMAT_ALIASES: dict[str, OntologyFormat] = {
+    "turtle": OntologyFormat.TURTLE,
+    "rdfxml": OntologyFormat.RDF_XML,
+    "rdf-xml": OntologyFormat.RDF_XML,
+    "rdf/xml": OntologyFormat.RDF_XML,
+    "xml": OntologyFormat.RDF_XML,
+    "owlxml": OntologyFormat.OWL_XML,
+    "owl-xml": OntologyFormat.OWL_XML,
+    "ntriples": OntologyFormat.N_TRIPLES,
+    "n-triples": OntologyFormat.N_TRIPLES,
+    "nquads": OntologyFormat.N_QUADS,
+    "n-quads": OntologyFormat.N_QUADS,
+    "json-ld": OntologyFormat.JSON_LD,
+    "jsonld": OntologyFormat.JSON_LD,
+    "json": OntologyFormat.JSON_LD,
+    "manchester": OntologyFormat.MANCHESTER,
+    "functional": OntologyFormat.OWL_FUNCTIONAL,
+    "owl-functional": OntologyFormat.OWL_FUNCTIONAL,
+}
+
+
+def parse_format(value: str | None) -> OntologyFormat | None:
+    """Resolve a caller-supplied format to an OntologyFormat, or None for auto-detect.
+
+    Accepts an OntologyFormat value ("ttl"), a friendly alias ("turtle"), or a
+    real MIME type ("text/turtle"). Raises ValueError on anything else: an
+    unrecognised format used to be discarded in silence, which is how the paste
+    form's selector could go unnoticed as dead.
+    """
+    if value is None:
+        return None
+    key = value.strip().lower()
+    if not key:
+        return None
+    try:
+        return OntologyFormat(key)
+    except ValueError:
+        pass
+    if key in _FORMAT_ALIASES:
+        return _FORMAT_ALIASES[key]
+    if key in _MIME_MAP:
+        return _MIME_MAP[key]
+    accepted = ", ".join(sorted(f.value for f in OntologyFormat))
+    raise ValueError(f"Unknown ontology format {value!r}. Accepted: {accepted}")
 
 
 def _is_owl_xml(data: bytes) -> bool:

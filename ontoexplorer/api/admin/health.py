@@ -6,7 +6,7 @@ import asyncio
 import httpx
 import redis as redis_sync
 from fastapi import APIRouter, Depends
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.config import get_settings
@@ -228,13 +228,15 @@ async def admin_overview(
     version_ids = [str(r["version_id"]) for r in rows]
     embed_counts: dict[str, int] = {}
     if version_ids:
+        # Expanding IN rather than Postgres' `= ANY(:ids)` so the same
+        # statement runs under any driver. version_ids is non-empty here.
         count_rows = (await db.execute(
             text("""
                 SELECT version_id, COUNT(*) AS cnt
                 FROM term_embeddings
-                WHERE version_id = ANY(:ids)
+                WHERE version_id IN :ids
                 GROUP BY version_id
-            """),
+            """).bindparams(bindparam("ids", expanding=True)),
             {"ids": version_ids},
         )).all()
         embed_counts = {str(r.version_id): int(r.cnt) for r in count_rows}
@@ -281,15 +283,23 @@ async def admin_overview(
                    j.started_at, j.finished_at, j.error, j.created_at,
                    o.shortname AS ontology_shortname, o.iri AS ontology_iri
             FROM jobs j
-            JOIN versions v ON v.id = j.version_id
-            JOIN ontologies o ON o.id = v.ontology_id
+            -- LEFT so an ingestion that failed before producing a version
+            -- (unreachable IRI, source over the download cap, unparseable file)
+            -- still appears; those rows carry a NULL version_id and are exactly
+            -- the failures with no other route to the UI.
+            LEFT JOIN versions v ON v.id = j.version_id
+            LEFT JOIN ontologies o ON o.id = v.ontology_id
             ORDER BY j.created_at DESC
             LIMIT 50
         """)
     )).mappings().all()
 
     def _fmt(dt) -> str | None:
-        return dt.isoformat() if dt else None
+        # Raw SQL, so the driver picks the type: asyncpg hands back datetimes,
+        # sqlite hands back ISO strings.
+        if not dt:
+            return None
+        return dt.isoformat() if hasattr(dt, "isoformat") else str(dt)
 
     jobs = [
         {

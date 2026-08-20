@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { api, slugFromIri, type Ontology, type OntologyVersion, type UsageCounts } from '../lib/api'
+import { api, slugFromIri, type Ontology, type OntologyVersion } from '../lib/api'
 import { useAuth } from '../hooks/useAuth'
 import ReindexWithReasoner from '../components/ReindexWithReasoner'
+
+const INGEST_POLL_MS = 1500
+const INGEST_TRACK_TIMEOUT_MS = 30 * 60_000
 
 // ── Status dot ────────────────────────────────────────────────────────────────
 
@@ -527,14 +529,22 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
 
 // ── Add-ontology inline form ──────────────────────────────────────────────────
 
-type AddTab = 'iri' | 'url' | 'upload' | 'paste'
+type AddTab = 'iri' | 'upload' | 'paste'
 
+// Values are OntologyFormat keys, sent as `format` and resolved server-side by
+// parse_format. '' means auto-detect, which handles almost everything — the
+// explicit choices are the fallback for content the sniffer can't place.
 const FORMATS = [
-  { value: 'turtle',      label: 'Turtle (.ttl)' },
-  { value: 'rdf',         label: 'RDF/XML (.rdf, .owl)' },
-  { value: 'n-triples',   label: 'N-Triples (.nt)' },
-  { value: 'json-ld',     label: 'JSON-LD (.jsonld)' },
-  { value: 'obo',         label: 'OBO (.obo)' },
+  { value: '',      label: 'Auto-detect' },
+  { value: 'ttl',    label: 'Turtle (.ttl)' },
+  { value: 'rdf',    label: 'RDF/XML (.rdf, .owl)' },
+  { value: 'nt',     label: 'N-Triples (.nt)' },
+  { value: 'nq',     label: 'N-Quads (.nq)' },
+  { value: 'trig',   label: 'TriG (.trig)' },
+  { value: 'jsonld', label: 'JSON-LD (.jsonld)' },
+  { value: 'obo',    label: 'OBO (.obo)' },
+  { value: 'omn',    label: 'Manchester (.omn)' },
+  { value: 'ofn',    label: 'Functional (.ofn)' },
 ]
 
 function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
@@ -542,9 +552,25 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
   const [value, setValue] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [pasteContent, setPasteContent] = useState('')
-  const [pasteFormat, setPasteFormat] = useState('turtle')
+  // Shared by the upload and paste tabs: '' = auto-detect, otherwise an
+  // explicit OntologyFormat key that bypasses server-side detection.
+  const [formatOverride, setFormatOverride] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  // Tone is set explicitly at each call site rather than sniffed from the text:
+  // the failure message is the server's error verbatim, so its wording is not
+  // ours to pattern-match on.
+  const [messageTone, setMessageTone] = useState<'info' | 'error'>('info')
+  const say = (text: string, tone: 'info' | 'error' = 'info') => {
+    setMessage(text)
+    setMessageTone(tone)
+  }
+  // Stops the ingestion poll from setting state after the form unmounts.
+  const cancelled = useRef(false)
+  useEffect(() => {
+    cancelled.current = false
+    return () => { cancelled.current = true }
+  }, [])
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [profileId, setProfileId] = useState<string | undefined>(undefined)
 
@@ -556,37 +582,72 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
   })
   const profiles = profilesData?.profiles ?? []
 
+  // Ingestion runs in a Celery worker, so POST /ontologies only queues it. The
+  // returned task_id is also the ingestion job's id, so poll GET /jobs/{id} for
+  // the outcome — a submission that fails before any version exists (unreachable
+  // IRI, source over the download cap, unparseable file) otherwise reported
+  // nothing but "queued" while the real error sat in the worker log.
+  async function trackIngestion(taskId: string) {
+    // Generous ceiling: ingesting a multi-hundred-MB ontology is slow, and
+    // Celery retries a failed attempt three times a minute apart.
+    const deadline = Date.now() + INGEST_TRACK_TIMEOUT_MS
+    while (!cancelled.current && Date.now() < deadline) {
+      try {
+        const job = await api.jobs.get(taskId)
+        if (job.status === 'failed') {
+          say(`Failed: ${job.error ?? 'ingestion failed — see the jobs log'}`, 'error')
+          return
+        }
+        if (job.status === 'done') {
+          say('Ingested — refreshing…')
+          onSuccess()
+          return
+        }
+        say(`Ingesting… (task ${taskId})`)
+      } catch {
+        // 404 until the worker picks the task up and writes the row — keep waiting.
+      }
+      await new Promise((r) => setTimeout(r, INGEST_POLL_MS))
+    }
+    if (!cancelled.current) {
+      say(`Still running — track task ${taskId} in the jobs log`)
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSubmitting(true)
     setMessage(null)
+    setMessageTone('info')
+    let taskId: string | null = null
     try {
       let result: { task_id: string }
       if (tab === 'iri') {
+        // One path for both: resolve_iri content-negotiates and follows
+        // redirects, and a direct file URL resolves through it unchanged
+        // because static servers ignore the Accept header.
         result = await api.ontologies.submitByIri(value, profileId)
-      } else if (tab === 'url') {
-        result = await api.ontologies.submitByUrl(value, profileId)
       } else if (tab === 'upload') {
         if (!file) return
-        result = await api.ontologies.submitFile(file, profileId)
+        result = await api.ontologies.submitFile(file, profileId, formatOverride)
       } else {
-        result = await api.ontologies.submitByContent(pasteContent, pasteFormat, profileId)
+        result = await api.ontologies.submitByContent(pasteContent, formatOverride, profileId)
       }
-      setMessage(`Queued — task ID: ${result.task_id}`)
+      taskId = result.task_id
+      say(`Queued — task ID: ${result.task_id}`)
       setValue('')
       setFile(null)
       setPasteContent('')
-      setTimeout(onSuccess, 2000)
     } catch (err: unknown) {
-      setMessage(`Error: ${err instanceof Error ? err.message : String(err)}`)
+      say(`Error: ${err instanceof Error ? err.message : String(err)}`, 'error')
     } finally {
       setSubmitting(false)
     }
+    if (taskId) await trackIngestion(taskId)
   }
 
   const tabs: { key: AddTab; label: string }[] = [
-    { key: 'iri',    label: 'By IRI' },
-    { key: 'url',    label: 'By URL' },
+    { key: 'iri',    label: 'By IRI or URL' },
     { key: 'upload', label: 'Upload file' },
     { key: 'paste',  label: 'Paste RDF' },
   ]
@@ -624,12 +685,12 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
       </div>
 
       <form onSubmit={handleSubmit}>
-        {(tab === 'iri' || tab === 'url') && (
+        {tab === 'iri' && (
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <input
               value={value}
               onChange={e => setValue(e.target.value)}
-              placeholder={tab === 'iri' ? 'https://purl.obolibrary.org/obo/go.owl' : 'https://example.com/ontology.ttl'}
+              aria-label="Ontology IRI or URL"
               style={{ flex: 1 }}
               required
             />
@@ -637,24 +698,42 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
         )}
 
         {tab === 'upload' && (
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            <input
-              type="file"
-              accept=".owl,.ttl,.rdf,.nt,.obo,.jsonld,.xml"
-              onChange={e => setFile(e.target.files?.[0] ?? null)}
-              style={{ flex: 1, fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}
-              required
-            />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <input
+                type="file"
+                accept=".owl,.ttl,.turtle,.rdf,.xml,.nt,.nq,.trig,.jsonld,.json,.obo,.omn,.ofn"
+                onChange={e => setFile(e.target.files?.[0] ?? null)}
+                style={{ flex: 1, fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)' }}
+                required
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              {/* Auto-detect reads the file extension first, so this is only
+                  needed for a misnamed or extension-less file. */}
+              <label htmlFor="upload-format" style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>Format:</label>
+              <select
+                id="upload-format"
+                value={formatOverride}
+                onChange={e => setFormatOverride(e.target.value)}
+                style={{ fontSize: 'var(--font-size-sm)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '0.2rem 0.4rem', color: 'var(--text)' }}
+              >
+                {FORMATS.map(f => (
+                  <option key={f.value} value={f.value}>{f.label}</option>
+                ))}
+              </select>
+            </div>
           </div>
         )}
 
         {tab === 'paste' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>Format:</span>
+              <label htmlFor="paste-format" style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>Format:</label>
               <select
-                value={pasteFormat}
-                onChange={e => setPasteFormat(e.target.value)}
+                id="paste-format"
+                value={formatOverride}
+                onChange={e => setFormatOverride(e.target.value)}
                 style={{ fontSize: 'var(--font-size-sm)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '0.2rem 0.4rem', color: 'var(--text)' }}
               >
                 {FORMATS.map(f => (
@@ -736,7 +815,7 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
         <p style={{
           marginTop: '0.5rem',
           fontSize: 'var(--font-size-sm)',
-          color: message.startsWith('Error') ? 'var(--red-soft)' : 'var(--accent)',
+          color: messageTone === 'error' ? 'var(--red-soft)' : 'var(--accent)',
         }}>
           {message}
         </p>
@@ -767,104 +846,6 @@ function sortOntologies(list: Ontology[], col: SortCol, dir: SortDir): Ontology[
     return dir === 'asc' ? cmp : -cmp
   })
   return sorted
-}
-
-const DASH_GRANULARITIES = ['week', 'month', 'year'] as const
-
-function _DualCount({ counts }: { counts?: UsageCounts }) {
-  return (
-    <span>
-      <strong style={{ color: 'var(--text)' }}>{(counts?.unique ?? 0).toLocaleString()}</strong>
-      <span style={{ color: 'var(--text-dim)' }}> / {(counts?.total ?? 0).toLocaleString()}</span>
-    </span>
-  )
-}
-
-function MyUsageSection() {
-  const [gran, setGran] = useState<typeof DASH_GRANULARITIES[number]>('month')
-  const { data, isLoading } = useQuery({
-    queryKey: ['usage-mine', gran],
-    queryFn: () => api.stats.usageMine(gran, 12),
-  })
-  const per = data?.per_ontology ?? []
-  const trend = data?.trend ?? []
-  const hasData = trend.some(d => d.view_total || d.download_total)
-  const anyUsage = per.some(o => o.view_total || o.download_total)
-
-  const cell: React.CSSProperties = { padding: '5px 8px', textAlign: 'right', fontSize: 'var(--font-size-sm)' }
-  const th: React.CSSProperties = { ...cell, color: 'var(--text-dim)', fontSize: 10, textTransform: 'uppercase', fontWeight: 500 }
-
-  return (
-    <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '1rem', marginBottom: '1rem' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-        <h2 style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          Views &amp; Downloads — my ontologies
-        </h2>
-        <div style={{ display: 'flex', gap: 4 }}>
-          {DASH_GRANULARITIES.map(g => (
-            <button key={g} onClick={() => setGran(g)} style={{
-              fontSize: 11, textTransform: 'capitalize', cursor: 'pointer', padding: '3px 10px',
-              borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)',
-              background: g === gran ? 'var(--accent)' : 'transparent',
-              color: g === gran ? 'var(--on-accent)' : 'var(--text-dim)',
-            }}>{g}</button>
-          ))}
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', gap: '1.5rem', fontSize: 'var(--font-size-sm)', marginBottom: '0.75rem' }}>
-        <div>Views (unique / total): <_DualCount counts={data?.totals.views} /></div>
-        <div>Downloads (unique / total): <_DualCount counts={data?.totals.downloads} /></div>
-      </div>
-
-      {isLoading ? (
-        <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</p>
-      ) : per.length === 0 ? (
-        <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>You don't own or maintain any ontologies yet.</p>
-      ) : (
-        <>
-          {hasData && (
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={trend}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="period" tick={{ fontSize: 11, fill: 'var(--text-dim)' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: 'var(--text-dim)' }} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip contentStyle={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', color: 'var(--text)' }} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Line type="monotone" dataKey="view_unique" name="Views" stroke="var(--accent-blue)" dot={false} strokeWidth={2} />
-                <Line type="monotone" dataKey="download_unique" name="Downloads" stroke="var(--accent)" dot={false} strokeWidth={2} />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: hasData ? '0.75rem' : 0 }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <th style={{ ...th, textAlign: 'left' }}>Ontology</th>
-                <th style={th}>Views (u / t)</th>
-                <th style={th}>Downloads (u / t)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {per.map(o => (
-                <tr key={o.ontology_id} style={{ borderBottom: '1px solid var(--overlay)' }}>
-                  <td style={{ ...cell, textAlign: 'left' }}>
-                    <Link to={`/ontologies/${o.shortname ?? o.ontology_id}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>
-                      {o.title || o.shortname || o.ontology_id}
-                    </Link>
-                  </td>
-                  <td style={cell}>{o.view_unique.toLocaleString()} / {o.view_total.toLocaleString()}</td>
-                  <td style={cell}>{o.download_unique.toLocaleString()} / {o.download_total.toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {!anyUsage && (
-            <p style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: '0.5rem' }}>No views or downloads recorded yet.</p>
-          )}
-        </>
-      )}
-    </div>
-  )
 }
 
 export default function Dashboard() {
@@ -952,8 +933,6 @@ export default function Dashboard() {
           <button onClick={() => setSearch('')} style={{ color: 'var(--text-dim)', fontSize: 11, padding: '2px 4px' }}>✕</button>
         )}
       </div>
-
-      <MyUsageSection />
 
       {/* Sort bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginBottom: '0.75rem' }}>

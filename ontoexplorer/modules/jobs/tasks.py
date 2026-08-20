@@ -392,6 +392,46 @@ def compute_ontology_comparison(version_from_id: str, version_to_id: str) -> dic
     return {"status": "done"}
 
 
+async def _ingest_tracked(request, job_id: str | None, session_factory):
+    """Run the ingestion pipeline, mirroring its progress into the jobs table.
+
+    The row is keyed by the Celery task id, so the `task_id` POST /ontologies
+    hands back is exactly the id GET /jobs/{id} answers to. Without this, a
+    submission that fails before the pipeline produces an OntologyVersion —
+    unreachable IRI, source over the download cap, unparseable file — left no
+    trace outside the worker log, and the caller saw a queued submission that
+    simply never appeared.
+
+    Each jobs update runs in its own session so it is unaffected by the state
+    of the (possibly failed) ingestion transaction, and a tracking failure is
+    logged rather than allowed to mask the real outcome.
+    """
+    from ontoexplorer.modules.ingestion.pipeline import run_ingestion
+    from ontoexplorer.modules.jobs import tracker
+
+    async def _track(fn) -> None:
+        if not job_id:
+            return
+        try:
+            async with session_factory() as db:
+                await fn(db)
+        except Exception:
+            log.exception("ingest_job_tracking_failed", job_id=job_id)
+
+    await _track(lambda db: tracker.start_job(db, job_id, "ingestion"))
+    try:
+        async with session_factory() as db:
+            result = await run_ingestion(db, request)
+    except Exception as exc:
+        # Bind the text now: Python unbinds `exc` at the end of the except block,
+        # so a lambda closing over it would be reading a name about to vanish.
+        message = str(exc)[:1000]
+        await _track(lambda db: tracker.mark_failed(db, job_id, message))
+        raise
+    await _track(lambda db: tracker.mark_done(db, job_id, version_id=result.version_id))
+    return result
+
+
 @celery_app.task(bind=True, name="ontoexplorer.ingest_ontology", max_retries=3)
 def ingest_ontology(
     self,
@@ -402,6 +442,7 @@ def ingest_ontology(
     upload_key: str | None = None,
     filename: str | None = None,
     content_type: str | None = None,
+    format: str | None = None,
     owner_id: str | None = None,
     groups: list[str] | None = None,
     reasoner: str = "rustdl",
@@ -409,7 +450,8 @@ def ingest_ontology(
 ) -> dict:
     """Celery task: run the full ingestion pipeline for one ontology submission."""
     from ontoexplorer.database import make_celery_db_session
-    from ontoexplorer.modules.ingestion.pipeline import IngestionRequest, run_ingestion
+    from ontoexplorer.modules.ingestion.format_detect import parse_format
+    from ontoexplorer.modules.ingestion.pipeline import IngestionRequest
 
     # File uploads are staged in MinIO and referenced by key (see submit_ontology),
     # so the bytes never travel through the broker. Fall back to the legacy
@@ -419,15 +461,19 @@ def ingest_ontology(
         raw_bytes = fetch_staged_upload(upload_key)
     else:
         raw_bytes = bytes.fromhex(raw_bytes_hex) if raw_bytes_hex else None
+    # Celery args are JSON, so the format arrives as a string; the API has
+    # already validated it, and re-parsing here keeps the task callable directly.
     request = IngestionRequest(
         iri=iri, url=url, raw_bytes=raw_bytes,
-        filename=filename, content_type=content_type, owner_id=owner_id, groups=groups or [],
+        filename=filename, content_type=content_type, format=parse_format(format),
+        owner_id=owner_id, groups=groups or [],
         reasoner=reasoner, reasoner_profile_id=reasoner_profile_id,
     )
 
+    session_factory = make_celery_db_session()
+
     async def _run():
-        async with make_celery_db_session()() as db:
-            return await run_ingestion(db, request)
+        return await _ingest_tracked(request, self.request.id, session_factory)
 
     try:
         result = asyncio.run(_run())
