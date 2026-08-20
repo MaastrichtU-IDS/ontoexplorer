@@ -80,6 +80,8 @@ class IngestionRequest:
     raw_bytes: bytes | None = None
     filename: str | None = None
     content_type: str | None = None
+    # Explicit serialisation, bypassing detection. None => auto-detect.
+    format: OntologyFormat | None = None
     owner_id: str | None = None
     groups: list[str] = None  # type: ignore[assignment]
     reasoner: str = "rustdl"
@@ -119,13 +121,17 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     else:
         raise ValueError("IngestionRequest must specify iri, url, or raw_bytes")
 
-    # ── Step 1: Detect format ─────────────────────────────────────────────────
-    fmt = detect_format(
-        source.data,
-        filename=request.filename,
-        content_type=source.content_type or request.content_type,
-    )
-    log.info("format_detected", format=fmt.value)
+    # ── Step 1: Determine format ──────────────────────────────────────────────
+    if request.format is not None:
+        fmt = request.format
+        log.info("format_specified", format=fmt.value)
+    else:
+        fmt = detect_format(
+            source.data,
+            filename=request.filename,
+            content_type=source.content_type or request.content_type,
+        )
+        log.info("format_detected", format=fmt.value)
 
     # ── Step 4: Deduplicate (fast hash on raw bytes) ───────────────────────────
     sha256 = compute_sha256_bytes(source.data)

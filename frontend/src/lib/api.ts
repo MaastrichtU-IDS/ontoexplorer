@@ -527,7 +527,9 @@ export interface AutocompleteResponse {
 
 export interface Job {
   id: string
-  version_id: string
+  // null until ingestion produces a version — an ingestion job is created from
+  // the Celery task id before the pipeline has run.
+  version_id: string | null
   type: string
   status: string
   started_at: string | null
@@ -954,7 +956,8 @@ export interface AdminOntologyEntry {
 export interface AdminJobEntry {
   id: string
   type: string
-  version_id: string
+  // null for an ingestion that failed before producing a version.
+  version_id: string | null
   ontology_shortname: string | null
   ontology_iri: string | null
   status: string
@@ -1351,10 +1354,11 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ url, ...(profileId ? { profile_id: profileId } : {}) }),
       }),
-    submitFile: (file: File, profileId?: string) => {
+    submitFile: (file: File, profileId?: string, format?: string) => {
       const fd = new FormData()
       fd.append('file', file)
       if (profileId) fd.append('profile_id', profileId)
+      if (format) fd.append('format', format)   // omitted => server auto-detects
       return request<{ task_id: string; status: string }>('/ontologies', {
         method: 'POST',
         body: fd,

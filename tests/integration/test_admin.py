@@ -528,3 +528,50 @@ async def test_admin_recompute_all_diffs_single_version_returns_zero(
     assert resp.status_code == 200
     assert resp.json()["queued"] == 0
     m.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_admin_overview_lists_version_less_failed_ingestion(
+    client, user_and_key, db_session, monkeypatch
+):
+    """A submission that failed before producing a version must still be listed.
+
+    The jobs query joined `versions` to label each row with its ontology; as an
+    INNER join it silently dropped exactly the rows that matter most — an
+    ingestion that died before a version existed (unreachable IRI, source over
+    the download cap, unparseable file). Those are the failures an admin has no
+    other way to see.
+    """
+    from ontoexplorer.modules.jobs import tracker
+
+    _, raw_key = user_and_key
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
+
+    await tracker.start_job(db_session, "job-oversized", "ingestion")
+    await tracker.mark_failed(
+        db_session, "job-oversized", "Response exceeds size limit (706398355 bytes)"
+    )
+
+    with (
+        patch("ontoexplorer.api.admin.health._check_postgres", new=AsyncMock(return_value="ok")),
+        patch("ontoexplorer.api.admin.health._check_redis", return_value="ok"),
+        patch("ontoexplorer.api.admin.health._check_minio", new=AsyncMock(return_value="ok")),
+        patch("ontoexplorer.api.admin.health._check_elk", new=AsyncMock(return_value="ok")),
+        patch("ontoexplorer.api.admin.health._celery_queue_depth", return_value=0),
+        patch("ontoexplorer.api.admin.health._search_redis", return_value=MagicMock(exists=lambda k: False)),
+        patch("ontoexplorer.api.admin._common._elk_redis", return_value=MagicMock(exists=lambda k: False)),
+        patch("ontoexplorer.api.admin.health._reasoning_status", new=AsyncMock(return_value="not_started")),
+    ):
+        resp = await client.get(
+            "/api/v1/admin/overview",
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+
+    assert resp.status_code == 200
+    jobs = {j["id"]: j for j in resp.json()["jobs"]}
+    assert "job-oversized" in jobs, "version-less failed ingestion was filtered out"
+    entry = jobs["job-oversized"]
+    assert entry["status"] == "failed"
+    assert entry["version_id"] is None
+    assert entry["ontology_shortname"] is None
+    assert "size limit" in entry["error"]

@@ -167,8 +167,14 @@ class Job(Base):
     __tablename__ = "jobs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    version_id: Mapped[str] = mapped_column(ForeignKey("versions.id", ondelete="CASCADE"))
-    type: Mapped[str] = mapped_column(String)    # "reasoning" | "indexing"
+    # Nullable: an "ingestion" job is created from the Celery task id before any
+    # version exists, so a submission that fails early (unreachable IRI,
+    # oversized source, unparseable file) still leaves a queryable row. Filled
+    # in once ingestion produces a version.
+    version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("versions.id", ondelete="CASCADE"), nullable=True
+    )
+    type: Mapped[str] = mapped_column(String)    # "ingestion" | "reason" | "indexing" | ...
     status: Mapped[str] = mapped_column(String, default="pending")  # pending | running | done | failed
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -178,7 +184,7 @@ class Job(Base):
     meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    version: Mapped[OntologyVersion] = relationship(back_populates="jobs", passive_deletes=True)
+    version: Mapped[OntologyVersion | None] = relationship(back_populates="jobs", passive_deletes=True)
 
 
 class Webhook(Base):
