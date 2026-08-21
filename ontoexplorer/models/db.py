@@ -386,6 +386,11 @@ class EntityIndex(Base):
     # No parent in its own hierarchy. Precomputed at index time: as a query-time
     # anti-join this is a LIMIT trap the planner loses badly (26 s on DRON).
     is_root: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    # True for every owl:NamedIndividual, independent of `type`. `type` is
+    # single-valued and first-wins, so a punned entity (both Class and
+    # NamedIndividual) is typed 'class' and would vanish from the individuals
+    # listing without this.
+    is_individual: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
     # search_tsv is a generated column; SQLAlchemy reads it but never writes it.
 
 

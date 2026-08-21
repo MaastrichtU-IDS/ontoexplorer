@@ -31,14 +31,21 @@ function ClassList({ classes, oid, vid }: { classes: ClassRef[]; oid: string; vi
   )
 }
 
-function HierarchyGroup({ label, classes, oid, vid, badge }: {
+function HierarchyGroup({ label, classes, oid, vid, badge, total }: {
   label: string; classes: ClassRef[]; oid: string; vid: string; badge?: string
+  /** Full size of the relation. The list is capped at 200 server-side, so when
+   *  it is larger the label says so rather than letting a partial list read as
+   *  complete — DRON's `entity` root has 771,506 inferred subclasses. */
+  total?: number
 }) {
   if (classes.length === 0) return null
+  const count = total != null && total > classes.length
+    ? `${classes.length} of ${total.toLocaleString()}`
+    : `${classes.length}`
   return (
     <div style={{ marginBottom: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-        <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{label}</span>
+        <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{label} ({count})</span>
         {badge && (
           <span style={{
             fontSize: 10, background: 'var(--bg-secondary)', color: 'var(--text-dim)',
@@ -122,14 +129,14 @@ export default function TermPage() {
         <Section title="Hierarchy">
           {hasSuperclasses && (
             <div style={{ marginBottom: 16 }}>
-              <HierarchyGroup label="Superclasses — asserted" classes={data.superclasses.asserted} oid={oid!} vid={vid!} />
-              <HierarchyGroup label="Superclasses — inferred" classes={data.superclasses.inferred} oid={oid!} vid={vid!} badge="ELK" />
+              <HierarchyGroup label="Superclasses — asserted" classes={data.superclasses.asserted} oid={oid!} vid={vid!} total={data.relationTotals?.superclasses_asserted} />
+              <HierarchyGroup label="Superclasses — inferred" classes={data.superclasses.inferred} oid={oid!} vid={vid!} badge="ELK" total={data.relationTotals?.superclasses_inferred} />
             </div>
           )}
           {hasSubclasses && (
             <div>
-              <HierarchyGroup label="Subclasses — asserted" classes={data.subclasses.asserted} oid={oid!} vid={vid!} />
-              <HierarchyGroup label="Subclasses — inferred" classes={data.subclasses.inferred} oid={oid!} vid={vid!} badge="ELK" />
+              <HierarchyGroup label="Subclasses — asserted" classes={data.subclasses.asserted} oid={oid!} vid={vid!} total={data.relationTotals?.subclasses_asserted} />
+              <HierarchyGroup label="Subclasses — inferred" classes={data.subclasses.inferred} oid={oid!} vid={vid!} badge="ELK" total={data.relationTotals?.subclasses_inferred} />
             </div>
           )}
         </Section>

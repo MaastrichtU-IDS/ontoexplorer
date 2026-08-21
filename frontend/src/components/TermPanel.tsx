@@ -782,6 +782,19 @@ function InheritedDomainPropertiesTable({ props: items, slug, vid }: { props: In
   )
 }
 
+/** Deferred sections render nothing until /term-expanded resolves, which made
+ *  "no usages" and "usages still loading" look identical — a ~4 s window on a
+ *  large ontology in which the page looks complete and is not. Matches the
+ *  dimmed "Loading…" used elsewhere (ClassTree, CoverageSection, HistoryTab). */
+function SectionLoading() {
+  return (
+    <div style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', padding: '2px 0' }}>
+      Loading…
+    </div>
+  )
+}
+
+
 function Section({ label, children, headerRight }: {
   label: string
   children: React.ReactNode
@@ -1710,7 +1723,7 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
   const { data: baseData, isLoading, error } = useTerm(ontologyId, versionId, termIri, lang)
   // Lazy fetch of the three expensive sections deferred by the backend. Merged
   // into `data` once it arrives so the rendering below doesn't need to branch.
-  const { data: expanded } = useTermExpanded(ontologyId, versionId, termIri, lang)
+  const { data: expanded, isLoading: expandedLoading } = useTermExpanded(ontologyId, versionId, termIri, lang)
   // Profile + meta fetched at the panel level so the role map can be shared
   // between the header (deprecation chip) and the Annotations section.
   const { data: profile } = useOntologyProfile(ontologyId ?? undefined, versionId)
@@ -1903,7 +1916,9 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
           </Section>
         )}
 
-        {hasInheritedSchemaDomain && (
+        {expandedLoading ? (
+          <Section label="Inherited domain of"><SectionLoading /></Section>
+        ) : hasInheritedSchemaDomain && (
           <Section label={`Inherited domain of (${data.inheritedSchemaProperties.length})`}>
             <InheritedDomainPropertiesTable props={data.inheritedSchemaProperties} slug={slug} vid={versionId} />
           </Section>
@@ -1911,7 +1926,10 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
 
         {/* From the expanded fetch: locating the restrictions that reference a
             class is slow on large ontologies, so it arrives after the panel. */}
-        {(expanded?.classUsage.length ?? 0) > 0 && (
+        {expandedLoading && (
+          <Section label="Used in axioms"><SectionLoading /></Section>
+        )}
+        {!expandedLoading && (expanded?.classUsage.length ?? 0) > 0 && (
           <Section label={`Used in axioms (${expanded!.classUsage.length}${expanded!.classUsageHasMore ? '+' : ''})`}>
             <UsagePager<ClassUsageEntry>
               initial={expanded!.classUsage}

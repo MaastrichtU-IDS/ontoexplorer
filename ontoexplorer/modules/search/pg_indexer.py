@@ -108,10 +108,16 @@ async def populate_entity_index(
     # Deprecation is already computed during indexing and kept as a Redis set;
     # mirroring it here lets the SQL-backed navigation tree honour
     # hide_obsolete without a second lookup.
-    from ontoexplorer.modules.search.indexer import _deprecated_key
+    from ontoexplorer.modules.search.indexer import _deprecated_key, _individuals_key
     deprecated = {
         m.decode() if isinstance(m, bytes) else m
         for m in r.smembers(_deprecated_key(version_id))
+    }
+    # Independent of `type`: a punned Class/NamedIndividual is typed 'class'
+    # but still belongs in the individuals listing.
+    individuals = {
+        m.decode() if isinstance(m, bytes) else m
+        for m in r.smembers(_individuals_key(version_id))
     }
 
     # Entities that appear as a child in either hierarchy. Anything else is a
@@ -144,6 +150,7 @@ async def populate_entity_index(
             "search_text": search_text,
             "deprecated": iri in deprecated,
             "is_root": iri not in non_roots,
+            "is_individual": iri in individuals,
         })
 
     # Clear any prior rows for this version, then bulk insert.
@@ -159,11 +166,11 @@ async def populate_entity_index(
                 INSERT INTO entity_index
                     (version_id, iri, ontology_id, type,
                      primary_label, primary_label_norm, short, source, search_text,
-                     deprecated, is_root)
+                     deprecated, is_root, is_individual)
                 VALUES
                     (:version_id, :iri, :ontology_id, :type,
                      :primary_label, :primary_label_norm, :short, :source, :search_text,
-                     :deprecated, :is_root)
+                     :deprecated, :is_root, :is_individual)
             """),
             rows,
         )

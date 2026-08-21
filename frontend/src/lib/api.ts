@@ -275,6 +275,16 @@ export interface Term {
   unsat_children_count?: number
 }
 
+export interface RelationCounts {
+  superclasses_asserted: number
+  superclasses_inferred: number
+  subclasses_asserted: number
+  subclasses_inferred: number
+}
+
+/** Whether each list above was capped at TERM_RELATION_LIMIT. */
+export type RelationFlags = Record<keyof RelationCounts, boolean>
+
 export interface ClassRef {
   iri: string
   label: string
@@ -349,6 +359,8 @@ export interface RawTermDetail {
   is_inverse_target: boolean
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
   subclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
+  relation_totals?: RelationCounts
+  relation_truncated?: RelationFlags
   superclass_expressions?: ClassExprNode[]
   inferred_superclass_expressions?: InferredExprEntry[]
   equivalent_to?: ClassExprNode[]
@@ -384,6 +396,8 @@ export interface ParsedTerm {
   rawSynonyms: LangLabel[]
   synonyms: { exact: string[]; related: string[]; broad: string[]; narrow: string[] }
   superclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
+  relationTotals?: RelationCounts
+  relationTruncated?: RelationFlags
   subclasses: { asserted: ClassRef[]; inferred: ClassRef[] }
   superclassExpressions: ClassExprNode[]
   inferredSuperclassExpressions: InferredExprEntry[]
@@ -1129,6 +1143,10 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
     },
     superclasses:         raw.superclasses         ?? { asserted: [], inferred: [] },
     subclasses:           raw.subclasses            ?? { asserted: [], inferred: [] },
+    // Full sizes of the four relations. The lists are capped at 200, so
+    // without these a truncated list reads as complete.
+    relationTotals:       raw.relation_totals,
+    relationTruncated:    raw.relation_truncated,
     superclassExpressions:          raw.superclass_expressions           ?? [],
     inferredSuperclassExpressions:  raw.inferred_superclass_expressions  ?? [],
     equivalentTo:                   raw.equivalent_to                    ?? [],

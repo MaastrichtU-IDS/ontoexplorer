@@ -72,7 +72,7 @@ async def _seed_entity(db, version_id, iri, label, type_="class",
         version_id=version_id, iri=iri, ontology_id="o1", type=type_,
         primary_label=label, primary_label_norm=label.lower(),
         short=iri.rsplit("/", 1)[-1], search_text=label, deprecated=deprecated,
-        is_root=is_root,
+        is_root=is_root, is_individual=(type_ == "individual"),
     ))
     await db.commit()
 
@@ -427,3 +427,80 @@ async def test_replacing_a_kind_still_clears_that_kinds_stale_rows(db_session):
     kids = sorted(c for (c,) in (await db_session.execute(
         select(HierarchyEdge.child).where(HierarchyEdge.version_id == v))).all())
     assert kids == ["http://x/C"]
+
+
+# ── individuals ───────────────────────────────────────────────────────────────
+# Not a hierarchy — a flat list — but it was the one entity type still answered
+# from Oxigraph, with an OPTIONAL label join and ORDER BY across the whole set.
+# DRON has 19 individuals so it returns in 6 ms; the identical query shape over
+# 771k entities takes 14.05 s, which is what an ABox-heavy ontology would pay.
+
+@pytest.mark.anyio
+async def test_individuals_are_listed_from_the_index(db_session):
+    from ontoexplorer.modules.hierarchy.edges import fetch_individuals
+    v = "v-ind"
+    await _seed_entity(db_session, v, "http://x/i2", "Beta", type_="individual")
+    await _seed_entity(db_session, v, "http://x/i1", "alpha", type_="individual")
+    await _seed_entity(db_session, v, "http://x/c1", "AClass", type_="class")
+
+    rows = await fetch_individuals(db_session, v, hide_obsolete=True, limit=50, offset=0)
+    assert [r["label"] for r in rows] == ["alpha", "Beta"], "case-insensitive label order"
+    assert all(r["has_children"] is False for r in rows), "individuals never expand"
+
+
+@pytest.mark.anyio
+async def test_individuals_hide_obsolete(db_session):
+    from ontoexplorer.modules.hierarchy.edges import fetch_individuals
+    v = "v-ind-dep"
+    await _seed_entity(db_session, v, "http://x/live", "Live", type_="individual")
+    await _seed_entity(db_session, v, "http://x/dead", "Dead", type_="individual",
+                       deprecated=True)
+
+    hidden = await fetch_individuals(db_session, v, hide_obsolete=True, limit=50, offset=0)
+    shown = await fetch_individuals(db_session, v, hide_obsolete=False, limit=50, offset=0)
+    assert [r["label"] for r in hidden] == ["Live"]
+    assert {r["label"] for r in shown} == {"Live", "Dead"}
+
+
+@pytest.mark.anyio
+async def test_individuals_paginate(db_session):
+    from ontoexplorer.modules.hierarchy.edges import fetch_individuals
+    v = "v-ind-page"
+    for i in range(5):
+        await _seed_entity(db_session, v, f"http://x/i{i}", f"L{i}", type_="individual")
+    page = await fetch_individuals(db_session, v, hide_obsolete=True, limit=2, offset=2)
+    assert [r["label"] for r in page] == ["L2", "L3"]
+
+
+@pytest.mark.anyio
+async def test_index_presence_gates_the_individual_listing(db_session):
+    """A version indexed before is_individual existed (or before the cap was
+    raised) has no flagged rows, which looks the same as having no individuals
+    — so the caller must be able to tell and fall back."""
+    from ontoexplorer.modules.hierarchy.edges import has_individual_index
+    assert await has_individual_index(db_session, "v-ind-none") is False
+    await _seed_entity(db_session, "v-ind-none", "http://x/i", "I", type_="individual")
+    assert await has_individual_index(db_session, "v-ind-none") is True
+
+
+@pytest.mark.anyio
+async def test_punned_entities_are_listed_as_individuals_and_as_classes(db_session):
+    """OWL 2 punning: DRON's UO_* unit terms are declared both a Class and a
+    NamedIndividual. `type` is single-valued and first-wins, so they are typed
+    'class'; filtering the listing on type would drop them (27 -> 19 on DRON).
+    """
+    from ontoexplorer.models.db import EntityIndex
+    from ontoexplorer.modules.hierarchy.edges import fetch_individuals, fetch_roots
+    v = "v-pun"
+    db_session.add(EntityIndex(
+        version_id=v, iri="http://x/Unit", ontology_id="o1", type="class",
+        primary_label="unit", primary_label_norm="unit", short="Unit",
+        search_text="unit", deprecated=False, is_root=True, is_individual=True,
+    ))
+    await db_session.commit()
+
+    inds = await fetch_individuals(db_session, v, hide_obsolete=True, limit=50, offset=0)
+    classes = await fetch_roots(db_session, v, "class", hide_obsolete=True,
+                                limit=50, offset=0)
+    assert [i["iri"] for i in inds] == ["http://x/Unit"]
+    assert [c["iri"] for c in classes] == ["http://x/Unit"]
