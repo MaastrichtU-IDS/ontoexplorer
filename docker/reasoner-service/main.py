@@ -66,6 +66,17 @@ class JustificationRequest(BaseModel):
     cache_only: bool = False         # return cached result or a miss marker; never compute
 
 
+class ConsistencyRequest(BaseModel):
+    ntriples: str
+    ofn: str = ""
+    reasoner: str = "rustdl"
+
+
+class MergeRequest(BaseModel):
+    ntriples: str
+    ofn: str = ""
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -86,6 +97,115 @@ def get_reasoners():
         {**asdict(info), "capabilities": sorted(info.capabilities)}
         for info in list_reasoners()
     ]
+
+
+def _ofn_to_ntriples(ofn: str) -> str:
+    """OWL functional-syntax axioms -> N-Triples (via py-horned-owl + pyoxigraph),
+    wrapping in Ontology(...) exactly like the incremental assert path."""
+    import io
+    import pyhornedowl
+    import pyoxigraph
+    wrapped = "Ontology(\n" + ofn.strip() + "\n)"
+    onto = pyhornedowl.open_ontology_from_string(wrapped, serialization="ofn")
+    rdfxml = onto.save_to_string(serialization="rdf")
+    store = pyoxigraph.Store()
+    store.bulk_load(io.BytesIO(rdfxml.encode("utf-8")), format=pyoxigraph.RdfFormat.RDF_XML)
+    return pyoxigraph.serialize(
+        (q.triple for q in store.quads_for_pattern(None, None, None, None)),
+        format=pyoxigraph.RdfFormat.N_TRIPLES,
+    ).decode("utf-8")
+
+
+@app.post("/consistency")
+def consistency(req: ConsistencyRequest):
+    reasoner = req.reasoner or default_reasoner()
+    try:
+        get_backend(reasoner)  # validate; the isolated worker resolves it again
+    except KeyError:
+        raise HTTPException(422, f"unknown reasoner '{reasoner}'")
+    combined = req.ntriples
+    if req.ofn.strip():
+        try:
+            combined = (req.ntriples or "") + "\n" + _ofn_to_ntriples(req.ofn)
+        except Exception as exc:
+            raise HTTPException(422, f"invalid OFN: {exc}")
+    unsat = _consistency_isolated(combined, reasoner)
+    inconsistent = "http://www.w3.org/2002/07/owl#Thing" in unsat
+    return {"inconsistent": inconsistent, "unsatisfiable_classes": unsat, "reasoner": reasoner}
+
+
+def _consistency_isolated(ntriples: str, reasoner: str) -> list[str]:
+    """Run rustdl (or any backend) for an ad-hoc consistency check in a
+    short-lived subprocess, mirroring /classify's isolation.
+
+    An in-process reasoning call that segfaults / overflows the native stack /
+    OOMs kills the uvicorn worker mid-request — the client then sees
+    "Server disconnected without sending a response" and the worker is silently
+    respawned. Running it via consistency_worker.py confines any such crash to
+    the child: a non-zero exit becomes a clean HTTP 500 here instead.
+    """
+    import json
+    import os
+    import subprocess
+    import sys
+    import tempfile
+
+    timeout_s = int(os.getenv("REASONER_CONSISTENCY_TIMEOUT_S", "600"))
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".nt", delete=False, encoding="utf-8"
+        ) as tmp:
+            tmp.write(ntriples)
+            tmp_path = tmp.name
+
+        worker = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "consistency_worker.py")
+        try:
+            proc = subprocess.run(
+                [sys.executable, worker, tmp_path, reasoner, json.dumps({})],
+                timeout=timeout_s, capture_output=True, text=True,
+            )
+        except subprocess.TimeoutExpired:
+            log.error("consistency_timeout reasoner=%s after=%ss", reasoner, timeout_s)
+            raise HTTPException(504, f"consistency check timed out after {timeout_s}s")
+
+        if proc.returncode != 0:
+            tail = (proc.stderr or "").strip()[-600:]
+            log.error("consistency_worker_failed reasoner=%s rc=%s stderr=%s",
+                      reasoner, proc.returncode, tail)
+            raise HTTPException(
+                500,
+                f"reasoner crashed (segfault/OOM/abort, rc={proc.returncode}): {tail}",
+            )
+
+        # The worker prints exactly one JSON line with the result; tolerate any
+        # leading log noise by parsing the last non-empty stdout line.
+        lines = [ln for ln in (proc.stdout or "").splitlines() if ln.strip()]
+        if not lines:
+            raise HTTPException(
+                500,
+                f"reasoner produced no result; stderr={(proc.stderr or '')[-300:]}",
+            )
+        try:
+            payload = json.loads(lines[-1])
+        except json.JSONDecodeError as exc:
+            raise HTTPException(500, f"reasoner produced unparseable result: {exc}")
+        return list(payload.get("unsatisfiable", []))
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+@app.post("/merge")
+def merge(req: MergeRequest):
+    combined = req.ntriples or ""
+    if req.ofn.strip():
+        try:
+            combined = (req.ntriples or "") + "\n" + _ofn_to_ntriples(req.ofn)
+        except Exception as exc:
+            raise HTTPException(422, f"invalid OFN: {exc}")
+    return {"ntriples": combined}
 
 
 @app.post("/classify", status_code=202)
