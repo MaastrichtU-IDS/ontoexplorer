@@ -63,13 +63,22 @@ const mockTermWithInferredSuper = {
 // whatever a given test assigned before rendering.
 let mockCurrentTerm: typeof mockTerm = mockTerm
 
+const { mockExpanded } = vi.hoisted(() => ({
+  // Typed loosely on purpose: tests supply real expanded payloads, and
+  // inferring the shape from the `data: undefined` default would forbid that.
+  mockExpanded: vi.fn(
+    (): { data: unknown; isLoading: boolean; error: unknown } =>
+      ({ data: undefined, isLoading: false, error: null }),
+  ),
+}))
+
 vi.mock('../hooks/useTerm', () => ({
   useTerm: () => ({
     data: mockCurrentTerm,
     isLoading: false,
     error: null,
   }),
-  useTermExpanded: () => ({ data: undefined, isLoading: false, error: null }),
+  useTermExpanded: () => mockExpanded(),
 }))
 
 vi.mock('../hooks/useClassTree', () => ({
@@ -111,6 +120,7 @@ function wrap(ui: React.ReactElement) {
 }
 
 beforeEach(() => {
+  mockExpanded.mockReturnValue({ data: undefined, isLoading: false, error: null })
   mockCurrentTerm = mockTerm
   mockJustification.mockReset()
   mockReasonersList.mockReset()
@@ -462,4 +472,50 @@ describe('justification explain UI', () => {
     await waitFor(() => expect(button).not.toBeDisabled())
     expect(button).toHaveAttribute('title', 'Show justification')
   })
+})
+
+
+// ── deferred-section loading ──────────────────────────────────────────────────
+// The sections that come from /term-expanded render nothing until it resolves,
+// so "no usages" and "usages still loading" looked identical — a ~4 s window on
+// a large ontology in which the panel appears complete and is not.
+
+test('shows a Loading… placeholder for deferred sections while they load', async () => {
+  mockExpanded.mockReturnValue({ data: undefined, isLoading: true, error: null })
+  wrap(<TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" slug="go" />)
+
+  expect(await screen.findByText('Used in axioms')).toBeInTheDocument()
+  expect(screen.getByText('Inherited domain of')).toBeInTheDocument()
+  expect(screen.getAllByText('Loading…').length).toBeGreaterThanOrEqual(2)
+})
+
+test('replaces the placeholder with content once the deferred fetch resolves', async () => {
+  mockExpanded.mockReturnValue({
+    isLoading: false, error: null,
+    data: {
+      inferredSuperclassExpressions: [], inferredDisjointWith: [],
+      inheritedSchemaProperties: [],
+      classUsage: [{ iri: 'http://ex.org/C1', label: 'uses it', manchester: null }],
+      classUsageHasMore: false,
+    },
+  })
+  wrap(<TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" slug="go" />)
+
+  expect(await screen.findByText(/Used in axioms \(1\)/)).toBeInTheDocument()
+  expect(screen.queryByText('Loading…')).not.toBeInTheDocument()
+})
+
+test('drops an empty deferred section rather than leaving a placeholder', async () => {
+  mockExpanded.mockReturnValue({
+    isLoading: false, error: null,
+    data: {
+      inferredSuperclassExpressions: [], inferredDisjointWith: [],
+      inheritedSchemaProperties: [], classUsage: [], classUsageHasMore: false,
+    },
+  })
+  wrap(<TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" slug="go" />)
+
+  await waitFor(() => expect(screen.queryByText('Loading…')).not.toBeInTheDocument())
+  expect(screen.queryByText('Used in axioms')).not.toBeInTheDocument()
+  expect(screen.queryByText('Inherited domain of')).not.toBeInTheDocument()
 })

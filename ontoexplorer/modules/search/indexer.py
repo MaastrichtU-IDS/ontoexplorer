@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.parse
 from dataclasses import dataclass
@@ -12,7 +13,13 @@ from ontoexplorer.clients.oxigraph import graph_iri, sparql_query
 from ontoexplorer.config import get_settings
 
 _SEARCH_TTL = 30 * 24 * 3600  # 30 days, same as ELK classification TTL
-IND_INDEX_THRESHOLD = 50_000  # skip individual indexing above this count to prevent OOM
+# Bounds how many individuals are indexed, to bound memory. It was 50_000,
+# which meant an ABox-heavy ontology had *no* individuals indexed at all — and
+# that is exactly the case where reading them from Oxigraph is slow (2.3-4.8 s
+# per page on 200k, degrading with offset). Classes have never had a cap and
+# DRON indexes 771k of them, so the old figure was far below what the pipeline
+# actually handles. Override with INDEX_INDIVIDUAL_LIMIT.
+IND_INDEX_THRESHOLD = int(os.getenv("INDEX_INDIVIDUAL_LIMIT", str(1_000_000)))
 
 
 @dataclass
@@ -43,6 +50,16 @@ def _iri_key(version_id: str, iri: str) -> str:
 
 def _type_key(version_id: str, entity_type: str) -> str:
     return f"search:entities:{version_id}:type:{entity_type}"
+
+
+def _individuals_key(version_id: str) -> str:
+    """Every owl:NamedIndividual, regardless of its primary `type`.
+
+    Distinct from _type_key(v, "individual"), which only holds entities whose
+    single primary type came out as 'individual' — a punned Class/Individual
+    lands in the class set and would otherwise be lost.
+    """
+    return f"search:entities:{version_id}:individuals"
 
 
 def _meta_key(version_id: str) -> str:
@@ -385,6 +402,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
     """
     ind_total_rows = list(sparql_query(ind_total_q))
     ind_total = int(ind_total_rows[0]["n"].value) if ind_total_rows else 0
+    individual_iris: set[str] = set()
     if ind_total <= IND_INDEX_THRESHOLD:
         ind_iri_q = f"""
             PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -394,6 +412,11 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         """
         for sol in sparql_query(ind_iri_q):
             iri = sol["entity"].value
+            # Recorded whatever else it is. `entities` is first-wins and
+            # single-valued, so an OWL 2 punned entity (Class *and*
+            # NamedIndividual — DRON's UO_* unit terms) stays typed 'class';
+            # without this set it would vanish from the individuals listing.
+            individual_iris.add(iri)
             if iri not in entities:
                 entities[iri] = "individual"
                 individual_count += 1
@@ -583,6 +606,12 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
     pipe.expire(_type_key(version_id, "data_property"),       _SEARCH_TTL)
     pipe.expire(_type_key(version_id, "annotation_property"), _SEARCH_TTL)
     pipe.expire(_type_key(version_id, "individual"),          _SEARCH_TTL)
+    # Rewritten wholesale: a re-index must not leave individuals behind that
+    # the ontology no longer declares.
+    pipe.delete(_individuals_key(version_id))
+    if individual_iris:
+        pipe.sadd(_individuals_key(version_id), *individual_iris)
+        pipe.expire(_individuals_key(version_id), _SEARCH_TTL)
     pipe.hset(_meta_key(version_id), mapping={
         "indexed_at":       datetime.now(timezone.utc).isoformat(),
         "class_count":      str(class_count),

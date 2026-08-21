@@ -1074,6 +1074,23 @@ async def list_terms(
                     seen[iri] = (label, score, lang_tag)
             return [{"iri": iri, "label": lbl, "lang": lt, "has_children": False} for iri, (lbl, _, lt) in seen.items()]
 
+        # Flat listing from the index when it has this version's individuals.
+        # The Oxigraph query below joins labels and sorts every individual
+        # before applying LIMIT: 2.3-3.4 s for the first page of a 200k-
+        # individual ontology, 4.8 s at offset 100,000, because each page
+        # re-sorts the whole set.
+        if is_root and lang is None:
+            from ontoexplorer.modules.hierarchy.edges import (
+                fetch_individuals,
+                has_individual_index,
+            )
+            if await has_individual_index(db, version_id):
+                terms = await fetch_individuals(
+                    db, version_id, hide_obsolete=hide_obsolete,
+                    limit=limit, offset=offset)
+                return {"terms": terms, "offset": offset, "limit": limit,
+                        "parent": parent}
+
         terms = await asyncio.to_thread(_run_individuals, get_store(), ind_q)
         return {"terms": terms, "offset": offset, "limit": limit, "parent": parent}
 

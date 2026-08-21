@@ -440,3 +440,53 @@ async def fetch_inferred_roots(
             roots.insert(0, {"iri": _OWL_NOTHING, "label": "Nothing",
                              "lang": None, "has_children": True})
     return roots
+
+
+# ── individuals ───────────────────────────────────────────────────────────────
+
+async def has_individual_index(db: AsyncSession, version_id: str) -> bool:
+    """Whether this version has individuals mirrored into entity_index.
+
+    Gates the SQL listing. A version indexed before is_individual existed — or
+    before the individual cap was raised — has no flagged rows, which is
+    indistinguishable from an ontology with no individuals, so the caller falls
+    back to Oxigraph rather than reporting an empty tab.
+    """
+    found = (await db.execute(
+        text("SELECT 1 FROM entity_index WHERE version_id = :v AND is_individual LIMIT 1"),
+        {"v": version_id},
+    )).scalar()
+    return found is not None
+
+
+async def fetch_individuals(
+    db: AsyncSession, version_id: str, *,
+    hide_obsolete: bool, limit: int, offset: int,
+) -> list[dict]:
+    """Named individuals as a flat, paginated list.
+
+    Not a hierarchy, but it was the last entity type still answered from
+    Oxigraph, by a query that joined labels and sorted the entire set before
+    applying LIMIT. That is invisible on an ontology with 19 individuals and
+    costs 14 s at 771k — the same shape that made class roots slow. entity_index
+    already holds individuals with their labels, so the listing is an indexed
+    read like every other tab.
+
+    Filtered on is_individual rather than type='individual', so punned
+    Class/NamedIndividual entities are listed here as well as in the class
+    tree — matching what the Oxigraph query returned.
+
+    has_children is always False: individuals are leaves in this tree.
+    """
+    obsolete_sql = "AND deprecated = false" if hide_obsolete else ""
+    rows = (await db.execute(text(f"""
+        SELECT iri, primary_label AS label
+        FROM entity_index
+        WHERE version_id = :v
+          AND is_individual
+          {obsolete_sql}
+        ORDER BY lower(primary_label), iri
+        LIMIT :limit OFFSET :offset
+    """), {"v": version_id, "limit": limit, "offset": offset})).all()
+    return [{"iri": r.iri, "label": r.label, "lang": None, "has_children": False}
+            for r in rows]
