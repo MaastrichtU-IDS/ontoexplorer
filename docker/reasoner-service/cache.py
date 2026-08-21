@@ -42,11 +42,82 @@ def _ofn_key(version_id: str) -> str:
     return f"ofn:{version_id}"
 
 
+# The four per-class maps, stored one Redis hash each so a single class can be
+# read without materialising the whole classification.
+_PER_CLASS_MAPS = ("superclasses", "subclasses", "direct_superclasses", "direct_subclasses")
+
+
+def _per_class_key(version_id: str, reasoner: str, which: str) -> str:
+    return f"classification:{version_id}:{reasoner}:{which}"
+
+
+def _per_class_index_key(version_id: str, reasoner: str) -> str:
+    """Every class named anywhere in the classification, for membership checks."""
+    return f"classification:{version_id}:{reasoner}:classes"
+
+
 def store_classification(result: ClassificationResult, reasoner: str) -> None:
     key = _classification_key(result.version_id, reasoner)
     data = json.dumps(asdict(result)).encode()
     _redis.setex(key, _CLASSIFICATION_TTL, gzip.compress(data))
+    store_per_class(result, reasoner)
     clear_classification_error(result.version_id, reasoner)
+
+
+def store_per_class(result: ClassificationResult, reasoner: str) -> None:
+    """Write each map as a hash of class IRI -> JSON list.
+
+    The blob above is still the source of truth for whole-ontology questions.
+    This exists so that answering "what are C's subclasses?" costs one HGET
+    rather than decompressing and parsing the entire result — 8.5 s and ~539 MB
+    on DRON, per request, which was killing the service's workers.
+    """
+    version_id = result.version_id
+    as_dict = asdict(result)
+    known: set[str] = set()
+
+    pipe = _redis.pipeline()
+    for which in _PER_CLASS_MAPS:
+        mapping = as_dict.get(which) or {}
+        key = _per_class_key(version_id, reasoner, which)
+        pipe.delete(key)          # a re-run must not leave stale classes behind
+        if mapping:
+            pipe.hset(key, mapping={k: json.dumps(v) for k, v in mapping.items()})
+            pipe.expire(key, _CLASSIFICATION_TTL)
+        known.update(mapping.keys())
+
+    index_key = _per_class_index_key(version_id, reasoner)
+    pipe.delete(index_key)
+    if known:
+        pipe.sadd(index_key, *known)
+        pipe.expire(index_key, _CLASSIFICATION_TTL)
+    pipe.execute()
+
+
+def load_class_entry(
+    version_id: str, reasoner: str, which: str, cls: str
+) -> list[str] | None:
+    """One class's entry from one map, or None when it has no entry.
+
+    None and [] are different answers: [] means the classification knows this
+    class and it has nothing in this direction, None means no entry at all.
+    """
+    raw = _redis.hget(_per_class_key(version_id, reasoner, which), cls)
+    return json.loads(raw) if raw is not None else None
+
+
+def has_per_class_index(version_id: str, reasoner: str) -> bool:
+    """Whether per-class entries exist for this version.
+
+    Classifications produced before this was added only have the blob, so
+    callers check here and fall back rather than reporting a class as unknown.
+    """
+    return bool(_redis.exists(_per_class_index_key(version_id, reasoner)))
+
+
+def class_is_known(version_id: str, reasoner: str, cls: str) -> bool:
+    """Whether the classification mentions this class at all (for 404s)."""
+    return bool(_redis.sismember(_per_class_index_key(version_id, reasoner), cls))
 
 
 def load_classification(version_id: str, reasoner: str) -> ClassificationResult | None:

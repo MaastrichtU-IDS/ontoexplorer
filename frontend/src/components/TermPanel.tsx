@@ -1909,11 +1909,13 @@ export default function TermPanel({ ontologyId, versionId, termIri, slug, single
           </Section>
         )}
 
-        {data.classUsage.length > 0 && (
-          <Section label={`Used in axioms (${data.classUsage.length}${data.classUsageHasMore ? '+' : ''})`}>
+        {/* From the expanded fetch: locating the restrictions that reference a
+            class is slow on large ontologies, so it arrives after the panel. */}
+        {(expanded?.classUsage.length ?? 0) > 0 && (
+          <Section label={`Used in axioms (${expanded!.classUsage.length}${expanded!.classUsageHasMore ? '+' : ''})`}>
             <UsagePager<ClassUsageEntry>
-              initial={data.classUsage}
-              initialHasMore={!!data.classUsageHasMore}
+              initial={expanded!.classUsage}
+              initialHasMore={expanded!.classUsageHasMore}
               fetchPage={async (offset) => {
                 const page = await api.ontologies.termUsagePage(ontologyId!, versionId, data.iri, offset)
                 return { items: page.items as ClassUsageEntry[], has_more: page.has_more }

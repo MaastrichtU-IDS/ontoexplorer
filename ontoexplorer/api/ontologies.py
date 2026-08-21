@@ -1416,11 +1416,24 @@ async def list_terms(
     return response
 
 
-def _sparql_term_props(store, props_q: str, sub_q: str) -> tuple[list, list[str]]:
-    """Run two SPARQL queries for term detail synchronously (called via asyncio.to_thread)."""
+def _sparql_term_props(
+    store, props_q: str, sub_q: str, count_q: str | None = None
+) -> tuple[list, list[str], int]:
+    """Run the term-detail queries synchronously (called via asyncio.to_thread).
+
+    Returns (property rows, subclass IRIs, total subclasses). The subclass query
+    is capped, so the count is asked separately — it is an indexed aggregate
+    (23 ms on DRON's largest class) and is the only way to report an honest
+    total next to a truncated list.
+    """
     prop_rows = list(store.query(props_q))
-    sub_iris = [r["sub"].value for r in store.query(sub_q)] if prop_rows else []
-    return prop_rows, sub_iris
+    if not prop_rows:
+        return prop_rows, [], 0
+    sub_iris = [r["sub"].value for r in store.query(sub_q)]
+    if count_q is None:
+        return prop_rows, sub_iris, len(sub_iris)
+    total = int(list(store.query(count_q))[0]["n"].value)
+    return prop_rows, sub_iris, total
 
 
 # Usage relation → Manchester frame keyword.
@@ -1530,6 +1543,57 @@ def _sparql_usage(store, q: str, label_fn, graph_iri: str) -> list[dict]:
     return result
 
 
+def _compute_adc_map_for(store, g_iri: str) -> dict[str, list[str]]:
+    """owl:AllDisjointClasses membership, as member IRI -> its co-members."""
+    import pyoxigraph as _ox
+
+    graph_node = _ox.NamedNode(g_iri)
+    adc_node = _ox.NamedNode(_OWL + "AllDisjointClasses")
+    members_node = _ox.NamedNode(_OWL + "members")
+    type_node = _ox.NamedNode(_RDF + "type")
+    adc: dict[str, list[str]] = {}
+    for q in store.quads_for_pattern(None, type_node, adc_node, graph_node):
+        mem_qs = list(store.quads_for_pattern(q.subject, members_node, None, graph_node))
+        if not mem_qs:
+            continue
+        miris = [
+            m.value for m in _rdf_list_items(store, graph_node, mem_qs[0].object)
+            if isinstance(m, _ox.NamedNode)
+        ]
+        for miri in miris:
+            adc.setdefault(miri, []).extend(o for o in miris if o != miri)
+    return adc
+
+
+def _class_usage_queries(g_iri: str, term_iri: str) -> tuple[str, str]:
+    """(usage, disjoint) SPARQL for "where is this class referenced?"."""
+    cu_q = f"""
+        PREFIX owl:  <http://www.w3.org/2002/07/owl#>
+        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+        SELECT DISTINCT ?class ?relation ?prop ?restrictType ?r WHERE {{
+            GRAPH <{g_iri}> {{
+                {{ ?r owl:someValuesFrom <{term_iri}> . ?r owl:onProperty ?prop . BIND("some" AS ?restrictType) }}
+                UNION {{ ?r owl:allValuesFrom <{term_iri}> . ?r owl:onProperty ?prop . BIND("only" AS ?restrictType) }}
+                UNION {{ ?r owl:hasValue <{term_iri}> . ?r owl:onProperty ?prop . BIND("value" AS ?restrictType) }}
+                {{ ?class rdfs:subClassOf ?r . FILTER(isIRI(?class)) BIND("subClassOf" AS ?relation) }}
+                UNION {{ ?class owl:equivalentClass ?r . FILTER(isIRI(?class)) BIND("equivalentClass" AS ?relation) }}
+            }}
+        }}
+        ORDER BY ?class ?relation ?prop
+        LIMIT {USAGE_SQL_LIMIT}
+    """
+    disj_q = f"""
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        SELECT ?class WHERE {{
+            GRAPH <{g_iri}> {{
+                ?class owl:disjointWith <{term_iri}> . FILTER(isIRI(?class))
+            }}
+        }}
+        ORDER BY ?class
+    """
+    return cu_q, disj_q
+
+
 def _sparql_class_usage(store, cu_q: str, disj_q: str, label_fn, adc_map: dict, term_iri: str, graph_iri: str) -> list[dict]:
     """Run class-usage SPARQL queries and assemble rows (called via asyncio.to_thread)."""
     import pyoxigraph
@@ -1607,6 +1671,24 @@ def _sparql_class_usage(store, cu_q: str, disj_q: str, label_fn, adc_map: dict, 
 _TERM_DETAIL_CACHE_TTL = 300  # 5 minutes — term details are essentially static within a version
 
 
+# A class page shows a sample of its hierarchy, not all of it. DRON's `entity`
+# root has 771k transitive subclasses; returning them produced a 73 MB response
+# no UI could use. 200 matches one page of the navigation tree, which is where a
+# reader goes to browse the rest.
+USAGE_PAGE_SIZE = 10
+USAGE_SQL_LIMIT = USAGE_PAGE_SIZE + 1  # +1 to detect has_more without a COUNT query
+
+TERM_RELATION_LIMIT = 200
+
+
+def bound_relation(iris: list) -> tuple[list, int, bool]:
+    """(capped list, true total, whether it was cut)."""
+    total = len(iris)
+    if total <= TERM_RELATION_LIMIT:
+        return iris, total, False
+    return iris[:TERM_RELATION_LIMIT], total, True
+
+
 def _term_detail_cache_key(ontology_id: str, version_id: str, term_iri: str, lang: str | None) -> str:
     import hashlib
     payload = f"{ontology_id}\x1f{version_id}\x1f{term_iri}\x1f{lang or ''}"
@@ -1654,6 +1736,9 @@ async def get_term(
             }}
         }}
     """
+    # LIMIT in the query, not after: DRON's `entity` root has 771k asserted
+    # subclasses, and materialising them to then discard all but 200 was most of
+    # the request. One past the cap is enough to know the list was cut.
     asserted_sub_query = f"""
         SELECT ?sub WHERE {{
             GRAPH <{g_iri}> {{
@@ -1662,9 +1747,19 @@ async def get_term(
             }}
         }}
         ORDER BY ?sub
+        LIMIT {TERM_RELATION_LIMIT + 1}
     """
-    prop_rows, asserted_sub_iris = await asyncio.to_thread(
-        _sparql_term_props, store, props_query, asserted_sub_query
+    asserted_sub_count_query = f"""
+        SELECT (COUNT(?sub) AS ?n) WHERE {{
+            GRAPH <{g_iri}> {{
+                ?sub <http://www.w3.org/2000/01/rdf-schema#subClassOf> <{term_iri}> .
+                FILTER(isIRI(?sub))
+            }}
+        }}
+    """
+    prop_rows, asserted_sub_iris, asserted_sub_total = await asyncio.to_thread(
+        _sparql_term_props, store, props_query, asserted_sub_query,
+        asserted_sub_count_query,
     )
     if not prop_rows:
         raise HTTPException(status_code=404, detail="Term not found in this ontology version")
@@ -1788,9 +1883,20 @@ async def get_term(
     # for label lookups too — one SQL round-trip serves any number of IRIs.
     # IRIs not in entity_index (blank-node-derived expressions discovered late
     # in `_build_class_expr`) fall back to a Redis HGETALL in `_label()` below.
+    # Cap the subclass lists here, before anything else walks them. They are
+    # only ever displayed, and a class near the root has a transitive closure of
+    # 771k on DRON — resolving a label for each was ~15 s of Redis round trips
+    # to render 200 rows.
+    _sub_i_total = len(inferred_sub_iris)
+    _sub_i_cut = _sub_i_total > TERM_RELATION_LIMIT
+    inferred_sub_iris = inferred_sub_iris[:TERM_RELATION_LIMIT]
+    _sub_a_cut = asserted_sub_total > TERM_RELATION_LIMIT
+    asserted_sub_iris = asserted_sub_iris[:TERM_RELATION_LIMIT]
+
     _pre_iris: list[str] = []
     _pre_iris.extend(asserted_sub_iris)
     _pre_iris.extend(inferred_sub_iris)
+    # (both already capped above — see _sub_total / _sub_i_total)
     _pre_iris.extend(asserted_sup_iris)
     _pre_iris.extend(inferred_sup_iris)
     for _vals in properties.values():
@@ -1905,8 +2011,6 @@ async def get_term(
 
     # Default page size for usage/class_usage tables. Frontend renders the first
     # USAGE_PAGE_SIZE rows and offers a "Show more" button (separate endpoint).
-    USAGE_PAGE_SIZE = 10
-    USAGE_SQL_LIMIT = USAGE_PAGE_SIZE + 1  # +1 to detect has_more without a COUNT query
 
     # ── Per-query helpers ───────────────────────────────────────────────────
     # Each returns its raw rows; label resolution happens after the gather.
@@ -2112,12 +2216,12 @@ async def get_term(
                 "range_label": _label(row["range_iri"]) if row["range_iri"] else None,
             })
 
-    # Phase 2 — class_usage needs _adc_map (only run when this term is a class).
+    # class_usage is deferred to /term-expanded. Finding the restrictions that
+    # reference a class costs ~4 s on a DRON-sized graph whatever the class —
+    # it was 4 s of every class page, including leaves with no usages at all.
+    # The panel now renders first and this section fills in, matching how the
+    # inferred-walk sections already behave.
     class_usage: list[dict] = []
-    if not is_property:
-        _cu_rows = await asyncio.to_thread(_run_class_usage_queries, store, _adc_map)
-        class_usage_has_more = len(_cu_rows) > USAGE_PAGE_SIZE
-        class_usage = _cu_rows[:USAGE_PAGE_SIZE]
 
     term_detail = r.hgetall(_iri_key(version_id, term_iri))
     source = term_detail.get("source", "") if term_detail else ""
@@ -2224,6 +2328,14 @@ async def get_term(
         property_labels = {iri: label for iri, label, _t in _pl_rows}
         property_types = {iri: _t for iri, _label, _t in _pl_rows}
 
+    # Cap what crosses the wire. The asserted subclass list is already bounded by
+    # its query; the other three arrive whole.
+    _sup_a = bound_relation(asserted_sup_iris)
+    _sup_i = bound_relation(inferred_sup_iris)
+    # Subclass lists were capped at source; carry their recorded totals.
+    _sub_a = (asserted_sub_iris, asserted_sub_total, _sub_a_cut)
+    _sub_i = (inferred_sub_iris, _sub_i_total, _sub_i_cut)
+
     _payload = {
         "iri": term_iri,
         "label": typed_label if term_labels else top_label,
@@ -2239,12 +2351,22 @@ async def get_term(
         "type_of": type_of,
         "is_inverse_target": is_inverse_target,
         "superclasses": {
-            "asserted": _term_list(asserted_sup_iris),
-            "inferred": _term_list(inferred_sup_iris),
+            "asserted": _term_list(_sup_a[0]),
+            "inferred": _term_list(_sup_i[0]),
         },
         "subclasses": {
-            "asserted": _term_list(asserted_sub_iris),
-            "inferred": _term_list(inferred_sub_iris),
+            "asserted": _term_list(_sub_a[0]),
+            "inferred": _term_list(_sub_i[0]),
+        },
+        # The lists above are capped at TERM_RELATION_LIMIT so a class near the
+        # root stays a small response; these describe the full hierarchy.
+        "relation_totals": {
+            "superclasses_asserted": _sup_a[1], "superclasses_inferred": _sup_i[1],
+            "subclasses_asserted": _sub_a[1], "subclasses_inferred": _sub_i[1],
+        },
+        "relation_truncated": {
+            "superclasses_asserted": _sup_a[2], "superclasses_inferred": _sup_i[2],
+            "subclasses_asserted": _sub_a[2], "subclasses_inferred": _sub_i[2],
         },
         "superclass_expressions": superclass_expressions,
         "inferred_superclass_expressions": inferred_superclass_expressions,
@@ -2672,10 +2794,21 @@ async def get_term_expanded(
         for r in idp_rows
     ]
 
+    # Lifted off the main term response — see the note there.
+    _cu_q, _disj_q = _class_usage_queries(g_iri, term_iri)
+
+    def _class_usage_rows(s_):
+        adc = _compute_adc_map_for(s_, g_iri)
+        return _sparql_class_usage(s_, _cu_q, _disj_q, _label, adc, term_iri, g_iri)
+
+    _cu_rows = await asyncio.to_thread(_class_usage_rows, store)
+
     payload = {
         "inferred_superclass_expressions": ox_result["inferred_superclass_expressions"],
         "inferred_disjoint_with":          ox_result["inferred_disjoint_with"],
         "inherited_schema_properties":     inherited_schema_properties,
+        "class_usage":                     _cu_rows[:USAGE_PAGE_SIZE],
+        "class_usage_has_more":            len(_cu_rows) > USAGE_PAGE_SIZE,
     }
     await asyncio.to_thread(_r_cache.set, _cache_key, _json_cache.dumps(payload), _TERM_EXPANDED_CACHE_TTL)
     return payload

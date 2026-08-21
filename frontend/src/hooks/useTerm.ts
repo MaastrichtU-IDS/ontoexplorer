@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { api, parseTerm, ParsedTerm, InferredExprEntry, InheritedSchemaProperty } from '../lib/api'
+import { api, parseTerm, ParsedTerm, InferredExprEntry, InheritedSchemaProperty, ClassUsageEntry } from '../lib/api'
 
 export function useTerm(
   ontologyId: string | null,
@@ -22,6 +22,10 @@ export interface TermExpandedSections {
   inferredSuperclassExpressions: InferredExprEntry[]
   inferredDisjointWith: InferredExprEntry[]
   inheritedSchemaProperties: InheritedSchemaProperty[]
+  /** Moved off the main term response: finding the restrictions that reference
+   *  a class costs ~4 s on a large ontology regardless of the class. */
+  classUsage: ClassUsageEntry[]
+  classUsageHasMore: boolean
 }
 
 /**
@@ -43,6 +47,8 @@ export function useTermExpanded(
         inferredSuperclassExpressions: raw.inferred_superclass_expressions ?? [],
         inferredDisjointWith:          raw.inferred_disjoint_with         ?? [],
         inheritedSchemaProperties:     raw.inherited_schema_properties    ?? [],
+        classUsage:                    raw.class_usage                    ?? [],
+        classUsageHasMore:             raw.class_usage_has_more           ?? false,
       }
     },
     enabled: !!ontologyId && !!versionId && !!termIri,
