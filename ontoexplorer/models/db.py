@@ -411,6 +411,21 @@ class HierarchyEdge(Base):
     kind: Mapped[str] = mapped_column(String, primary_key=True)
 
 
+class InferredRoot(Base):
+    """A class with no direct inferred parent, for the inferred tree's top level.
+
+    Owned by reasoning, deliberately separate from `entity_index`: indexing
+    rebuilds that table with DELETE + INSERT and runs concurrently with
+    reasoning on a different queue, so a flag stored there would be erased by
+    whichever finished last.
+    """
+    __tablename__ = "inferred_root"
+
+    version_id: Mapped[str] = mapped_column(
+        ForeignKey("versions.id", ondelete="CASCADE"), primary_key=True)
+    iri: Mapped[str] = mapped_column(Text, primary_key=True)
+
+
 class SavedQuery(Base):
     __tablename__ = "saved_queries"
 

@@ -373,3 +373,57 @@ def test_compute_non_roots_splits_by_hierarchy():
         ("http://x/q", "http://x/p", PROPERTY_KIND),
     ]
     assert non_root_iris(edges) == {"http://x/B", "http://x/q"}
+
+
+# ── kind ownership ────────────────────────────────────────────────────────────
+# Indexing writes the asserted edges; reasoning writes the inferred ones. They
+# are queued concurrently onto different Celery queues, so neither may clear
+# the other's rows — a version-wide delete would have one wipe the other
+# depending on which finished last.
+
+@pytest.mark.anyio
+async def test_writing_inferred_edges_leaves_asserted_ones_alone(db_session):
+    from ontoexplorer.modules.hierarchy.edges import INFERRED_KIND
+    v = "v-kinds"
+    await replace_edges(db_session, v, [
+        ("http://x/B", "http://x/A", CLASS_KIND),
+        ("http://x/q", "http://x/p", PROPERTY_KIND),
+    ], kinds=(CLASS_KIND, PROPERTY_KIND))
+
+    await replace_edges(db_session, v, [
+        ("http://x/C", "http://x/A", INFERRED_KIND),
+    ], kinds=(INFERRED_KIND,))
+
+    kinds = sorted(k for (k,) in (await db_session.execute(
+        select(HierarchyEdge.kind).where(HierarchyEdge.version_id == v))).all())
+    assert kinds == [CLASS_KIND, INFERRED_KIND, PROPERTY_KIND]
+
+
+@pytest.mark.anyio
+async def test_reindexing_leaves_inferred_edges_alone(db_session):
+    from ontoexplorer.modules.hierarchy.edges import INFERRED_KIND
+    v = "v-kinds2"
+    await replace_edges(db_session, v, [("http://x/C", "http://x/A", INFERRED_KIND)],
+                        kinds=(INFERRED_KIND,))
+    await replace_edges(db_session, v, [("http://x/B", "http://x/A", CLASS_KIND)],
+                        kinds=(CLASS_KIND, PROPERTY_KIND))
+
+    rows = sorted((c, k) for c, k in (await db_session.execute(
+        select(HierarchyEdge.child, HierarchyEdge.kind)
+        .where(HierarchyEdge.version_id == v))).all())
+    assert rows == [("http://x/B", CLASS_KIND), ("http://x/C", INFERRED_KIND)]
+
+
+@pytest.mark.anyio
+async def test_replacing_a_kind_still_clears_that_kinds_stale_rows(db_session):
+    from ontoexplorer.modules.hierarchy.edges import INFERRED_KIND
+    v = "v-kinds3"
+    await replace_edges(db_session, v, [
+        ("http://x/C", "http://x/A", INFERRED_KIND),
+        ("http://x/D", "http://x/A", INFERRED_KIND),
+    ], kinds=(INFERRED_KIND,))
+    await replace_edges(db_session, v, [("http://x/C", "http://x/A", INFERRED_KIND)],
+                        kinds=(INFERRED_KIND,))
+    kids = sorted(c for (c,) in (await db_session.execute(
+        select(HierarchyEdge.child).where(HierarchyEdge.version_id == v))).all())
+    assert kids == ["http://x/C"]
