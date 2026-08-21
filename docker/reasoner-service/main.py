@@ -16,6 +16,10 @@ from cache import (
     load_input_axioms,
     load_justification,
     store_classification_error,
+    class_is_known,
+    has_per_class_index,
+    load_class_entry,
+    store_per_class,
     store_justification,
 )
 from registry import default_reasoner, get_backend, list_reasoners
@@ -189,26 +193,56 @@ def get_classification(version_id: str, reasoner: str = Query(default_reasoner()
     return asdict(result)
 
 
+def _relations_or_404(version_id: str, reasoner: str, cls: str, kind: str) -> tuple[list, list]:
+    """(transitive, direct) lists for one class — (all, direct) in that order.
+
+    Reads the per-class hashes, which cost one HGET each. Falls back to the
+    whole blob only for classifications cached before those were written; that
+    read is 8.5 s and ~539 MB on a DRON-sized ontology, so it must never be the
+    normal path.
+    """
+    all_map = "superclasses" if kind == "superclasses" else "subclasses"
+    direct_map = f"direct_{all_map}"
+
+    if has_per_class_index(version_id, reasoner):
+        if not class_is_known(version_id, reasoner, cls):
+            raise HTTPException(404, "Class not found in classification index")
+        return (
+            load_class_entry(version_id, reasoner, all_map, cls) or [],
+            load_class_entry(version_id, reasoner, direct_map, cls) or [],
+        )
+
+    result = _load_or_404(version_id, reasoner)
+    # Backfill on the way out: this request already paid to parse the blob, so
+    # write the per-class entries and let every later one be an HGET. Without
+    # it a classification predating this would reload 539 MB forever.
+    try:
+        store_per_class(result, reasoner)
+    except Exception:
+        pass
+    all_d = getattr(result, all_map)
+    direct_d = getattr(result, direct_map)
+    if cls not in all_d and cls not in direct_d:
+        raise HTTPException(404, "Class not found in classification index")
+    return all_d.get(cls, []), direct_d.get(cls, [])
+
+
 @app.get("/classify/{version_id}/superclasses")
 def get_superclasses(version_id: str, cls: str, direct: bool = False,
                       reasoner: str = Query(default_reasoner())):
-    result = _load_or_404(version_id, reasoner)
-    if cls not in result.superclasses and cls not in result.direct_superclasses:
-        raise HTTPException(404, "Class not found in classification index")
+    all_sup, direct_sup = _relations_or_404(version_id, reasoner, cls, "superclasses")
     if direct:
-        return {"class": cls, "superclasses": result.direct_superclasses.get(cls, []), "direct": True}
-    return {"class": cls, "superclasses": result.superclasses.get(cls, []), "direct": False}
+        return {"class": cls, "superclasses": direct_sup, "direct": True}
+    return {"class": cls, "superclasses": all_sup, "direct": False}
 
 
 @app.get("/classify/{version_id}/subclasses")
 def get_subclasses(version_id: str, cls: str, direct: bool = False,
                     reasoner: str = Query(default_reasoner())):
-    result = _load_or_404(version_id, reasoner)
-    if cls not in result.subclasses and cls not in result.direct_subclasses:
-        raise HTTPException(404, "Class not found in classification index")
+    all_sub, direct_sub = _relations_or_404(version_id, reasoner, cls, "subclasses")
     if direct:
-        return {"class": cls, "subclasses": result.direct_subclasses.get(cls, []), "direct": True}
-    return {"class": cls, "subclasses": result.subclasses.get(cls, []), "direct": False}
+        return {"class": cls, "subclasses": direct_sub, "direct": True}
+    return {"class": cls, "subclasses": all_sub, "direct": False}
 
 
 @app.get("/classify/{version_id}/consistency")

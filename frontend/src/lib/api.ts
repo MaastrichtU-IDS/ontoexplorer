@@ -1267,6 +1267,8 @@ export const api = {
         inferred_superclass_expressions: InferredExprEntry[]
         inferred_disjoint_with: InferredExprEntry[]
         inherited_schema_properties: InheritedSchemaProperty[]
+        class_usage: ClassUsageEntry[]
+        class_usage_has_more: boolean
       }>(
         `/ontologies/${oid}/${vid}/term-expanded/${encodeURIComponent(iri)}${lang ? `?lang=${lang}` : ''}`
       ),

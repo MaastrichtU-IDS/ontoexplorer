@@ -12,6 +12,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -379,7 +380,35 @@ class EntityIndex(Base):
     short: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[str | None] = mapped_column(Text, nullable=True)
     search_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # Mirrored from the indexer's deprecated set so the SQL-backed navigation
+    # tree can honour hide_obsolete without consulting Redis or Oxigraph.
+    deprecated: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    # No parent in its own hierarchy. Precomputed at index time: as a query-time
+    # anti-join this is a LIMIT trap the planner loses badly (26 s on DRON).
+    is_root: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
     # search_tsv is a generated column; SQLAlchemy reads it but never writes it.
+
+
+class HierarchyEdge(Base):
+    """One asserted named parent edge, mirrored from Oxigraph for the tree.
+
+    `kind` is 'class' (rdfs:subClassOf) or 'property' (rdfs:subPropertyOf), so
+    one table serves both hierarchies.
+
+    The four columns are marked as a composite key only because SQLAlchemy
+    requires a primary key to map a table; the migration deliberately creates
+    none. A graph is a set of triples so an edge cannot repeat anyway (verified
+    on DRON — 777,706 edges, 0 duplicates), and the key's index measured 186 MB
+    against 84 MB for the narrow (version_id, kind, child) index that serves the
+    same lookups.
+    """
+    __tablename__ = "hierarchy_edge"
+
+    version_id: Mapped[str] = mapped_column(
+        ForeignKey("versions.id", ondelete="CASCADE"), primary_key=True)
+    child: Mapped[str] = mapped_column(Text, primary_key=True)
+    parent: Mapped[str] = mapped_column(Text, primary_key=True)
+    kind: Mapped[str] = mapped_column(String, primary_key=True)
 
 
 class SavedQuery(Base):

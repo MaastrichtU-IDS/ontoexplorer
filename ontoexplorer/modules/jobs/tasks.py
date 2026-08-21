@@ -835,11 +835,43 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         from ontoexplorer.modules.search.indexer import build_index
         stats = build_index(version_id, ontology_id, profile=profile)
 
+        # Mirror the asserted hierarchy so the navigation tree is served from
+        # SQL rather than re-deriving roots from the whole graph on every cache
+        # miss. Runs before entity_index so the child set can be written there
+        # as is_root. Best-effort: list_terms falls back to SPARQL for any
+        # version with no edge rows.
+        _non_roots: set[str] | None = None
+        try:
+            import time as _t
+            from ontoexplorer.clients.oxigraph import get_store, graph_iri
+            from ontoexplorer.database import make_celery_db_session as _mk
+            from ontoexplorer.modules.hierarchy.edges import (
+                extract_edges,
+                non_root_iris,
+                replace_edges,
+            )
+
+            _t0 = _t.monotonic()
+            _edges = extract_edges(get_store(), graph_iri(ontology_id, version_id))
+            _non_roots = non_root_iris(_edges)
+
+            async def _store_edges():
+                async with _mk()() as _db:
+                    return await replace_edges(_db, version_id, _edges)
+
+            _n = asyncio.run(_store_edges())
+            _edges_ready = _n > 0
+            log.info("hierarchy_edges_populated", version_id=version_id, edges=_n,
+                     duration_s=round(_t.monotonic() - _t0, 2))
+        except Exception as exc:
+            _edges_ready = False
+            log.warning("hierarchy_edges_failed", version_id=version_id, error=str(exc))
+
         # Mirror the Redis index into Postgres `entity_index` for the SQL-backed
         # /search path. Best-effort: keyword search falls back to Redis if this fails.
         try:
             from ontoexplorer.modules.search.pg_indexer import populate_entity_index_sync
-            pg_rows = populate_entity_index_sync(version_id, ontology_id)
+            pg_rows = populate_entity_index_sync(version_id, ontology_id, _non_roots)
             log.info("entity_index_populated", version_id=version_id, rows=pg_rows)
         except Exception as exc:
             log.warning("entity_index_populate_failed", version_id=version_id, error=str(exc))
@@ -875,6 +907,44 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                     _r.delete(_k)
         except Exception:
             pass
+        # Precompute the navigation tree's root level. Root detection compares
+        # the whole entity set against the whole child set, which on a
+        # DRON-sized ontology (~800k classes) takes ~13 s — the indexing worker
+        # pays it once here so no visitor does. Also drops the pre-index cached
+        # variants, which the long TTL would otherwise preserve.
+        try:
+            import time as _time
+            from ontoexplorer.modules.search.indexer import _get_redis
+            _t0 = _time.monotonic()
+            if _edges_ready:
+                # Cheap path: the edges were just written, so reuse them rather
+                # than re-deriving roots from the whole graph (~0.7 s vs ~17 s).
+                from ontoexplorer.database import make_celery_db_session as _mk2
+                from ontoexplorer.modules.hierarchy.edges import warm_root_cache_sql
+
+                async def _warm():
+                    async with _mk2()() as _db:
+                        return await warm_root_cache_sql(_db, _get_redis(), version_id)
+
+                _n = asyncio.run(_warm())
+                _via = "sql"
+            else:
+                from ontoexplorer.clients.oxigraph import get_store, graph_iri
+                from ontoexplorer.modules.hierarchy.roots import warm_root_cache
+                _n = warm_root_cache(
+                    get_store(), _get_redis(), version_id,
+                    graph_iri(ontology_id, version_id),
+                    deprecated_filter=(
+                        'FILTER NOT EXISTS { ?class owl:deprecated ?_d . '
+                        'FILTER(str(?_d) = "true") }'
+                    ),
+                )
+                _via = "sparql"
+            log.info("root_cache_warmed", version_id=version_id, roots=_n, via=_via,
+                     duration_s=round(_time.monotonic() - _t0, 2))
+        except Exception as exc:
+            # Non-fatal: the endpoint still computes on demand.
+            log.warning("root_cache_warm_failed", version_id=version_id, error=str(exc))
         embed_ontology.delay(version_id, ontology_id=ontology_id)
         log.info("index_ontology_done", version_id=version_id,
                  class_count=stats.class_count, property_count=stats.property_count)
