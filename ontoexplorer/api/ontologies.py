@@ -2924,6 +2924,24 @@ async def inferred_children(
     from ontoexplorer.clients.reasoning import get_classification
     from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _deprecated_key, _type_key
 
+    # Served from the edges reasoning materialised, when they exist. Deriving
+    # this per request cost 16 s for the root and ~2 s per expansion on DRON,
+    # because it fetched and parsed the whole classification every time.
+    from ontoexplorer.modules.hierarchy.edges import (
+        fetch_inferred_children,
+        fetch_inferred_roots,
+        has_materialised_inferred,
+    )
+    if await has_materialised_inferred(db, version_id):
+        if cls == _OWL_THING:
+            terms = await fetch_inferred_roots(
+                db, version_id, hide_obsolete=hide_obsolete, limit=2000, offset=0)
+        else:
+            terms = await fetch_inferred_children(
+                db, version_id, cls, hide_obsolete=hide_obsolete,
+                limit=2000, offset=0)
+        return {"terms": terms, "reasoning_available": True}
+
     try:
         classification = await get_classification(version_id, reasoner=version.reasoner)
     except Exception:

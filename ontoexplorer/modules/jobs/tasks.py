@@ -698,6 +698,49 @@ async def _reason_and_persist(db, version, version_id: str, ontology_id: str, jo
             to_graph=inferred_named,
         )
 
+    # Materialise the inferred hierarchy for the navigation tree. Deriving it
+    # per request meant fetching and parsing the whole classification (12 s on
+    # DRON) and reducing 771,507 classes to direct parents (1 s) to return two
+    # terms. Best-effort: /inferred-children falls back for versions with no
+    # inferred edges. Scoped to the 'inferred' kind so it cannot clear the
+    # asserted edges, which indexing writes concurrently on another queue.
+    try:
+        import time as _t
+        from ontoexplorer.clients.reasoning import get_classification
+        from ontoexplorer.modules.hierarchy.edges import (
+            INFERRED_KIND,
+            reduce_direct_inferred,
+            replace_edges,
+            replace_inferred_roots,
+        )
+        from ontoexplorer.modules.search.indexer import _get_redis, _type_key
+
+        _t0 = _t.monotonic()
+        _c = await get_classification(version_id, reasoner=version.reasoner)
+        # Union in every named class: EL reasoners omit classes with no
+        # non-trivial subsumptions, and those are exactly the top-level classes
+        # that must still appear as inferred roots.
+        _all = set(_c.get("direct_superclasses", {})) | set(_c.get("superclasses", {}))
+        for _parents in _c.get("direct_superclasses", {}).values():
+            _all.update(_parents)
+        for _parents in _c.get("superclasses", {}).values():
+            _all.update(_parents)
+        _all |= {
+            m.decode() if isinstance(m, bytes) else m
+            for m in _get_redis().smembers(_type_key(version_id, "class"))
+        }
+        _edges, _roots = reduce_direct_inferred(
+            _c.get("direct_superclasses", {}), _c.get("superclasses", {}),
+            _c.get("unsatisfiable", []), _all,
+        )
+        await replace_edges(db, version_id, _edges, kinds=(INFERRED_KIND,))
+        await replace_inferred_roots(db, version_id, _roots)
+        log.info("inferred_hierarchy_materialised", version_id=version_id,
+                 edges=len(_edges), roots=len(_roots),
+                 duration_s=round(_t.monotonic() - _t0, 2))
+    except Exception as exc:
+        log.warning("inferred_hierarchy_failed", version_id=version_id, error=str(exc))
+
     # Update job status
     await tracker.mark_done(db, job_id)
 

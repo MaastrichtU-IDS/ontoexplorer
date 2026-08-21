@@ -22,6 +22,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 CLASS_KIND = "class"
 PROPERTY_KIND = "property"
+# Direct inferred parents, written by reasoning rather than indexing.
+INFERRED_KIND = "inferred"
+
+# Which kinds each writer owns. Indexing and reasoning are queued concurrently
+# onto different Celery queues, so each must clear only its own rows.
+ASSERTED_KINDS = (CLASS_KIND, PROPERTY_KIND)
 
 _OWL_THING = "http://www.w3.org/2002/07/owl#Thing"
 
@@ -71,15 +77,25 @@ def non_root_iris(edges) -> set[str]:
 
 
 async def replace_edges(
-    db: AsyncSession, version_id: str, edges: list[tuple[str, str, str]]
+    db: AsyncSession,
+    version_id: str,
+    edges: list[tuple[str, str, str]],
+    kinds: tuple[str, ...] = ASSERTED_KINDS,
 ) -> int:
-    """Make `version_id`'s edges exactly `edges`. Returns the row count written.
+    """Replace this version's edges *of the given kinds*. Returns rows written.
 
-    Delete-then-insert rather than upsert: re-indexing must also drop edges the
-    ontology no longer asserts, and the table has no unique key to upsert on.
+    Delete-then-insert rather than upsert: a re-run must also drop edges the
+    ontology no longer has, and the table has no unique key to upsert on.
+
+    Scoped by kind because indexing (asserted) and reasoning (inferred) write
+    the same table from different Celery queues with no ordering between them.
+    A version-wide delete would let whichever finished last erase the other's
+    hierarchy.
     """
     await db.execute(
-        text("DELETE FROM hierarchy_edge WHERE version_id = :v"), {"v": version_id}
+        text("DELETE FROM hierarchy_edge WHERE version_id = :v AND kind IN :kinds")
+        .bindparams(bindparam("kinds", expanding=True)),
+        {"v": version_id, "kinds": list(kinds)},
     )
     if edges:
         await _insert_edges(db, version_id, edges)
@@ -269,3 +285,158 @@ async def warm_root_cache_sql(
         json.dumps(payload),
     )
     return len(terms)
+
+
+# ── inferred hierarchy ────────────────────────────────────────────────────────
+
+_OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing"
+
+
+def reduce_direct_inferred(
+    direct_superclasses: dict[str, list[str]],
+    superclasses: dict[str, list[str]],
+    unsatisfiable,
+    all_classes: set[str],
+) -> tuple[list[tuple[str, str, str]], set[str]]:
+    """Reduce a classification to (direct inferred edges, root IRIs).
+
+    Done once per reasoning run. Previously this ran on every /inferred-children
+    request, after fetching and parsing the whole classification — 16 s to
+    return two terms on DRON.
+
+    Conventions preserved from that implementation:
+      * owl:Thing is never a parent; every class subclasses it, so keeping it
+        would leave the tree with no roots.
+      * An unsatisfiable class gets owl:Nothing as its direct parent, the
+        Protégé "broken corner", and so is not a root.
+      * owl:Nothing is not itself recorded as a root — the read surfaces it only
+        when something actually hangs beneath it.
+      * A class absent from both maps is still a root: EL reasoners omit classes
+        with no non-trivial subsumptions, and those are exactly the top-level
+        classes with no subclasses.
+    """
+    unsat = set(unsatisfiable or ())
+    edges: list[tuple[str, str, str]] = []
+    roots: set[str] = set()
+
+    for cls in sorted(all_classes):
+        if cls == _OWL_NOTHING:
+            continue
+        if cls in direct_superclasses:
+            parents = [p for p in direct_superclasses[cls] if p != _OWL_THING]
+        else:
+            raw = [p for p in superclasses.get(cls, []) if p != _OWL_THING]
+            # Keep only parents that are not an ancestor of another parent.
+            parents = [
+                p for p in raw
+                if not any(p in superclasses.get(q, []) for q in raw if q != p)
+            ]
+        if cls in unsat and _OWL_NOTHING not in parents:
+            parents.append(_OWL_NOTHING)
+
+        if parents:
+            edges.extend((cls, p, INFERRED_KIND) for p in parents)
+        else:
+            roots.add(cls)
+    return edges, roots
+
+
+async def replace_inferred_roots(db: AsyncSession, version_id: str, iris) -> int:
+    """Make this version's inferred-root set exactly `iris`."""
+    await db.execute(
+        text("DELETE FROM inferred_root WHERE version_id = :v"), {"v": version_id}
+    )
+    rows = sorted(iris)
+    if rows:
+        await db.execute(
+            text("INSERT INTO inferred_root (version_id, iri) VALUES (:v, :iri)"),
+            [{"v": version_id, "iri": i} for i in rows],
+        )
+    await db.commit()
+    return len(rows)
+
+
+async def has_materialised_inferred(db: AsyncSession, version_id: str) -> bool:
+    """Whether reasoning has written this version's inferred edges.
+
+    Absence means "not reasoned, or reasoned before this shipped" — the caller
+    falls back rather than showing an empty inferred tree.
+    """
+    found = (await db.execute(
+        text("SELECT 1 FROM hierarchy_edge WHERE version_id = :v AND kind = :k LIMIT 1"),
+        {"v": version_id, "k": INFERRED_KIND},
+    )).scalar()
+    return found is not None
+
+
+def _inferred_child_rows(rows) -> list[dict]:
+    return [{"iri": r.iri, "label": r.label, "lang": None,
+             "has_children": bool(r.has_children)} for r in rows]
+
+
+async def fetch_inferred_children(
+    db: AsyncSession, version_id: str, parent: str, *,
+    hide_obsolete: bool, limit: int, offset: int,
+) -> list[dict]:
+    """Direct inferred children of `parent`, each flagged as expandable."""
+    obsolete_sql = "AND e.deprecated = false" if hide_obsolete else ""
+    rows = (await db.execute(text(f"""
+        SELECT e.iri, e.primary_label AS label,
+               EXISTS (
+                   SELECT 1 FROM hierarchy_edge c
+                   WHERE c.version_id = h.version_id AND c.kind = h.kind
+                     AND c.parent = h.child
+               ) AS has_children
+        FROM hierarchy_edge h
+        JOIN entity_index e
+          ON e.version_id = h.version_id AND e.iri = h.child
+        WHERE h.version_id = :v AND h.kind = :kind AND h.parent = :parent
+          AND e.type = 'class'
+          {obsolete_sql}
+        ORDER BY lower(e.primary_label), e.iri
+        LIMIT :limit OFFSET :offset
+    """), {"v": version_id, "kind": INFERRED_KIND, "parent": parent,
+           "limit": limit, "offset": offset})).all()
+    return _inferred_child_rows(rows)
+
+
+async def fetch_inferred_roots(
+    db: AsyncSession, version_id: str, *,
+    hide_obsolete: bool, limit: int, offset: int,
+) -> list[dict]:
+    """Top level of the inferred tree.
+
+    owl:Nothing is prepended when anything is unsatisfiable, so the broken
+    classes are reachable from the root — it is a synthetic node, derived from
+    the edges rather than stored as a root.
+    """
+    obsolete_sql = "AND e.deprecated = false" if hide_obsolete else ""
+    rows = (await db.execute(text(f"""
+        SELECT e.iri, e.primary_label AS label,
+               EXISTS (
+                   SELECT 1 FROM hierarchy_edge c
+                   WHERE c.version_id = r.version_id AND c.kind = :kind
+                     AND c.parent = e.iri
+               ) AS has_children
+        FROM inferred_root r
+        JOIN entity_index e
+          ON e.version_id = r.version_id AND e.iri = r.iri
+        WHERE r.version_id = :v
+          AND e.type = 'class'
+          {obsolete_sql}
+        ORDER BY lower(e.primary_label), e.iri
+        LIMIT :limit OFFSET :offset
+    """), {"v": version_id, "kind": INFERRED_KIND,
+           "limit": limit, "offset": offset})).all()
+    roots = _inferred_child_rows(rows)
+
+    if offset == 0:
+        unsat = (await db.execute(
+            text("SELECT 1 FROM hierarchy_edge WHERE version_id = :v AND kind = :k "
+                 "AND parent = :n LIMIT 1"),
+            {"v": version_id, "k": INFERRED_KIND, "n": _OWL_NOTHING},
+        )).scalar()
+        if unsat is not None:
+            roots.insert(0, {"iri": _OWL_NOTHING, "label": "Nothing",
+                             "lang": None, "has_children": True})
+    return roots

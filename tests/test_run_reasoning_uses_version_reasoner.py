@@ -96,6 +96,10 @@ async def test_run_reasoning_followup_get_carries_version_reasoner(db_session, m
     ):
         await tasks._run_reasoning(db_session, version.id)
 
-    assert len(captured_urls) == 1
-    assert f"/classify/{version.id}" in captured_urls[0]
-    assert "reasoner=rustdl" in captured_urls[0]
+    # Two GETs now: the follow-up that fetches the inferred axioms, and the
+    # classification read that materialises the inferred hierarchy for the tree.
+    # Both address this version and must carry its reasoner — picking the wrong
+    # one would silently read another backend's classification.
+    assert len(captured_urls) == 2, captured_urls
+    assert all(f"/classify/{version.id}" in u for u in captured_urls)
+    assert all("reasoner=rustdl" in u for u in captured_urls)
