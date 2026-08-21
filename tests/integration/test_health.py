@@ -28,3 +28,15 @@ async def test_ready_returns_json(client):
     assert resp.headers["content-type"].startswith("application/json")
     body = resp.json()
     assert "postgres" in body
+
+
+@pytest.mark.anyio
+async def test_version_is_not_cacheable(client):
+    """The version string is what people check to confirm a deploy landed, so a
+    stale one is worse than none. It was served with no Cache-Control at all,
+    and browsers cached it heuristically — a local instance running 0.3.71
+    reported 0.3.65 until a hard refresh.
+    """
+    resp = await client.get("/api/v1/version")
+    cache_control = resp.headers.get("cache-control", "")
+    assert "no-store" in cache_control, cache_control

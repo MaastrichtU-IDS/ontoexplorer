@@ -20,13 +20,22 @@ async def health():
 async def version():
     """The running build's version. `git_ref`/`git_sha` are injected at image
     build time (CI); both are null for a local/dev build, where `version` (the
-    packaged __version__) is the source of truth."""
+    packaged __version__) is the source of truth.
+
+    Explicitly uncacheable. With no Cache-Control browsers cache this
+    heuristically, and a stale version is worse than none: it is the one thing
+    people check to confirm a deploy landed. An instance running 0.3.71
+    reported 0.3.65 in the footer until a hard refresh.
+    """
     s = get_settings()
-    return {
-        "version": __version__,
-        "git_ref": s.git_ref or None,
-        "git_sha": s.git_sha[:12] if s.git_sha else None,
-    }
+    return JSONResponse(
+        {
+            "version": __version__,
+            "git_ref": s.git_ref or None,
+            "git_sha": s.git_sha[:12] if s.git_sha else None,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/ready", summary="Readiness probe — checks all backend connections")
