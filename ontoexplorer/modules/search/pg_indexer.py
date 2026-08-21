@@ -96,7 +96,8 @@ def _build_search_text(entity: dict) -> str:
 
 
 async def populate_entity_index(
-    session, version_id: str, ontology_id: str
+    session, version_id: str, ontology_id: str,
+    non_roots: set[str] | None = None,
 ) -> int:
     """Mirror Redis entity records for *version_id* into the `entity_index` table.
 
@@ -104,6 +105,19 @@ async def populate_entity_index(
     of rows written. Safe to re-run; uses a single transaction.
     """
     r = _get_redis()
+    # Deprecation is already computed during indexing and kept as a Redis set;
+    # mirroring it here lets the SQL-backed navigation tree honour
+    # hide_obsolete without a second lookup.
+    from ontoexplorer.modules.search.indexer import _deprecated_key
+    deprecated = {
+        m.decode() if isinstance(m, bytes) else m
+        for m in r.smembers(_deprecated_key(version_id))
+    }
+
+    # Entities that appear as a child in either hierarchy. Anything else is a
+    # root; storing that here avoids an anti-join the planner handles badly.
+    # None means "hierarchy not extracted", in which case no root is claimed.
+    non_roots = non_roots if non_roots is not None else set()
 
     rows: list[dict] = []
     for iri in _iter_version_iris(version_id):
@@ -128,6 +142,8 @@ async def populate_entity_index(
             "short": entity.get("short", ""),
             "source": entity.get("source") or None,
             "search_text": search_text,
+            "deprecated": iri in deprecated,
+            "is_root": iri not in non_roots,
         })
 
     # Clear any prior rows for this version, then bulk insert.
@@ -142,10 +158,12 @@ async def populate_entity_index(
             text("""
                 INSERT INTO entity_index
                     (version_id, iri, ontology_id, type,
-                     primary_label, primary_label_norm, short, source, search_text)
+                     primary_label, primary_label_norm, short, source, search_text,
+                     deprecated, is_root)
                 VALUES
                     (:version_id, :iri, :ontology_id, :type,
-                     :primary_label, :primary_label_norm, :short, :source, :search_text)
+                     :primary_label, :primary_label_norm, :short, :source, :search_text,
+                     :deprecated, :is_root)
             """),
             rows,
         )
@@ -155,7 +173,9 @@ async def populate_entity_index(
     return len(rows)
 
 
-def populate_entity_index_sync(version_id: str, ontology_id: str) -> int:
+def populate_entity_index_sync(
+    version_id: str, ontology_id: str, non_roots: set[str] | None = None
+) -> int:
     """Synchronous wrapper for use inside Celery tasks."""
     import asyncio
 
@@ -163,6 +183,6 @@ def populate_entity_index_sync(version_id: str, ontology_id: str) -> int:
 
     async def _run() -> int:
         async with make_celery_db_session()() as session:
-            return await populate_entity_index(session, version_id, ontology_id)
+            return await populate_entity_index(session, version_id, ontology_id, non_roots)
 
     return asyncio.run(_run())

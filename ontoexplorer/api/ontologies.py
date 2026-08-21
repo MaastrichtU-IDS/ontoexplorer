@@ -1082,7 +1082,8 @@ async def list_terms(
         try:
             from ontoexplorer.modules.search.indexer import _get_redis
             _r = _get_redis()
-            _cache_key = f"terms_root:{version_id}:{entity_type}:{limit}:{int(hide_obsolete)}:{lang or ''}"
+            from ontoexplorer.modules.hierarchy.roots import root_cache_key
+            _cache_key = root_cache_key(version_id, entity_type, limit, hide_obsolete, lang)
             _cached = _r.get(_cache_key)
             if _cached:
                 return _json.loads(_cached)
@@ -1127,7 +1128,40 @@ async def list_terms(
         if hide_obsolete else ""
     )
 
-    if is_root:
+    # ── SQL-backed tree ───────────────────────────────────────────────────────
+    # When the version's hierarchy has been mirrored into Postgres, answer from
+    # there: deriving roots from the whole graph costs ~12.8 s on DRON against
+    # ~0.8 s indexed, and children arrive with has_children already computed
+    # instead of needing a second query.
+    #
+    # Not every request qualifies. entity_index stores one primary label, so a
+    # language-specific request still needs the store; hide_inverse is an
+    # owl:inverseOf filter the mirror does not carry; and individuals are a flat
+    # list rather than a hierarchy.
+    served_from_sql = False
+    if lang is None and not hide_inverse and not is_individual:
+        from ontoexplorer.modules.hierarchy.edges import (
+            fetch_children,
+            fetch_roots,
+            has_materialised_hierarchy,
+        )
+        if await has_materialised_hierarchy(db, version_id):
+            if is_root:
+                terms = await fetch_roots(
+                    db, version_id, entity_type,
+                    hide_obsolete=hide_obsolete, limit=limit, offset=offset)
+                served_from_sql = True
+            elif parent and parent.startswith("http"):
+                terms = await fetch_children(
+                    db, version_id, parent, entity_type,
+                    hide_obsolete=hide_obsolete, limit=limit, offset=offset)
+                served_from_sql = True
+            # Any other parent value is the "all entities" fallback listing,
+            # which is not a hierarchy question — leave it to the store.
+
+    if served_from_sql:
+        pass
+    elif is_root:
         # Two-pass root detection avoids correlated FILTER NOT EXISTS (O(n²) on large ontologies).
         # Pass 1: all entities with labels. Pass 2: entities that have a named parent. Subtract in Python.
         _NOT_DEPRECATED = _NOT_DEPRECATED_CLASS
@@ -1202,7 +1236,20 @@ async def list_terms(
             roots.sort(key=lambda x: (x[1] or x[0]).lower())
             return roots[off: off + lim]
 
-        page = await asyncio.to_thread(_run_root_two_pass, store, all_q, non_root_q, offset, limit)
+        if is_any_property:
+            # Properties number in the hundreds at most, so the original
+            # enumerate-and-subtract path costs nothing here.
+            page = await asyncio.to_thread(
+                _run_root_two_pass, store, all_q, non_root_q, offset, limit)
+        else:
+            # Classes can number ~800k (DRON), where labelling and sorting the
+            # whole set to display a handful of roots dominated the request.
+            from ontoexplorer.modules.hierarchy.roots import compute_roots
+            all_roots = await asyncio.to_thread(
+                compute_roots, store, g,
+                lang=lang, deprecated_filter=_NOT_DEPRECATED_CLASS,
+            )
+            page = all_roots[offset: offset + limit]
         terms = [{"iri": iri, "label": lbl, "lang": lt} for iri, lbl, lt in page]
 
     elif is_any_property:
@@ -1300,8 +1347,9 @@ async def list_terms(
         inverse_iris = await asyncio.to_thread(_run_inverse, store, inv_q)
         terms = [t for t in terms if t["iri"] not in inverse_iris]
 
-    # Find which terms have children (single query over the fetched IRIs)
-    if terms:
+    # Find which terms have children (single query over the fetched IRIs).
+    # The SQL path computes this inline, so this is the store path only.
+    if terms and not served_from_sql:
         values_block = " ".join(f"<{t['iri']}>" for t in terms)
         if is_any_property:
             child_q = f"""
@@ -1356,8 +1404,12 @@ async def list_terms(
         try:
             from ontoexplorer.modules.search.indexer import _get_redis
             _r = _get_redis()
-            _cache_key = f"terms_root:{version_id}:{entity_type}:{limit}:{int(hide_obsolete)}:{lang or ''}"
-            _r.setex(_cache_key, 300, _json.dumps(response))
+            from ontoexplorer.modules.hierarchy.roots import ROOT_CACHE_TTL, root_cache_key
+            # Long-lived: the root set only changes when the version is
+            # re-ingested or re-indexed, which invalidates it explicitly. At 300 s
+            # a DRON-sized ontology re-paid a ~60 s query every five minutes.
+            _cache_key = root_cache_key(version_id, entity_type, limit, hide_obsolete, lang)
+            _r.setex(_cache_key, ROOT_CACHE_TTL, _json.dumps(response))
         except Exception:
             pass
 
