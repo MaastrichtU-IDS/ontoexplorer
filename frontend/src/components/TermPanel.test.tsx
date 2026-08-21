@@ -480,16 +480,18 @@ describe('justification explain UI', () => {
 // so "no usages" and "usages still loading" looked identical — a ~4 s window on
 // a large ontology in which the panel appears complete and is not.
 
-test('shows a Loading… placeholder for deferred sections while they load', async () => {
+test('signals that more is coming, without reserving a section for it', async () => {
   mockExpanded.mockReturnValue({ data: undefined, isLoading: true, error: null })
   wrap(<TermPanel ontologyId="go" versionId="v1" termIri="http://purl.obolibrary.org/obo/GO_0008219" slug="go" />)
 
-  expect(await screen.findByText('Used in axioms')).toBeInTheDocument()
-  expect(screen.getByText('Inherited domain of')).toBeInTheDocument()
-  expect(screen.getAllByText('Loading…').length).toBeGreaterThanOrEqual(2)
+  expect(await screen.findByText(/Loading inferred axioms and usage/)).toBeInTheDocument()
+  // No section header while loading: most turn out empty, and a header that
+  // appears and then vanishes is worse than one that never appeared.
+  expect(screen.queryByText('Used in axioms')).not.toBeInTheDocument()
+  expect(screen.queryByText('Inherited domain of')).not.toBeInTheDocument()
 })
 
-test('replaces the placeholder with content once the deferred fetch resolves', async () => {
+test('shows the section once the deferred fetch brings content', async () => {
   mockExpanded.mockReturnValue({
     isLoading: false, error: null,
     data: {
