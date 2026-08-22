@@ -2256,36 +2256,59 @@ async def get_term(
     )).scalar_one_or_none()
     effective_lang = resolve_lang(lang, _ontology_row, _user if isinstance(_user, type(None)) is False else None)
 
-    # Predicate sets for label/definition/synonym extraction
-    _LABEL_PREDS = {
+    # Ordered, not sets: the first entry for a language wins, so iteration order
+    # decides which label is shown. As sets that order was arbitrary, and a
+    # skos:altLabel could outrank the rdfs:label for the same term from one run
+    # to the next — "food" displayed as its synonym "nourishment".
+    #
+    # altLabel stays last so it is still a label of last resort for ontologies
+    # that carry nothing else, while never displacing a real one. It is also
+    # listed in _SYNONYM_PREDS, so it appears as a synonym as well.
+    _LABEL_PREDS = (
         "http://www.w3.org/2000/01/rdf-schema#label",
         "http://www.w3.org/2004/02/skos/core#prefLabel",
         "http://www.w3.org/2004/02/skos/core#altLabel",
-    }
-    _DEFINITION_PREDS = {
+    )
+    # Likewise ordered: a formal definition outranks a free-text rdfs:comment.
+    _DEFINITION_PREDS = (
         "http://purl.obolibrary.org/obo/IAO_0000115",
         "http://www.w3.org/2004/02/skos/core#definition",
         "http://www.w3.org/2000/01/rdf-schema#comment",
-    }
+    )
     # IAO_0000600 — semi-formal description used by BFO/OBO for primitive
     # entities that resist a closed-form definition. Surfaced as its own
     # field so the UI can render it directly after the formal definition.
-    _ELUCIDATION_PREDS = {
+    _ELUCIDATION_PREDS = (
         "http://purl.obolibrary.org/obo/IAO_0000600",
-    }
-    _SYNONYM_PREDS = {
+    )
+    _SYNONYM_PREDS = (
         "http://www.geneontology.org/formats/oboInOwl#hasExactSynonym",
         "http://www.geneontology.org/formats/oboInOwl#hasRelatedSynonym",
         "http://www.geneontology.org/formats/oboInOwl#hasBroadSynonym",
         "http://www.geneontology.org/formats/oboInOwl#hasNarrowSynonym",
-    }
+        # SKOS ontologies express synonyms here. It was absent, so a purely
+        # SKOS ontology showed no synonyms at all — its alt labels surfaced
+        # only as a last-resort label. The registry and the detected profile
+        # both classify this as a synonym property.
+        "http://www.w3.org/2004/02/skos/core#altLabel",
+    )
 
     def _dedup_by_value(entries: list[dict]) -> list[dict]:
-        seen: set[str] = set()
+        """Drop repeats, keyed on value *and* language.
+
+        Deduping on value alone silently lost a language whenever two spelled a
+        term identically — "alimento"@pt-BR dropped for colliding with
+        "alimento"@es — so asking for Portuguese fell back to English on a term
+        that genuinely had a Portuguese label. The tag is collapsed to its
+        primary subtag to match how labels are compared everywhere else.
+        """
+        from ontoexplorer.modules.search.lang import canonical_lang
+        seen: set[tuple[str, str]] = set()
         out = []
         for e in entries:
-            if e["value"] not in seen:
-                seen.add(e["value"])
+            key = (e["value"], canonical_lang(e.get("lang") or ""))
+            if key not in seen:
+                seen.add(key)
                 out.append(e)
         return out
 
@@ -2294,17 +2317,15 @@ async def get_term(
     term_elucidations = _dedup_by_value([v for p in _ELUCIDATION_PREDS for v in properties_typed.get(p, [])])
     term_synonyms     = _dedup_by_value([v for p in _SYNONYM_PREDS     for v in properties_typed.get(p, [])])
 
-    # Primary label: prefer effective_lang if set
-    def _typed_primary_label(entries):
-        if not entries:
-            return term_iri.split("/")[-1]
-        if effective_lang:
-            found = next((e["value"] for e in entries if e.get("lang") == effective_lang), None)
-            if found:
-                return found
-        return entries[0]["value"]
+    # Primary label, and the language it is actually in. The fallback used to be
+    # entries[0] — whichever label property the profile queried first — so on a
+    # class whose profile also treats skos:altLabel as a label, a synonym could
+    # outrank the real label. See pick_label.
+    from ontoexplorer.modules.search.lang import pick_label
 
-    typed_label = _typed_primary_label(term_labels)
+    typed_label, typed_label_lang = pick_label(term_labels, effective_lang)
+    if typed_label is None:
+        typed_label = term_iri.split("/")[-1]
 
     # For individuals: resolve rdf:type classes (excluding OWL meta-types) with labels
     _OWL_META = {
@@ -2360,7 +2381,9 @@ async def get_term(
         "definitions": term_definitions,
         "elucidations": term_elucidations,
         "synonyms": term_synonyms,
-        "lang": effective_lang,
+        # The language of the label returned above, not the one requested:
+        # echoing the request back reported a German fallback as "pt".
+        "lang": typed_label_lang if term_labels else effective_lang,
         "source": source,
         "properties": properties_typed,
         "property_labels": property_labels,

@@ -45,3 +45,60 @@ def test_canonical_lang_preserves_empty():
 def test_canonical_lang_handles_already_canonical():
     assert canonical_lang("de") == "de"
     assert canonical_lang("zh") == "zh"
+
+
+# ── pick_label ────────────────────────────────────────────────────────────────
+# The term-detail endpoint picked entries[0] when the requested language was
+# absent — arbitrary source order, with no preference for English or untagged.
+# On a class whose profile also treats skos:altLabel as a label, the synonym
+# came first and won: asking for Portuguese on a class labelled in nine
+# languages returned the German *synonym* "Nahrung". It then reported that as
+# lang="pt", because the response echoed the requested language rather than the
+# language of the label it actually chose.
+
+from ontoexplorer.modules.search.lang import pick_label
+
+ENTRIES = [
+    {"value": "Nahrung", "lang": "de"},      # a synonym, listed first
+    {"value": "food", "lang": "en"},
+    {"value": "aliment", "lang": "fr"},
+    {"value": "plain", "lang": ""},
+]
+
+
+def test_requested_language_wins():
+    assert pick_label(ENTRIES, "fr") == ("aliment", "fr")
+
+
+def test_falls_back_to_english_not_to_whatever_is_first():
+    assert pick_label(ENTRIES, "pt") == ("food", "en")
+
+
+def test_falls_back_to_untagged_before_another_language():
+    entries = [{"value": "Nahrung", "lang": "de"}, {"value": "plain", "lang": ""}]
+    assert pick_label(entries, "pt") == ("plain", None)
+
+
+def test_falls_back_to_any_language_as_a_last_resort():
+    entries = [{"value": "Nahrung", "lang": "de"}]
+    assert pick_label(entries, "pt") == ("Nahrung", "de")
+
+
+def test_reports_the_language_actually_chosen_not_the_one_requested():
+    _, lang = pick_label(ENTRIES, "pt")
+    assert lang == "en", "must not echo the requested language back"
+
+
+def test_regional_tags_match_their_primary_subtag():
+    entries = [{"value": "colour", "lang": "en-GB"}]
+    assert pick_label(entries, "en") == ("colour", "en")
+
+
+def test_no_entries_yields_nothing():
+    assert pick_label([], "en") == (None, None)
+
+
+def test_no_language_requested_keeps_source_order():
+    """Without a preference there is nothing to score, so the first entry — the
+    order the profile's label properties were queried in — stands."""
+    assert pick_label(ENTRIES, None) == ("Nahrung", "de")
