@@ -1,5 +1,4 @@
-import { useState, useCallback } from 'react'
-import { api } from '../lib/api'
+import { useCallback, useSyncExternalStore } from 'react'
 
 const STORAGE_KEY = 'oe_lang_override'
 
@@ -14,32 +13,48 @@ function writeSessionLang(lang: string | null): void {
   } catch { /* ignore */ }
 }
 
-interface UseLangOptions {
-  ontologyId?: string
-  ontologyPreferredLang?: string | null
+// One value shared by every useLang() caller.
+//
+// This used to be per-component useState seeded from localStorage. The picker
+// lives in the navbar while the tree and term panel read the language on the
+// ontology page, so changing language updated only the picker's own copy:
+// everything else kept its stale value, refetched with it, and nothing
+// appeared to happen.
+let current: string | null = readSessionLang()
+const listeners = new Set<() => void>()
+
+function subscribe(fn: () => void): () => void {
+  listeners.add(fn)
+  return () => { listeners.delete(fn) }
+}
+
+function getSnapshot(): string | null {
+  return current
+}
+
+function publish(lang: string | null): void {
+  current = lang
+  writeSessionLang(lang)
+  listeners.forEach(fn => fn())
 }
 
 export interface UseLangResult {
   effectiveLang: string | null
   sessionLang: string | null
   setSessionLang: (lang: string | null) => void
-  setOntologyLang: (ontologyId: string, lang: string | null) => Promise<void>
 }
 
-export function useLang(opts: UseLangOptions = {}): UseLangResult {
-  const [sessionLang, setSessionLangState] = useState<string | null>(readSessionLang)
+export function useLang(): UseLangResult {
+  const sessionLang = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
   const setSessionLang = useCallback((lang: string | null) => {
-    writeSessionLang(lang)
-    setSessionLangState(lang)
+    publish(lang)
   }, [])
 
-  const setOntologyLang = useCallback(async (ontologyId: string, lang: string | null) => {
-    await api.ontologies.patch(ontologyId, { preferred_lang: lang })
-  }, [])
+  // Session choice, else let the server apply the signed-in user's preference.
+  // There is no per-ontology default: the display language belongs to the
+  // reader, not to the ontology.
+  const effectiveLang = sessionLang ?? null
 
-  // Three-tier resolution: session > ontology override > (user pref handled server-side)
-  const effectiveLang = sessionLang ?? opts.ontologyPreferredLang ?? null
-
-  return { effectiveLang, sessionLang, setSessionLang, setOntologyLang }
+  return { effectiveLang, sessionLang, setSessionLang }
 }

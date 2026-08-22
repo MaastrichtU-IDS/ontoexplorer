@@ -70,6 +70,24 @@ def _deprecated_key(version_id: str) -> str:
     return f"search:entities:{version_id}:deprecated"
 
 
+def label_dedupe_key(value: str, lang_tag: str | None) -> tuple[str, str]:
+    """What makes two labels the same label.
+
+    Value *and* language. Deduping on value alone silently dropped a label
+    whenever two languages spelled a term identically — "chocolate"@es lost to
+    "chocolate"@en, "alimento"@pt-BR lost to "alimento"@es — while the language
+    counter still counted the dropped one. /languages therefore offered
+    languages that no entity could be displayed in, and choosing them appeared
+    to do nothing.
+
+    The tag is collapsed to its primary subtag because that is how labels are
+    stored downstream: keeping "colour"@en-GB and "colour"@en-US separately
+    would only produce a duplicate under `en`.
+    """
+    from ontoexplorer.modules.search.lang import canonical_lang
+    return value, canonical_lang(lang_tag or "")
+
+
 def _langs_key(version_id: str) -> str:
     return f"search:entities:{version_id}:langs"
 
@@ -456,9 +474,10 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
                 val = sol["label"].value
                 lang_tag = sol["lang"].value if sol["lang"] is not None else ""
                 entry = {"value": val, "lang": lang_tag}
-                # O(1) dedup by value using tracking set
-                if val not in label_seen[iri]:
-                    label_seen[iri].add(val)
+                # O(1) dedup on (value, language) — see label_dedupe_key.
+                key = label_dedupe_key(val, lang_tag)
+                if key not in label_seen[iri]:
+                    label_seen[iri].add(key)
                     labels_by_iri[iri].append(entry)
                 lang_counts[lang_tag] = lang_counts.get(lang_tag, 0) + 1
 

@@ -144,6 +144,44 @@ async def has_materialised_hierarchy(db: AsyncSession, version_id: str) -> bool:
     return found is not None
 
 
+def resolve_label(
+    labels: dict | None, primary_label: str, primary_lang: str | None,
+    lang: str | None,
+) -> tuple[str, str | None]:
+    """Pick a label and report its language, mirroring the SPARQL path's scoring.
+
+    Order: requested language > English > untagged > anything else. Matches
+    _label_score in the terms endpoint, so switching between the SQL and
+    Oxigraph paths does not change which label a user sees.
+
+    Untagged labels are keyed "" in the map but reported as None: there is no
+    tag to show, and the tree badges anything non-null.
+    """
+    # Raw text() SQL declares no column types, so the driver hands JSON back as
+    # a string rather than a dict — asyncpg and sqlite alike.
+    if isinstance(labels, str):
+        import json
+        try:
+            labels = json.loads(labels)
+        except ValueError:
+            labels = {}
+    labels = labels or {}
+    if not labels:
+        # Indexed before labels were recorded — still render, and report the
+        # primary label's language if it happens to be known.
+        return primary_label, primary_lang or None
+    if lang and lang in labels:
+        return labels[lang], lang
+    if not lang:
+        return primary_label, primary_lang or None
+    if "en" in labels:
+        return labels["en"], "en"
+    if "" in labels:
+        return labels[""], None
+    tag = sorted(labels)[0]
+    return labels[tag], (tag or None)
+
+
 def _type_clause(entity_type: str) -> tuple[str, dict]:
     """SQL fragment + params selecting the entity_index rows for this tree."""
     if entity_type == "property":
@@ -155,6 +193,22 @@ def _edge_kind(entity_type: str) -> str:
     return CLASS_KIND if entity_type in ("class", "individual") else PROPERTY_KIND
 
 
+def _rows_to_terms(rows, lang: str | None) -> list[dict]:
+    """Resolve each row's label for `lang` and sort on what is displayed.
+
+    Sorting happens here rather than in SQL: the label depends on the requested
+    language, so no single index can order every language, and the result sets
+    these paths return are already narrowed by a root flag or a parent.
+    """
+    terms = []
+    for r in rows:
+        label, tag = resolve_label(r.labels, r.primary_label, r.primary_lang, lang)
+        terms.append({"iri": r.iri, "label": label, "lang": tag,
+                      "has_children": bool(r.has_children)})
+    terms.sort(key=lambda t: ((t["label"] or t["iri"]).lower(), t["iri"]))
+    return terms
+
+
 async def fetch_roots(
     db: AsyncSession,
     version_id: str,
@@ -163,6 +217,7 @@ async def fetch_roots(
     hide_obsolete: bool,
     limit: int,
     offset: int,
+    lang: str | None = None,
 ) -> list[dict]:
     """Entities of this type with no parent, read from the precomputed flag.
 
@@ -175,7 +230,7 @@ async def fetch_roots(
     obsolete_sql = "AND e.deprecated = false" if hide_obsolete else ""
 
     sql = text(f"""
-        SELECT e.iri, e.primary_label AS label,
+        SELECT e.iri, e.primary_label, e.primary_lang, e.labels,
                EXISTS (
                    SELECT 1 FROM hierarchy_edge c
                    WHERE c.version_id = e.version_id
@@ -189,7 +244,7 @@ async def fetch_roots(
           AND e.is_root
         ORDER BY lower(e.primary_label), e.iri
         LIMIT :limit OFFSET :offset
-    """)
+    """)   # paginate on a stable key; display order applied after resolution
     if entity_type == "property":
         sql = sql.bindparams(bindparam("types", expanding=True))
 
@@ -197,8 +252,7 @@ async def fetch_roots(
         "v": version_id, "kind": _edge_kind(entity_type),
         "limit": limit, "offset": offset, **params,
     })).all()
-    return [{"iri": r.iri, "label": r.label, "lang": None,
-             "has_children": bool(r.has_children)} for r in rows]
+    return _rows_to_terms(rows, lang)
 
 
 async def fetch_children(
@@ -210,6 +264,7 @@ async def fetch_children(
     hide_obsolete: bool,
     limit: int,
     offset: int,
+    lang: str | None = None,
 ) -> list[dict]:
     """Direct children of `parent`, each flagged with whether it expands further.
 
@@ -226,7 +281,7 @@ async def fetch_children(
     # an ORDER BY expression that is not in the select list, which sqlite allows
     # — so a DISTINCT here fails only in production.
     sql = text(f"""
-        SELECT e.iri, e.primary_label AS label,
+        SELECT e.iri, e.primary_label, e.primary_lang, e.labels,
                EXISTS (
                    SELECT 1 FROM hierarchy_edge c
                    WHERE c.version_id = h.version_id
@@ -243,7 +298,7 @@ async def fetch_children(
           {obsolete_sql}
         ORDER BY lower(e.primary_label), e.iri
         LIMIT :limit OFFSET :offset
-    """)
+    """)   # paginate on a stable key; display order applied after resolution
     if entity_type == "property":
         sql = sql.bindparams(bindparam("types", expanding=True))
 
@@ -251,8 +306,7 @@ async def fetch_children(
         "v": version_id, "kind": kind, "parent": parent,
         "limit": limit, "offset": offset, **params,
     })).all()
-    return [{"iri": r.iri, "label": r.label, "lang": None,
-             "has_children": bool(r.has_children)} for r in rows]
+    return _rows_to_terms(rows, lang)
 
 
 async def warm_root_cache_sql(
@@ -369,19 +423,14 @@ async def has_materialised_inferred(db: AsyncSession, version_id: str) -> bool:
     return found is not None
 
 
-def _inferred_child_rows(rows) -> list[dict]:
-    return [{"iri": r.iri, "label": r.label, "lang": None,
-             "has_children": bool(r.has_children)} for r in rows]
-
-
 async def fetch_inferred_children(
     db: AsyncSession, version_id: str, parent: str, *,
-    hide_obsolete: bool, limit: int, offset: int,
+    hide_obsolete: bool, limit: int, offset: int, lang: str | None = None,
 ) -> list[dict]:
     """Direct inferred children of `parent`, each flagged as expandable."""
     obsolete_sql = "AND e.deprecated = false" if hide_obsolete else ""
     rows = (await db.execute(text(f"""
-        SELECT e.iri, e.primary_label AS label,
+        SELECT e.iri, e.primary_label, e.primary_lang, e.labels,
                EXISTS (
                    SELECT 1 FROM hierarchy_edge c
                    WHERE c.version_id = h.version_id AND c.kind = h.kind
@@ -397,12 +446,12 @@ async def fetch_inferred_children(
         LIMIT :limit OFFSET :offset
     """), {"v": version_id, "kind": INFERRED_KIND, "parent": parent,
            "limit": limit, "offset": offset})).all()
-    return _inferred_child_rows(rows)
+    return _rows_to_terms(rows, lang)
 
 
 async def fetch_inferred_roots(
     db: AsyncSession, version_id: str, *,
-    hide_obsolete: bool, limit: int, offset: int,
+    hide_obsolete: bool, limit: int, offset: int, lang: str | None = None,
 ) -> list[dict]:
     """Top level of the inferred tree.
 
@@ -412,7 +461,7 @@ async def fetch_inferred_roots(
     """
     obsolete_sql = "AND e.deprecated = false" if hide_obsolete else ""
     rows = (await db.execute(text(f"""
-        SELECT e.iri, e.primary_label AS label,
+        SELECT e.iri, e.primary_label, e.primary_lang, e.labels,
                EXISTS (
                    SELECT 1 FROM hierarchy_edge c
                    WHERE c.version_id = r.version_id AND c.kind = :kind
@@ -428,7 +477,7 @@ async def fetch_inferred_roots(
         LIMIT :limit OFFSET :offset
     """), {"v": version_id, "kind": INFERRED_KIND,
            "limit": limit, "offset": offset})).all()
-    roots = _inferred_child_rows(rows)
+    roots = _rows_to_terms(rows, lang)
 
     if offset == 0:
         unsat = (await db.execute(
@@ -461,7 +510,7 @@ async def has_individual_index(db: AsyncSession, version_id: str) -> bool:
 
 async def fetch_individuals(
     db: AsyncSession, version_id: str, *,
-    hide_obsolete: bool, limit: int, offset: int,
+    hide_obsolete: bool, limit: int, offset: int, lang: str | None = None,
 ) -> list[dict]:
     """Named individuals as a flat, paginated list.
 
@@ -480,7 +529,8 @@ async def fetch_individuals(
     """
     obsolete_sql = "AND deprecated = false" if hide_obsolete else ""
     rows = (await db.execute(text(f"""
-        SELECT iri, primary_label AS label
+        SELECT iri, primary_label, primary_lang, labels,
+               false AS has_children
         FROM entity_index
         WHERE version_id = :v
           AND is_individual
@@ -488,5 +538,4 @@ async def fetch_individuals(
         ORDER BY lower(primary_label), iri
         LIMIT :limit OFFSET :offset
     """), {"v": version_id, "limit": limit, "offset": offset})).all()
-    return [{"iri": r.iri, "label": r.label, "lang": None, "has_children": False}
-            for r in rows]
+    return _rows_to_terms(rows, lang)

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams, useLocation } from 'react-router-dom'
-import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
 import { useOntologies } from '../hooks/useOntologies'
 import { useVersions } from '../hooks/useVersions'
 import { useTerm } from '../hooks/useTerm'
@@ -916,11 +916,7 @@ export default function OntologyPage() {
   const [dataExpand,    setDataExpand]    = useState(0)
   const [dataCollapse,  setDataCollapse]  = useState(0)
 
-  const { effectiveLang, setOntologyLang } = useLang({
-    ontologyPreferredLang: ontology?.preferred_lang ?? null,
-  })
-  const availableLangs = useOntologyLanguages(oid, activeVid)
-  const queryClient = useQueryClient()
+  const { effectiveLang } = useLang()
 
   // Auto-reveal inverses when navigating to a term that is itself an inverse target
   const { data: selectedTermData } = useTerm(oid ?? null, activeVid ?? null, selectedTermIri, effectiveLang)
@@ -974,30 +970,6 @@ export default function OntologyPage() {
         >
           {slug}
         </button>
-        {availableLangs.length > 1 && (
-          <select
-            value={ontology?.preferred_lang ?? ''}
-            onChange={async e => {
-              if (oid) {
-                await setOntologyLang(oid, e.target.value || null)
-                queryClient.invalidateQueries({ queryKey: ['ontologies'] })
-              }
-            }}
-            style={{
-              fontSize: 11, background: 'var(--bg-secondary)',
-              border: '1px solid var(--border)', borderRadius: 4,
-              color: 'var(--text)', padding: '2px 4px', maxWidth: 80,
-            }}
-            title="Per-ontology language"
-          >
-            <option value=''>All</option>
-            {availableLangs.map(l => (
-              <option key={l.lang} value={l.lang}>
-                {l.lang || 'untagged'}
-              </option>
-            ))}
-          </select>
-        )}
       </div>
 
       {/* Left pane tabs: Browse | Query */}
