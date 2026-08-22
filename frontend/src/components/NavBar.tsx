@@ -1,9 +1,7 @@
-import { useState } from 'react'
 import { NavLink, Link } from 'react-router-dom'
-import { useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../hooks/useAuth'
-import { useLang } from '../hooks/useLang'
 import { useRepositoryLanguages } from '../hooks/useRepositoryLanguages'
+import LanguagePicker from './LanguagePicker'
 import { logout } from '../lib/auth'
 import ThemeToggle from './ThemeToggle'
 
@@ -11,130 +9,6 @@ const navLinks = [
   { to: '/ontologies',  label: 'Ontologies' },
 ]
 
-// Render a BCP-47 tag in its own language ("el" → "Ελληνικά", "ja" → "日本語").
-function endonym(tag: string): string {
-  if (!tag) return 'untagged'
-  try {
-    return new Intl.DisplayNames([tag], { type: 'language', fallback: 'code' }).of(tag) || tag
-  } catch {
-    return tag
-  }
-}
-
-// English name, used for search-matching only ("el" → "greek", so the picker
-// can still be filtered by typing a familiar Latin-script name).
-function englishName(tag: string): string {
-  if (!tag) return ''
-  try {
-    return new Intl.DisplayNames(['en'], { type: 'language', fallback: 'code' }).of(tag) || ''
-  } catch {
-    return ''
-  }
-}
-
-function LangPicker() {
-  const { sessionLang, setSessionLang } = useLang()
-  const repoLangs = useRepositoryLanguages()
-  const queryClient = useQueryClient()
-  const [open, setOpen] = useState(false)
-  const [filter, setFilter] = useState('')
-
-  // Backend already returns langs sorted alphabetically by code — no need to re-sort.
-  const q = filter.trim().toLowerCase()
-  const visible = q
-    ? repoLangs.filter(({ lang }) =>
-        lang.toLowerCase().includes(q)
-        || endonym(lang).toLowerCase().includes(q)
-        || englishName(lang).toLowerCase().includes(q)
-      )
-    : repoLangs
-
-  function pick(lang: string | null) {
-    setSessionLang(lang)
-    setOpen(false)
-    setFilter('')
-    // Refetch any queries whose results depend on the active language without a
-    // full page reload — reloading wipes the in-memory access token and forces
-    // a refresh-token round-trip that can fail and log the user out.
-    queryClient.invalidateQueries()
-  }
-
-  return (
-    <div style={{ position: 'relative' }}>
-      <button
-        // The personal one: session-scoped, stored locally, applies to every
-        // ontology you view. The per-ontology select on the ontology page sets
-        // the shared default instead.
-        title="Your display language — applies to everything you view, and only to you"
-        onClick={() => setOpen(v => !v)}
-        style={{
-          background: 'none', border: '1px solid var(--border)',
-          borderRadius: 'var(--radius)', padding: '4px 10px',
-          color: 'var(--text-dim)', fontSize: 12, cursor: 'pointer',
-        }}
-      >
-        {'🌐'} {sessionLang ?? 'All'}
-      </button>
-      {open && (
-        <div style={{
-          position: 'absolute', right: 0, top: '110%', zIndex: 100,
-          background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-          borderRadius: 'var(--radius)', minWidth: 190, boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-          display: 'flex', flexDirection: 'column',
-        }}>
-          <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-            <input
-              autoFocus
-              value={filter}
-              onChange={e => setFilter(e.target.value)}
-              placeholder="Search…"
-              style={{
-                width: '100%', boxSizing: 'border-box',
-                padding: '4px 7px', fontSize: 12,
-                background: 'var(--bg)', border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-sm)', color: 'var(--text)', outline: 'none',
-              }}
-            />
-          </div>
-          <div style={{ maxHeight: 280, overflowY: 'auto' }}>
-            {!q && (
-              <button
-                onClick={() => pick(null)}
-                style={{
-                  display: 'block', width: '100%', textAlign: 'left',
-                  padding: '6px 12px', background: 'none', border: 'none',
-                  color: sessionLang === null ? 'var(--accent)' : 'var(--text)',
-                  fontSize: 12, cursor: 'pointer',
-                }}
-              >
-                All languages
-              </button>
-            )}
-            {visible.map(({ lang }) => (
-              <button
-                key={lang}
-                onClick={() => pick(lang || null)}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  width: '100%', textAlign: 'left',
-                  padding: '6px 12px', background: 'none', border: 'none',
-                  color: sessionLang === (lang ? lang : null) ? 'var(--accent)' : 'var(--text)',
-                  fontSize: 12, cursor: 'pointer', gap: 8,
-                }}
-              >
-                <span>{endonym(lang)}</span>
-                <span style={{ fontSize: 10, color: 'var(--text-dim)', flexShrink: 0 }}>{lang || '—'}</span>
-              </button>
-            ))}
-            {visible.length === 0 && (
-              <div style={{ padding: '6px 12px', fontSize: 12, color: 'var(--text-dim)' }}>No match</div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
 
 export default function NavBar() {
   const { user, isAuthenticated } = useAuth()
@@ -165,7 +39,7 @@ export default function NavBar() {
       ))}
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
         <ThemeToggle />
-        <LangPicker />
+        <RepositoryLangPicker />
         {isAuthenticated ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             {user?.is_admin && (
@@ -226,4 +100,8 @@ export default function NavBar() {
       </div>
     </nav>
   )
+}
+
+function RepositoryLangPicker() {
+  return <LanguagePicker languages={useRepositoryLanguages()} />
 }

@@ -19,6 +19,7 @@ import { ReuseSection } from '../components/ReuseSection'
 import SearchBar from '../components/SearchBar'
 import { useLang } from '../hooks/useLang'
 import { useOntologyLanguages } from '../hooks/useOntologyLanguages'
+import LanguagePicker from '../components/LanguagePicker'
 import { useOntologyMeta } from '../hooks/useOntologyMeta'
 
 const IND_PAGE_SIZE = 50
@@ -917,6 +918,7 @@ export default function OntologyPage() {
   const [dataCollapse,  setDataCollapse]  = useState(0)
 
   const { effectiveLang } = useLang()
+  const ontologyLangs = useOntologyLanguages(oid, activeVid)
 
   // Auto-reveal inverses when navigating to a term that is itself an inverse target
   const { data: selectedTermData } = useTerm(oid ?? null, activeVid ?? null, selectedTermIri, effectiveLang)
@@ -970,6 +972,17 @@ export default function OntologyPage() {
         >
           {slug}
         </button>
+        {/* The same picker as the navigation bar, over this ontology's own
+            languages rather than the whole repository's. Both write the same
+            session language, so the two stay in step; offering a language this
+            ontology has no labels in would just be a choice that does nothing. */}
+        {ontologyLangs.length > 0 && (
+          <LanguagePicker
+            languages={ontologyLangs}
+            align="right"
+            title="Display language for labels — applies to everything you view, and only to you"
+          />
+        )}
       </div>
 
       {/* Left pane tabs: Browse | Query */}
