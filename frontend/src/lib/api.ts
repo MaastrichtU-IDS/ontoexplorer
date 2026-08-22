@@ -238,7 +238,6 @@ export interface Ontology {
   individual_count?: number | null
   label?: string | null
   description?: string | null
-  preferred_lang?: string | null
   languages?: OntologyLanguage[]
   /** Public identity of the uploader ("Added by"). Never includes email. */
   owner_display_name?: string | null
@@ -1259,7 +1258,7 @@ export const api = {
       close: (oid: string, vid: string, sid: string) =>
         request<{ closed: boolean }>(`/ontologies/${oid}/${vid}/incremental/${sid}`, { method: 'DELETE' }),
     },
-    patch: (id: string, body: { shortname?: string | null; title?: string | null; preferred_lang?: string | null; groups?: string[]; current_version_id?: string | null }) =>
+    patch: (id: string, body: { shortname?: string | null; title?: string | null; groups?: string[]; current_version_id?: string | null }) =>
       request<Ontology>(`/ontologies/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(body),

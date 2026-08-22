@@ -25,13 +25,18 @@ def resolve_lang(
 ) -> str | None:
     """Return the effective BCP-47 language tag, or None (= all languages).
 
-    Priority: query_param > ontology.preferred_lang > user.preferred_lang > None.
-    An empty string query_param is treated as absent.
+    Priority: query_param > user.preferred_lang > None. An empty string
+    query_param is treated as absent.
+
+    `ontology` is accepted but ignored. There used to be a per-ontology default
+    ranked *above* the user's own preference, so a reader who had chosen French
+    was shown English anyway if an owner had set that ontology to English — a
+    dataset default overriding a stated personal preference. The display
+    language is a property of the reader, not of the ontology, so the concept
+    is gone; the parameter remains only so the call sites keep their shape.
     """
     if query_param:
         return query_param
-    if ontology and ontology.preferred_lang:
-        return ontology.preferred_lang
     if user and user.preferred_lang:
         return user.preferred_lang
     return None

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams, useLocation } from 'react-router-dom'
-import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
 import { useOntologies } from '../hooks/useOntologies'
 import { useVersions } from '../hooks/useVersions'
 import { useTerm } from '../hooks/useTerm'
@@ -916,12 +916,7 @@ export default function OntologyPage() {
   const [dataExpand,    setDataExpand]    = useState(0)
   const [dataCollapse,  setDataCollapse]  = useState(0)
 
-  const [langError, setLangError] = useState<string | null>(null)
-  const { effectiveLang, setOntologyLang } = useLang({
-    ontologyPreferredLang: ontology?.preferred_lang ?? null,
-  })
-  const availableLangs = useOntologyLanguages(oid, activeVid)
-  const queryClient = useQueryClient()
+  const { effectiveLang } = useLang()
 
   // Auto-reveal inverses when navigating to a term that is itself an inverse target
   const { data: selectedTermData } = useTerm(oid ?? null, activeVid ?? null, selectedTermIri, effectiveLang)
@@ -975,50 +970,6 @@ export default function OntologyPage() {
         >
           {slug}
         </button>
-        {/* Not a personal view control — the one in the navbar is. This writes
-            ontology.preferred_lang, the default language everyone sees for this
-            ontology, so it is labelled as a default and reports failure rather
-            than silently doing nothing when the user may not edit it. */}
-        {availableLangs.length > 1 && (
-          <select
-            value={ontology?.preferred_lang ?? ''}
-            onChange={async e => {
-              if (!oid) return
-              try {
-                setLangError(null)
-                await setOntologyLang(oid, e.target.value || null)
-                // Everything language-dependent keys off effectiveLang, which
-                // reads ontology.preferred_lang — so the ontology record has to
-                // be refetched before anything downstream can notice.
-                await queryClient.invalidateQueries()
-              } catch (err: unknown) {
-                setLangError(
-                  err instanceof Error && err.message.toLowerCase().includes('forbidden')
-                    ? 'Only the owner or a maintainer can set the default language'
-                    : `Could not set the default language: ${err instanceof Error ? err.message : String(err)}`
-                )
-              }
-            }}
-            style={{
-              fontSize: 11, background: 'var(--bg-secondary)',
-              border: '1px solid var(--border)', borderRadius: 4,
-              color: 'var(--text)', padding: '2px 4px', maxWidth: 110,
-            }}
-            title="Default language shown to everyone for this ontology. To change only your own view, use the language picker in the navigation bar."
-          >
-            <option value=''>Default: all</option>
-            {availableLangs.map(l => (
-              <option key={l.lang} value={l.lang}>
-                {l.lang || 'untagged'}
-              </option>
-            ))}
-          </select>
-        )}
-        {langError && (
-          <span style={{ color: 'var(--red-soft)', fontSize: 11, flex: '1 1 100%' }}>
-            {langError}
-          </span>
-        )}
       </div>
 
       {/* Left pane tabs: Browse | Query */}

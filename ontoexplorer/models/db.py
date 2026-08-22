@@ -109,7 +109,6 @@ class Ontology(Base):
     groups: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     owner_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     auto_sync: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
-    preferred_lang: Mapped[str | None] = mapped_column(String, nullable=True)
     # Admin-pinned default version. When set (and still ready), it overrides the
     # automatic version-aware "latest" selection. Nullable FK; SET NULL so
     # deleting the pinned version falls back to automatic selection.

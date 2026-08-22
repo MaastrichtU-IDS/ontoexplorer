@@ -16,17 +16,20 @@ def _ontology(lang):
 def test_query_param_wins_over_all():
     assert resolve_lang("fr", _ontology("de"), _user("en")) == "fr"
 
-def test_ontology_override_wins_over_user():
-    assert resolve_lang(None, _ontology("de"), _user("en")) == "de"
+def test_user_pref_beats_any_ontology_setting():
+    """Reversed deliberately. The ontology default used to win, so a reader who
+    had chosen English saw German because an owner had set it — a dataset
+    default overriding a stated personal preference."""
+    assert resolve_lang(None, _ontology("de"), _user("en")) == "en"
 
-def test_user_pref_used_when_no_override():
+def test_user_pref_used_when_nothing_is_requested():
     assert resolve_lang(None, _ontology(None), _user("en")) == "en"
 
 def test_none_when_no_preference():
     assert resolve_lang(None, _ontology(None), _user(None)) is None
 
 def test_empty_string_query_param_treated_as_none():
-    assert resolve_lang("", _ontology("de"), _user("en")) == "de"
+    assert resolve_lang("", _ontology(None), _user("en")) == "en"
 
 
 def test_canonical_lang_strips_subtag():
@@ -102,3 +105,42 @@ def test_no_language_requested_keeps_source_order():
     """Without a preference there is nothing to score, so the first entry — the
     order the profile's label properties were queried in — stands."""
     assert pick_label(ENTRIES, None) == ("Nahrung", "de")
+
+
+# ── resolve_lang precedence ───────────────────────────────────────────────────
+# An ontology-wide default used to sit *above* the user's own preference, so
+# someone who set French in their profile was shown English anyway if an owner
+# had set the ontology to English. A dataset default overriding a person's
+# stated preference is backwards, and the concept is gone: language is a
+# property of the reader, not of the ontology.
+
+
+class _User:
+    def __init__(self, lang):
+        self.preferred_lang = lang
+
+
+def test_an_explicit_request_wins():
+    assert resolve_lang("fr", None, _User("de")) == "fr"
+
+
+def test_the_user_preference_is_used_when_nothing_is_requested():
+    assert resolve_lang(None, None, _User("de")) == "de"
+
+
+def test_an_empty_request_is_treated_as_absent():
+    assert resolve_lang("", None, _User("de")) == "de"
+
+
+def test_no_request_and_no_user_preference_means_all_languages():
+    assert resolve_lang(None, None, None) is None
+    assert resolve_lang(None, None, _User(None)) is None
+
+
+def test_the_ontology_argument_no_longer_influences_anything():
+    """Kept in the signature so the three call sites need not change shape, but
+    it must not be consulted: it was overriding the reader's own choice."""
+    class _Ontology:
+        preferred_lang = "es"
+    assert resolve_lang(None, _Ontology(), _User("de")) == "de"
+    assert resolve_lang(None, _Ontology(), None) is None

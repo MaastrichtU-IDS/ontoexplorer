@@ -36,17 +36,12 @@ describe('useLang', () => {
     expect(page.result.current.sessionLang).toBeNull()
   })
 
-  it('still lets the ontology default apply when no session language is set', () => {
-    const page = renderHook(() => useLang({ ontologyPreferredLang: 'nl' }))
-    expect(page.result.current.effectiveLang).toBe('nl')
-  })
-
-  it('prefers the session language over the ontology default', () => {
-    const picker = renderHook(() => useLang())
-    const page = renderHook(() => useLang({ ontologyPreferredLang: 'nl' }))
-
-    act(() => picker.result.current.setSessionLang('ja'))
-    expect(page.result.current.effectiveLang).toBe('ja')
+  it('sends nothing when no session language is chosen', () => {
+    // The server then applies the signed-in user's own preference. There is no
+    // per-ontology default to consult — the display language belongs to the
+    // reader, not to the ontology.
+    const page = renderHook(() => useLang())
+    expect(page.result.current.effectiveLang).toBeNull()
   })
 
   it('starts from whatever was persisted', async () => {

@@ -1,5 +1,4 @@
 import { useCallback, useSyncExternalStore } from 'react'
-import { api } from '../lib/api'
 
 const STORAGE_KEY = 'oe_lang_override'
 
@@ -39,31 +38,23 @@ function publish(lang: string | null): void {
   listeners.forEach(fn => fn())
 }
 
-interface UseLangOptions {
-  ontologyId?: string
-  ontologyPreferredLang?: string | null
-}
-
 export interface UseLangResult {
   effectiveLang: string | null
   sessionLang: string | null
   setSessionLang: (lang: string | null) => void
-  setOntologyLang: (ontologyId: string, lang: string | null) => Promise<void>
 }
 
-export function useLang(opts: UseLangOptions = {}): UseLangResult {
+export function useLang(): UseLangResult {
   const sessionLang = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
   const setSessionLang = useCallback((lang: string | null) => {
     publish(lang)
   }, [])
 
-  const setOntologyLang = useCallback(async (ontologyId: string, lang: string | null) => {
-    await api.ontologies.patch(ontologyId, { preferred_lang: lang })
-  }, [])
+  // Session choice, else let the server apply the signed-in user's preference.
+  // There is no per-ontology default: the display language belongs to the
+  // reader, not to the ontology.
+  const effectiveLang = sessionLang ?? null
 
-  // Three-tier resolution: session > ontology override > (user pref handled server-side)
-  const effectiveLang = sessionLang ?? opts.ontologyPreferredLang ?? null
-
-  return { effectiveLang, sessionLang, setSessionLang, setOntologyLang }
+  return { effectiveLang, sessionLang, setSessionLang }
 }

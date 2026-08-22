@@ -384,9 +384,6 @@ async def patch_ontology(
         raw = body["groups"]
         ontology.groups = [g for g in (raw if isinstance(raw, list) else []) if g]
 
-    if "preferred_lang" in body:
-        ontology.preferred_lang = body["preferred_lang"] or None
-
     if "title" in body:
         ontology.title = body["title"] or None
 
