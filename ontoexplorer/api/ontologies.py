@@ -1079,7 +1079,7 @@ async def list_terms(
         # before applying LIMIT: 2.3-3.4 s for the first page of a 200k-
         # individual ontology, 4.8 s at offset 100,000, because each page
         # re-sorts the whole set.
-        if is_root and lang is None:
+        if is_root:
             from ontoexplorer.modules.hierarchy.edges import (
                 fetch_individuals,
                 has_individual_index,
@@ -1087,7 +1087,7 @@ async def list_terms(
             if await has_individual_index(db, version_id):
                 terms = await fetch_individuals(
                     db, version_id, hide_obsolete=hide_obsolete,
-                    limit=limit, offset=offset)
+                    limit=limit, offset=offset, lang=lang)
                 return {"terms": terms, "offset": offset, "limit": limit,
                         "parent": parent}
 
@@ -1151,12 +1151,12 @@ async def list_terms(
     # ~0.8 s indexed, and children arrive with has_children already computed
     # instead of needing a second query.
     #
-    # Not every request qualifies. entity_index stores one primary label, so a
-    # language-specific request still needs the store; hide_inverse is an
-    # owl:inverseOf filter the mirror does not carry; and individuals are a flat
-    # list rather than a hierarchy.
+    # Not every request qualifies: hide_inverse is an owl:inverseOf filter the
+    # mirror does not carry, and individuals are a flat list handled above.
+    # Language-specific requests do qualify — entity_index carries each entity's
+    # labels per language, so they no longer force the Oxigraph fallback.
     served_from_sql = False
-    if lang is None and not hide_inverse and not is_individual:
+    if not hide_inverse and not is_individual:
         from ontoexplorer.modules.hierarchy.edges import (
             fetch_children,
             fetch_roots,
@@ -1166,12 +1166,12 @@ async def list_terms(
             if is_root:
                 terms = await fetch_roots(
                     db, version_id, entity_type,
-                    hide_obsolete=hide_obsolete, limit=limit, offset=offset)
+                    hide_obsolete=hide_obsolete, limit=limit, offset=offset, lang=lang)
                 served_from_sql = True
             elif parent and parent.startswith("http"):
                 terms = await fetch_children(
                     db, version_id, parent, entity_type,
-                    hide_obsolete=hide_obsolete, limit=limit, offset=offset)
+                    hide_obsolete=hide_obsolete, limit=limit, offset=offset, lang=lang)
                 served_from_sql = True
             # Any other parent value is the "all entities" fallback listing,
             # which is not a hierarchy question — leave it to the store.
@@ -2975,11 +2975,12 @@ async def inferred_children(
     if await has_materialised_inferred(db, version_id):
         if cls == _OWL_THING:
             terms = await fetch_inferred_roots(
-                db, version_id, hide_obsolete=hide_obsolete, limit=2000, offset=0)
+                db, version_id, hide_obsolete=hide_obsolete, limit=2000, offset=0,
+                lang=lang)
         else:
             terms = await fetch_inferred_children(
                 db, version_id, cls, hide_obsolete=hide_obsolete,
-                limit=2000, offset=0)
+                limit=2000, offset=0, lang=lang)
         return {"terms": terms, "reasoning_available": True}
 
     try:

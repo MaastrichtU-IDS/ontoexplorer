@@ -14,6 +14,7 @@ from typing import Iterable
 
 from sqlalchemy import text
 
+from ontoexplorer.modules.search.lang import canonical_lang
 from ontoexplorer.modules.search.indexer import (
     _get_redis,
     _iri_key,
@@ -132,6 +133,26 @@ async def populate_entity_index(
             continue
 
         primary_label = entity.get("primary_label") or entity.get("label") or entity.get("short", "")
+        # lang -> label, untagged under "". Lets the SQL-backed tree answer a
+        # language-specific request instead of falling back to Oxigraph, and
+        # lets it report which language each label is in. Later entries win, so
+        # an entity with two labels in one language keeps the last.
+        try:
+            _label_entries = json.loads(entity.get("labels") or "[]")
+        except ValueError:
+            _label_entries = []
+        # Keyed by primary subtag: requests carry canonical tags ("en") while
+        # ontologies label with regional ones ("en-GB"), and /languages already
+        # collapses them. Without this, asking for English on a class labelled
+        # only en-GB fell through to whatever language sorted first.
+        labels_by_lang = {
+            canonical_lang(e.get("lang") or ""): e.get("value")
+            for e in _label_entries if e.get("value")
+        }
+        primary_lang = next(
+            (lg for lg, v in labels_by_lang.items() if v == primary_label and lg),
+            None,
+        ) or None
         # Decamelize so `PizzaSauce` matches query `pizza sauce` via the fast
         # prefix tier. Both display label and original-spelling search are
         # preserved (search_text still includes the original form).
@@ -151,6 +172,8 @@ async def populate_entity_index(
             "deprecated": iri in deprecated,
             "is_root": iri not in non_roots,
             "is_individual": iri in individuals,
+            "labels": json.dumps(labels_by_lang),
+            "primary_lang": primary_lang,
         })
 
     # Clear any prior rows for this version, then bulk insert.
@@ -166,11 +189,12 @@ async def populate_entity_index(
                 INSERT INTO entity_index
                     (version_id, iri, ontology_id, type,
                      primary_label, primary_label_norm, short, source, search_text,
-                     deprecated, is_root, is_individual)
+                     deprecated, is_root, is_individual, labels, primary_lang)
                 VALUES
                     (:version_id, :iri, :ontology_id, :type,
                      :primary_label, :primary_label_norm, :short, :source, :search_text,
-                     :deprecated, :is_root, :is_individual)
+                     :deprecated, :is_root, :is_individual,
+                     CAST(:labels AS jsonb), :primary_lang)
             """),
             rows,
         )

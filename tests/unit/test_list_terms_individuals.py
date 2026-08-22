@@ -1,4 +1,4 @@
-"""Regression test for the individuals branch of `list_terms`.
+"""Regression test for the Oxigraph individuals branch of `list_terms`.
 
 Guards against a closure-scoping bug where `_run_individuals` referenced
 `_label_score`, which was `def`-ed *after* the individuals branch in the
@@ -44,6 +44,15 @@ async def test_list_terms_individuals_returns_rows(monkeypatch):
              "label": _Node("Alice", "en")}]
     monkeypatch.setattr(ox, "get_store", lambda: _FakeStore(rows))
     monkeypatch.setattr(ox, "graph_iri", lambda *_a, **_k: "urn:g")
+
+    # This test covers the Oxigraph path, which is what a version indexed
+    # before individuals were mirrored into entity_index still uses. Say so
+    # explicitly, rather than relying on db=None to make the gate fail.
+    from ontoexplorer.modules.hierarchy import edges as edges_mod
+
+    async def _not_indexed(*_a, **_k):
+        return False
+    monkeypatch.setattr(edges_mod, "has_individual_index", _not_indexed)
 
     result = await ont_api.list_terms(
         ontology_id="o1",

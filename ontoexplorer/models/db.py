@@ -15,6 +15,7 @@ from sqlalchemy import (
     false,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
 
@@ -391,6 +392,13 @@ class EntityIndex(Base):
     # NamedIndividual) is typed 'class' and would vanish from the individuals
     # listing without this.
     is_individual: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    # lang -> label, untagged under "". Lets the SQL-backed tree and listings
+    # answer a language-specific request instead of falling back to Oxigraph,
+    # and lets them report which language a label is actually in.
+    # JSON under sqlite (tests), JSONB on Postgres.
+    labels: Mapped[dict] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    primary_lang: Mapped[str | None] = mapped_column(Text, nullable=True)
     # search_tsv is a generated column; SQLAlchemy reads it but never writes it.
 
 
