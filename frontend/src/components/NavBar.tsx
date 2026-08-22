@@ -62,6 +62,10 @@ function LangPicker() {
   return (
     <div style={{ position: 'relative' }}>
       <button
+        // The personal one: session-scoped, stored locally, applies to every
+        // ontology you view. The per-ontology select on the ontology page sets
+        // the shared default instead.
+        title="Your display language — applies to everything you view, and only to you"
         onClick={() => setOpen(v => !v)}
         style={{
           background: 'none', border: '1px solid var(--border)',
