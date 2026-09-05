@@ -8,7 +8,6 @@ import { useIsMobile } from '../hooks/useIsMobile'
 import { slugFromIri, OntologyVersion, OntologyMetadataEntry, SearchResult, Term, api } from '../lib/api'
 import ClassTree from '../components/ClassTree'
 import TermPanel from '../components/TermPanel'
-import IncrementalReasoningPanel from '../components/IncrementalReasoningPanel'
 import ResizeHandle from '../components/ResizeHandle'
 import ProfileEditor from '../components/ProfileEditor'
 import MetaProfileEditor from '../components/MetaProfileEditor'
@@ -1145,9 +1144,6 @@ export default function OntologyPage() {
               />
             </CollapsibleSection>
           )}
-          <CollapsibleSection label="Incremental reasoning" defaultOpen={false}>
-            <IncrementalReasoningPanel ontologyId={oid} versionId={activeVid} />
-          </CollapsibleSection>
         </div>
       ) : (
         <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>

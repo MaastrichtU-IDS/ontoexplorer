@@ -7,6 +7,15 @@ export default function ApiKeys() {
   const [name, setName] = useState('')
   const [newKey, setNewKey] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  function copyKey() {
+    if (!newKey) return
+    navigator.clipboard.writeText(newKey).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    }).catch(() => {})   // clipboard blocked (insecure origin / denied permission)
+  }
 
   const { data, isLoading } = useQuery({ queryKey: ['api-keys'], queryFn: () => api.apiKeys.list() })
 
@@ -86,10 +95,42 @@ export default function ApiKeys() {
               border: '1px solid rgba(16, 185, 129, 0.25)',
               borderRadius: 'var(--radius-sm)',
             }}>
-              <p style={{ fontWeight: 600, color: 'var(--accent)', marginBottom: '0.25rem', fontSize: 'var(--font-size-sm)' }}>
-                Copy this key now — it won't be shown again:
+              <p style={{ fontWeight: 600, color: 'var(--accent)', marginBottom: '0.5rem', fontSize: 'var(--font-size-sm)' }}>
+                Copy this key now — it won't be shown again.
               </p>
-              <code style={{ wordBreak: 'break-all', fontSize: 'var(--font-size-sm)', color: 'var(--text)' }}>{newKey}</code>
+              {/* The key and its copy control sit in their own box, so the
+                  warning above reads as prose rather than as part of the value. */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                padding: '0.5rem 0.6rem',
+                background: 'var(--bg)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-sm)',
+              }}>
+                <code style={{ flex: 1, wordBreak: 'break-all', fontSize: 'var(--font-size-sm)', color: 'var(--text)' }}>{newKey}</code>
+                <button
+                  onClick={copyKey}
+                  aria-label="Copy API key to clipboard"
+                  title={copied ? 'Copied' : 'Copy to clipboard'}
+                  style={{
+                    flexShrink: 0,
+                    fontSize: 14,
+                    padding: '2px 8px',
+                    background: 'none',
+                    border: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: copied ? 'var(--accent)' : 'var(--text-dim)',
+                    cursor: 'pointer',
+                    transition: 'color 0.15s, border-color 0.15s',
+                  }}
+                  onMouseEnter={e => { if (!copied) e.currentTarget.style.borderColor = 'var(--text-muted)' }}
+                  onMouseLeave={e => { if (!copied) e.currentTarget.style.borderColor = 'var(--border)' }}
+                >
+                  {copied ? '✓' : '⎘'}
+                </button>
+              </div>
             </div>
           )}
         </div>

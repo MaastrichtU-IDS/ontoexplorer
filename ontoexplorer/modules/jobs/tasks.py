@@ -594,6 +594,31 @@ def _version_is_el_profile(version_id: str) -> bool:
         return False
 
 
+def _named_classes_in_store(ontology_id: str, version_id: str) -> set[str]:
+    """Every named class declared in a version's asserted graph.
+
+    Read from Oxigraph rather than the Redis search index so the inferred
+    hierarchy does not depend on indexing having already run. Blank nodes are
+    excluded: anonymous class expressions are not navigable tree nodes.
+    """
+    from ontoexplorer.clients.oxigraph import graph_iri, sparql_query
+
+    g = graph_iri(ontology_id, version_id)
+    try:
+        solutions = sparql_query(f"""
+            SELECT DISTINCT ?c FROM <{g}> WHERE {{
+                {{ ?c a <http://www.w3.org/2002/07/owl#Class> }}
+                UNION {{ ?c a <http://www.w3.org/2000/01/rdf-schema#Class> }}
+                FILTER(isIRI(?c))
+            }}
+        """)
+        return {row["c"].value for row in solutions}
+    except Exception as exc:
+        # Best-effort: the Redis union below still covers the common case.
+        log.warning("named_class_lookup_failed", version_id=version_id, error=str(exc))
+        return set()
+
+
 async def _reason_and_persist(db, version, version_id: str, ontology_id: str, job_id: str) -> dict:
     """Classify the asserted graph, persist inferred triples, and mark the job done.
 
@@ -725,6 +750,18 @@ async def _reason_and_persist(db, version, version_id: str, ontology_id: str, jo
             _all.update(_parents)
         for _parents in _c.get("superclasses", {}).values():
             _all.update(_parents)
+        # The named classes come from the RDF store, not from the Redis type
+        # set alone. Redis is written by indexing, which the pipeline queues
+        # *after* reasoning (step 9 vs step 8) and on a different queue, so
+        # reasoning routinely wins the race and reads an empty set. When that
+        # happened, `_all` held only the classes the reasoner mentioned, and
+        # every class with no non-trivial subsumption silently vanished from
+        # the inferred tree -- e.g. SKOS lost skos:Concept and
+        # skos:ConceptScheme, keeping only skos:Collection.
+        #
+        # Redis stays in the union: it is authoritative once built, and covers
+        # anything indexing derives that a plain type assertion does not.
+        _all |= _named_classes_in_store(str(version.ontology_id), version_id)
         _all |= {
             m.decode() if isinstance(m, bytes) else m
             for m in _get_redis().smembers(_type_key(version_id, "class"))
