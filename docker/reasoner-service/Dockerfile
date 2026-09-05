@@ -41,7 +41,7 @@ RUN pip install --no-cache-dir \
     "requests>=2.31" \
     "py-horned-owl==1.4.*" \
     "pyoxigraph>=0.4" \
-    "rustdl==0.4.17"
+    "rustdl==0.4.28"
 
 # Konclude: bundle the prebuilt binary from the official image (linux/amd64).
 # It links only libstdc++.so.6 at runtime (TBB is statically linked).

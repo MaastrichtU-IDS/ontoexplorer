@@ -83,7 +83,7 @@ RUN pip install --no-cache-dir \
     "requests>=2.31" \
     /tmp/wheels/py_horned_owl-*.whl \
     "pyoxigraph>=0.4" \
-    "rustdl==0.4.17" \
+    "rustdl==0.4.28" \
  && rm -rf /tmp/wheels
 
 # Konclude (native aarch64): the binary dynamically links the Qt5 runtime libs
