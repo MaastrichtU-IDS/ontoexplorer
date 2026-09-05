@@ -100,6 +100,36 @@ def remove_object(bucket: str, key: str) -> None:
         raise
 
 
+# Download chunk size. Smaller than the 16 MiB upload part above: this bounds
+# the per-request footprint of a download, and several can be in flight at once.
+_DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+
+
+def stream_object(bucket: str, key: str, chunk_size: int = _DOWNLOAD_CHUNK_SIZE):
+    """Yield an object's bytes in chunks, releasing the connection when done.
+
+    The counterpart to upload_stream. Reading a whole object into memory to
+    serve it costs twice its size (the bytes, then the response copy) against
+    the api container's memory limit, per concurrent request -- fine for the
+    tens of MB stored today, not for the multi-GB uploads this accepts.
+    """
+    client = get_minio_client()
+    response = client.get_object(bucket, key)
+    try:
+        yield from response.stream(chunk_size)
+    finally:
+        response.close()
+        response.release_conn()
+
+
+def object_size(bucket: str, key: str) -> int | None:
+    """Object size in bytes, or None if it cannot be determined."""
+    try:
+        return get_minio_client().stat_object(bucket, key).size
+    except Exception:
+        return None
+
+
 def download_bytes(bucket: str, key: str) -> bytes:
     client = get_minio_client()
     response = client.get_object(bucket, key)

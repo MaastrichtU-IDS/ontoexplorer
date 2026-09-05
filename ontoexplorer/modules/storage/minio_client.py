@@ -10,8 +10,10 @@ import uuid
 from ontoexplorer.clients.minio import (
     download_bytes,
     object_exists,
+    object_size,
     presigned_get_url,
     remove_object,
+    stream_object,
     upload_bytes,
     upload_stream,
 )
@@ -56,6 +58,16 @@ def store_ontology(ontology_id: str, version_id: str, sha256: str, ext: str, dat
 
 def fetch_ontology(key: str) -> bytes:
     return download_bytes(_settings().minio_ontologies_bucket, key)
+
+
+def stream_ontology(key: str):
+    """Chunked reader for the stored artifact — use instead of fetch_ontology
+    when the bytes are only being forwarded, not parsed."""
+    return stream_object(_settings().minio_ontologies_bucket, key)
+
+
+def ontology_size(key: str) -> int | None:
+    return object_size(_settings().minio_ontologies_bucket, key)
 
 
 def ontology_download_url(key: str, expires_seconds: int = 3600) -> str:

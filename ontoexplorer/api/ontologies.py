@@ -3,7 +3,7 @@
 import asyncio
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +20,6 @@ from ontoexplorer.clients.reasoning import (
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Ontology, OntologyVersion, User
 from ontoexplorer.modules.auth.dependencies import get_current_user, require_auth, require_uploader
-from ontoexplorer.modules.storage.minio_client import fetch_ontology
 
 router = APIRouter(prefix="/api/v1/ontologies", tags=["ontologies"])
 
@@ -684,7 +683,6 @@ async def download_version(ontology_id: str, version_id: str, request: Request, 
     # swallows all errors so stats can't break a download.
     from ontoexplorer.modules.usage.capture import KIND_DOWNLOAD, record_usage
     await record_usage(request, ontology_id, KIND_DOWNLOAD)
-    data = await asyncio.to_thread(fetch_ontology, version.minio_key)
     ext = version.minio_key.rsplit(".", 1)[-1] if "." in version.minio_key else "owl"
     content_types = {
         "owl": "application/rdf+xml", "ttl": "text/turtle",
@@ -693,10 +691,23 @@ async def download_version(ontology_id: str, version_id: str, request: Request, 
     }
     media_type = content_types.get(ext.lower(), "application/octet-stream")
     filename = version.minio_key.rsplit("/", 1)[-1]
-    return Response(
-        content=data,
+
+    # Streamed, not buffered: reading the whole artifact in to serve it cost
+    # twice its size in the api container (the bytes, then the response copy)
+    # for every concurrent request. Uploads have always been chunked; this is
+    # the matching read path. Content-Length is set when the store reports a
+    # size, so clients still get a progress bar.
+    from ontoexplorer.modules.storage.minio_client import ontology_size, stream_ontology
+
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    size = await asyncio.to_thread(ontology_size, version.minio_key)
+    if size is not None:
+        headers["Content-Length"] = str(size)
+
+    return StreamingResponse(
+        stream_ontology(version.minio_key),
         media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers=headers,
     )
 
 
