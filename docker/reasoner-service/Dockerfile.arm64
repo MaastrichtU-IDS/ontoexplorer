@@ -1,15 +1,12 @@
 # Native linux/arm64 build of the reasoner service.
 #
-# Why this exists: the default (amd64) image runs emulated on Apple Silicon,
-# and the cffi-based py-whelk segfaults under that emulation — so whelk (the
-# default reasoner) can't classify locally. This image builds everything for
-# aarch64 so ALL reasoners run NATIVELY (no emulation).
+# Why this exists: the default (amd64) image runs emulated on Apple Silicon, so
+# classification is slow and the emulated stack has been a source of crashes.
+# This image builds everything for aarch64 so the reasoners run NATIVELY.
 #
 # Reasoner coverage in this image (all native aarch64):
-#   - whelk   : native aarch64 py-whelk wheel (docker/reasoner-service/wheels-arm64/,
-#               built from patched source — see wheels-arm64/py-whelk-arm64.patch)
-#   - rdflib  : pure Python
-#   - rustdl  : PyPI aarch64 wheel (rustdl==0.3.41)
+#   - rustdl  : PyPI aarch64 wheel (see the pinned version below). Default, and
+#               the justifier for every reasoner.
 #   - konclude: compiled from source for aarch64 (see konclude-build stage). We
 #               only ever feed it OWL/XML, so KoncludeWithoutRedland.pro (pure
 #               Qt, no RDF parser) is sufficient — no static Redland stack, no

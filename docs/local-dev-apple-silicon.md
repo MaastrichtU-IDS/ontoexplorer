@@ -26,12 +26,16 @@ only ever pulled in by an explicit `-f docker-compose.arm64.yml` (or the
 
 ### Reasoner coverage in the arm64 image
 
-- **whelk** — native aarch64 wheel (`wheels-arm64/`, built from patched source).
-- **rdflib** — pure Python.
-- **rustdl** — PyPI aarch64 wheel (`rustdl==0.3.23`).
+- **rustdl** — PyPI aarch64 wheel. The default reasoner, and the justifier for
+  every reasoner. Version is pinned in `docker/reasoner-service/Dockerfile.arm64`.
+- **km** — kobayashi-marust, compiled from source for aarch64.
 - **konclude** — no arm64 build exists anywhere; bundled as the x86_64 binary
   plus a small sysroot and run under `qemu-user`. It's a batch subprocess, so
-  per-call emulation is fine; whelk/rustdl stay native.
+  per-call emulation is fine; rustdl and km stay native.
+
+whelk and the legacy rdflib classifier were removed and are no longer
+registered — `docker/reasoner-service/registry.py` is the source of truth for
+what is selectable.
 
 ## Setup on a new Apple Silicon machine
 

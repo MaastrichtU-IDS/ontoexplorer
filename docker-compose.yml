@@ -161,12 +161,12 @@ services:
       CLASSIFICATION_TTL_SECONDS: "2592000"
       JUSTIFICATION_TTL_SECONDS: "604800"
       JUSTIFICATION_TIME_LIMIT_SECONDS: "300"
-    # Mem cap so OOMs inside the reasoner (whelk on 1M+ triple ontologies,
-    # or the justification greedy walk on the cl-scale module) get killed by
-    # the container's cgroup and restart cleanly via docker — rather than
-    # invoking Linux OOM-killer at the host level. Raised from 6 GB to 48 GB
-    # on the new 251 GB host so FMA / Mondo / HP / Uberon classify without
-    # OOM-kills; ELK is JVM-bound so this is just headroom, not commitment.
+    # Mem cap so OOMs inside the reasoner (classification of 1M+ triple
+    # ontologies, or the justification greedy walk on the cl-scale module) get
+    # killed by the container's cgroup and restart cleanly via docker — rather
+    # than invoking Linux OOM-killer at the host level. Raised from 6 GB to
+    # 48 GB on the new 251 GB host so FMA / Mondo / HP / Uberon classify
+    # without OOM-kills; this is headroom, not commitment.
     mem_limit: 48g
     depends_on:
       - redis

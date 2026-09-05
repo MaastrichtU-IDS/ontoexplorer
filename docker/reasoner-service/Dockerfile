@@ -1,17 +1,20 @@
 # Reasoner service — hosts a capability-aware registry of OWL reasoners
 # behind one HTTP contract. Reasoner is selected per request (default DEFAULT_REASONER):
-#   - "whelk"    (EL): py-whelk = whelk-rs, in-process via py-horned-owl. Default.
-#   - "rdflib"   (EL, legacy): pure-Python structural classifier in classifier.py.
 #   - "rustdl"   (DL SROIQ): PyO3 binding, installed from the PyPI manylinux wheel
-#                (rustdl==0.3.41, tag v0.3.41). Classify + native sound justify
-#                + render_manchester (used by the whelk backend's justify path too).
+#                (see the pinned version below). Default. Classify + native sound
+#                justify + render_manchester; also covers the EL role in
+#                saturation_only mode. Every justification runs through it,
+#                whichever reasoner classified the version.
 #   - "konclude" (OWL 2, all profiles): prebuilt binary from konclude/konclude:latest,
 #                invoked as a subprocess. Classify + consistency (no justify).
 #   - "km"       (SROIQ / OWL 2 DL): kobayashi-marust, a sound consequence-based
 #                reasoner compiled from source (see km-build stage). Subprocess
 #                (`km classify`). Classify + consistency (no justify). Experimental.
-# Image is pinned to linux/amd64 (via compose) so the x86_64 py_whelk wheel and the
-# x86_64 Konclude binary run natively (emulated on Apple Silicon).
+# whelk and the legacy rdflib classifier were removed and are no longer
+# registered — see the notes in registry.py for why. registry.py is the source
+# of truth for what is actually selectable.
+# Image is pinned to linux/amd64 (via compose) so the x86_64 Konclude binary runs
+# natively (emulated on Apple Silicon).
 
 # --- km-build: compile kobayashi-marust's `km` binary (Rust) ---
 FROM rust:1-slim-bookworm AS km-build
