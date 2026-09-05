@@ -54,12 +54,24 @@ async def ready():
         healthy = False
 
     # Fuseki
+    # Require a parseable SPARQL result, not merely a non-5xx status. A wrong
+    # dataset path answers 404/405, which read as healthy under a `< 500` rule
+    # and hid a totally unreachable metadata store.
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(f"{settings.fuseki_endpoint}{settings.fuseki_sparql_path}", params={"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 1"})
-            checks["fuseki"] = "ok" if resp.status_code < 500 else f"error: {resp.status_code}"
-            if resp.status_code >= 500:
-                healthy = False
+            resp = await client.get(
+                f"{settings.fuseki_endpoint}{settings.fuseki_sparql_path}",
+                params={"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 1"},
+                headers={"Accept": "application/sparql-results+json"},
+            )
+        if resp.status_code != 200:
+            checks["fuseki"] = f"error: HTTP {resp.status_code} from {settings.fuseki_endpoint}{settings.fuseki_sparql_path}"
+            healthy = False
+        elif "results" not in resp.json():
+            checks["fuseki"] = "error: endpoint did not return SPARQL results"
+            healthy = False
+        else:
+            checks["fuseki"] = "ok"
     except Exception as exc:
         checks["fuseki"] = f"error: {exc}"
         healthy = False

@@ -18,6 +18,7 @@ def get_minio_client() -> Minio:
             access_key=s.minio_access_key,
             secret_key=s.minio_secret_key,
             secure=s.minio_secure,
+            region=s.minio_region,
         )
     return _client
 
@@ -27,6 +28,12 @@ def _get_public_minio_client() -> Minio:
 
     Uses minio_public_endpoint when set so generated URLs are reachable by
     browsers. Falls back to the internal client when unset (local dev).
+
+    `region` is mandatory here, not an optimisation. Presigning is otherwise a
+    pure offline signature computation, but minio-py resolves an unknown bucket
+    region by calling GET /{bucket}?location= against this endpoint -- and the
+    public ingress hostname is not routable from inside the cluster, so that
+    call fails with ECONNREFUSED and takes the whole presign down with it.
     """
     global _public_client
     if _public_client is None:
@@ -38,6 +45,7 @@ def _get_public_minio_client() -> Minio:
             access_key=s.minio_access_key,
             secret_key=s.minio_secret_key,
             secure=secure,
+            region=s.minio_region,
         )
     return _public_client
 

@@ -44,6 +44,9 @@ RUN uv sync --no-install-project --no-dev
 COPY ontoexplorer/ ./ontoexplorer/
 COPY alembic/ ./alembic/
 COPY alembic.ini .
+# One-shot maintenance scripts are run with `kubectl exec ... python scripts/<x>.py`,
+# so they have to ship in the image.
+COPY scripts/ ./scripts/
 
 # Install the project
 RUN uv sync --no-dev

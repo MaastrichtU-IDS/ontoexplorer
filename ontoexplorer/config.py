@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     # In prod set to the externally reachable hostname (e.g. minio.example.com).
     minio_public_endpoint: str = ""
     minio_public_secure: bool = False
+    # Pinning the region keeps presigned-URL signing offline. Without it minio-py
+    # issues a live GET /{bucket}?location= against the endpoint, which fails for
+    # the public client because the public ingress hostname is not routable from
+    # inside the cluster.
+    minio_region: str = "us-east-1"
 
     # SPARQL metadata store (Jena Fuseki)
     fuseki_endpoint: str = "http://localhost:7001"

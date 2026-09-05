@@ -113,7 +113,13 @@ services:
     environment:
       ADMIN_PASSWORD: admin
       JVM_ARGS: "-Xmx1g"
-    command: /jena-fuseki/fuseki-server --update --mem /fuseki
+    # TDB2 on a named volume. `--mem` was silently non-durable: every restart
+    # discarded all FAIR metadata, and nothing re-derives it. Matches the k8s
+    # deployment. `/fuseki` stays the dataset path, so FUSEKI_ENDPOINT is
+    # unchanged.
+    command: /jena-fuseki/fuseki-server --update --tdb2 --loc /fuseki-data /fuseki
+    volumes:
+      - fuseki-data:/fuseki-data
 
   postgres:
     image: pgvector/pgvector:pg16
@@ -202,3 +208,4 @@ volumes:
   grafana-data:
   redis-data:
   fastembed-cache:
+  fuseki-data:
