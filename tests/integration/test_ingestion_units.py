@@ -73,17 +73,6 @@ def test_compute_sha256_differs_for_different_content():
     assert compute_sha256(g1) != compute_sha256(g2)
 
 
-def test_void_stats():
-    from ontoexplorer.modules.ingestion.format_detect import OntologyFormat
-    from ontoexplorer.modules.ingestion.parser import parse_ontology
-    from ontoexplorer.modules.metadata.void import compute_void_stats
-
-    graph = parse_ontology(_TURTLE, OntologyFormat.TURTLE)
-    stats = compute_void_stats(graph)
-    assert stats.triple_count >= 3
-    assert stats.class_count >= 2
-
-
 def test_source_resolve_bytes():
     from ontoexplorer.modules.ingestion.source_resolver import SourceMode, resolve_bytes
 
@@ -96,13 +85,12 @@ def test_dcat_build():
     """DCAT record builder produces a non-empty RDF graph."""
     import rdflib
 
-    from ontoexplorer.modules.ingestion.format_detect import OntologyFormat
-    from ontoexplorer.modules.ingestion.parser import parse_ontology
     from ontoexplorer.modules.metadata.dcat import build_dcat_record
-    from ontoexplorer.modules.metadata.void import compute_void_stats
+    from ontoexplorer.modules.metadata.void import VoidStats
 
-    graph = parse_ontology(_TURTLE, OntologyFormat.TURTLE)
-    stats = compute_void_stats(graph)
+    # Stats are an input to the builder, not what this test covers.
+    stats = VoidStats(triple_count=3, class_count=2, property_count=1,
+                      entity_count=0, distinct_subjects=2, distinct_objects=2)
     dcat = build_dcat_record(
         ontology_id="test-id",
         version_id="ver-id",

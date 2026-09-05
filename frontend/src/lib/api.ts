@@ -1233,31 +1233,6 @@ export const api = {
         { method: 'POST', body: JSON.stringify({ profile_id: profileId ?? null }) },
       ),
 
-    // Incremental EL++ reasoning session (km): ask subsumption on demand + assert
-    // hypothetical axioms and watch entailments change. EL++ only.
-    incremental: {
-      start: (oid: string, vid: string) =>
-        request<{ session_id: string; revision: number; inconsistent: boolean; total_clauses: number; clause_ids: number[] }>(
-          `/ontologies/${oid}/${vid}/incremental`, { method: 'POST' }),
-      subsumed: (oid: string, vid: string, sid: string, sub: string, sup: string) =>
-        request<{ sub: string; sup: string; entailed: boolean | null; revision: number }>(
-          `/ontologies/${oid}/${vid}/incremental/${sid}/subsumed`,
-          { method: 'POST', body: JSON.stringify({ sub, sup }) }),
-      assert: (oid: string, vid: string, sid: string, sub: string, sup: string) =>
-        request<{ revision: number; inconsistent: boolean; clause_ids: number[] }>(
-          `/ontologies/${oid}/${vid}/incremental/${sid}/assert`,
-          { method: 'POST', body: JSON.stringify({ sub, sup }) }),
-      assertAxioms: (oid: string, vid: string, sid: string, ofn: string) =>
-        request<{ revision: number; inconsistent: boolean; clause_ids: number[] }>(
-          `/ontologies/${oid}/${vid}/incremental/${sid}/assert-axioms`,
-          { method: 'POST', body: JSON.stringify({ ofn }) }),
-      retract: (oid: string, vid: string, sid: string, clauseIds: number[]) =>
-        request<{ revision: number; inconsistent: boolean }>(
-          `/ontologies/${oid}/${vid}/incremental/${sid}/retract`,
-          { method: 'POST', body: JSON.stringify({ clause_ids: clauseIds }) }),
-      close: (oid: string, vid: string, sid: string) =>
-        request<{ closed: boolean }>(`/ontologies/${oid}/${vid}/incremental/${sid}`, { method: 'DELETE' }),
-    },
     patch: (id: string, body: { shortname?: string | null; title?: string | null; groups?: string[]; current_version_id?: string | null }) =>
       request<Ontology>(`/ontologies/${id}`, {
         method: 'PATCH',

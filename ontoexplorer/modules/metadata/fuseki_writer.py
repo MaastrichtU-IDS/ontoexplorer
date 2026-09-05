@@ -75,18 +75,3 @@ async def write_version_metadata(
     await _drop_subjects(PROV_GRAPH, prov_graph)
     await insert_turtle(prov_ttl, graph_iri=PROV_GRAPH)
     logger.info("Wrote PROV-O activity for version %s to Fuseki", version_id)
-
-
-async def delete_version_metadata(ontology_id: str, version_id: str) -> None:
-    """Remove all Fuseki metadata for a specific version (called on deprecation).
-
-    Currently unreferenced. Before wiring it up, note that it clears only the
-    per-version graph: this version's triples in the shared catalogue and
-    provenance graphs survive, so a deprecated version would keep appearing in
-    cross-ontology queries. Removing those needs the same subject-scoped delete
-    `_drop_subjects` does, and the subject IRIs are only reconstructible from
-    `app_url` plus the ids -- see `build_dcat_record` / `build_ingestion_activity`.
-    """
-    version_graph_iri = _graph_iri(ontology_id, version_id)
-    await delete_graph(version_graph_iri)
-    logger.info("Deleted Fuseki metadata for version %s", version_id)
