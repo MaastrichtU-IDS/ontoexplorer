@@ -37,7 +37,6 @@ from ontoexplorer.modules.metadata.dcat import build_dcat_record
 from ontoexplorer.modules.metadata.prov import build_ingestion_activity
 from ontoexplorer.modules.metadata.fuseki_writer import write_version_metadata
 from ontoexplorer.modules.metadata.void import compute_void_stats_sparql
-from ontoexplorer.modules.storage.minio_client import ontology_download_url
 from ontoexplorer.modules.ingestion.deduplicator import compute_sha256_bytes
 from ontoexplorer.modules.ingestion.format_detect import OntologyFormat, detect_format
 from ontoexplorer.modules.ingestion.horned_convert import (
@@ -446,18 +445,19 @@ async def _write_fair_metadata(
     triple_count: int,
 ) -> None:
     """Compute VoID stats via SPARQL, build DCAT + PROV-O graphs, write to Fuseki."""
-    # Presigning reaches out to the public MinIO endpoint, which is the one step
-    # here that can fail for reasons unrelated to the metadata itself. Isolate it
-    # so a dead endpoint costs a single dcat:downloadURL triple rather than the
-    # entire DCAT record and its provenance.
-    try:
-        download_url = ontology_download_url(version.minio_key)
-    except Exception as exc:
-        download_url = None
-        log.warning("download_url_presign_failed", version_id=version_id, error=str(exc))
-
+    # dcat:downloadURL is the app's own download route, not a presigned MinIO
+    # URL. Presigned URLs expire in an hour, so a catalogue record built from one
+    # advertises a dead link for the rest of its life -- and reaching the object
+    # store to mint it put a network call on the metadata path, which is what
+    # silently emptied this store for months. The app route never expires, is
+    # publicly resolvable, is already what the REST API advertises, and is the
+    # chokepoint download statistics are counted at.
     try:
         settings = get_settings()
+        download_url = (
+            f"{str(settings.app_url).rstrip('/')}"
+            f"/api/v1/ontologies/{ontology_id}/{version_id}/download"
+        )
         void_stats = compute_void_stats_sparql(ontology_id, version_id)
 
         dcat_graph = build_dcat_record(

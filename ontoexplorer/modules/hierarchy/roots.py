@@ -15,6 +15,7 @@ normally paid once per version rather than every five minutes.
 
 from __future__ import annotations
 
+from ontoexplorer import __version__
 from ontoexplorer.modules.search.indexer import _SEARCH_TTL
 
 # Roots are a property of an ingested version's content, which does not change
@@ -42,7 +43,19 @@ def root_cache_key(
     hide_obsolete: bool,
     lang: str | None,
 ) -> str:
-    return f"terms_root:{version_id}:{entity_type}:{limit}:{int(hide_obsolete)}:{lang or ''}"
+    """Cache key for one root listing.
+
+    The app version is part of the key so a release cannot be shadowed by
+    entries computed under the previous one. The TTL is a month, and a fix to
+    the root query is exactly the case where every cached answer is wrong --
+    invalidate_root_cache only runs on re-ingest/re-index, which a deploy is
+    not. Keeping the version_id first leaves that function's scan pattern
+    (`terms_root:{version_id}:*`) matching.
+
+    The cost is one recomputation per version per variant after each release.
+    """
+    return (f"terms_root:{version_id}:{__version__}:{entity_type}"
+            f":{limit}:{int(hide_obsolete)}:{lang or ''}")
 
 
 def invalidate_root_cache(redis, version_id: str) -> int:
