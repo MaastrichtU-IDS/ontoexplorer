@@ -446,10 +446,19 @@ async def _write_fair_metadata(
     triple_count: int,
 ) -> None:
     """Compute VoID stats via SPARQL, build DCAT + PROV-O graphs, write to Fuseki."""
+    # Presigning reaches out to the public MinIO endpoint, which is the one step
+    # here that can fail for reasons unrelated to the metadata itself. Isolate it
+    # so a dead endpoint costs a single dcat:downloadURL triple rather than the
+    # entire DCAT record and its provenance.
+    try:
+        download_url = ontology_download_url(version.minio_key)
+    except Exception as exc:
+        download_url = None
+        log.warning("download_url_presign_failed", version_id=version_id, error=str(exc))
+
     try:
         settings = get_settings()
         void_stats = compute_void_stats_sparql(ontology_id, version_id)
-        download_url = ontology_download_url(version.minio_key)
 
         dcat_graph = build_dcat_record(
             ontology_id=ontology_id,
@@ -474,7 +483,10 @@ async def _write_fair_metadata(
 
         await write_version_metadata(ontology_id, version_id, dcat_graph, prov_graph)
     except Exception as exc:
-        log.warning("fair_metadata_failed", error=str(exc))
+        # Metadata is written fire-and-forget: ingestion still succeeds. Log at
+        # error level so it surfaces -- a silent warning here left Fuseki empty
+        # across every ingest without anything flagging it.
+        log.error("fair_metadata_failed", version_id=version_id, error=str(exc), exc_info=True)
 
 
 def _extract_ontology_iri_fast(data: bytes, fmt: OntologyFormat) -> str | None:

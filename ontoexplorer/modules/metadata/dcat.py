@@ -19,7 +19,7 @@ def build_dcat_record(
     version_id: str,
     ontology_iri: str,
     version_iri: str | None,
-    minio_download_url: str,
+    minio_download_url: str | None,
     format_ext: str,
     void_stats: VoidStats,
     owner_name: str | None = None,
@@ -62,7 +62,10 @@ def build_dcat_record(
     distribution = URIRef(f"{dataset}/download")
     g.add((dataset, DCAT.distribution, distribution))
     g.add((distribution, RDF.type, DCAT.Distribution))
-    g.add((distribution, DCAT.downloadURL, URIRef(minio_download_url)))
+    # Optional: presigning can fail independently of the rest of the record,
+    # and one missing triple beats discarding the whole graph.
+    if minio_download_url:
+        g.add((distribution, DCAT.downloadURL, URIRef(minio_download_url)))
     g.add((distribution, DCAT.mediaType, Literal(_media_type(format_ext))))
     g.add((distribution, DCTERMS.format, Literal(format_ext)))
 
