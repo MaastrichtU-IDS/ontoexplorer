@@ -18,6 +18,7 @@ from sqlalchemy import select
 from ontoexplorer.models.db import HierarchyEdge
 from ontoexplorer.modules.hierarchy.edges import (
     CLASS_KIND,
+    INFERRED_KIND,
     PROPERTY_KIND,
     extract_edges,
     fetch_children,
@@ -139,6 +140,22 @@ async def test_version_without_rows_reports_not_materialised(db_session):
 async def test_version_with_rows_reports_materialised(db_session):
     await replace_edges(db_session, "v-has", [("c", "p", CLASS_KIND)])
     assert await has_materialised_hierarchy(db_session, "v-has") is True
+
+
+@pytest.mark.anyio
+async def test_inferred_rows_alone_do_not_report_asserted_materialised(db_session):
+    """Reasoning must not claim the asserted tree on indexing's behalf.
+
+    Reasoning writes `inferred` rows for versions indexing has never touched.
+    While the gate ignored `kind`, those rows flipped it to True and the
+    asserted tree was served from SQL root flags that were never set -- five
+    ontologies rendered an empty class browser the moment they were reasoned.
+    """
+    await replace_edges(db_session, "v-reasoned-only",
+                        [("c", "p", INFERRED_KIND)], kinds=(INFERRED_KIND,))
+    assert await has_materialised_hierarchy(db_session, "v-reasoned-only") is False
+    assert await has_materialised_hierarchy(
+        db_session, "v-reasoned-only", kinds=(INFERRED_KIND,)) is True
 
 
 # ── roots ─────────────────────────────────────────────────────────────────────

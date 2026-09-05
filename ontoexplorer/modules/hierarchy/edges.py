@@ -130,16 +130,27 @@ async def _insert_edges(db: AsyncSession, version_id: str, edges) -> None:
         ])
 
 
-async def has_materialised_hierarchy(db: AsyncSession, version_id: str) -> bool:
-    """Whether this version's edges have been mirrored.
+async def has_materialised_hierarchy(
+    db: AsyncSession, version_id: str, kinds: tuple[str, ...] = ASSERTED_KINDS,
+) -> bool:
+    """Whether this version's edges *of the given kinds* have been mirrored.
 
     Callers use this to decide between the SQL path and the SPARQL fallback: an
     empty result from the SQL path is indistinguishable from a genuinely empty
     tree, so absence has to be detected before querying, not after.
+
+    Scoped by kind for the same reason `replace_edges` is. Indexing writes the
+    asserted kinds and reasoning writes `inferred`, independently and from
+    different queues. An unscoped check answered "materialised" as soon as
+    *either* writer had run, so a version that had been reasoned but never
+    indexed took the SQL path for its asserted tree, read root flags indexing
+    had never set, and rendered empty -- with the SPARQL fallback that would
+    have answered correctly skipped entirely.
     """
     found = (await db.execute(
-        text("SELECT 1 FROM hierarchy_edge WHERE version_id = :v LIMIT 1"),
-        {"v": version_id},
+        text("SELECT 1 FROM hierarchy_edge WHERE version_id = :v AND kind IN :kinds LIMIT 1")
+        .bindparams(bindparam("kinds", expanding=True)),
+        {"v": version_id, "kinds": list(kinds)},
     )).scalar()
     return found is not None
 
