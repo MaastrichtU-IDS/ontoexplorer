@@ -9,6 +9,19 @@ from rdflib.namespace import RDF, XSD
 PROV = rdflib.Namespace("http://www.w3.org/ns/prov#")
 
 
+def prov_subject_iris(version_id: str, app_base_url: str) -> list[str]:
+    """The subjects build_ingestion_activity mints for one version.
+
+    The submitted source URL is also a subject in that graph but is deliberately
+    excluded: it is shared between every version ingested from the same URL, so
+    deleting by it would remove another version's triples.
+    """
+    return [
+        f"{app_base_url}/api/v1/versions/{version_id}/provenance",
+        f"{app_base_url}/api/v1/ontologies/{version_id}",
+    ]
+
+
 def build_ingestion_activity(
     *,
     version_id: str,

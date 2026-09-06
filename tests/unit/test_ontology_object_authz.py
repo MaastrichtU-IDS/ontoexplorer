@@ -41,6 +41,16 @@ def _auth(key: str) -> dict:
 
 
 @pytest.fixture(autouse=True)
+def _purge_dispatch_is_stubbed(monkeypatch):
+    """Deletion queues an artifact purge onto the write queue. These tests are
+    about authorization, and there is no broker here — stub the dispatch so a
+    missing Redis does not read as an authz failure."""
+    from ontoexplorer.modules.jobs import tasks
+    monkeypatch.setattr(tasks.purge_version_artifacts, "delay",
+                        lambda *a, **k: None, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _identity_is_real(monkeypatch):
     """Resolve the caller from their key, not from AUTH_BYPASS.
 

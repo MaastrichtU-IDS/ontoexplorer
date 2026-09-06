@@ -89,6 +89,24 @@ async def trigger_compute(
         existing.diff_data = None
         await db.commit()
 
+    elif existing is None:
+        # Claim the work by inserting the pending row BEFORE dispatching, the way
+        # diff.py does. Previously the row was created by the worker, so nothing
+        # here was idempotent: this endpoint has no auth dependency, and N
+        # concurrent requests for the same pair queued N comparison tasks onto a
+        # single-concurrency worker. The unique constraint collapses the race.
+        row = OntologyComparison(
+            version_from_id=from_version_id,
+            version_to_id=to_version_id,
+            status="pending",
+        )
+        try:
+            db.add(row)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            return JSONResponse(status_code=202, content={"status": "pending"})
+
     from ontoexplorer.modules.jobs.tasks import compute_ontology_comparison
     compute_ontology_comparison.delay(from_version_id, to_version_id)
     return JSONResponse(status_code=202, content={"status": "pending"})

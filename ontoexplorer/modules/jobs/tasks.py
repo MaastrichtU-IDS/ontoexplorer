@@ -49,6 +49,7 @@ celery_app.conf.update(
         "ontoexplorer.ingest_ontology": {"queue": "write"},
         "ontoexplorer.reason_ontology": {"queue": "write"},
         "ontoexplorer.load_imports": {"queue": "write"},
+        "ontoexplorer.purge_version_artifacts": {"queue": "write"},
     },
     beat_schedule={
         "poll-for-updates-hourly": {
@@ -176,6 +177,67 @@ def _reset_orphaned_jobs(sender=None, **kwargs):
 
     asyncio.run(_reset())
 
+
+
+@celery_app.task(name="ontoexplorer.purge_version_artifacts", time_limit=600)
+def purge_version_artifacts(ontology_id: str, version_id: str, minio_key: str | None = None) -> dict:
+    """Erase one version's artifacts from every store outside Postgres.
+
+    Deleting an ontology used to remove only its Postgres rows. The triples
+    stayed in Oxigraph and remained anonymously queryable through
+    /api/v1/sparql/content, the DCAT and PROV records stayed in Fuseki's shared
+    catalogue graphs, and the uploaded file stayed in MinIO — so a "deleted"
+    ontology was still fully readable, and a withdrawal request could not
+    actually be honoured. `clients.oxigraph.delete_graph` existed the whole time
+    and had no callers.
+
+    Runs on the write queue because the API opens Oxigraph read-only; only
+    worker-heavy holds the read-write handle.
+
+    Best-effort per store: one unreachable backend must not strand the rest, so
+    each step is attempted and failures are collected rather than raised.
+    """
+    import asyncio
+
+    removed: dict[str, str] = {}
+
+    def _step(name, fn):
+        try:
+            fn()
+            removed[name] = "ok"
+        except Exception as exc:
+            removed[name] = f"failed: {exc}"
+            log.warning("purge_step_failed", step=name, version_id=version_id, error=str(exc))
+
+    from ontoexplorer.clients.oxigraph import delete_graph as _drop_content_graph
+
+    _step("oxigraph_asserted", lambda: _drop_content_graph(ontology_id, version_id, inferred=False))
+    _step("oxigraph_inferred", lambda: _drop_content_graph(ontology_id, version_id, inferred=True))
+
+    def _drop_fuseki():
+        from ontoexplorer.modules.metadata.fuseki_writer import delete_version_metadata
+        asyncio.run(delete_version_metadata(ontology_id, version_id))
+
+    _step("fuseki_metadata", _drop_fuseki)
+
+    if minio_key:
+        def _drop_object():
+            from ontoexplorer.clients.minio import remove_object
+            from ontoexplorer.config import get_settings as _gs
+            remove_object(_gs().minio_ontologies_bucket, minio_key)
+
+        _step("minio_object", _drop_object)
+
+    def _drop_redis():
+        from ontoexplorer.modules.search.indexer import _get_redis
+        r = _get_redis()
+        for key in r.scan_iter(match=f"*{version_id}*"):
+            r.delete(key)
+
+    _step("redis_index", _drop_redis)
+
+    log.info("purged_version_artifacts", version_id=version_id, result=removed)
+    return removed
 
 @celery_app.task(name="ontoexplorer.detect_profile")
 def detect_profile(version_id: str, ontology_id: str = "") -> dict:

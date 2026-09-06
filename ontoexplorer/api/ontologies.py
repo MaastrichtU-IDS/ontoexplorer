@@ -22,6 +22,10 @@ from ontoexplorer.models.db import Ontology, OntologyVersion, User
 from ontoexplorer.clients.sparql_iri import is_safe_iri
 from ontoexplorer.modules.auth.dependencies import get_current_user, require_auth, require_uploader
 
+from ontoexplorer.logging_config import get_logger
+
+log = get_logger(__name__)
+
 router = APIRouter(prefix="/api/v1/ontologies", tags=["ontologies"])
 
 # Separate top-level router (not nested under /ontologies) so the reasoner
@@ -3468,6 +3472,30 @@ async def delete_ontology(
     from ontoexplorer.modules.auth.permissions import can_edit_ontology_id
     if not await can_edit_ontology_id(db, user, ontology_id):
         raise HTTPException(status_code=403, detail="You are not allowed to delete this ontology")
+
+    # Postgres is only one of five stores. Queue the artifacts of every version
+    # for removal before dropping the rows that name them — the triples in
+    # Oxigraph stay anonymously queryable otherwise, and the object stays in
+    # MinIO. Queued rather than done inline because the API opens Oxigraph
+    # read-only; worker-heavy holds the sole read-write handle.
+    versions = (await db.execute(
+        select(OntologyVersion).where(OntologyVersion.ontology_id == ontology_id)
+    )).scalars().all()
+    from ontoexplorer.modules.jobs.tasks import purge_version_artifacts
+    try:
+        for v in versions:
+            purge_version_artifacts.delay(ontology_id, str(v.id), v.minio_key)
+    except Exception as exc:
+        # Refuse rather than orphan. Once the rows are gone nothing records which
+        # graphs and objects belonged to this ontology, so they would stay in
+        # Oxigraph and MinIO — anonymously queryable — with no way to find them.
+        log.error("purge_dispatch_failed", ontology_id=ontology_id, error=str(exc))
+        raise HTTPException(
+            status_code=503,
+            detail="Cannot delete right now: the cleanup queue is unavailable. "
+                   "Nothing was removed; try again once it recovers.",
+        ) from exc
+
     await db.delete(ontology)
     await db.commit()
     return Response(status_code=204)

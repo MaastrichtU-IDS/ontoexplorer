@@ -5,7 +5,10 @@ import logging
 import rdflib
 
 from ontoexplorer.clients.fuseki import delete_graph, insert_turtle, sparql_update
+from ontoexplorer.clients.sparql_iri import is_safe_iri
 from ontoexplorer.config import get_settings
+from ontoexplorer.modules.metadata.dcat import dcat_subject_iris
+from ontoexplorer.modules.metadata.prov import prov_subject_iris
 
 logger = logging.getLogger(__name__)
 
@@ -107,3 +110,35 @@ async def write_version_metadata(
     await _drop_subjects(PROV_GRAPH, prov_graph, app_base_url)
     await insert_turtle(prov_ttl, graph_iri=PROV_GRAPH)
     logger.info("Wrote PROV-O activity for version %s to Fuseki", version_id)
+
+
+async def _drop_subject_iris(graph_iri: str, subjects: list[str]) -> None:
+    """Delete every triple in `graph_iri` whose subject is one of `subjects`."""
+    safe = [s for s in subjects if is_safe_iri(s)]
+    if not safe:
+        return
+    values = " ".join(f"<{s}>" for s in sorted(safe))
+    await sparql_update(
+        f"DELETE {{ GRAPH <{graph_iri}> {{ ?s ?p ?o }} }} "
+        f"WHERE {{ GRAPH <{graph_iri}> {{ VALUES ?s {{ {values} }} ?s ?p ?o }} }}"
+    )
+
+
+async def delete_version_metadata(ontology_id: str, version_id: str) -> None:
+    """Remove every trace of one version from Fuseki.
+
+    Clears the per-version graph *and* the version's triples in the shared
+    catalogue and provenance graphs. An earlier version of this function cleared
+    only the per-version graph, which left a deleted ontology still listed in
+    cross-ontology queries; it was unreferenced, so nothing surfaced that.
+
+    The subject IRIs come from the builders that minted them, so deletion cannot
+    drift from creation.
+    """
+    app_base_url = str(get_settings().app_url).rstrip("/")
+
+    await delete_graph(_graph_iri(ontology_id, version_id))
+    await _drop_subject_iris(META_GRAPH, dcat_subject_iris(ontology_id, version_id, app_base_url))
+    await _drop_subject_iris(PROV_GRAPH, prov_subject_iris(version_id, app_base_url))
+
+    logger.info("Deleted Fuseki metadata for version %s", version_id)

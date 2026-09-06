@@ -13,6 +13,16 @@ SCHEMA = rdflib.Namespace("https://schema.org/")
 PROV = rdflib.Namespace("http://www.w3.org/ns/prov#")
 
 
+def dcat_subject_iris(ontology_id: str, version_id: str, app_base_url: str) -> list[str]:
+    """The subjects build_dcat_record mints for one version.
+
+    Deletion needs these and cannot re-derive them by parsing, so they live
+    beside the builder rather than being spelled out a second time elsewhere.
+    """
+    dataset = f"{app_base_url}/api/v1/ontologies/{ontology_id}/{version_id}"
+    return [dataset, f"{dataset}/download"]
+
+
 def build_dcat_record(
     *,
     ontology_id: str,
