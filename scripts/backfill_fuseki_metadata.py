@@ -17,9 +17,8 @@ container will fail:
     docker exec -e OXIGRAPH_READ_ONLY=true ontoexplorer-worker-light-1 \
         python scripts/backfill_fuseki_metadata.py
 
-This script deliberately depends only on code that exists in older images, so
-it can be piped into a running pod (`kubectl exec -i ... -- python - < file`)
-without waiting for a release build.
+This script can be piped into a running pod without waiting for a release
+build: `kubectl exec -i ... -- python - < file`.
 
 By default the catalog (`urn:meta`) and provenance (`urn:prov`) graphs are
 dropped and rebuilt, which makes a full run idempotent -- those two graphs are
@@ -34,9 +33,6 @@ import asyncio
 import logging
 import sys
 import time
-from datetime import timedelta
-
-from minio import Minio
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -58,44 +54,6 @@ log = logging.getLogger(__name__)
 
 SKIP_STATUSES = ["pending", "failed", "deprecated"]
 
-# Presign locally rather than via ontology_download_url(), so this script works
-# against images built before minio_region was introduced.
-#
-# The public MinIO ingress is reachable from the internet but NOT from inside
-# the cluster (no hairpin back through the ingress IP), so minio-py's region
-# probe -- GET /{bucket}?location= -- hangs through five urllib3 retries and
-# then fails. Pinning the region skips that probe entirely: signing becomes pure
-# local computation and the resulting URL is still valid for browsers.
-_presign_client: "Minio | None" = None
-_presign_broken = False
-
-
-def _presign(minio_key: str) -> str | None:
-    """Presigned GET URL, or None if signing is unavailable."""
-    global _presign_client, _presign_broken
-    if _presign_broken:
-        return None
-    s = get_settings()
-    if _presign_client is None:
-        _presign_client = Minio(
-            s.minio_public_endpoint or s.minio_endpoint,
-            access_key=s.minio_access_key,
-            secret_key=s.minio_secret_key,
-            secure=s.minio_public_secure if s.minio_public_endpoint else s.minio_secure,
-            region=getattr(s, "minio_region", None) or "us-east-1",
-        )
-    try:
-        return _presign_client.presigned_get_object(
-            s.minio_ontologies_bucket, minio_key, expires=timedelta(hours=1)
-        )
-    except Exception as exc:
-        # Disable for the rest of the run: whatever broke is per-endpoint, not
-        # per-object, and retrying it once per version is pure latency.
-        _presign_broken = True
-        log.warning("presigning unavailable (%s); using stable download route", exc)
-        return None
-
-
 async def _rebuild_one(version: OntologyVersion, app_base_url: str) -> int:
     """Re-derive and write metadata for one version. Returns triples written."""
     ontology_id = str(version.ontology_id)
@@ -104,11 +62,10 @@ async def _rebuild_one(version: OntologyVersion, app_base_url: str) -> int:
 
     void_stats = compute_void_stats_sparql(ontology_id, version_id)
 
-    # Fall back to the app's own stable download route rather than to None: it
-    # never expires, it is already what the REST API advertises, and keeping the
-    # value non-None lets this script run against an image whose build predates
-    # the optional-downloadURL change in dcat.py.
-    download_url = _presign(version.minio_key) or (
+    # The app's own download route, matching what ingestion writes. It never
+    # expires and needs no object-store round trip, so this script does not have
+    # to reach MinIO at all.
+    download_url = (
         f"{app_base_url.rstrip('/')}/api/v1/ontologies/{ontology_id}/{version_id}/download"
     )
 

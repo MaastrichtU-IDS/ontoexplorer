@@ -11,7 +11,6 @@ from ontoexplorer.clients.minio import (
     download_bytes,
     object_exists,
     object_size,
-    presigned_get_url,
     remove_object,
     stream_object,
     upload_bytes,
@@ -68,10 +67,6 @@ def stream_ontology(key: str):
 
 def ontology_size(key: str) -> int | None:
     return object_size(_settings().minio_ontologies_bucket, key)
-
-
-def ontology_download_url(key: str, expires_seconds: int = 3600) -> str:
-    return presigned_get_url(_settings().minio_ontologies_bucket, key, expires_seconds)
 
 
 # ── Import cache ───────────────────────────────────────────────────────────────

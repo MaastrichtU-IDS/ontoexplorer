@@ -46,15 +46,9 @@ class Settings(BaseSettings):
     # Periodic snapshots of processed aggregates (e.g. usage_daily) live here so
     # the stats survive a bad migration / accidental drop / postgres-PVC loss.
     minio_backups_bucket: str = "backups"
-    # Public-facing endpoint used only for presigned URL generation.
-    # Defaults to minio_endpoint so local dev works without extra config.
-    # In prod set to the externally reachable hostname (e.g. minio.example.com).
-    minio_public_endpoint: str = ""
-    minio_public_secure: bool = False
-    # Pinning the region keeps presigned-URL signing offline. Without it minio-py
-    # issues a live GET /{bucket}?location= against the endpoint, which fails for
-    # the public client because the public ingress hostname is not routable from
-    # inside the cluster.
+    # Pinned so the client never issues a live GET /{bucket}?location= to
+    # discover it. That probe is pure latency on every signing path, and when it
+    # ran against an endpoint the cluster could not reach it failed outright.
     minio_region: str = "us-east-1"
 
     # SPARQL metadata store (Jena Fuseki)
