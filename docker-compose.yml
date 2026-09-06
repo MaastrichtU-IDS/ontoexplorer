@@ -117,7 +117,12 @@ services:
     # discarded all FAIR metadata, and nothing re-derives it. Matches the k8s
     # deployment. `/fuseki` stays the dataset path, so FUSEKI_ENDPOINT is
     # unchanged.
-    command: /jena-fuseki/fuseki-server --update --tdb2 --loc /fuseki-data /fuseki
+    # arq:httpServiceAllowed=false disables SPARQL SERVICE. Federation makes
+    # the Fuseki process dial a host named in the query, and this endpoint is
+    # reachable anonymously through the API's passthrough, so it is request
+    # forgery from inside the cluster. The app-layer guard rejects SERVICE too;
+    # this is the half that does not depend on a regex.
+    command: /jena-fuseki/fuseki-server --set arq:httpServiceAllowed=false --update --tdb2 --loc /fuseki-data /fuseki
     volumes:
       - fuseki-data:/fuseki-data
 

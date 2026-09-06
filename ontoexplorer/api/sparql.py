@@ -21,24 +21,54 @@ router = APIRouter(prefix="/api/v1", tags=["sparql"])
 _DEFAULT_ACCEPT = "application/sparql-results+json"
 
 _UPDATE_RE = re.compile(
-    r"\b(INSERT|DELETE|DROP|CLEAR|LOAD|CREATE|COPY|MOVE)\b",
+    r"\b(INSERT|DELETE|DROP|CLEAR|LOAD|CREATE|COPY|MOVE|ADD)\b",
     re.IGNORECASE,
 )
 
+# SERVICE makes the evaluating process open an outbound HTTP connection to a
+# host named in the query. On an endpoint anyone can reach that is request
+# forgery from inside the cluster, and NO_PROXY covers .svc.cluster.local, so
+# in-namespace targets are dialled directly rather than through egress-proxy.
+# pyoxigraph 0.5.9 exposes no switch to disable federation and no query parser
+# to inspect, so this lexical check is the only control available in-process.
+_FEDERATION_RE = re.compile(r"\bSERVICE\b", re.IGNORECASE)
 
-def _check_query_guard(query: str) -> None:
-    """Raise ValueError if query contains SPARQL Update keywords.
 
-    Best-effort guard: strips IRIs and string literals before checking.
-    Primary enforcement is the read-only Oxigraph store (RocksDB secondary mode).
+def _strip_non_keyword_text(query: str) -> str:
+    """Remove comments, string literals and IRIs, leaving only SPARQL syntax.
+
+    Order matters and previously did not. IRIs were stripped first with
+    `<[^>]*>`, whose character class spans newlines, so a single unpaired `<`
+    anywhere -- including inside a comment, which had not been removed yet --
+    consumed everything up to the next `>`. A keyword in between vanished with
+    it and the guard passed:
+
+        # <
+        INSERT DATA { <urn:a> <urn:b> <urn:c> }
+        #>
+
+    Comments go first, and the IRI pattern no longer crosses a line, so an
+    unterminated `<` can hide at most the rest of its own line.
     """
-    # Strip IRIs (<...>), quoted strings ("..." and '...'), then comments (#...)
-    stripped = re.sub(r"<[^>]*>", " ", query)
+    stripped = re.sub(r"#[^\n]*", " ", query)
     stripped = re.sub(r'"[^"\\]*(?:\\.[^"\\]*)*"', " ", stripped)
     stripped = re.sub(r"'[^'\\]*(?:\\.[^'\\]*)*'", " ", stripped)
-    stripped = re.sub(r"#[^\n]*", "", stripped)
+    stripped = re.sub(r"<[^>\n]*>", " ", stripped)
+    return stripped
+
+
+def _check_query_guard(query: str) -> None:
+    """Reject SPARQL Update verbs and federation on the public endpoints.
+
+    Update is additionally prevented by the store being opened read-only; there
+    is no such second line of defence for SERVICE, so this check is load-bearing
+    rather than best-effort.
+    """
+    stripped = _strip_non_keyword_text(query)
     if _UPDATE_RE.search(stripped):
         raise ValueError("SPARQL Update not permitted")
+    if _FEDERATION_RE.search(stripped):
+        raise ValueError("SPARQL SERVICE (federation) is not permitted on this endpoint")
 
 
 @router.get("/sparql", summary="SPARQL 1.1 over Fuseki metadata store")
@@ -46,6 +76,10 @@ def _check_query_guard(query: str) -> None:
 async def sparql_metadata(request: Request):
     try:
         query, accept = await _extract_query_and_accept(request)
+        # This endpoint had no guard at all, while /sparql/content had one. Jena
+        # enables SERVICE by default and the Fuseki pod has no proxy variables,
+        # so federation here dials straight out of that pod.
+        _check_query_guard(query)
     except ValueError as exc:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
     metrics.sparql_requests_total.labels(endpoint="fuseki", method=request.method).inc()
