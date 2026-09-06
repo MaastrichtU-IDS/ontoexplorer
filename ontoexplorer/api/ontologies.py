@@ -3380,6 +3380,9 @@ async def deprecate_version(
     db: AsyncSession = Depends(get_db),
 ):
     version = await _get_version_or_404(db, ontology_id, version_id)
+    from ontoexplorer.modules.auth.permissions import can_edit_ontology_id
+    if not await can_edit_ontology_id(db, user, ontology_id):
+        raise HTTPException(status_code=403, detail="You are not allowed to deprecate this version")
     if version.status == "deprecated":
         raise HTTPException(status_code=409, detail="Version is already deprecated")
 
@@ -3443,6 +3446,9 @@ async def delete_ontology(
     db: AsyncSession = Depends(get_db),
 ):
     ontology = await _get_ontology_or_404(db, ontology_id)
+    from ontoexplorer.modules.auth.permissions import can_edit_ontology_id
+    if not await can_edit_ontology_id(db, user, ontology_id):
+        raise HTTPException(status_code=403, detail="You are not allowed to delete this ontology")
     await db.delete(ontology)
     await db.commit()
     return Response(status_code=204)

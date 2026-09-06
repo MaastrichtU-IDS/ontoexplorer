@@ -78,6 +78,9 @@ async def patch_profile(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(require_auth),
 ):
+    from ontoexplorer.modules.auth.permissions import can_edit_ontology_id
+    if not await can_edit_ontology_id(db, _user, ontology_id):
+        raise HTTPException(status_code=403, detail="You are not allowed to edit this ontology")
     profile = await _get_profile_or_404(version_id, db)
     if body.label_props is not None:
         profile.label_props = body.label_props
@@ -110,6 +113,9 @@ async def trigger_detect(
     _user: User = Depends(require_auth),
 ):
     await _get_version_or_404(version_id, db)
+    from ontoexplorer.modules.auth.permissions import can_edit_ontology_id
+    if not await can_edit_ontology_id(db, _user, ontology_id):
+        raise HTTPException(status_code=403, detail="You are not allowed to edit this ontology")
 
     from ontoexplorer.modules.profile.detector import run_detection
     await run_detection(db, version_id, ontology_id=ontology_id)
