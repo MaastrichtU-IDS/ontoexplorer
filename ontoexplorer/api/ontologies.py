@@ -19,6 +19,7 @@ from ontoexplorer.clients.reasoning import (
 )
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Ontology, OntologyVersion, User
+from ontoexplorer.clients.sparql_iri import is_safe_iri
 from ontoexplorer.modules.auth.dependencies import get_current_user, require_auth, require_uploader
 
 router = APIRouter(prefix="/api/v1/ontologies", tags=["ontologies"])
@@ -1733,6 +1734,12 @@ async def get_term(
     db: AsyncSession = Depends(get_db),
     _user=Depends(get_current_user),
 ):
+    # term_iri is a raw path segment reaching a dozen SPARQL templates below,
+    # each formatting it between angle brackets, on an anonymous route. Reject
+    # at the boundary rather than at every sink; a value that cannot be written
+    # as an IRIREF could not name anything in the store either.
+    if not is_safe_iri(term_iri):
+        raise HTTPException(status_code=400, detail="Malformed term IRI")
     import asyncio
     import json as _json_cache
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
@@ -2454,6 +2461,12 @@ async def get_term_usage_page(
     otherwise `class_usage` (axioms referencing the term as filler / disjoint).
     Used by the frontend's "Show more" button on term-detail tables.
     """
+    # term_iri is a raw path segment reaching a dozen SPARQL templates below,
+    # each formatting it between angle brackets, on an anonymous route. Reject
+    # at the boundary rather than at every sink; a value that cannot be written
+    # as an IRIREF could not name anything in the store either.
+    if not is_safe_iri(term_iri):
+        raise HTTPException(status_code=400, detail="Malformed term IRI")
     import asyncio
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
     from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
@@ -2622,6 +2635,12 @@ async def get_term_expanded(
     after the main panel renders, so the user sees most data immediately and
     the inferred-walk results fill in shortly after.
     """
+    # term_iri is a raw path segment reaching a dozen SPARQL templates below,
+    # each formatting it between angle brackets, on an anonymous route. Reject
+    # at the boundary rather than at every sink; a value that cannot be written
+    # as an IRIREF could not name anything in the store either.
+    if not is_safe_iri(term_iri):
+        raise HTTPException(status_code=400, detail="Malformed term IRI")
     import asyncio
     import json as _json_cache
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
