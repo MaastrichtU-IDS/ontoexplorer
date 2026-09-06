@@ -95,14 +95,37 @@ async def test_successful_ingestion_attaches_the_version(session_factory, monkey
 
 
 @pytest.mark.anyio
-async def test_jobs_endpoint_reports_the_failure(client, db_session):
-    """GET /jobs/{task_id} is what the UI polls — it must show the message."""
+async def test_jobs_endpoint_reports_the_failure(client, db_session, user_and_key):
+    """GET /jobs/{task_id} is what the UI polls — it must show the message.
+
+    Authenticated, because 0.3.89 withholds `error` from anonymous callers: it
+    carries a raw exception string, which for a failed fetch names the target
+    host and made this endpoint an SSRF oracle. The submitter still sees it.
+    """
+    _user, key = user_and_key
     await tracker.start_job(db_session, "job-api", "ingestion")
     await tracker.mark_failed(db_session, "job-api", "Response exceeds size limit")
 
-    r = await client.get("/api/v1/jobs/job-api")
+    r = await client.get("/api/v1/jobs/job-api", headers={"Authorization": f"Bearer {key}"})
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "failed"
     assert body["version_id"] is None
     assert "size limit" in body["error"]
+
+
+@pytest.mark.anyio
+async def test_jobs_endpoint_hides_the_failure_text_from_anonymous_callers(client, db_session, monkeypatch):
+    """The counterpart. Pins auth_bypass off: a developer .env sets it true, under
+    which this assertion would pass while testing nothing."""
+    from ontoexplorer.config import get_settings
+    monkeypatch.setattr(get_settings(), "auth_bypass", False, raising=False)
+
+    await tracker.start_job(db_session, "job-anon", "ingestion")
+    await tracker.mark_failed(db_session, "job-anon", "connect to 10.42.0.5 refused")
+
+    r = await client.get("/api/v1/jobs/job-anon")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "failed"
+    assert "10.42.0.5" not in str(body["error"])
