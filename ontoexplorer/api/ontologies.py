@@ -2915,10 +2915,22 @@ async def list_inferred(
         ORDER BY ?sub ?sup
         LIMIT {limit} OFFSET {offset}
     """
-    try:
-        results = list(store.query(query))
-    except Exception:
-        results = []
+    # Off the event loop. This was the one Oxigraph query in the API still run
+    # inline in an async handler, and it is the expensive shape: ORDER BY over a
+    # whole :inferred graph, which is 404k triples on sphn. The route is
+    # anonymous, the api Deployment is replicas: 1, and its readiness probe is a
+    # tcpSocket check — the socket stays open while the loop is stalled, so
+    # Kubernetes never restarts it. One unauthenticated request degraded
+    # everything else served by the process.
+    import asyncio as _asyncio
+
+    def _run() -> list:
+        try:
+            return list(store.query(query))
+        except Exception:
+            return []
+
+    results = await _asyncio.to_thread(_run)
 
     axioms = [{"subClass": r["sub"].value, "superClass": r["sup"].value} for r in results]
     return {
