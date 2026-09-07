@@ -8,6 +8,9 @@ export default function ApiKeys() {
   const [newKey, setNewKey] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [copied, setCopied] = useState(false)
+  // Scopes are enforced from 0.3.92: a read key genuinely cannot modify
+  // anything. Read stays the default, so a key is only as powerful as asked for.
+  const [canWrite, setCanWrite] = useState(false)
 
   function copyKey() {
     if (!newKey) return
@@ -20,10 +23,11 @@ export default function ApiKeys() {
   const { data, isLoading } = useQuery({ queryKey: ['api-keys'], queryFn: () => api.apiKeys.list() })
 
   const create = useMutation({
-    mutationFn: () => api.apiKeys.create(name, ['read']),
+    mutationFn: () => api.apiKeys.create(name, canWrite ? ['read', 'write'] : ['read']),
     onSuccess: (key: ApiKey) => {
       setNewKey(key.key ?? null)
       setName('')
+      setCanWrite(false)
       qc.invalidateQueries({ queryKey: ['api-keys'] })
     },
   })
@@ -63,14 +67,25 @@ export default function ApiKeys() {
           padding: '1rem',
           marginBottom: '1.25rem',
         }}>
-          <form onSubmit={e => { e.preventDefault(); create.mutate() }} style={{ display: 'flex', gap: '0.5rem' }}>
+          <form onSubmit={e => { e.preventDefault(); create.mutate() }} style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
             <input
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="Key name (e.g. my-script)"
               required
-              style={{ flex: 1 }}
+              style={{ flex: 1, minWidth: '14rem' }}
             />
+            <label style={{
+              display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+              fontSize: 'var(--font-size-sm)', color: 'var(--text-muted)', cursor: 'pointer',
+            }}>
+              <input
+                type="checkbox"
+                checked={canWrite}
+                onChange={e => setCanWrite(e.target.checked)}
+              />
+              Allow this key to make changes
+            </label>
             <button
               type="submit"
               disabled={create.isPending}

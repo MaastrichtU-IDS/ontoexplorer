@@ -3,7 +3,7 @@
 import hashlib
 from datetime import UTC, datetime
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from sqlalchemy import select, update
@@ -28,13 +28,47 @@ async def _get_or_create_dev_user(db: AsyncSession) -> User:
     return dev_user
 
 
+# Methods that only read. Anything else needs a key carrying write or admin.
+_READ_ONLY_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _enforce_key_scopes(api_key: ApiKey, method: str) -> None:
+    """Refuse a mutating request made with a read-only API key.
+
+    Scopes were stored at creation and never read anywhere, so a key created
+    with ["read"] — which is what the UI issues — carried its owner's full
+    authority, including deleting ontologies. The field promised least privilege
+    the system did not provide.
+
+    Enforced here, in the one place every authenticated request passes through,
+    rather than as a dependency on each mutating route. Authorization in this
+    codebase has been opt-in per route, and every gap found so far came from a
+    route that simply never opted in.
+
+    A key with no scopes recorded is treated as read-only: failing closed is the
+    only safe reading of an absent grant.
+    """
+    if method in _READ_ONLY_METHODS:
+        return
+    if {"write", "admin"} & set(api_key.scopes or []):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="This API key is read-only. Create a key with the 'write' scope to modify data.",
+    )
+
+
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: AsyncSession = Depends(get_db),
 ) -> User | None:
     """
     Extract the authenticated user from a Bearer token (JWT or API key).
     Returns None if no valid credentials are present.
+
+    A browser session (JWT) is the user acting directly and carries no scopes.
+    An API key is a delegated, narrower credential, so its scopes are enforced.
     """
     if get_settings().auth_bypass:
         return await _get_or_create_dev_user(db)
@@ -67,6 +101,7 @@ async def get_current_user(
             update(ApiKey).where(ApiKey.id == api_key.id).values(last_used_at=datetime.now(UTC))
         )
         await db.commit()
+        _enforce_key_scopes(api_key, request.method)
         result2 = await db.execute(select(User).where(User.id == api_key.user_id))
         return result2.scalar_one_or_none()
 
