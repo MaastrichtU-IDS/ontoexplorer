@@ -45,7 +45,9 @@ RUN pip install --no-cache-dir \
 
 # Konclude: bundle the prebuilt binary from the official image (linux/amd64).
 # It links only libstdc++.so.6 at runtime (TBB is statically linked).
-COPY --from=konclude/konclude:latest /root/Konclude /usr/local/bin/Konclude
+# Pinned by digest: this copies a reasoner binary straight into the released
+# image from a third-party Docker Hub tag that can move under us.
+COPY --from=konclude/konclude:latest@sha256:45a9b4583865d1f4209280209ec46de6444366ba47da1a50a0c795247126120c /root/Konclude /usr/local/bin/Konclude
 RUN chmod +x /usr/local/bin/Konclude \
  && apt-get update && apt-get install -y --no-install-recommends libstdc++6 \
  && rm -rf /var/lib/apt/lists/*

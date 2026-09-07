@@ -23,8 +23,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A tag is not a review gate. `on: push: tags` fires for ANY semver tag from
+  # anyone who can push one, including on a commit that never went through a
+  # pull request — and the images it produces are what the services repo pins
+  # and ArgoCD deploys. Refuse anything that is not already on main.
+  guard:
+    name: Tag must be on main
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Refuse a tag that does not descend from main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag ${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not an ancestor of origin/main. Release tags must be cut from main."
+            exit 1
+          fi
+          echo "$GITHUB_SHA is on main."
+
   build-and-push:
     name: Build & push ${{ matrix.image }}
+    needs: guard
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:

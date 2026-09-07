@@ -27,7 +27,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=horned-build /horned-convert /usr/local/bin/horned-convert
 
 # Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Pinned by digest. uv installs every Python dependency in this image and
+# runs as root, so a compromised or simply changed `latest` rewrites the
+# whole dependency set with nothing in the diff to show it. Bump
+# deliberately; resolve a new digest with
+#   docker buildx imagetools inspect ghcr.io/astral-sh/uv:latest
+COPY --from=ghcr.io/astral-sh/uv:latest@sha256:2bb3ebca0a796a155094a27773d290c4b074572e6107f171d88d086682fd2500 /uv /usr/local/bin/uv
 
 # Copy project metadata first for layer caching. __init__.py carries the
 # version (pyproject reads it dynamically via hatchling), and uv builds the
