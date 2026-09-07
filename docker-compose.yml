@@ -1,9 +1,24 @@
+# Published ports bind 127.0.0.1, never 0.0.0.0.
+#
+# Docker's default is to publish on every interface, and its rules sit in the
+# DOCKER-USER iptables chain ahead of ufw — so `ufw deny 6379` does not close a
+# published port. On any host with a routable address that makes these services
+# reachable from the network, and three of them have no meaningful auth:
+# redis has none at all and is the Celery broker (a task pushed there executes
+# in a worker holding the whole secret environment), postgres and fuseki carry
+# the development defaults below.
+#
+# Loopback keeps every local workflow working — psql, redis-cli, a GUI client,
+# the browser — while removing network reach. On a shared multi-user host,
+# prefer dropping the mapping entirely in a local override and using
+# `docker compose exec <service>`, since loopback is still every login.
+
 services:
   api:
     build: .
     command: uvicorn ontoexplorer.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file: .env
     environment:
       OXIGRAPH_READ_ONLY: "true"
@@ -88,7 +103,7 @@ services:
       context: .
       dockerfile: docker/frontend/Dockerfile
     ports:
-      - "3001:80"
+      - "127.0.0.1:3001:80"
     depends_on:
       - api
 
@@ -96,8 +111,8 @@ services:
     image: minio/minio
     command: server /data --console-address ":9001"
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
     environment:
@@ -109,7 +124,7 @@ services:
     image: stain/jena-fuseki
     user: root
     ports:
-      - "7001:3030"
+      - "127.0.0.1:7001:3030"
     environment:
       ADMIN_PASSWORD: admin
       JVM_ARGS: "-Xmx1g"
@@ -129,7 +144,7 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_DB: ontoexplorer
       POSTGRES_USER: ontoexplorer
@@ -146,7 +161,7 @@ services:
     image: redis:7
     command: redis-server --appendonly yes --appendfsync everysec
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
 
@@ -160,7 +175,7 @@ services:
     # so workers stay consistent. Overrides the Dockerfile CMD for amd64+arm64.
     command: uvicorn main:app --host 0.0.0.0 --port 8001 --workers 4
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     environment:
       REDIS_URL: redis://redis:6379/2
       CLASSIFICATION_TTL_SECONDS: "2592000"
@@ -179,14 +194,14 @@ services:
   prometheus:
     image: prom/prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
 
   grafana:
     image: grafana/grafana
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
@@ -198,7 +213,7 @@ services:
   loki:
     image: grafana/loki
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
 
   promtail:
     image: grafana/promtail
