@@ -423,22 +423,68 @@ def compute_justification_endpoint(version_id: str, req: JustificationRequest):
 
     t0 = time.monotonic()
     # Direct call (no ThreadPoolExecutor): py-whelk + pyhornedowl rely on
-    # PyO3 objects whose lifetimes/handles don't transfer cleanly to a
-    # worker thread. The previous executor-based timeout was found to
-    # return empty results in ~1ms for some ontologies (e.g. ordo) when
-    # the executor's worker couldn't initialise the reasoner state.
-    # The trade-off: we lose the per-request internal timeout. Uvicorn's
-    # request lifetime is still bounded by the client's HTTP timeout, and
-    # the per-step is_entailed calls are bounded by ontology size.
+    # Out of process, like classify and consistency. An in-process deadline was
+    # tried and removed for a real reason — rustdl's PyO3 handles are thread-
+    # affine, so an executor-based timeout returned empty results in ~1 ms on
+    # some ontologies (e.g. ordo). The comment left in its place claimed
+    # "Uvicorn's request lifetime is still bounded by the client's HTTP
+    # timeout", which is not true: a sync handler runs to completion in the
+    # threadpool whether or not the client is still connected. So justification
+    # had no bound at all, and JUSTIFICATION_TIME_LIMIT_SECONDS — set in the
+    # compose file and the k8s configmap — was read by nothing.
+    #
+    # A process boundary carries no PyO3 handles, so the deadline works here
+    # where a thread could not, and it brings the same crash isolation the other
+    # two paths already had: rustdl can overflow the native stack, and in-process
+    # that takes down a uvicorn worker mid-request.
+    timeout_s = int(os.getenv("JUSTIFICATION_TIME_LIMIT_SECONDS", "300"))
+    sets, fmt = [], "ntriples"
+    tmp_path = None
     try:
-        sets, fmt = justifier.justify(ntriples, req.sub, sup, req.max_justifications,
-                                      version_id=version_id)
+        import subprocess
+        import sys
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".nt", delete=False,
+                                         encoding="utf-8") as tmp:
+            tmp.write(ntriples)
+            tmp_path = tmp.name
+
+        worker = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "justify_worker.py")
+        query = json.dumps({"sub": req.sub, "sup": sup,
+                            "max": req.max_justifications, "version_id": version_id})
+        try:
+            proc = subprocess.run(
+                [sys.executable, worker, tmp_path, justifier_name, query],
+                timeout=timeout_s, capture_output=True, text=True,
+            )
+        except subprocess.TimeoutExpired:
+            log.error("justification_timeout version_id=%s sub=%s after=%ss",
+                      version_id, req.sub, timeout_s)
+            raise HTTPException(
+                504, f"justification timed out after {timeout_s}s")
+
+        if proc.returncode != 0:
+            tail = (proc.stderr or "").strip()[-600:]
+            log.error("justification_worker_failed version_id=%s rc=%s stderr=%s",
+                      version_id, proc.returncode, tail)
+        else:
+            payload = json.loads(proc.stdout.strip().splitlines()[-1])
+            sets, fmt = payload["sets"], payload["format"]
+    except HTTPException:
+        raise
     except Exception:
-        sets, fmt = [], "ntriples"
         log.exception("justification_compute_failed", extra={
             "version_id": version_id, "sub": req.sub, "sup": sup,
             "justifier": justifier_name,
         })
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
     elapsed_ms = round((time.monotonic() - t0) * 1000, 1)
 

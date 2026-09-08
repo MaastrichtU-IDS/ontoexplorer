@@ -56,7 +56,7 @@ RUN chmod +x /usr/local/bin/Konclude \
 COPY --from=km-build /km /usr/local/bin/km
 RUN chmod +x /usr/local/bin/km
 
-COPY main.py classify_worker.py consistency_worker.py classifier.py cache.py \
+COPY main.py classify_worker.py consistency_worker.py justify_worker.py classifier.py cache.py \
      registry.py rustdl_backend.py konclude_backend.py km_backend.py incremental_km.py ./
 
 EXPOSE 8001
