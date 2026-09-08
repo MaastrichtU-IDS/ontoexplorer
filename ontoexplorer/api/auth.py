@@ -36,6 +36,10 @@ from pydantic import BaseModel
 from ontoexplorer.config import can_upload, get_settings, is_admin
 from ontoexplorer.models.db import User
 
+from ontoexplorer.logging_config import get_logger
+
+log = get_logger(__name__)
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 _SUPPORTED_PROVIDERS = {"orcid", "github", "google"}
@@ -137,17 +141,48 @@ async def oauth_callback(
     redirect_uri = get_redirect_uri(provider)
     token_url = get_token_url(provider)
 
-    token = await client.fetch_token(
-        token_url,
-        code=code,
-        redirect_uri=redirect_uri,
-        grant_type="authorization_code",
-    )
+    # Surface what the provider actually said. Both of these used to raise
+    # straight out of the handler as a bare 500, discarding the one piece of
+    # information that identifies the fault: GitHub returns
+    # `bad_verification_code` for a stale or replayed code and
+    # `incorrect_client_credentials` for a wrong client_id/secret pair, and the
+    # two are indistinguishable from outside once collapsed into "Internal
+    # Server Error".
+    try:
+        token = await client.fetch_token(
+            token_url,
+            code=code,
+            redirect_uri=redirect_uri,
+            grant_type="authorization_code",
+        )
+    except Exception as exc:
+        log.warning("oauth_token_exchange_failed", provider=provider,
+                    redirect_uri=redirect_uri, error=str(exc))
+        raise HTTPException(
+            status_code=502,
+            detail=f"{provider} rejected the token exchange: {exc}",
+        ) from exc
 
     access_token = token.get("access_token")
     orcid_id = token.get("orcid") if provider == "orcid" else None
 
-    userinfo = await fetch_userinfo(provider, access_token, orcid_id=orcid_id)
+    if not access_token:
+        # Some providers answer 200 with an error body rather than a status.
+        log.warning("oauth_no_access_token", provider=provider, response_keys=sorted(token.keys()))
+        raise HTTPException(
+            status_code=502,
+            detail=f"{provider} returned no access token: "
+                   f"{token.get('error_description') or token.get('error') or token}",
+        )
+
+    try:
+        userinfo = await fetch_userinfo(provider, access_token, orcid_id=orcid_id)
+    except Exception as exc:
+        log.warning("oauth_userinfo_failed", provider=provider, error=str(exc))
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not read your {provider} profile: {exc}",
+        ) from exc
     provider_user_id, email, display_name = extract_user_info(provider, userinfo)
 
     # ORCID's OAuth token response carries the authoritative iD; the userinfo
