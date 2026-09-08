@@ -160,6 +160,14 @@ async def revoke_session(db: AsyncSession, refresh_token: str) -> None:
         await db.commit()
 
 
+class EmailAlreadyRegistered(Exception):
+    """A different account already holds this email address.
+
+    Raised instead of letting the unique constraint on users.email fail, so the
+    caller can tell the person how to recover rather than returning a 500.
+    """
+
+
 # ── User management ────────────────────────────────────────────────────────────
 
 async def get_or_create_user(
@@ -191,6 +199,30 @@ async def get_or_create_user(
         await db.commit()
         result2 = await db.execute(select(User).where(User.id == oauth_account.user_id))
         return result2.scalar_one()
+
+    # This identity is not linked to any account. Before creating one, check
+    # whether the email is already taken — users.email is unique, so inserting a
+    # second row with it raises an IntegrityError that surfaced as a bare 500.
+    #
+    # Reachable without doing anything unusual: unlink a provider, then sign in
+    # with it again. The OAuthAccount is gone so the lookup above misses, and the
+    # User still holds the address.
+    #
+    # Deliberately NOT resolved by attaching this identity to the existing user.
+    # Matching an account by email is an account-takeover vector — anyone able to
+    # register that address at another provider would walk straight in. The
+    # lookup above is by (provider, provider_user_id) precisely to avoid that,
+    # and the fix must not undo it. Explain the situation and point at the
+    # recovery instead: sign in with the original provider, then use
+    # /auth/{provider}/link, which attaches to the account you are already
+    # authenticated as.
+    if email:
+        clash = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+        if clash is not None:
+            raise EmailAlreadyRegistered(
+                f"An account already exists for {email}. Sign in with the provider you "
+                f"used originally, then re-link {provider} from your profile."
+            )
 
     # New user
     user = User(

@@ -25,6 +25,7 @@ from ontoexplorer.modules.auth.session import (
     decode_link_token,
     decode_merge_token,
     find_oauth_owner,
+    EmailAlreadyRegistered,
     get_or_create_user,
     link_oauth_account,
     merge_users,
@@ -252,16 +253,24 @@ async def oauth_callback(
         return resp
 
     # ── LOGIN MODE ───────────────────────────────────────────────────────────
-    user = await get_or_create_user(
-        db,
-        provider=provider,
-        provider_user_id=provider_user_id,
-        email=email,
-        display_name=display_name,
-        access_token=access_token,
-        refresh_token=token.get("refresh_token"),
-        expires_at=expires_at,
-    )
+    try:
+        user = await get_or_create_user(
+            db,
+            provider=provider,
+            provider_user_id=provider_user_id,
+            email=email,
+            display_name=display_name,
+            access_token=access_token,
+            refresh_token=token.get("refresh_token"),
+            expires_at=expires_at,
+        )
+    except EmailAlreadyRegistered as exc:
+        # 409, not 500: the address belongs to an account this identity is not
+        # linked to. Carries the recovery, because the person hitting it has just
+        # been told "Internal Server Error" by a login page and has no idea their
+        # account still exists.
+        log.info("oauth_login_email_conflict", provider=provider)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     jwt_access, refresh_token = await create_session(db, user.id)
 
