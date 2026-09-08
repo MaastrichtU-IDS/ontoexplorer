@@ -82,6 +82,7 @@ async def get_current_user(
     try:
         user_id = decode_access_token(token)
         result = await db.execute(select(User).where(User.id == user_id))
+        request.state.auth_method = "session"
         return result.scalar_one_or_none()
     except JWTError:
         pass
@@ -101,6 +102,7 @@ async def get_current_user(
             update(ApiKey).where(ApiKey.id == api_key.id).values(last_used_at=datetime.now(UTC))
         )
         await db.commit()
+        request.state.auth_method = "api_key"
         _enforce_key_scopes(api_key, request.method)
         result2 = await db.execute(select(User).where(User.id == api_key.user_id))
         return result2.scalar_one_or_none()
@@ -135,3 +137,28 @@ async def require_admin(user: User = Depends(require_auth)) -> User:
     if not is_admin(user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return user
+
+
+async def reject_api_key_auth(
+    request: Request,
+    _user: User | None = Depends(get_current_user),
+) -> None:
+    """Allow browser traffic; refuse API keys.
+
+    For endpoints that exist to serve the UI and commit real compute per call —
+    justification queues work on a single-concurrency worker. Live testing showed
+    any account could aim those at any ontology, and registration is open, so a
+    key was a standing licence to spend someone else's capacity.
+
+    The line is the credential type, not authentication: the SPA serves anonymous
+    visitors, so requiring a login would break ordinary browsing. A browser
+    session (or no credential at all) passes; a programmatic key does not.
+
+    This bounds who can call, not how often. Anonymous volume is a rate-limit
+    problem and is not addressed here.
+    """
+    if getattr(request.state, "auth_method", None) == "api_key":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This endpoint backs the web interface and is not available to API keys.",
+        )

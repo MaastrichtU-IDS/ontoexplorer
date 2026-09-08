@@ -175,6 +175,12 @@ class Job(Base):
     version_id: Mapped[str | None] = mapped_column(
         ForeignKey("versions.id", ondelete="CASCADE"), nullable=True
     )
+    # Who submitted this. Nullable: rows created before attribution existed, and
+    # work the system starts on its own (beat-scheduled re-ingestion), have no
+    # submitter. The jobs listing treats NULL as admin-only rather than public.
+    user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     type: Mapped[str] = mapped_column(String)    # "ingestion" | "reason" | "indexing" | ...
     status: Mapped[str] = mapped_column(String, default="pending")  # pending | running | done | failed
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -20,7 +20,12 @@ from ontoexplorer.clients.reasoning import (
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Ontology, OntologyVersion, User
 from ontoexplorer.clients.sparql_iri import is_safe_iri
-from ontoexplorer.modules.auth.dependencies import get_current_user, require_auth, require_uploader
+from ontoexplorer.modules.auth.dependencies import (
+    get_current_user,
+    reject_api_key_auth,
+    require_auth,
+    require_uploader,
+)
 
 from ontoexplorer.logging_config import get_logger
 
@@ -761,7 +766,7 @@ async def reason_version(
     version.reasoner = chosen
     await db.commit()
     from ontoexplorer.modules.jobs.tasks import reason_ontology
-    reason_ontology.delay(version.id)
+    reason_ontology.delay(version.id, user_id=user.id)
     return {"status": "queued", "reasoner": chosen,
             "profile_id": profile.id if profile else None, "version_id": version.id}
 
@@ -3282,6 +3287,7 @@ async def get_justification(
     sup: str = Query(..., description="Superclass IRI"),
     max_justifications: int = Query(3, ge=1, le=5),
     db: AsyncSession = Depends(get_db),
+    _ui_only: None = Depends(reject_api_key_auth),
 ):
     import asyncio
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
@@ -3369,6 +3375,7 @@ async def request_justification(
     body: JustificationRequest,
     user: User = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
+    _ui_only: None = Depends(reject_api_key_auth),
 ):
     await _get_version_or_404(db, ontology_id, version_id)
     from ontoexplorer.modules.jobs.tasks import compute_justification

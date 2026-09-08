@@ -480,7 +480,8 @@ async def _ingest_tracked(request, job_id: str | None, session_factory):
         except Exception:
             log.exception("ingest_job_tracking_failed", job_id=job_id)
 
-    await _track(lambda db: tracker.start_job(db, job_id, "ingestion"))
+    await _track(lambda db: tracker.start_job(db, job_id, "ingestion",
+                                              user_id=getattr(request, "owner_id", None)))
     try:
         async with session_factory() as db:
             result = await run_ingestion(db, request)
@@ -559,7 +560,7 @@ def ingest_ontology(
 
 
 @celery_app.task(bind=True, name="ontoexplorer.reason_ontology", max_retries=2)
-def reason_ontology(self, version_id: str) -> dict:
+def reason_ontology(self, version_id: str, user_id: str | None = None) -> dict:
     """
     Run OWL-EL classification for an ingested ontology version.
 
@@ -575,7 +576,7 @@ def reason_ontology(self, version_id: str) -> dict:
 
     async def _run():
         async with make_celery_db_session()() as db:
-            return await _run_reasoning(db, version_id)
+            return await _run_reasoning(db, version_id, user_id=user_id)
 
     t0 = time.monotonic()
     try:
@@ -604,7 +605,7 @@ def reason_ontology(self, version_id: str) -> dict:
         raise self.retry(exc=exc, countdown=120) from exc
 
 
-async def _run_reasoning(db, version_id: str) -> dict:
+async def _run_reasoning(db, version_id: str, user_id: str | None = None) -> dict:
     """Async body of the reasoning task."""
     from sqlalchemy import select
 
@@ -620,7 +621,8 @@ async def _run_reasoning(db, version_id: str) -> dict:
     ontology_id = version.ontology_id
 
     # Create / mark job as running
-    job = await tracker.create_job(db, version_id=version_id, job_type="reason")
+    job = await tracker.create_job(db, version_id=version_id, job_type="reason",
+                                   user_id=user_id)
     await tracker.mark_running(db, job.id)
 
     try:

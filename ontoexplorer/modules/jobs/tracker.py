@@ -9,12 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ontoexplorer.models.db import Job
 
 
-async def create_job(db: AsyncSession, version_id: str | None, job_type: str) -> Job:
+async def create_job(db: AsyncSession, version_id: str | None, job_type: str,
+                     user_id: str | None = None) -> Job:
+    """`user_id` is who asked for this. None means the system did (beat), and the
+    jobs listing treats that as admin-only rather than public."""
     job = Job(
         id=str(uuid.uuid4()),
         version_id=version_id,
         type=job_type,
         status="pending",
+        user_id=user_id,
     )
     db.add(job)
     await db.commit()
@@ -22,7 +26,8 @@ async def create_job(db: AsyncSession, version_id: str | None, job_type: str) ->
     return job
 
 
-async def start_job(db: AsyncSession, job_id: str, job_type: str) -> None:
+async def start_job(db: AsyncSession, job_id: str, job_type: str,
+                    user_id: str | None = None) -> None:
     """Insert-or-reset a running job row under a caller-supplied id.
 
     Ingestion keys its job row on the Celery task id — the same id the submit
@@ -34,7 +39,7 @@ async def start_job(db: AsyncSession, job_id: str, job_type: str) -> None:
     existing = await db.execute(select(Job.id).where(Job.id == job_id))
     if existing.scalar_one_or_none() is None:
         db.add(Job(id=job_id, version_id=None, type=job_type,
-                   status="running", started_at=now))
+                   status="running", started_at=now, user_id=user_id))
     else:
         await db.execute(
             update(Job)
