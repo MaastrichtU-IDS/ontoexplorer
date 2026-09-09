@@ -11,6 +11,7 @@ from enum import StrEnum
 
 import httpx
 
+from ontoexplorer.clients.fetch_guard import guarded_transport
 from ontoexplorer.config import get_settings
 
 # Accept header for IRI mode — prefer OWL/XML, then Turtle, then RDF/XML, then anything
@@ -78,7 +79,9 @@ def _fetch(
     buffering the whole body first and rejecting it afterwards.
     """
     max_size = get_settings().ingest_max_source_bytes
-    with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
+    # transport=guarded_transport(): refuse non-public targets and pin the DNS
+    # result, on this request and every redirect hop (see clients/fetch_guard).
+    with httpx.Client(timeout=_TIMEOUT, follow_redirects=True, transport=guarded_transport()) as client:
         with client.stream("GET", url, headers=headers) as resp:
             resp.raise_for_status()
 

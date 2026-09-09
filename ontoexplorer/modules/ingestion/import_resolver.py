@@ -6,6 +6,9 @@ from dataclasses import dataclass
 
 import httpx
 import rdflib
+
+from ontoexplorer.clients.fetch_guard import guarded_transport
+from ontoexplorer.config import get_settings
 from rdflib.namespace import OWL
 
 from ontoexplorer.modules.storage.minio_client import import_exists, import_key, store_import
@@ -132,16 +135,36 @@ def resolve_imports(graph: rdflib.Graph, visited: set[str] | None = None, depth:
 
 
 def _fetch_import(iri: str) -> tuple[bytes, str]:
-    """Fetch an import IRI, returning (bytes, file_extension)."""
+    """Fetch an import IRI, returning (bytes, file_extension).
+
+    Guarded and size-capped exactly like the primary source fetch: an import
+    target is as user-controlled as the source URL — an uploaded ontology can
+    carry ``owl:imports <http://internal:port/>`` — and this path previously
+    buffered the whole body with no ceiling, so a large or internal import was
+    an unbounded read as well as an SSRF.
+    """
     from ontoexplorer.modules.ingestion.source_resolver import _RDF_ACCEPT
 
-    with httpx.Client(timeout=_TIMEOUT, follow_redirects=True) as client:
-        resp = client.get(iri, headers={"Accept": _RDF_ACCEPT})
-        resp.raise_for_status()
+    max_size = get_settings().ingest_max_source_bytes
+    with httpx.Client(timeout=_TIMEOUT, follow_redirects=True, transport=guarded_transport()) as client:
+        with client.stream("GET", iri, headers={"Accept": _RDF_ACCEPT}) as resp:
+            resp.raise_for_status()
 
-    ct = resp.headers.get("content-type", "")
+            declared = resp.headers.get("content-length")
+            if declared and int(declared) > max_size:
+                raise ValueError(
+                    f"Import exceeds size limit ({int(declared)} bytes, limit {max_size} bytes)"
+                )
+
+            buf = bytearray()
+            for chunk in resp.iter_bytes():
+                buf.extend(chunk)
+                if len(buf) > max_size:
+                    raise ValueError(f"Import exceeds size limit ({max_size} bytes)")
+
+            ct = resp.headers.get("content-type", "")
     ext = _content_type_to_ext(ct)
-    return resp.content, ext
+    return bytes(buf), ext
 
 
 def _content_type_to_ext(content_type: str) -> str:
