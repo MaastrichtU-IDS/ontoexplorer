@@ -12,8 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ontoexplorer.config import get_settings
 from ontoexplorer.models.db import (
     ApiKey,
+    Job,
+    MaintainerRequest,
     OAuthAccount,
     Ontology,
+    OntologyMaintainer,
     SavedQuery,
     Session,
     User,
@@ -358,13 +361,28 @@ async def find_oauth_owner(db: AsyncSession, provider: str, provider_user_id: st
 # the source user to the target BEFORE the source is deleted. None carry a
 # per-user unique constraint, so reassignment can't collide. Sessions are dropped
 # rather than reassigned (the old identity simply re-logs in).
+# Every table with a user FK must appear here or be deliberately excluded.
+# Anything missed is destroyed rather than moved: the source User is deleted at
+# the end of the merge, and each FK is either ON DELETE CASCADE (the row goes)
+# or SET NULL (the row is orphaned).
 _MERGE_REASSIGN = [
     (OAuthAccount, "user_id"),
     (Ontology, "owner_id"),
     (Webhook, "user_id"),
     (ApiKey, "user_id"),
     (SavedQuery, "user_id"),
+    # CASCADE: merging silently revoked the source's maintainer grants on other
+    # people's ontologies, with nothing to indicate it had happened.
+    (OntologyMaintainer, "user_id"),
+    (MaintainerRequest, "user_id"),
+    # SET NULL: the submitter's own job history would become admin-only.
+    (Job, "user_id"),
 ]
+
+# (user_id, ontology_id) is UNIQUE, so a straight UPDATE collides when both
+# accounts already maintain the same ontology. The target's grant is the one to
+# keep — it survives the merge either way — so drop the source's duplicate first.
+_MERGE_DEDUPE_FIRST = [(OntologyMaintainer, "user_id", "ontology_id")]
 
 
 async def merge_users(db: AsyncSession, target_id: str, source_id: str) -> dict:
@@ -386,6 +404,15 @@ async def merge_users(db: AsyncSession, target_id: str, source_id: str) -> dict:
         raise ValueError("Account not found.")
 
     moved: dict[str, int] = {}
+    for model, user_col, scope_col in _MERGE_DEDUPE_FIRST:
+        dupes = select(getattr(model, scope_col)).where(getattr(model, user_col) == target_id)
+        await db.execute(
+            delete(model).where(
+                getattr(model, user_col) == source_id,
+                getattr(model, scope_col).in_(dupes),
+            )
+        )
+
     for model, col in _MERGE_REASSIGN:
         res = await db.execute(
             update(model).where(getattr(model, col) == source_id).values(**{col: target_id})
