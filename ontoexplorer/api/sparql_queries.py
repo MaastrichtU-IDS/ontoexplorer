@@ -3,7 +3,6 @@
 import uuid
 from datetime import UTC, datetime
 from typing import Optional
-from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -31,42 +30,31 @@ _URL_TIMEOUT_SECONDS = 5.0
 
 
 async def _fetch_starter_url(url: str) -> str:
-    """Fetch the body of `url` with a size cap, timeout, and scheme guard.
+    """Fetch the body of `url` with a size cap, timeout, and SSRF guard.
 
-    Allowed: https://, plus http:// for localhost only. Returns UTF-8 body.
-    Manually follows up to 3 redirects, re-validating the scheme guard on each
-    hop to prevent SSRF via cross-scheme/host redirect-chase. Body is streamed
-    with a hard byte cap to avoid buffering huge responses.
+    The guard is the shared async_guarded_transport(): it refuses any target
+    resolving to a non-public address — on the initial request and every
+    redirect hop — and pins the connection to the validated IP against DNS
+    rebinding. This replaced a scheme-only guard that allowed https:// to *any*
+    host (internal endpoints included) and http:// to localhost, i.e. the api
+    pod's own loopback. Body is streamed under a hard byte cap.
     """
-    from urllib.parse import urljoin
+    from ontoexplorer.clients.fetch_guard import async_guarded_transport
 
-    def _validate_scheme(u: str) -> None:
-        parsed = urlparse(u)
-        host = (parsed.hostname or "").lower()
-        is_local_http = parsed.scheme == "http" and host in ("localhost", "127.0.0.1")
-        if parsed.scheme != "https" and not is_local_http:
-            raise ValueError("Only https:// URLs are allowed (localhost http allowed for dev)")
-
-    current = url
-    async with httpx.AsyncClient(timeout=_URL_TIMEOUT_SECONDS, follow_redirects=False) as http:
-        for _ in range(4):  # initial request + up to 3 redirects
-            _validate_scheme(current)
-            async with http.stream("GET", current) as resp:
-                if resp.is_redirect:
-                    location = resp.headers.get("location")
-                    if not location:
-                        raise ValueError("Redirect without Location header")
-                    current = urljoin(current, location)
-                    continue
-                if resp.status_code != 200:
-                    raise ValueError(f"Upstream returned HTTP {resp.status_code}")
-                buf = bytearray()
-                async for chunk in resp.aiter_bytes():
-                    buf.extend(chunk)
-                    if len(buf) > _MAX_URL_BYTES:
-                        raise ValueError(f"Response exceeded {_MAX_URL_BYTES} byte cap")
-                return bytes(buf).decode("utf-8", errors="replace")
-    raise ValueError("Too many redirects")
+    async with httpx.AsyncClient(
+        timeout=_URL_TIMEOUT_SECONDS,
+        follow_redirects=True,
+        transport=async_guarded_transport(),
+    ) as http:
+        async with http.stream("GET", url) as resp:
+            if resp.status_code != 200:
+                raise ValueError(f"Upstream returned HTTP {resp.status_code}")
+            buf = bytearray()
+            async for chunk in resp.aiter_bytes():
+                buf.extend(chunk)
+                if len(buf) > _MAX_URL_BYTES:
+                    raise ValueError(f"Response exceeded {_MAX_URL_BYTES} byte cap")
+            return bytes(buf).decode("utf-8", errors="replace")
 
 
 class SavedQueryCreate(BaseModel):
