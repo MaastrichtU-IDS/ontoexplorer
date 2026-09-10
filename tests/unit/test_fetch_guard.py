@@ -1,0 +1,155 @@
+"""SSRF guard for ingestion fetches.
+
+Confirmed live before this guard existed: a submitted source URL of
+``http://minio.ontoexplorer-dev.svc.cluster.local:9000/minio/health/live``
+reached an internal, cluster-DNS-only service and failed only at format
+detection — i.e. the worker fetched it. These tests pin the guard that closes
+it: a default-deny on non-public addresses, enforced on every redirect hop and
+against DNS rebinding by pinning the connection to a validated address.
+"""
+import ipaddress
+
+import httpx
+import pytest
+
+from ontoexplorer.clients.fetch_guard import (
+    GuardedTransport,
+    SsrfBlocked,
+    _ip_is_forbidden,
+    is_forbidden_ip,
+)
+
+FORBIDDEN = [
+    "127.0.0.1", "127.0.0.53",          # loopback
+    "10.0.0.5", "172.16.9.9", "192.168.1.1",  # RFC1918
+    "169.254.169.254",                  # link-local / cloud metadata
+    "100.64.0.1",                       # CGNAT (RFC6598) — not is_private on 3.10
+    "0.0.0.0",                          # unspecified
+    "224.0.0.1",                        # multicast
+    "::1",                              # IPv6 loopback
+    "fc00::1", "fd12::1",              # IPv6 ULA
+    "fe80::1",                          # IPv6 link-local
+    "::ffff:127.0.0.1",                # IPv4-mapped loopback — must be unwrapped
+    "::ffff:10.0.0.1",                 # IPv4-mapped RFC1918
+]
+
+PUBLIC = ["8.8.8.8", "93.184.216.34", "1.1.1.1", "2606:2800:220:1:248:1893:25c8:1946"]
+
+
+@pytest.mark.parametrize("addr", FORBIDDEN)
+def test_forbidden_addresses(addr):
+    assert _ip_is_forbidden(ipaddress.ip_address(addr)), addr
+    assert is_forbidden_ip(addr), addr
+
+
+@pytest.mark.parametrize("addr", PUBLIC)
+def test_public_addresses_allowed(addr):
+    assert not _ip_is_forbidden(ipaddress.ip_address(addr)), addr
+    assert not is_forbidden_ip(addr), addr
+
+
+def _resolver(mapping):
+    def resolve(host, port):
+        if host not in mapping:
+            import socket
+            raise socket.gaierror(f"no fake record for {host}")
+        return mapping[host]
+    return resolve
+
+
+def _ok_handler(captured):
+    def handler(request):
+        captured["host"] = request.url.host
+        captured["host_header"] = request.headers.get("host")
+        captured["sni"] = request.extensions.get("sni_hostname")
+        return httpx.Response(200, content=b"ok")
+    return handler
+
+
+def test_non_http_scheme_blocked():
+    t = GuardedTransport(inner=httpx.MockTransport(lambda r: httpx.Response(200)),
+                         resolver=_resolver({}))
+    with httpx.Client(transport=t) as c:
+        with pytest.raises(SsrfBlocked, match="scheme"):
+            c.get("file:///etc/passwd")
+
+
+def test_internal_resolution_blocked():
+    t = GuardedTransport(
+        inner=httpx.MockTransport(lambda r: httpx.Response(200, content=b"SHOULD NOT REACH")),
+        resolver=_resolver({"evil.example": ["169.254.169.254"]}),
+    )
+    with httpx.Client(transport=t) as c:
+        with pytest.raises(SsrfBlocked, match="non-public"):
+            c.get("http://evil.example/x")
+
+
+def test_one_internal_answer_in_a_set_blocks_all():
+    """A round-robin record must not wave through an internal address."""
+    t = GuardedTransport(
+        inner=httpx.MockTransport(lambda r: httpx.Response(200)),
+        resolver=_resolver({"mixed.example": ["93.184.216.34", "10.0.0.1"]}),
+    )
+    with httpx.Client(transport=t) as c:
+        with pytest.raises(SsrfBlocked):
+            c.get("http://mixed.example/x")
+
+
+def test_public_target_is_pinned_and_host_preserved():
+    captured = {}
+    t = GuardedTransport(
+        inner=httpx.MockTransport(_ok_handler(captured)),
+        resolver=_resolver({"example.org": ["93.184.216.34"]}),
+    )
+    with httpx.Client(transport=t) as c:
+        r = c.get("http://example.org/data.owl")
+    assert r.status_code == 200
+    assert captured["host"] == "93.184.216.34", "connection not pinned to the validated IP"
+    assert captured["host_header"] == "example.org", "original Host header not preserved"
+    assert captured["sni"] == "example.org", "TLS SNI/verification not kept on the hostname"
+
+
+def test_redirect_into_internal_is_blocked():
+    """A public URL that 302s to an internal one must be caught on the second hop."""
+    def handler(request):
+        if request.url.host == "93.184.216.34":       # first hop, pinned public IP
+            return httpx.Response(302, headers={"location": "http://internal.example/secret"})
+        return httpx.Response(200, content=b"SHOULD NOT REACH")
+
+    t = GuardedTransport(
+        inner=httpx.MockTransport(handler),
+        resolver=_resolver({
+            "public.example": ["93.184.216.34"],
+            "internal.example": ["127.0.0.1"],
+        }),
+    )
+    with httpx.Client(transport=t, follow_redirects=True) as c:
+        with pytest.raises(SsrfBlocked, match="non-public"):
+            c.get("http://public.example/start")
+
+
+def test_allow_hosts_exemption_skips_resolution():
+    captured = {}
+
+    def blowup(host, port):
+        raise AssertionError("resolver must not run for an allow-listed host")
+
+    t = GuardedTransport(
+        inner=httpx.MockTransport(_ok_handler(captured)),
+        resolver=blowup,
+        allow_hosts=frozenset({"localhost"}),
+    )
+    with httpx.Client(transport=t) as c:
+        r = c.get("http://localhost/x")
+    assert r.status_code == 200
+    assert captured["host"] == "localhost", "allow-listed host should not be pinned/rewritten"
+
+
+def test_allow_private_disables_the_guard():
+    t = GuardedTransport(
+        inner=httpx.MockTransport(lambda r: httpx.Response(200, content=b"ok")),
+        resolver=lambda h, p: (_ for _ in ()).throw(AssertionError("should not resolve")),
+        allow_private=True,
+    )
+    with httpx.Client(transport=t) as c:
+        assert c.get("http://127.0.0.1:9000/x").status_code == 200

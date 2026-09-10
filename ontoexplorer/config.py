@@ -126,6 +126,16 @@ class Settings(BaseSettings):
     # (DRON is ~674 MiB and growing); raise via INGEST_MAX_SOURCE_BYTES.
     ingest_max_source_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GiB
 
+    # Ingestion SSRF guard. By default every outbound ontology fetch (source
+    # URL/IRI and owl:imports) must resolve to a public address; loopback,
+    # link-local (incl. cloud metadata), private and reserved ranges are
+    # refused, on the original request and on every redirect hop. Local
+    # development that legitimately fetches localhost imports sets
+    # INGEST_ALLOW_PRIVATE_FETCH=true, or names specific hosts in
+    # INGEST_FETCH_ALLOW_HOSTS (comma-separated).
+    ingest_allow_private_fetch: bool = False
+    ingest_fetch_allow_hosts: str = ""
+
     # MOD-API
     mod_catalogue_title: str = "OntoExplorer Catalogue"
     mod_catalogue_description: str = "A FAIR ontology repository"
