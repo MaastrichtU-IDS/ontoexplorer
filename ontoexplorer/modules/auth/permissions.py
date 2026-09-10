@@ -33,13 +33,22 @@ async def is_ontology_maintainer(db: AsyncSession, user_id: str, ontology_id: st
 
 
 async def can_edit_ontology(db: AsyncSession, user: User | None, ontology: Ontology) -> bool:
-    """True if `user` may edit `ontology`: an admin, the owner, an unowned
-    ontology (legacy-permissive), or an approved maintainer of it."""
+    """True if `user` may edit `ontology`: an admin, the owner, or an approved
+    maintainer of it.
+
+    An *ownerless* ontology (owner_id IS NULL) is editable only by admins and
+    approved maintainers — not by any authenticated user. owner_id is
+    ON DELETE SET NULL, so deleting an account orphans everything it registered;
+    the previous "unowned => anyone" rule turned that into a privilege
+    escalation, since this same check gates deleting an ontology and deprecating
+    its versions. An orphaned ontology now stays admin-managed until ownership
+    is reassigned.
+    """
     if user is None:
         return False
     if is_admin(user):
         return True
-    if ontology.owner_id is None or ontology.owner_id == user.id:
+    if ontology.owner_id == user.id:
         return True
     return await is_ontology_maintainer(db, user.id, ontology.id)
 

@@ -196,7 +196,9 @@ async def test_can_edit_ontology_helper(db_session, monkeypatch):
     assert await can_edit_ontology(db_session, owner, owned) is True
     assert await can_edit_ontology(db_session, maint, owned) is True
     assert await can_edit_ontology(db_session, other, owned) is False
-    assert await can_edit_ontology(db_session, other, unowned) is True   # legacy-permissive
+    # Ownerless is admin/maintainer-only now, not editable by any authenticated
+    # user (see test_ownerless_edit_authz.py for the rationale).
+    assert await can_edit_ontology(db_session, other, unowned) is False
     assert await can_edit_ontology(db_session, None, owned) is False
 
     monkeypatch.setattr("ontoexplorer.modules.auth.permissions.is_admin", lambda u: True)
