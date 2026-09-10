@@ -12,9 +12,11 @@ while keeping the common path fast.
 """
 from __future__ import annotations
 
+import base64
+import json
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.modules.search.indexer import normalise_label
@@ -45,7 +47,8 @@ async def pg_entity_search(
     """Cross-ontology entity search via Postgres `entity_index`.
 
     Deduplicates by IRI (first-seen-wins across ontologies). Result list is already
-    globally tier-ranked: exact label match first, then prefix, then word-suffix.
+    globally tier-ranked: exact primary-label match, then primary-label prefix,
+    then primary-label word-match, then synonym/alt-label-only matches.
 
     `types`, if given, restricts to those entity_index.type values
     (e.g. ['class', 'object_property']). None or empty = no type filter.
@@ -56,10 +59,17 @@ async def pg_entity_search(
     if not norm:
         return []
 
+    # Scope to each ontology's default version (pin-/version-aware), the same set
+    # the /entities listing uses. This keeps search and browse consistent: a hit
+    # links to the version that actually serves the term, and a multi-version
+    # ontology can't surface the same IRI once per version.
+    vids = await _latest_version_ids(db)
+    if not vids:
+        return []
+
     type_filter_sql = "AND ei.type = ANY(:types)" if types else ""
 
     # Stage 1: prefix-on-primary-label. Uses the text_pattern_ops btree.
-    # Filter to ready non-deprecated versions via the JOIN.
     # Within tier-1 (prefix match), sort by label LENGTH then alphabetically so
     # the label closest in length to the query wins. Without this, an unrelated
     # short label that happens to be lex-earlier sorts above the obvious target:
@@ -70,60 +80,84 @@ async def pg_entity_search(
                ei.primary_label_norm,
                CASE WHEN ei.primary_label_norm = :norm THEN 0 ELSE 1 END AS tier
         FROM entity_index ei
-        JOIN versions v ON v.id = ei.version_id
-        WHERE v.status NOT IN ('pending','failed','deprecated')
+        WHERE ei.version_id = ANY(:vids)
           AND ei.primary_label_norm LIKE :prefix
           {type_filter_sql}
         ORDER BY tier, LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
         LIMIT :over
     """)
     over = limit * _OVERSAMPLE
-    params: dict = {"norm": norm, "prefix": norm + "%", "over": over}
+    params: dict = {"norm": norm, "prefix": norm + "%", "over": over, "vids": vids}
     if types:
         params["types"] = list(types)
-    result = await db.execute(prefix_sql, params)
-    prefix_rows = result.all()
+    prefix_rows = (await db.execute(prefix_sql, params)).all()
 
-    seen_iris: set[str] = set()
-    merged: list[dict] = []
-    for row in prefix_rows:
-        if row.iri in seen_iris:
-            continue
-        seen_iris.add(row.iri)
-        merged.append(_row_to_dict(row))
-        if len(merged) >= limit:
-            return merged[:limit]
+    # Load ontology namespaces once so a shared IRI is attributed to its DEFINING
+    # ontology — the one whose IRI is a namespace-prefix of the term IRI — instead
+    # of whichever copy sorts first (e.g. sulo:hasValue reused by pizza is
+    # attributed to sulo, not pizza).
+    from sqlalchemy import select as _select
+    from ontoexplorer.models.db import Ontology
+    ont_iri = {r.id: r.iri for r in (await db.execute(_select(Ontology.id, Ontology.iri))).all()}
 
-    # Stage 2: word-suffix fallback via tsvector. Only runs if prefix tier didn't fill.
+    def _defines(term_iri: str, ontology_id: str) -> bool:
+        base = ont_iri.get(ontology_id)
+        if not base or not term_iri.startswith(base):
+            return False
+        if base[-1] in "/#":
+            return True
+        return term_iri[len(base):len(base) + 1] in ("", "/", "#")
+
+    # Dedup by IRI. Position = first-seen (rank) order; the representative
+    # occurrence is the defining ontology's when one is present among the
+    # candidates. Keep scanning past `limit` so a later-ranked defining copy can
+    # still upgrade an already-included IRI, but never add new IRIs beyond `limit`.
+    chosen: dict[str, dict] = {}
+
+    def _consider(rows):
+        for row in rows:
+            iri = row.iri
+            if iri in chosen:
+                if _defines(iri, row.ontology_id) and not _defines(iri, chosen[iri]["ontology_id"]):
+                    chosen[iri] = _row_to_dict(row)  # same key -> keeps position
+            elif len(chosen) < limit:
+                chosen[iri] = _row_to_dict(row)
+
+    _consider(prefix_rows)
+
+    # Stage 2: word-match fallback via tsvector. Only runs if prefix tier didn't fill.
     # Multi-word queries are AND'd; the last token is prefix-matched (user may
     # still be typing it).
-    if len(merged) < limit:
+    #
+    # The tsvector covers the primary label AND all synonyms/alt-labels, so a term
+    # can match on a synonym alone (e.g. "cytolysis" has the synonym "holin lysin
+    # activity"). Rank rows whose PRIMARY label contains the query above those that
+    # matched only via a synonym — otherwise a short primary label with a matching
+    # synonym outranks a term literally named "... <query>". `label_hit` = 0 when
+    # the query text appears in the primary label, 1 when the match is synonym-only.
+    if len(chosen) < limit:
         tsv_sql = text(f"""
             SELECT ei.iri, ei.primary_label, ei.short, ei.type,
                    ei.version_id, ei.ontology_id, ei.source,
-                   ei.primary_label_norm
+                   ei.primary_label_norm,
+                   CASE WHEN ei.primary_label_norm LIKE :contains THEN 0 ELSE 1 END AS label_hit
             FROM entity_index ei
-            JOIN versions v ON v.id = ei.version_id
-            WHERE v.status NOT IN ('pending','failed','deprecated')
+            WHERE ei.version_id = ANY(:vids)
               AND ei.search_tsv @@ to_tsquery('simple', :tsq)
               AND ei.primary_label_norm NOT LIKE :prefix
               {type_filter_sql}
-            ORDER BY LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
+            ORDER BY label_hit, LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
             LIMIT :over
         """)
-        params2: dict = {"tsq": _build_tsquery(norm), "prefix": norm + "%", "over": over}
+        params2: dict = {
+            "tsq": _build_tsquery(norm), "prefix": norm + "%",
+            "contains": f"%{norm}%", "over": over, "vids": vids,
+        }
         if types:
             params2["types"] = list(types)
-        result = await db.execute(tsv_sql, params2)
-        for row in result.all():
-            if row.iri in seen_iris:
-                continue
-            seen_iris.add(row.iri)
-            merged.append(_row_to_dict(row))
-            if len(merged) >= limit:
-                break
+        _consider((await db.execute(tsv_sql, params2)).all())
 
-    return merged[:limit]
+    return list(chosen.values())[:limit]
 
 
 async def pg_autocomplete_entities(
@@ -452,3 +486,172 @@ async def pg_entities_by_iri(db: AsyncSession, iris: list[str], version_ids: lis
         "version_id": r.version_id, "ontology_id": r.ontology_id,
         "ontology_shortname": r.ontology_shortname, "primary_label_norm": r.primary_label_norm,
     } for r in rows[:limit]]
+
+
+_LISTABLE_TYPES = {
+    "class", "object_property", "data_property", "annotation_property", "individual",
+}
+
+
+def encode_entity_cursor(label: str, iri: str, version: str | None = None) -> str:
+    d: dict = {"l": label, "i": iri}
+    if version is not None:
+        d["v"] = version
+    return base64.urlsafe_b64encode(json.dumps(d, separators=(",", ":")).encode()).decode()
+
+
+def decode_entity_cursor(s: str) -> tuple[str, str, str | None] | None:
+    """Decode an opaque cursor to (label_norm, iri, version_id|None); None if malformed.
+
+    Collapsed-mode cursors carry no version (one row per IRI), so `v` is optional.
+    """
+    try:
+        d = json.loads(base64.urlsafe_b64decode(s.encode()))
+        return (d["l"], d["i"], d.get("v"))
+    except Exception:
+        return None
+
+
+async def _latest_version_ids(db: AsyncSession) -> list[str]:
+    """The default (pin-aware, version-aware) version id per ontology.
+
+    Reuses the same selection the rest of the app uses so the listing shows one
+    version per ontology (killing same-ontology multi-version duplicates) and so
+    a row links to the version that actually serves that term.
+    """
+    from ontoexplorer.modules.search.versions import latest_ready_versions
+    return [v.id for v in await latest_ready_versions(db)]
+
+
+def _occ(ontology_id: str, version_id: str) -> dict:
+    return {"ontology_id": ontology_id, "version_id": version_id}
+
+
+async def list_entities_by_type(
+    db: AsyncSession,
+    entity_type: str,
+    limit: int,
+    after: tuple[str, str, str | None] | None,
+    collapse: bool = False,
+) -> tuple[list[dict], str | None]:
+    """Keyset-paginated cross-repository listing of one `entity_index.type`.
+
+    Scoped to the default version per ontology (see `_latest_version_ids`).
+    Each returned entity has the shape
+    `{iri, label, short, type, source, ontologies: [{ontology_id, version_id}]}`.
+
+    - `collapse=False` (default): one entity per (ontology occurrence) of an IRI,
+      ordered/keyset by (primary_label_norm, iri, version_id); `ontologies` has one
+      entry.
+    - `collapse=True`: one entity per IRI, ordered/keyset by (primary_label_norm,
+      iri); `ontologies` aggregates every ontology whose default version has it.
+
+    `after` is the previous page's last key (label_norm, iri, version_id|None);
+    None for the first page. Fetches limit+1 rows to detect a further page.
+    Returns (entities, next_cursor); next_cursor is None on the final page.
+    """
+    vids = await _latest_version_ids(db)
+    if not vids:
+        return [], None
+
+    if not collapse:
+        params: dict = {"t": entity_type, "vids": vids, "lim": limit + 1}
+        keyset = ""
+        if after is not None:
+            al, ai, av = after
+            keyset = """
+              AND ( ei.primary_label_norm > :al
+                    OR (ei.primary_label_norm = :al AND ei.iri > :ai)
+                    OR (ei.primary_label_norm = :al AND ei.iri = :ai AND ei.version_id > :av) )
+            """
+            params |= {"al": al, "ai": ai, "av": av or ""}
+        sql = text(f"""
+            SELECT ei.iri, ei.primary_label, ei.short, ei.type,
+                   ei.version_id, ei.ontology_id, ei.source, ei.primary_label_norm
+            FROM entity_index ei
+            WHERE ei.type = :t
+              AND ei.version_id IN :vids
+              {keyset}
+            ORDER BY ei.primary_label_norm, ei.iri, ei.version_id
+            LIMIT :lim
+        """).bindparams(bindparam("vids", expanding=True))
+        rows = (await db.execute(sql, params)).all()
+        has_more = len(rows) > limit
+        page = rows[:limit]
+        entities = [{
+            "iri": r.iri, "label": r.primary_label, "short": r.short, "type": r.type,
+            "source": r.source or "", "ontologies": [_occ(r.ontology_id, r.version_id)],
+        } for r in page]
+        next_cursor = (
+            encode_entity_cursor(page[-1].primary_label_norm, page[-1].iri, page[-1].version_id)
+            if has_more and page else None
+        )
+        return entities, next_cursor
+
+    # collapse=True: one row per IRI. Portable two-step (GROUP BY/min + fetch
+    # occurrences) instead of Postgres-only json_agg, so it also runs on SQLite.
+    params = {"t": entity_type, "vids": vids, "lim": limit + 1}
+    keyset = ""
+    if after is not None:
+        al, ai, _ = after
+        keyset = """
+          HAVING ( MIN(ei.primary_label_norm) > :al
+                   OR (MIN(ei.primary_label_norm) = :al AND ei.iri > :ai) )
+        """
+        params |= {"al": al, "ai": ai}
+    group_sql = text(f"""
+        SELECT ei.iri,
+               MIN(ei.primary_label) AS label,
+               MIN(ei.short) AS short,
+               MIN(ei.primary_label_norm) AS label_norm
+        FROM entity_index ei
+        WHERE ei.type = :t
+          AND ei.version_id IN :vids
+        GROUP BY ei.iri
+        {keyset}
+        ORDER BY MIN(ei.primary_label_norm), ei.iri
+        LIMIT :lim
+    """).bindparams(bindparam("vids", expanding=True))
+    grouped = (await db.execute(group_sql, params)).all()
+    has_more = len(grouped) > limit
+    page = grouped[:limit]
+    if not page:
+        return [], None
+
+    iris = [g.iri for g in page]
+    occ_sql = text("""
+        SELECT ei.iri, ei.ontology_id, ei.version_id
+        FROM entity_index ei
+        WHERE ei.type = :t
+          AND ei.version_id IN :vids
+          AND ei.iri IN :iris
+        ORDER BY ei.ontology_id
+    """).bindparams(bindparam("vids", expanding=True), bindparam("iris", expanding=True))
+    occ_rows = (await db.execute(occ_sql, {"t": entity_type, "vids": vids, "iris": iris})).all()
+    by_iri: dict[str, list[dict]] = {}
+    for o in occ_rows:
+        by_iri.setdefault(o.iri, []).append(_occ(o.ontology_id, o.version_id))
+
+    entities = [{
+        "iri": g.iri, "label": g.label, "short": g.short, "type": entity_type,
+        "source": "", "ontologies": by_iri.get(g.iri, []),
+    } for g in page]
+    next_cursor = (
+        encode_entity_cursor(page[-1].label_norm, page[-1].iri)
+        if has_more else None
+    )
+    return entities, next_cursor
+
+
+async def count_entities_by_type(db: AsyncSession, entity_type: str, collapse: bool = False) -> int:
+    vids = await _latest_version_ids(db)
+    if not vids:
+        return 0
+    col = "COUNT(DISTINCT ei.iri)" if collapse else "COUNT(*)"
+    sql = text(f"""
+        SELECT {col}
+        FROM entity_index ei
+        WHERE ei.type = :t
+          AND ei.version_id IN :vids
+    """).bindparams(bindparam("vids", expanding=True))
+    return int((await db.execute(sql, {"t": entity_type, "vids": vids})).scalar_one())

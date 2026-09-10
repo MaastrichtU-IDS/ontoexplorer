@@ -6,6 +6,7 @@ import DashboardLayout from './components/DashboardLayout'
 import Home from './pages/Home'
 import Search from './pages/Search'
 import Ontologies from './pages/Ontologies'
+import Browse from './pages/Browse'
 import Dashboard from './pages/Dashboard'
 import ApiKeys from './pages/ApiKeys'
 import Webhooks from './pages/Webhooks'
@@ -109,6 +110,7 @@ export default function App() {
       <Route path="/ontologies" element={<Shell><Ontologies /></Shell>} />
       <Route path="/ontologies/:slug" element={<Shell><OntologyPage /></Shell>} />
       <Route path="/ontologies/:slug/:version" element={<Shell><OntologyPage /></Shell>} />
+      <Route path="/browse" element={<Shell><Browse /></Shell>} />
       <Route path="/compare" element={<CompareRedirect />} />
       <Route path="/coverage" element={<Navigate to="/ontologies?tab=coverage" replace />} />
       <Route path="/owl-profile" element={<Navigate to="/ontologies?tab=profiles" replace />} />
