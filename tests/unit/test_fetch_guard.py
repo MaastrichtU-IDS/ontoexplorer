@@ -153,3 +153,78 @@ def test_allow_private_disables_the_guard():
     )
     with httpx.Client(transport=t) as c:
         assert c.get("http://127.0.0.1:9000/x").status_code == 200
+
+
+# ── async sibling: same validation, exercised through AsyncGuardedTransport ──
+
+from ontoexplorer.clients.fetch_guard import AsyncGuardedTransport  # noqa: E402
+
+
+def _async_resolver(mapping):
+    async def resolve(host, port):
+        return mapping.get(host, [])
+    return resolve
+
+
+@pytest.mark.anyio
+async def test_async_internal_resolution_blocked():
+    t = AsyncGuardedTransport(
+        inner=httpx.MockTransport(lambda r: httpx.Response(200, content=b"SHOULD NOT REACH")),
+        resolver=_async_resolver({"evil.example": ["169.254.169.254"]}),
+    )
+    async with httpx.AsyncClient(transport=t) as c:
+        with pytest.raises(SsrfBlocked, match="non-public"):
+            await c.get("http://evil.example/x")
+
+
+@pytest.mark.anyio
+async def test_async_https_to_internal_is_blocked():
+    """The old scheme guard let https:// reach any host; this must not."""
+    t = AsyncGuardedTransport(
+        inner=httpx.MockTransport(lambda r: httpx.Response(200)),
+        resolver=_async_resolver({"kubernetes.default.svc": ["10.0.0.1"]}),
+    )
+    async with httpx.AsyncClient(transport=t) as c:
+        with pytest.raises(SsrfBlocked):
+            await c.get("https://kubernetes.default.svc/api")
+
+
+@pytest.mark.anyio
+async def test_async_public_target_is_pinned_and_host_preserved():
+    captured = {}
+
+    def handler(request):
+        captured["host"] = request.url.host
+        captured["host_header"] = request.headers.get("host")
+        captured["sni"] = request.extensions.get("sni_hostname")
+        return httpx.Response(200, content=b"ok")
+
+    t = AsyncGuardedTransport(
+        inner=httpx.MockTransport(handler),
+        resolver=_async_resolver({"example.org": ["93.184.216.34"]}),
+    )
+    async with httpx.AsyncClient(transport=t) as c:
+        r = await c.get("https://example.org/lib.rq")
+    assert r.status_code == 200
+    assert captured["host"] == "93.184.216.34"
+    assert captured["host_header"] == "example.org"
+    assert captured["sni"] == "example.org"
+
+
+@pytest.mark.anyio
+async def test_async_redirect_into_internal_is_blocked():
+    def handler(request):
+        if request.url.host == "93.184.216.34":
+            return httpx.Response(302, headers={"location": "http://internal.example/secret"})
+        return httpx.Response(200, content=b"SHOULD NOT REACH")
+
+    t = AsyncGuardedTransport(
+        inner=httpx.MockTransport(handler),
+        resolver=_async_resolver({
+            "public.example": ["93.184.216.34"],
+            "internal.example": ["127.0.0.1"],
+        }),
+    )
+    async with httpx.AsyncClient(transport=t, follow_redirects=True) as c:
+        with pytest.raises(SsrfBlocked, match="non-public"):
+            await c.get("https://public.example/start")

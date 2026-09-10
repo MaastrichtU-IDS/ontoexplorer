@@ -74,8 +74,16 @@ def is_forbidden_ip(literal: str) -> bool:
 
 
 def _default_resolver(host: str, port: int) -> list[str]:
-    """Resolve `host` to the list of IP strings a connection could land on."""
-    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    """Resolve `host` to the list of IP strings a connection could land on.
+
+    A resolution failure returns an empty list (surfaced as a ConnectError by
+    the caller), matching the async resolver, so a name that will not resolve —
+    which cannot be a rebinding vector — is handled the same on both paths.
+    """
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        return []
     # De-duplicate while preserving order; sockaddr[0] is the address.
     seen: dict[str, None] = {}
     for info in infos:
@@ -103,51 +111,116 @@ class GuardedTransport(httpx.BaseTransport):
         self._allow_hosts = allow_hosts
         self._allow_private = allow_private
 
+    def _bypass(self, host: str) -> bool:
+        return self._allow_private or host in self._allow_hosts
+
     def handle_request(self, request: httpx.Request) -> httpx.Response:
-        url = request.url
-        if url.scheme not in ("http", "https"):
-            raise SsrfBlocked(f"scheme not allowed for fetch: {url.scheme!r}")
-
-        host = url.host
-        if self._allow_private or host in self._allow_hosts:
+        host = _guard_scheme(request.url)
+        if self._bypass(host):
             return self._inner.handle_request(request)
-
-        port = url.port or (443 if url.scheme == "https" else 80)
-        try:
-            addresses = self._resolve(host, port)
-        except socket.gaierror as exc:
-            # A name that will not resolve cannot be a rebinding vector; let the
-            # normal connect path surface it as the usual "could not fetch".
-            raise httpx.ConnectError(f"name resolution failed: {host}", request=request) from exc
-        if not addresses:
-            raise httpx.ConnectError(f"name did not resolve: {host}", request=request)
-
-        # Block if *any* resolved address is forbidden — a round-robin record
-        # must not let one public answer wave through an internal one.
-        for literal in addresses:
-            if _ip_is_forbidden(ipaddress.ip_address(literal)):
-                raise SsrfBlocked(
-                    f"fetch target {host!r} resolves to a non-public address ({literal})"
-                )
-
-        # Pin to a validated address so nothing re-resolves between here and the
-        # socket. Host header stays as the client built it (the real authority);
-        # sni_hostname keeps TLS SNI and certificate verification on the name.
-        pinned = addresses[0]
-        request.url = url.copy_with(host=pinned)
-        request.extensions = {**request.extensions, "sni_hostname": host}
+        addresses = self._resolve(host, _port_of(request.url))
+        _pin_to_validated(request, host, addresses)
         return self._inner.handle_request(request)
 
     def close(self) -> None:
         self._inner.close()
 
 
+class AsyncGuardedTransport(httpx.AsyncBaseTransport):
+    """Async sibling of `GuardedTransport`, sharing its validation and pinning.
+
+    The two are deliberately kept as thin wrappers over the same module-level
+    helpers so the guard cannot drift between the sync and async fetch paths.
+    """
+
+    def __init__(
+        self,
+        *,
+        inner: httpx.AsyncBaseTransport | None = None,
+        resolver=None,
+        allow_hosts: frozenset[str] = frozenset(),
+        allow_private: bool = False,
+    ) -> None:
+        self._inner = inner if inner is not None else httpx.AsyncHTTPTransport()
+        self._resolve = resolver if resolver is not None else _default_async_resolver
+        self._allow_hosts = allow_hosts
+        self._allow_private = allow_private
+
+    def _bypass(self, host: str) -> bool:
+        return self._allow_private or host in self._allow_hosts
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        host = _guard_scheme(request.url)
+        if self._bypass(host):
+            return await self._inner.handle_async_request(request)
+        addresses = await self._resolve(host, _port_of(request.url))
+        _pin_to_validated(request, host, addresses)
+        return await self._inner.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
+def _guard_scheme(url: httpx.URL) -> str:
+    """Reject non-http(s) schemes; return the target host."""
+    if url.scheme not in ("http", "https"):
+        raise SsrfBlocked(f"scheme not allowed for fetch: {url.scheme!r}")
+    return url.host
+
+
+def _port_of(url: httpx.URL) -> int:
+    return url.port or (443 if url.scheme == "https" else 80)
+
+
+def _pin_to_validated(request: httpx.Request, host: str, addresses: list[str]) -> None:
+    """Block if any resolved address is non-public, else pin the connection to one.
+
+    Blocking on *any* forbidden address stops a round-robin record waving an
+    internal answer through. Pinning to a validated address means nothing
+    re-resolves between here and the socket (DNS rebinding). The Host header the
+    client built is left untouched (the real authority) and `sni_hostname` keeps
+    TLS SNI and certificate verification on the name rather than the pinned IP.
+    """
+    if not addresses:
+        raise httpx.ConnectError(f"name did not resolve: {host}", request=request)
+    for literal in addresses:
+        if _ip_is_forbidden(ipaddress.ip_address(literal)):
+            raise SsrfBlocked(
+                f"fetch target {host!r} resolves to a non-public address ({literal})"
+            )
+    request.url = request.url.copy_with(host=addresses[0])
+    request.extensions = {**request.extensions, "sni_hostname": host}
+
+
+async def _default_async_resolver(host: str, port: int) -> list[str]:
+    """Async DNS resolution via anyio (httpx's own concurrency backend)."""
+    import anyio
+
+    try:
+        infos = await anyio.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        return []
+    seen: dict[str, None] = {}
+    for info in infos:
+        seen.setdefault(info[4][0], None)
+    return list(seen)
+
+
 def guarded_transport() -> GuardedTransport:
-    """Build the guard transport from application settings."""
+    """Build the sync guard transport from application settings."""
+    return GuardedTransport(**_guard_kwargs())
+
+
+def async_guarded_transport() -> AsyncGuardedTransport:
+    """Build the async guard transport from application settings."""
+    return AsyncGuardedTransport(**_guard_kwargs())
+
+
+def _guard_kwargs() -> dict:
     from ontoexplorer.config import get_settings
 
     s = get_settings()
     allow = frozenset(
         h.strip().lower() for h in s.ingest_fetch_allow_hosts.split(",") if h.strip()
     )
-    return GuardedTransport(allow_hosts=allow, allow_private=s.ingest_allow_private_fetch)
+    return {"allow_hosts": allow, "allow_private": s.ingest_allow_private_fetch}
