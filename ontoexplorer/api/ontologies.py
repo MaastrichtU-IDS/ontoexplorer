@@ -3378,6 +3378,8 @@ async def request_justification(
     _ui_only: None = Depends(reject_api_key_auth),
 ):
     await _get_version_or_404(db, ontology_id, version_id)
+    from ontoexplorer.modules.jobs.justification_limits import enforce_justification_limits
+    await enforce_justification_limits(db, user)
     from ontoexplorer.modules.jobs.tasks import compute_justification
     task = compute_justification.delay(
         version_id=version_id,
@@ -3385,6 +3387,7 @@ async def request_justification(
         sub=body.sub,
         sup=body.sup,
         max_justifications=body.max_justifications,
+        user_id=user.id,
     )
     return {"job_id": task.id, "status": "queued", "sub": body.sub, "sup": body.sup}
 

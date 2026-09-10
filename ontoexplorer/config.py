@@ -142,6 +142,14 @@ class Settings(BaseSettings):
     mod_rate_limit_anon: int = 1000   # requests / day — unauthenticated (per IP)
     mod_rate_limit_auth: int = 10000  # requests / day — authenticated (per API key)
 
+    # Justification is session-only and cheap to request but dispatches an OWL
+    # justification job with an 11-minute hard limit on the reasoner pool, so a
+    # burst of requests can starve reasoning for everyone. Two per-user limits:
+    # how many may run at once (burst protection — the real resource is
+    # simultaneous long jobs), and how many per day (sustained-abuse ceiling).
+    justification_max_inflight: int = 2
+    justification_daily_limit: int = 200
+
     @field_validator("database_url")
     @classmethod
     def validate_database_url(cls, v: str) -> str:

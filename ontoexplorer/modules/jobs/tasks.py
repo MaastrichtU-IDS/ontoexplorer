@@ -1109,6 +1109,7 @@ def compute_justification(
     sub: str,
     sup: str | None,
     max_justifications: int = 1,
+    user_id: str | None = None,
 ) -> dict:
     """
     Compute justification(s) for a subclass inference or unsatisfiability.
@@ -1127,7 +1128,7 @@ def compute_justification(
         from ontoexplorer.modules.webhooks.delivery import broadcast_event
 
         async with make_celery_db_session()() as db:
-            job = await tracker.create_job(db, version_id=version_id, job_type="justification")
+            job = await tracker.create_job(db, version_id=version_id, job_type="justification", user_id=user_id)
             await tracker.mark_running(db, job.id)
             try:
                 version_result = await db.execute(
