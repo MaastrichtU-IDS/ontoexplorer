@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.config import get_settings
 from ontoexplorer.database import get_db
-from ontoexplorer.models.db import OntologyVersion
+from ontoexplorer.models.db import Ontology, OntologyVersion
 from ontoexplorer.modules.jobs.tasks import ingest_ontology
 from ontoexplorer.logging_config import get_logger
 
@@ -65,17 +65,27 @@ async def github_webhook(
         for path in changed_paths
     ]
 
-    # Find registered ontologies whose source_url matches a changed file
+    # Find registered ontologies whose source_url matches a changed file, and
+    # carry the owner + groups into the re-ingest. Without owner_id the ingest
+    # task defaults it to None; that is harmless while the ontology's IRI still
+    # matches an existing row (the pipeline preserves the owner then), but if the
+    # upstream file's ontology IRI has changed it lands in the create branch and
+    # would mint an *ownerless* ontology. The scheduled poller already passes
+    # owner_id; this keeps the two sync paths in step.
     result = await db.execute(
-        select(OntologyVersion.source_url)
+        select(OntologyVersion.source_url, Ontology.owner_id, Ontology.groups)
+        .join(Ontology, OntologyVersion.ontology_id == Ontology.id)
         .where(OntologyVersion.source_url.in_(candidate_urls))
         .where(OntologyVersion.status != "deprecated")
-        .distinct()
     )
-    matched_urls = result.scalars().all()
+    # One entry per source_url (a URL maps to a single ontology; dedupe the
+    # multiple versions that can share it).
+    matched: dict[str, tuple[str | None, list]] = {}
+    for source_url, owner_id, groups in result.all():
+        matched.setdefault(source_url, (owner_id, list(groups or [])))
 
-    for url in matched_urls:
-        ingest_ontology.delay(url=url)
+    for url, (owner_id, groups) in matched.items():
+        ingest_ontology.delay(url=url, owner_id=owner_id, groups=groups)
         log.info("github_sync_queued", url=url, repo=repo_full_name, ref=ref)
 
-    return {"queued": len(matched_urls), "urls": matched_urls}
+    return {"queued": len(matched), "urls": list(matched)}

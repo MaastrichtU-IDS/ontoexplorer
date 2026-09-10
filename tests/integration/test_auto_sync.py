@@ -91,7 +91,8 @@ async def test_patch_auto_sync_on(client, user_and_key, db_session):
     user, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
 
-    ont = Ontology(iri="http://example.org/patch-test.owl")
+    # Owned by the caller — an ownerless ontology is admin/maintainer-only now.
+    ont = Ontology(iri="http://example.org/patch-test.owl", owner_id=user.id)
     db_session.add(ont)
     await db_session.commit()
 
@@ -239,7 +240,8 @@ async def test_github_inbound_queues_ingest(client, db_session):
     """Valid GitHub push event queues ingest for matching source_url."""
     from unittest.mock import MagicMock, patch
 
-    ont = Ontology(iri="http://example.org/gh-sync.owl")
+    ont = Ontology(iri="http://example.org/gh-sync.owl",
+                   owner_id="owner-123", groups=["obo"])
     db_session.add(ont)
     await db_session.flush()
     ver = OntologyVersion(
@@ -284,7 +286,9 @@ async def test_github_inbound_queues_ingest(client, db_session):
     result = resp.json()
     assert result["queued"] == 1
     mock_ingest.delay.assert_called_once_with(
-        url="https://raw.githubusercontent.com/owner/repo/main/ontology.owl"
+        url="https://raw.githubusercontent.com/owner/repo/main/ontology.owl",
+        owner_id="owner-123",
+        groups=["obo"],
     )
 
 
