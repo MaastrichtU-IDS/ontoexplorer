@@ -195,9 +195,9 @@ export default function AdminPage() {
           description="Object storage for raw ontology artifacts and the imports closure cache"
         />
         <ServiceCard
-          name="Fuseki"
-          status={s.fuseki}
-          description="External SPARQL endpoint for FAIR metadata (DCAT + VoID + PROV-O) about each ontology version"
+          name="Metadata store"
+          status={s.metadata_store}
+          description="Embedded SPARQL store for FAIR metadata (DCAT + VoID + PROV-O) about each ontology version"
         />
         <ServiceCard
           name="Oxigraph"

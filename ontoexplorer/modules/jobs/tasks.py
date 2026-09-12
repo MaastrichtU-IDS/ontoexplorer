@@ -185,7 +185,7 @@ def purge_version_artifacts(ontology_id: str, version_id: str, minio_key: str | 
 
     Deleting an ontology used to remove only its Postgres rows. The triples
     stayed in Oxigraph and remained anonymously queryable through
-    /api/v1/sparql/content, the DCAT and PROV records stayed in Fuseki's shared
+    /api/v1/sparql/content, the DCAT and PROV records stayed in the metadata store's shared
     catalogue graphs, and the uploaded file stayed in MinIO — so a "deleted"
     ontology was still fully readable, and a withdrawal request could not
     actually be honoured. `clients.oxigraph.delete_graph` existed the whole time
@@ -214,11 +214,11 @@ def purge_version_artifacts(ontology_id: str, version_id: str, minio_key: str | 
     _step("oxigraph_asserted", lambda: _drop_content_graph(ontology_id, version_id, inferred=False))
     _step("oxigraph_inferred", lambda: _drop_content_graph(ontology_id, version_id, inferred=True))
 
-    def _drop_fuseki():
-        from ontoexplorer.modules.metadata.fuseki_writer import delete_version_metadata
+    def _drop_metadata():
+        from ontoexplorer.modules.metadata.metadata_writer import delete_version_metadata
         asyncio.run(delete_version_metadata(ontology_id, version_id))
 
-    _step("fuseki_metadata", _drop_fuseki)
+    _step("metadata_store", _drop_metadata)
 
     if minio_key:
         def _drop_object():

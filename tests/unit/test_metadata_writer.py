@@ -3,7 +3,7 @@
 import pytest
 import rdflib
 
-from ontoexplorer.modules.metadata import fuseki_writer
+from ontoexplorer.modules.metadata import metadata_writer
 
 
 class _Recorder:
@@ -27,9 +27,9 @@ class _Recorder:
 @pytest.fixture
 def recorder(monkeypatch):
     r = _Recorder()
-    monkeypatch.setattr(fuseki_writer, "sparql_update", r.sparql_update)
-    monkeypatch.setattr(fuseki_writer, "insert_turtle", r.insert_turtle)
-    monkeypatch.setattr(fuseki_writer, "delete_graph", r.delete_graph)
+    monkeypatch.setattr(metadata_writer, "sparql_update", r.sparql_update)
+    monkeypatch.setattr(metadata_writer, "insert_turtle", r.insert_turtle)
+    monkeypatch.setattr(metadata_writer, "delete_graph", r.delete_graph)
     return r
 
 
@@ -55,15 +55,15 @@ async def test_shared_graphs_are_cleared_of_this_version_before_insert(recorder)
     dcat = _graph(f"{base}/api/v1/ontologies/o1/v1", "first")
     prov = _graph(f"{base}/api/v1/versions/v1/provenance", "first")
 
-    await fuseki_writer.write_version_metadata("o1", "v1", dcat, prov)
+    await metadata_writer.write_version_metadata("o1", "v1", dcat, prov)
 
     deletes = [u for u in recorder.updates if u.startswith("DELETE")]
     assert len(deletes) == 2, "expected one subject-scoped delete per shared graph"
 
-    meta_delete = next(u for u in deletes if fuseki_writer.META_GRAPH in u)
+    meta_delete = next(u for u in deletes if metadata_writer.META_GRAPH in u)
     assert f"<{base}/api/v1/ontologies/o1/v1>" in meta_delete
 
-    prov_delete = next(u for u in deletes if fuseki_writer.PROV_GRAPH in u)
+    prov_delete = next(u for u in deletes if metadata_writer.PROV_GRAPH in u)
     assert f"<{base}/api/v1/versions/v1/provenance>" in prov_delete
 
 
@@ -74,19 +74,19 @@ async def test_delete_precedes_the_matching_insert(recorder):
     dcat = _graph(f"{base}/api/v1/ontologies/o1/v1", "x")
     prov = _graph(f"{base}/api/v1/versions/v1/provenance", "x")
 
-    await fuseki_writer.write_version_metadata("o1", "v1", dcat, prov)
+    await metadata_writer.write_version_metadata("o1", "v1", dcat, prov)
 
     # Both shared graphs received an insert, and each was cleared beforehand.
     shared_inserts = [g for g, _ in recorder.inserts
-                      if g in (fuseki_writer.META_GRAPH, fuseki_writer.PROV_GRAPH)]
-    assert shared_inserts == [fuseki_writer.META_GRAPH, fuseki_writer.PROV_GRAPH]
+                      if g in (metadata_writer.META_GRAPH, metadata_writer.PROV_GRAPH)]
+    assert shared_inserts == [metadata_writer.META_GRAPH, metadata_writer.PROV_GRAPH]
     assert len([u for u in recorder.updates if u.startswith("DELETE")]) == 2
 
 
 @pytest.mark.anyio
 async def test_subjectless_graph_issues_no_delete(recorder):
     """An empty record must not emit a DELETE with an empty VALUES block."""
-    await fuseki_writer.write_version_metadata("o1", "v1", rdflib.Graph(), rdflib.Graph())
+    await metadata_writer.write_version_metadata("o1", "v1", rdflib.Graph(), rdflib.Graph())
     assert [u for u in recorder.updates if u.startswith("DELETE")] == []
 
 
@@ -106,7 +106,7 @@ def test_submitted_source_url_is_not_interpolated():
     """The submitted URL becomes a PROV subject and is entirely user-supplied.
     Interpolated into a SPARQL Update, a `>` closes the IRIREF and everything
     after it executes — here a DROP of the catalogue graph."""
-    from ontoexplorer.modules.metadata.fuseki_writer import _version_scoped_subjects
+    from ontoexplorer.modules.metadata.metadata_writer import _version_scoped_subjects
 
     evil = ("http://evil.test/x> } }; DROP SILENT GRAPH <urn:meta> ; "
             "INSERT DATA { GRAPH <urn:meta> { <urn:pwned> <urn:p> <urn:o> } } #")
@@ -119,7 +119,7 @@ def test_submitted_source_url_is_not_interpolated():
 def test_benign_source_url_is_also_excluded():
     """Not just an injection guard: the source URL is shared state. Two versions
     ingested from one URL would otherwise delete each other's triple."""
-    from ontoexplorer.modules.metadata.fuseki_writer import _version_scoped_subjects
+    from ontoexplorer.modules.metadata.metadata_writer import _version_scoped_subjects
 
     kept = _version_scoped_subjects(_prov_with_source("http://example.org/onto.ttl"), "http://app")
     assert "http://example.org/onto.ttl" not in kept
@@ -129,7 +129,7 @@ def test_benign_source_url_is_also_excluded():
 def test_illegal_iri_characters_are_dropped_even_under_our_own_prefix():
     """rdflib warns about invalid IRIs but still builds the URIRef, so validity
     upstream cannot be assumed."""
-    from ontoexplorer.modules.metadata.fuseki_writer import _version_scoped_subjects
+    from ontoexplorer.modules.metadata.metadata_writer import _version_scoped_subjects
 
     g = rdflib.Graph()
     g.add((rdflib.URIRef("http://app/a> } } ; DROP ALL #"),

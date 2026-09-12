@@ -1,10 +1,10 @@
-"""Write FAIR metadata (DCAT + VoID + PROV-O) to Fuseki via SPARQL Update."""
+"""Write FAIR metadata (DCAT + VoID + PROV-O) to the embedded metadata store."""
 
 import logging
 
 import rdflib
 
-from ontoexplorer.clients.fuseki import delete_graph, insert_turtle, sparql_update
+from ontoexplorer.clients.metadata_store import delete_graph, insert_turtle, sparql_update
 from ontoexplorer.clients.sparql_iri import is_safe_iri
 from ontoexplorer.config import get_settings
 from ontoexplorer.modules.metadata.dcat import dcat_subject_iris
@@ -12,7 +12,7 @@ from ontoexplorer.modules.metadata.prov import prov_subject_iris
 
 logger = logging.getLogger(__name__)
 
-# Named graph IRIs in Fuseki
+# Named graph IRIs in the metadata store
 META_GRAPH = "urn:meta"
 PROV_GRAPH = "urn:prov"
 
@@ -82,7 +82,7 @@ async def write_version_metadata(
     prov_graph: rdflib.Graph,
 ) -> None:
     """
-    Insert DCAT + VoID metadata and PROV-O activity into Fuseki.
+    Insert DCAT + VoID metadata and PROV-O activity into the metadata store.
 
     DCAT metadata goes into the per-version named graph and the catalog graph.
     PROV activity goes into the provenance graph.
@@ -98,7 +98,7 @@ async def write_version_metadata(
 
     # Write per-version metadata
     await insert_turtle(dcat_ttl, graph_iri=version_graph_iri)
-    logger.info("Wrote DCAT metadata for version %s to Fuseki graph <%s>", version_id, version_graph_iri)
+    logger.info("Wrote DCAT metadata for version %s to metadata graph <%s>", version_id, version_graph_iri)
 
     # Also insert into the catalog graph (for cross-ontology queries), replacing
     # any earlier record for this version rather than stacking a second one.
@@ -109,7 +109,7 @@ async def write_version_metadata(
     # Insert provenance, likewise replacing this version's previous activity.
     await _drop_subjects(PROV_GRAPH, prov_graph, app_base_url)
     await insert_turtle(prov_ttl, graph_iri=PROV_GRAPH)
-    logger.info("Wrote PROV-O activity for version %s to Fuseki", version_id)
+    logger.info("Wrote PROV-O activity for version %s to the metadata store", version_id)
 
 
 async def _drop_subject_iris(graph_iri: str, subjects: list[str]) -> None:
@@ -125,7 +125,7 @@ async def _drop_subject_iris(graph_iri: str, subjects: list[str]) -> None:
 
 
 async def delete_version_metadata(ontology_id: str, version_id: str) -> None:
-    """Remove every trace of one version from Fuseki.
+    """Remove every trace of one version from the metadata store.
 
     Clears the per-version graph *and* the version's triples in the shared
     catalogue and provenance graphs. An earlier version of this function cleared
@@ -141,4 +141,4 @@ async def delete_version_metadata(ontology_id: str, version_id: str) -> None:
     await _drop_subject_iris(META_GRAPH, dcat_subject_iris(ontology_id, version_id, app_base_url))
     await _drop_subject_iris(PROV_GRAPH, prov_subject_iris(version_id, app_base_url))
 
-    logger.info("Deleted Fuseki metadata for version %s", version_id)
+    logger.info("Deleted metadata for version %s", version_id)

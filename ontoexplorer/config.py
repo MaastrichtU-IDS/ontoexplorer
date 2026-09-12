@@ -51,15 +51,14 @@ class Settings(BaseSettings):
     # ran against an endpoint the cluster could not reach it failed outright.
     minio_region: str = "us-east-1"
 
-    # SPARQL metadata store (Jena Fuseki)
-    fuseki_endpoint: str = "http://localhost:7001"
-    fuseki_sparql_path: str = "/sparql"
-    fuseki_update_user: str = ""
-    fuseki_update_password: str = ""
-
     # Oxigraph (embedded content triplestore) — path to data directory
     oxigraph_data_path: str = "/data/oxigraph"
     oxigraph_read_only: bool = False  # set True in API container; worker keeps write access
+
+    # Metadata triplestore (embedded pyoxigraph, replaced Jena Fuseki) — a
+    # separate store from the content one; serves /sparql. Same RW/RO model as
+    # oxigraph (governed by oxigraph_read_only: worker RW, API RO secondary).
+    metadata_store_path: str = "/data/metadata"
 
     sparql_query_timeout_seconds: int = 30
 
