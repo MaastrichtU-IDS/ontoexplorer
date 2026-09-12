@@ -13,6 +13,10 @@ class _Recorder:
         self.updates: list[str] = []
         self.inserts: list[tuple[str, str]] = []
         self.dropped: list[str] = []
+        self.flushed = 0
+
+    async def flush(self) -> None:
+        self.flushed += 1
 
     async def sparql_update(self, update: str, timeout: float = 30.0) -> None:
         self.updates.append(update)
@@ -30,6 +34,7 @@ def recorder(monkeypatch):
     monkeypatch.setattr(metadata_writer, "sparql_update", r.sparql_update)
     monkeypatch.setattr(metadata_writer, "insert_turtle", r.insert_turtle)
     monkeypatch.setattr(metadata_writer, "delete_graph", r.delete_graph)
+    monkeypatch.setattr(metadata_writer, "flush", r.flush)
     return r
 
 
@@ -57,6 +62,7 @@ async def test_shared_graphs_are_cleared_of_this_version_before_insert(recorder)
 
     await metadata_writer.write_version_metadata("o1", "v1", dcat, prov)
 
+    assert recorder.flushed >= 1, "must flush so the API read-only secondary sees the write"
     deletes = [u for u in recorder.updates if u.startswith("DELETE")]
     assert len(deletes) == 2, "expected one subject-scoped delete per shared graph"
 
