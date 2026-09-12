@@ -50,6 +50,7 @@ celery_app.conf.update(
         "ontoexplorer.reason_ontology": {"queue": "write"},
         "ontoexplorer.load_imports": {"queue": "write"},
         "ontoexplorer.purge_version_artifacts": {"queue": "write"},
+        "ontoexplorer.backfill_metadata": {"queue": "write"},
     },
     beat_schedule={
         "poll-for-updates-hourly": {
@@ -1524,3 +1525,52 @@ def refresh_reuse(version_id: str, ontology_id: str) -> dict:
     }
 
 
+
+
+@celery_app.task(name="ontoexplorer.backfill_metadata")
+def backfill_metadata() -> dict:
+    """Re-derive FAIR metadata for every non-deprecated version into the metadata
+    store.
+
+    Runs on the write queue (worker-heavy is the sole RW opener of the metadata
+    store). Used to repopulate after the Fuseki -> in-process-store migration:
+    the DCAT/VoID/PROV records are regenerable from Postgres + the content store,
+    so nothing was lost by dropping Fuseki's TDB2. Idempotent — write_version_metadata
+    clears each version's records before rewriting.
+    """
+    import asyncio
+
+    from sqlalchemy import select
+
+    from ontoexplorer.database import make_celery_db_session
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    from ontoexplorer.modules.ingestion.pipeline import _write_fair_metadata
+    from ontoexplorer.modules.ingestion.source_resolver import ResolvedSource, SourceMode
+
+    async def _run() -> dict:
+        attempted = 0
+        async with make_celery_db_session()() as db:
+            rows = (await db.execute(
+                select(OntologyVersion, Ontology)
+                .join(Ontology, Ontology.id == OntologyVersion.ontology_id)
+                .where(OntologyVersion.status.notin_(("deprecated", "failed", "pending")))
+            )).all()
+            for version, ont in rows:
+                # source is only used for the PROV activity's source URL + mode;
+                # the content the builders read comes from the Oxigraph store.
+                source = ResolvedSource(
+                    data=b"", content_type=None,
+                    final_url=version.source_url,
+                    mode=SourceMode.URL if version.source_url else SourceMode.BYTES,
+                )
+                await _write_fair_metadata(
+                    ontology_id=ont.id, version_id=version.id,
+                    ontology_iri=ont.iri, version=version, source=source,
+                    triple_count=version.triple_count or 0,
+                )
+                attempted += 1
+        return {"attempted": attempted}
+
+    result = asyncio.run(_run())
+    log.info("backfill_metadata_complete", **result)
+    return result
