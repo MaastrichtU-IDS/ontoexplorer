@@ -146,3 +146,33 @@ def graph_exists(ontology_id: str, version_id: str) -> bool:
     store = get_store()
     iri = graph_iri(ontology_id, version_id)
     return pyoxigraph.NamedNode(iri) in store
+
+
+_RDFS_SUBCLASSOF = pyoxigraph.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
+
+
+def inferred_subclass_page(
+    store: pyoxigraph.Store, inferred_iri: str, offset: int, limit: int
+) -> list[dict]:
+    """One page of inferred ``rdfs:subClassOf`` axioms from the :inferred graph.
+
+    Scans the predicate-bound index (``?s rdfs:subClassOf ?o`` in the given graph)
+    and takes the ``[offset:offset+limit]`` window, so a page costs O(offset+limit)
+    reads. The old caller sorted the whole graph with SPARQL ``ORDER BY`` before
+    paging, which was >59 s on sphn's 404k-triple :inferred graph.
+
+    Only IRI–IRI pairs are returned (matching the old ``FILTER(isIRI && isIRI)``).
+    Order is the store's stable index order — deterministic across requests, since
+    the :inferred graph is immutable once reasoning has written it — not alphabetical.
+    """
+    from itertools import islice
+
+    graph = pyoxigraph.NamedNode(inferred_iri)
+    quads = store.quads_for_pattern(None, _RDFS_SUBCLASSOF, None, graph)
+    iri_pairs = (
+        {"subClass": q.subject.value, "superClass": q.object.value}
+        for q in quads
+        if isinstance(q.subject, pyoxigraph.NamedNode)
+        and isinstance(q.object, pyoxigraph.NamedNode)
+    )
+    return list(islice(iri_pairs, offset, offset + limit))
