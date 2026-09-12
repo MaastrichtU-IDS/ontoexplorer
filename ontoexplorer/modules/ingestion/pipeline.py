@@ -9,7 +9,7 @@ Steps:
   4. Deduplicate (SHA-256 content hash)
   5. Store artifact in MinIO
   6. Load asserted triples into Oxigraph
-  7. (Phase 3) Extract FAIR metadata → Fuseki
+  7. (Phase 3) Extract FAIR metadata → metadata store
   8. Queue reasoning job (stub)
   9. Queue search indexing (stub)
   10. Deliver webhooks (stub)
@@ -35,7 +35,7 @@ from ontoexplorer.clients.oxigraph import bulk_load_bytes, load_graph
 from ontoexplorer.models.db import Ontology, OntologyImport, OntologyVersion
 from ontoexplorer.modules.metadata.dcat import build_dcat_record
 from ontoexplorer.modules.metadata.prov import build_ingestion_activity
-from ontoexplorer.modules.metadata.fuseki_writer import write_version_metadata
+from ontoexplorer.modules.metadata.metadata_writer import write_version_metadata
 from ontoexplorer.modules.metadata.void import compute_void_stats_sparql
 from ontoexplorer.modules.ingestion.deduplicator import compute_sha256_bytes
 from ontoexplorer.modules.ingestion.format_detect import OntologyFormat, detect_format
@@ -253,7 +253,7 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
 
     await db.commit()
 
-    # ── Step 7: Extract FAIR metadata → Fuseki ────────────────────────────────
+    # ── Step 7: Extract FAIR metadata → metadata store ────────────────────────────────
     ontology_iri = canonical_iri or provisional_iri
     await _write_fair_metadata(
         ontology_id=ontology_id,
@@ -444,7 +444,7 @@ async def _write_fair_metadata(
     source: ResolvedSource,
     triple_count: int,
 ) -> None:
-    """Compute VoID stats via SPARQL, build DCAT + PROV-O graphs, write to Fuseki."""
+    """Compute VoID stats via SPARQL, build DCAT + PROV-O graphs, write to the metadata store."""
     # dcat:downloadURL is the app's own download route, not a presigned MinIO
     # URL. Presigned URLs expire in an hour, so a catalogue record built from one
     # advertises a dead link for the rest of its life -- and reaching the object
@@ -484,7 +484,7 @@ async def _write_fair_metadata(
         await write_version_metadata(ontology_id, version_id, dcat_graph, prov_graph)
     except Exception as exc:
         # Metadata is written fire-and-forget: ingestion still succeeds. Log at
-        # error level so it surfaces -- a silent warning here left Fuseki empty
+        # error level so it surfaces -- a silent warning here left the metadata store empty
         # across every ingest without anything flagging it.
         log.error("fair_metadata_failed", version_id=version_id, error=str(exc), exc_info=True)
 

@@ -935,7 +935,7 @@ export interface AdminServiceStatus {
   redis: string
   minio: string
   elk: string
-  fuseki: string
+  metadata_store: string
   oxigraph: string
   workers: string
   beat: string

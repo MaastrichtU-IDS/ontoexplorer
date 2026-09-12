@@ -55,19 +55,13 @@ async def _check_elk() -> str:
         return f"error: {exc}"
 
 
-async def _check_fuseki() -> str:
-    """Ping the Jena Fuseki SPARQL endpoint.
-
-    Fuseki's /$/ping lives at the server root, so we strip any dataset path
-    (e.g. /fuseki) from the configured endpoint before pinging.
-    """
-    from urllib.parse import urlsplit, urlunsplit
-    parts = urlsplit(get_settings().fuseki_endpoint)
-    root = urlunsplit((parts.scheme, parts.netloc, "", "", ""))
+def _check_metadata_store() -> str:
+    """Open the embedded metadata store (read-only in the API) and assert it is
+    readable. Replaced the Fuseki HTTP ping when metadata moved in-process."""
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(f"{root}/$/ping")
-        return "ok" if resp.status_code == 200 else f"error: HTTP {resp.status_code}"
+        from ontoexplorer.clients.metadata_store import get_metadata_store
+        get_metadata_store().query("ASK {}")  # forces a RocksDB read
+        return "ok"
     except Exception as exc:
         return f"error: {exc}"
 
@@ -171,7 +165,7 @@ async def admin_overview(
         redis_status,
         minio_status,
         elk_status,
-        fuseki_status,
+        metadata_store_status,
         oxigraph_status,
         workers_status,
         beat_status,
@@ -181,7 +175,7 @@ async def admin_overview(
         asyncio.to_thread(_check_redis),
         _check_minio(),
         _check_elk(),
-        _check_fuseki(),
+        asyncio.to_thread(_check_metadata_store),
         asyncio.to_thread(_check_oxigraph),
         asyncio.to_thread(_check_workers),
         asyncio.to_thread(_check_beat),
@@ -322,7 +316,7 @@ async def admin_overview(
             "redis": redis_status,
             "minio": minio_status,
             "elk": elk_status,
-            "fuseki": fuseki_status,
+            "metadata_store": metadata_store_status,
             "oxigraph": oxigraph_status,
             "workers": workers_status,
             "beat": beat_status,

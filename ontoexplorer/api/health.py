@@ -1,4 +1,6 @@
 
+import asyncio
+
 import httpx
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
@@ -53,27 +55,15 @@ async def ready():
         checks["postgres"] = f"error: {exc}"
         healthy = False
 
-    # Fuseki
-    # Require a parseable SPARQL result, not merely a non-5xx status. A wrong
-    # dataset path answers 404/405, which read as healthy under a `< 500` rule
-    # and hid a totally unreachable metadata store.
+    # Metadata store (embedded pyoxigraph, replaced Fuseki): open it and run a
+    # trivial ASK. Off the event loop — pyoxigraph is synchronous.
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(
-                f"{settings.fuseki_endpoint}{settings.fuseki_sparql_path}",
-                params={"query": "SELECT * WHERE { ?s ?p ?o } LIMIT 1"},
-                headers={"Accept": "application/sparql-results+json"},
-            )
-        if resp.status_code != 200:
-            checks["fuseki"] = f"error: HTTP {resp.status_code} from {settings.fuseki_endpoint}{settings.fuseki_sparql_path}"
-            healthy = False
-        elif "results" not in resp.json():
-            checks["fuseki"] = "error: endpoint did not return SPARQL results"
-            healthy = False
-        else:
-            checks["fuseki"] = "ok"
+        from ontoexplorer.clients.metadata_store import get_metadata_store
+
+        await asyncio.to_thread(lambda: get_metadata_store().query("ASK {}"))
+        checks["metadata_store"] = "ok"
     except Exception as exc:
-        checks["fuseki"] = f"error: {exc}"
+        checks["metadata_store"] = f"error: {exc}"
         healthy = False
 
     # MinIO (check if endpoint is reachable)
