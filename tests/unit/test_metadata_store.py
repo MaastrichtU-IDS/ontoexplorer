@@ -62,3 +62,14 @@ async def test_query_sees_only_this_store(store):
     await store.insert_turtle("<urn:a> <urn:p> <urn:o> .", graph_iri="urn:meta")
     res = store.get_metadata_store().query("ASK { GRAPH <urn:meta> { <urn:a> ?p ?o } }")
     assert bool(res) is True
+
+
+def test_ro_open_of_uninitialised_store_serves_empty(tmp_path, monkeypatch):
+    """A fresh deploy has no on-disk store until the first write. The API's
+    read-only open must serve an empty store, not 500, until then."""
+    monkeypatch.setattr(get_settings(), "metadata_store_path", str(tmp_path / "never-written"), raising=False)
+    monkeypatch.setattr(get_settings(), "oxigraph_read_only", True, raising=False)
+    monkeypatch.setattr(metadata_store, "_store", None)
+    monkeypatch.setattr(metadata_store, "_ro_store", None)
+    s = metadata_store.get_metadata_store()          # must NOT raise
+    assert bool(s.query("ASK { ?s ?p ?o }")) is False  # empty -> false, no error

@@ -444,3 +444,12 @@ async def admin_clear_jobs(
     )
     await db.commit()
     return {"deleted": result.rowcount or 0}
+
+
+@router.post("/metadata/backfill", summary="Re-derive FAIR metadata for all versions into the metadata store")
+async def admin_backfill_metadata(_: User = Depends(_require_admin)):
+    """Queue a one-shot backfill that regenerates DCAT/VoID/PROV for every
+    non-deprecated version. Used after the Fuseki -> in-process-store migration."""
+    from ontoexplorer.modules.jobs.tasks import backfill_metadata
+    task = backfill_metadata.delay()
+    return {"status": "queued", "task_id": task.id}
