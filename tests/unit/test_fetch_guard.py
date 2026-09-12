@@ -228,3 +228,68 @@ async def test_async_redirect_into_internal_is_blocked():
     async with httpx.AsyncClient(transport=t, follow_redirects=True) as c:
         with pytest.raises(SsrfBlocked, match="non-public"):
             await c.get("https://public.example/start")
+
+
+# ── proxy awareness (regression: transport= bypassed env proxy, breaking
+#    external ingestion in egress-locked namespaces) ──────────────────────────
+
+def test_external_host_is_proxied_by_hostname_not_pinned():
+    """A public host must go through the proxy transport WITH its hostname intact
+    (the proxy's allow-list matches names) — not pinned to an IP, not sent direct."""
+    direct_hit = {"n": 0}
+    proxy_seen = {}
+
+    def direct_handler(request):
+        direct_hit["n"] += 1
+        return httpx.Response(200, content=b"DIRECT (wrong)")
+
+    def proxy_handler(request):
+        proxy_seen["host"] = request.url.host
+        return httpx.Response(200, content=b"ok")
+
+    t = GuardedTransport(
+        inner=httpx.MockTransport(direct_handler),
+        proxy_inner=httpx.MockTransport(proxy_handler),
+        proxy_url="http://egress-proxy:3128",
+        resolver=_resolver({"purl.obolibrary.org": ["93.184.216.34"]}),
+    )
+    with httpx.Client(transport=t) as c:
+        r = c.get("http://purl.obolibrary.org/obo/bfo.owl")
+    assert r.status_code == 200
+    assert direct_hit["n"] == 0, "external request went direct, bypassing the proxy"
+    assert proxy_seen["host"] == "purl.obolibrary.org", "proxy must see the hostname, not a pinned IP"
+
+
+def test_internal_target_still_blocked_even_with_a_proxy():
+    """Validation runs on the proxy path too: an internal-resolving host is refused
+    before it can reach either the proxy or a direct socket."""
+    t = GuardedTransport(
+        inner=httpx.MockTransport(lambda r: httpx.Response(200)),
+        proxy_inner=httpx.MockTransport(lambda r: httpx.Response(200, content=b"SHOULD NOT REACH")),
+        proxy_url="http://egress-proxy:3128",
+        resolver=_resolver({"evil.example": ["10.0.0.5"]}),
+    )
+    with httpx.Client(transport=t) as c:
+        with pytest.raises(SsrfBlocked):
+            c.get("http://evil.example/x")
+
+
+def test_no_proxy_host_goes_direct_and_pinned(monkeypatch):
+    """A host matched by NO_PROXY bypasses the proxy and uses the pinned direct path."""
+    monkeypatch.setenv("NO_PROXY", ".svc.cluster.local,localhost")
+    captured = {}
+
+    def direct_handler(request):
+        captured["host"] = request.url.host
+        return httpx.Response(200, content=b"ok")
+
+    t = GuardedTransport(
+        inner=httpx.MockTransport(direct_handler),
+        proxy_inner=httpx.MockTransport(lambda r: httpx.Response(200, content=b"PROXY (wrong)")),
+        proxy_url="http://egress-proxy:3128",
+        resolver=_resolver({"thing.svc.cluster.local": ["93.184.216.34"]}),  # pretend-public for the test
+    )
+    with httpx.Client(transport=t) as c:
+        r = c.get("http://thing.svc.cluster.local/x")
+    assert r.status_code == 200
+    assert captured["host"] == "93.184.216.34", "NO_PROXY host should go direct and be pinned to the IP"
