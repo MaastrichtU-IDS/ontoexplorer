@@ -4,7 +4,7 @@ import logging
 
 import rdflib
 
-from ontoexplorer.clients.metadata_store import delete_graph, insert_turtle, sparql_update
+from ontoexplorer.clients.metadata_store import delete_graph, flush, insert_turtle, sparql_update
 from ontoexplorer.clients.sparql_iri import is_safe_iri
 from ontoexplorer.config import get_settings
 from ontoexplorer.modules.metadata.dcat import dcat_subject_iris
@@ -109,6 +109,7 @@ async def write_version_metadata(
     # Insert provenance, likewise replacing this version's previous activity.
     await _drop_subjects(PROV_GRAPH, prov_graph, app_base_url)
     await insert_turtle(prov_ttl, graph_iri=PROV_GRAPH)
+    await flush()  # make the writes visible to the API's read-only secondary
     logger.info("Wrote PROV-O activity for version %s to the metadata store", version_id)
 
 
@@ -141,4 +142,5 @@ async def delete_version_metadata(ontology_id: str, version_id: str) -> None:
     await _drop_subject_iris(META_GRAPH, dcat_subject_iris(ontology_id, version_id, app_base_url))
     await _drop_subject_iris(PROV_GRAPH, prov_subject_iris(version_id, app_base_url))
 
+    await flush()  # make the deletes visible to the API's read-only secondary
     logger.info("Deleted metadata for version %s", version_id)

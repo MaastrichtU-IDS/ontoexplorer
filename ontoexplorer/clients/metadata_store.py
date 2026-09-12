@@ -96,3 +96,16 @@ async def delete_graph(graph_iri: str) -> None:
     """Drop all triples in a named graph. Idempotent (no error if absent),
     matching the old ``DROP SILENT GRAPH``."""
     await asyncio.to_thread(get_metadata_store().remove_graph, pyoxigraph.NamedNode(graph_iri))
+
+
+async def flush() -> None:
+    """Flush the memtable to on-disk SSTs so the API's read-only secondary sees
+    the writes.
+
+    Metadata writes are tiny (tens of triples), so RocksDB never fills a memtable
+    and never auto-flushes — meaning a separate read-only process (the API) opening
+    the store would not see freshly-written metadata until the writer restarted.
+    The content store avoids this only because its writes are large enough to
+    flush on their own. Call this after each version's metadata is written.
+    """
+    await asyncio.to_thread(get_metadata_store().flush)
