@@ -2906,38 +2906,25 @@ async def list_inferred(
     Returns 404 if reasoning has not yet completed.
     """
     await _get_version_or_404(db, ontology_id, version_id)
-    from ontoexplorer.clients.oxigraph import get_store, graph_iri
+    from ontoexplorer.clients.oxigraph import get_store, graph_iri, inferred_subclass_page
 
     store = get_store()
     inferred_iri = graph_iri(ontology_id, version_id, inferred=True)
 
-    query = f"""
-        PREFIX owl: <http://www.w3.org/2002/07/owl#>
-        PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-        SELECT ?sub ?sup WHERE {{
-            GRAPH <{inferred_iri}> {{ ?sub rdfs:subClassOf ?sup . FILTER(isIRI(?sub) && isIRI(?sup)) }}
-        }}
-        ORDER BY ?sub ?sup
-        LIMIT {limit} OFFSET {offset}
-    """
-    # Off the event loop. This was the one Oxigraph query in the API still run
-    # inline in an async handler, and it is the expensive shape: ORDER BY over a
-    # whole :inferred graph, which is 404k triples on sphn. The route is
-    # anonymous, the api Deployment is replicas: 1, and its readiness probe is a
-    # tcpSocket check — the socket stays open while the loop is stalled, so
-    # Kubernetes never restarts it. One unauthenticated request degraded
-    # everything else served by the process.
+    # Off the event loop, and scanning the predicate index rather than sorting the
+    # whole graph — see inferred_subclass_page. The old ORDER-BY-then-page shape
+    # was >59 s on sphn's 404k-triple :inferred graph; the api is one process and
+    # a tcpSocket readiness probe won't restart a stalled loop.
     import asyncio as _asyncio
 
-    def _run() -> list:
+    def _run() -> list[dict]:
         try:
-            return list(store.query(query))
+            return inferred_subclass_page(store, inferred_iri, offset, limit)
         except Exception:
             return []
 
-    results = await _asyncio.to_thread(_run)
+    axioms = await _asyncio.to_thread(_run)
 
-    axioms = [{"subClass": r["sub"].value, "superClass": r["sup"].value} for r in results]
     return {
         "version_id": version_id,
         "ontology_id": ontology_id,
