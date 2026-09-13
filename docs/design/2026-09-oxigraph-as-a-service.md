@@ -153,3 +153,37 @@ same image works both ways — the spike just sets the env var on the perf API.
 
 Step 0 (above) already proved the server reads the volume and answers query+update
 over HTTP, so this refactor is the remaining risk, and it's bounded to the list above.
+
+## Update (2026-09-13): read surface done; write path must also go HTTP
+
+**Shipped:** the whole API **read** surface now routes to an HTTP server behind
+flags, with zero call-site churn:
+- `clients/oxigraph.py` `_HttpStoreProxy` (returned by `get_store()` when
+  `OXIGRAPH_HTTP_ENDPOINT` is set) covers `.query()`, `.quads_for_pattern()` (native
+  Quads), `__len__` — the ~34+24 read sites. (#133 content SPARQL passthrough, #134 proxy.)
+- `clients/metadata_store.py` `_HttpMetadataProxy` for `/sparql`. (#135.)
+- All validated live against `ghcr.io/oxigraph/oxigraph:0.5.8`; embedded mode unchanged.
+
+**Constraint found:** `oxigraph serve-read-only` documents that *"opening as
+read-only while another process writes the database is undefined behavior."* So
+the tempting Option B — worker keeps the embedded RW store, a `serve-read-only`
+server answers the API's reads off the same volume — is **unsafe**. (The current
+embedded model's API RO-secondary-alongside-writer is the same shape and works in
+practice, but building a new architecture on documented UB is wrong.)
+
+**Therefore the server must be the sole opener (RW `serve`), and the write path
+must also go through HTTP** — the piece deferred until now:
+- Route the *centralised* write functions in `clients/oxigraph.py` — `load_graph`,
+  `bulk_load_bytes`, `append_bytes_to_graph`, `delete_graph` — to the server:
+  bulk RDF load via `POST {endpoint}/store?graph=<g>`, drops via `POST /update`
+  (`DROP GRAPH`). Because writes are centralised in these functions, this is
+  bounded (a handful of functions), not per-call-site — provided pipeline/tasks
+  don't call `store.add()/load()` directly (to audit).
+- In server mode `get_store()` for workers returns the read proxy (for their
+  `.query()` reads); their writes go through the routed write functions. The
+  `-Q write --concurrency=1` constraint can relax (the server serialises).
+
+**Revised remaining bricks:** (1) write path → HTTP [bounded, next]; (2) perf
+namespace with a single RW `oxigraph serve` (content) + one for metadata, api
+`replicas:3` with no mounts/pin, workers pointed at the servers; (3) measure read
+scaling vs the ~630 rps single-pod baseline.
