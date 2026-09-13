@@ -199,7 +199,7 @@ export function ReasonerProfilesPanel() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
         <p style={{ fontSize: 13, color: 'var(--text-dim)', margin: 0, maxWidth: 640 }}>
           Named reasoner configurations. Each profile picks a reasoner and its parameters; mark a profile
           <em> selectable</em> to offer it in the user dashboard when adding an ontology. Deleting a profile

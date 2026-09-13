@@ -373,7 +373,7 @@ export function ScopeToolbar({ onScopeChange, onCopy, onOntologyAdded, onSelecti
             const setSideMode = side === 'from' ? setFromMode : setToMode
 
             return (
-              <div key={side} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div key={side} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 11, color: 'var(--text-dim)', minWidth: 36 }}>
                   {side === 'from' ? 'From:' : 'To:'}
                 </span>

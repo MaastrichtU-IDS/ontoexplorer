@@ -21,7 +21,7 @@ export default function Stats() {
 
       <UsageTimeseriesWidget />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', marginBottom: '1.25rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
         <StatCard label="Total ontologies" value={data?.total_ontologies ?? 0} />
         <StatCard label="Total versions" value={data?.total_versions ?? 0} />
         <StatCard label="Storage used" value={formatBytes(data?.storage_bytes ?? 0)} />
@@ -69,7 +69,7 @@ function UsageSection() {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
         <DualStatCard label="Views" counts={data?.totals.views} />
         <DualStatCard label="Downloads" counts={data?.totals.downloads} />
       </div>

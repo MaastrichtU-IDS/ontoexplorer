@@ -36,7 +36,7 @@ function OntologySearchPane({ oid, submitted, navigate }: { oid: string; submitt
           onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
           onMouseLeave={e => (e.currentTarget.style.background = 'var(--bg-secondary)')}
         >
-          <span style={{ color: 'var(--accent)', fontWeight: 500, flex: 1 }}>{r.label}</span>
+          <span style={{ color: 'var(--accent)', fontWeight: 500, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
           <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{r.short}</span>
           <span style={{ color: 'var(--text-dim)', fontSize: 10 }}>{oid}</span>
           <span style={{
@@ -69,13 +69,13 @@ export default function Search() {
         MOS Expression Search
       </h1>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: '1.5rem', alignItems: 'flex-start' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: '1.5rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <OntologyPicker
           value={selectedOids}
           onChange={setSelectedOids}
           placeholder="Select ontologies…"
         />
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: 240 }}>
           <SearchBar
             ontologyId={firstOid}
             versionId={firstVid}

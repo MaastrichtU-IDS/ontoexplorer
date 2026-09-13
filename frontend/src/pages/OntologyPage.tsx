@@ -1203,7 +1203,7 @@ export default function OntologyPage() {
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
           {/* Tab bar */}
           <div style={{
-            display: 'flex', borderBottom: '1px solid var(--border)',
+            display: 'flex', overflowX: 'auto', borderBottom: '1px solid var(--border)',
             background: 'var(--bg-secondary)', flexShrink: 0,
           }}>
             {(['info', 'profile', 'history', 'coverage', 'owl-profile', 'reuse'] as const).map(tab => (
@@ -1211,7 +1211,7 @@ export default function OntologyPage() {
                 key={tab}
                 onClick={() => setDetailTab(tab)}
                 style={{
-                  padding: '8px 16px', border: 'none', cursor: 'pointer', fontSize: 12,
+                  padding: '8px 16px', border: 'none', cursor: 'pointer', fontSize: 12, flexShrink: 0,
                   background: detailTab === tab ? 'var(--bg)' : 'transparent',
                   color: detailTab === tab ? 'var(--text)' : 'var(--text-dim)',
                   borderBottom: detailTab === tab ? '2px solid var(--accent)' : '2px solid transparent',

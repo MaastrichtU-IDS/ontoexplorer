@@ -127,11 +127,11 @@ function ShortnameEditor({ ontology }: { ontology: Ontology }) {
 
   return (
     <span style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-      <span style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+      <span style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', flexWrap: 'wrap' }}>
         <input autoFocus value={value} onChange={e => setValue(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
           placeholder="my-ontology"
-          style={{ fontSize: 'var(--font-size-sm)', padding: '0.15rem 0.4rem', width: '12rem' }} />
+          style={{ fontSize: 'var(--font-size-sm)', padding: '0.15rem 0.4rem', width: '100%', maxWidth: '12rem' }} />
         <button onClick={commit} disabled={save.isPending} style={{ fontSize: 'var(--font-size-sm)', color: 'var(--accent)' }}>
           {save.isPending ? '…' : 'save'}
         </button>
@@ -175,11 +175,11 @@ function TitleEditor({ ontology }: { ontology: Ontology }) {
 
   return (
     <span style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-      <span style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+      <span style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', flexWrap: 'wrap' }}>
         <input autoFocus value={value} onChange={e => setValue(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
           placeholder="My Ontology"
-          style={{ fontSize: 'var(--font-size-sm)', padding: '0.15rem 0.4rem', width: '18rem' }} />
+          style={{ fontSize: 'var(--font-size-sm)', padding: '0.15rem 0.4rem', width: '100%', maxWidth: '18rem' }} />
         <button onClick={commit} disabled={save.isPending} style={{ fontSize: 'var(--font-size-sm)', color: 'var(--accent)' }}>
           {save.isPending ? '…' : 'save'}
         </button>
@@ -369,7 +369,7 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
       <td style={{ padding: '0.75rem 1rem', verticalAlign: 'top' }}>
 
         {/* Two-column layout: content (left) · status + delete (right) */}
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
 
           {/* Left: name, fields, date, stats, download */}
           <div style={{ flex: 1, minWidth: 0 }}>

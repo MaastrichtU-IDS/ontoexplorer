@@ -276,7 +276,7 @@ function EntityRow({
             <div>
               <div style={{ color: 'var(--blue)', fontSize: 9, textTransform: 'uppercase', fontWeight: 'bold', marginBottom: 4 }}>Literal changes</div>
               {literalChanges.map((lc, i) => (
-                <div key={i} style={{ fontSize: 10, marginBottom: 4 }}>
+                <div key={i} style={{ fontSize: 10, marginBottom: 4, wordBreak: 'break-word' }}>
                   <div style={{ color: 'var(--text-dim)' }}>
                     {lc.predicate}{lc.lang ? ` @${lc.lang}` : ''}
                   </div>

@@ -84,7 +84,7 @@ export default function Webhooks() {
           marginBottom: '1.25rem',
         }}>
           <form onSubmit={e => { e.preventDefault(); create.mutate() }}>
-            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
               <input
                 value={url}
                 onChange={e => setUrl(e.target.value)}
@@ -137,9 +137,9 @@ export default function Webhooks() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           {(data?.webhooks ?? []).map((wh: Webhook) => (
             <div key={wh.id} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
-              <div style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{ padding: '0.75rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <code style={{ fontSize: 'var(--font-size-base)', color: 'var(--text)' }}>{wh.url}</code>
+                  <code style={{ fontSize: 'var(--font-size-base)', color: 'var(--text)', wordBreak: 'break-all' }}>{wh.url}</code>
                   <div style={{ marginTop: '0.25rem', display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
                     {wh.events.map(ev => (
                       <span key={ev} style={{
@@ -192,7 +192,8 @@ export default function Webhooks() {
                   {!deliveries?.deliveries.length ? (
                     <p style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>No deliveries yet.</p>
                   ) : (
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-size-sm)' }}>
+                    <div style={{ overflowX: 'auto' }}>
+                    <table style={{ minWidth: 520, width: '100%', borderCollapse: 'collapse', fontSize: 'var(--font-size-sm)' }}>
                       <thead>
                         <tr>
                           {['Event', 'Status', 'HTTP', 'Attempts', 'Last attempt'].map(h => (
@@ -214,6 +215,7 @@ export default function Webhooks() {
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   )}
                 </div>
               )}

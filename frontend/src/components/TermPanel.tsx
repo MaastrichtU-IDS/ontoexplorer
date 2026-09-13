@@ -1409,7 +1409,7 @@ function AssertionsSection({
             const displayVals = [...iris, ...filteredLiterals]
             return (
               <tr key={pred} style={{ borderBottom: '1px solid var(--overlay)', verticalAlign: 'top' }}>
-                <td style={{ padding: '4px 10px 4px 0', color: 'var(--text-dim)', whiteSpace: 'nowrap', width: 1, fontSize: 11 }}
+                <td style={{ padding: '4px 10px 4px 0', color: 'var(--text-dim)', whiteSpace: 'normal', wordBreak: 'break-word', maxWidth: 160, fontSize: 11 }}
                     title={pred}>
                   {displayLabel}
                 </td>
@@ -1477,7 +1477,7 @@ function AnnotationsSection({
               const displayVals = [...iris, ...filteredLiterals]
               return (
                 <tr key={pred} style={{ borderBottom: '1px solid var(--overlay)', verticalAlign: 'top' }}>
-                  <td style={{ padding: '4px 10px 4px 0', color: 'var(--text-dim)', whiteSpace: 'nowrap', width: 1, fontSize: 11 }}
+                  <td style={{ padding: '4px 10px 4px 0', color: 'var(--text-dim)', whiteSpace: 'normal', wordBreak: 'break-word', maxWidth: 160, fontSize: 11 }}
                       title={pred}>
                     {displayLabel}
                   </td>
