@@ -154,6 +154,32 @@ async def sparql_metadata(request: Request):
 @router.get("/sparql/content", summary="SPARQL 1.1 over Oxigraph content store (asserted triples)")
 @router.post("/sparql/content")
 async def sparql_content(request: Request):
+    endpoint = get_settings().oxigraph_http_endpoint
+    if endpoint:
+        # Oxigraph-as-a-service mode: proxy to the HTTP server so the API needs no
+        # embedded RocksDB mount. Same guard as embedded; the server serialises.
+        try:
+            query, accept = await _extract_query_and_accept(request)
+            _check_query_guard(query)
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"detail": str(exc)})
+        default_graph_uris, named_graph_uris = await _extract_dataset_uris(request)
+        from ontoexplorer.clients.oxigraph import content_query_http
+
+        metrics.sparql_requests_total.labels(endpoint="oxigraph-http", method=request.method).inc()
+        t0 = time.monotonic()
+        try:
+            body, ctype = await content_query_http(
+                query, accept, endpoint, default_graph_uris, named_graph_uris,
+                timeout=get_settings().sparql_query_timeout_seconds,
+            )
+            return Response(content=body, media_type=ctype)
+        except Exception as exc:
+            metrics.sparql_errors_total.labels(endpoint="oxigraph-http").inc()
+            return JSONResponse(status_code=502, content={"detail": f"content SPARQL server error: {exc}"})
+        finally:
+            metrics.sparql_latency_seconds.labels(endpoint="oxigraph-http").observe(time.monotonic() - t0)
+
     from ontoexplorer.clients.oxigraph import get_store
 
     return await _serve_sparql(request, get_store(), "oxigraph")

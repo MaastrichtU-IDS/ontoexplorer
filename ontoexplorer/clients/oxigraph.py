@@ -176,3 +176,44 @@ def inferred_subclass_page(
         and isinstance(q.object, pyoxigraph.NamedNode)
     )
     return list(islice(iri_pairs, offset, offset + limit))
+
+
+async def content_query_http(
+    query: str,
+    accept: str,
+    endpoint: str,
+    default_graph_uris: list[str] | None = None,
+    named_graph_uris: list[str] | None = None,
+    timeout: float = 30.0,
+) -> tuple[bytes, str]:
+    """Proxy a content SPARQL *query* to an `oxigraph serve` HTTP endpoint.
+
+    Used by the API when OXIGRAPH_HTTP_ENDPOINT is set, so the API needs no
+    embedded RocksDB mount (see docs/design/2026-09-oxigraph-as-a-service.md).
+    The server serialises per the Accept header, so we return its bytes directly.
+
+    trust_env=False: the endpoint is an in-cluster Service, reached directly — it
+    must not go through the egress proxy, and there is no untrusted host here to
+    guard (unlike the ingestion fetch path).
+    """
+    from urllib.parse import urlencode
+
+    import httpx
+
+    # SPARQL protocol: query + dataset URIs form-encoded in the body. Encoded
+    # explicitly to bytes (repeated keys for multiple graph URIs).
+    params: list[tuple[str, str]] = [("query", query)]
+    for u in (default_graph_uris or []):
+        params.append(("default-graph-uri", u))
+    for u in (named_graph_uris or []):
+        params.append(("named-graph-uri", u))
+    body = urlencode(params).encode()
+
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        resp = await client.post(
+            endpoint.rstrip("/") + "/query",
+            content=body,
+            headers={"Accept": accept, "Content-Type": "application/x-www-form-urlencoded"},
+        )
+        resp.raise_for_status()
+        return resp.content, resp.headers.get("content-type", "application/sparql-results+json")
