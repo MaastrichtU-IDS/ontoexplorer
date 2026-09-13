@@ -74,19 +74,29 @@ def _check_query_guard(query: str) -> None:
         raise ValueError("SPARQL SERVICE (federation) is not permitted on this endpoint")
 
 
+def _pick_format(accept: str, formats, default):
+    """Resolve an Accept media type to a pyoxigraph format, else the default.
+
+    from_media_type RETURNS None (it does not raise) for an unrecognised or
+    wildcard type like ``*/*`` or ``text/html`` — the default Accept a browser or
+    a plain client sends. The previous ``except``-only fallback missed that None,
+    leaving format=None and making serialize() raise "format parameter is
+    required" — a 400 for every request without a precise SPARQL Accept header.
+    """
+    try:
+        fmt = formats.from_media_type(accept)
+    except (ValueError, KeyError):
+        fmt = None
+    return fmt if fmt is not None else default
+
+
 def _serialize_result(result, primary_accept: str) -> tuple[bytes, str]:
     if isinstance(result, bool):
         return json.dumps({"head": {}, "boolean": result}).encode(), pyoxigraph.QueryResultsFormat.JSON.media_type
     if isinstance(result, pyoxigraph.QueryTriples):
-        try:
-            fmt = pyoxigraph.RdfFormat.from_media_type(primary_accept)
-        except (ValueError, KeyError):
-            fmt = pyoxigraph.RdfFormat.TURTLE
+        fmt = _pick_format(primary_accept, pyoxigraph.RdfFormat, pyoxigraph.RdfFormat.TURTLE)
         return result.serialize(format=fmt), fmt.media_type
-    try:
-        fmt = pyoxigraph.QueryResultsFormat.from_media_type(primary_accept)
-    except (ValueError, KeyError):
-        fmt = pyoxigraph.QueryResultsFormat.JSON
+    fmt = _pick_format(primary_accept, pyoxigraph.QueryResultsFormat, pyoxigraph.QueryResultsFormat.JSON)
     return result.serialize(format=fmt), fmt.media_type
 
 
