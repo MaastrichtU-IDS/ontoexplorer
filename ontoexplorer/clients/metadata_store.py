@@ -44,11 +44,29 @@ _RO_STORE_TTL: float = 60.0
 _TURTLE = pyoxigraph.RdfFormat.TURTLE
 
 
+class _HttpMetadataProxy:
+    """Read-only HTTP stand-in for the metadata store (query only — the API's only
+    metadata read is /sparql). Lets the API run without the metadata volume mount
+    when METADATA_HTTP_ENDPOINT is set. Mirrors clients.oxigraph._HttpStoreProxy."""
+
+    def __init__(self, endpoint: str) -> None:
+        self._ep = endpoint
+
+    def query(self, query, default_graph=None, named_graphs=None):
+        from ontoexplorer.clients.oxigraph import _http_query
+        dg = [n.value for n in default_graph] if default_graph else None
+        ng = [n.value for n in named_graphs] if named_graphs else None
+        return _http_query(self._ep, query, dg, ng)
+
+
 def get_metadata_store() -> pyoxigraph.Store:
     """The metadata store: read-write in the worker, a refreshed read-only
-    secondary in the API (mirrors ``clients.oxigraph.get_store``)."""
+    secondary in the API (mirrors ``clients.oxigraph.get_store``) — or the HTTP
+    proxy when METADATA_HTTP_ENDPOINT is set (oxigraph-as-a-service)."""
     global _store, _ro_store, _ro_store_opened_at
     settings = get_settings()
+    if settings.oxigraph_read_only and settings.metadata_http_endpoint:
+        return _HttpMetadataProxy(settings.metadata_http_endpoint)
     path = settings.metadata_store_path
     Path(path).mkdir(parents=True, exist_ok=True)
     if settings.oxigraph_read_only:

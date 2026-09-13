@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     # `oxigraph serve` server) instead of the embedded RocksDB, so the API can be
     # stateless and scale horizontally. Empty = embedded (current behaviour).
     oxigraph_http_endpoint: str = ""
+    # Metadata store HTTP endpoint (oxigraph-as-a-service; empty = embedded).
+    metadata_http_endpoint: str = ""
 
     # Metadata triplestore (embedded pyoxigraph, replaced Jena Fuseki) — a
     # separate store from the content one; serves /sparql. Same RW/RO model as
