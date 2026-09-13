@@ -92,3 +92,25 @@ caused real incidents.
 Green-light the **spike** (step 1) — it's the only way to get real
 horizontal-scale numbers, and it's reversible (the volume format is unchanged).
 Everything past the spike is contingent on its results.
+
+## Spike step 0 — format/protocol compatibility (validated 2026-09-13)
+
+Before standing up any namespace, the critical assumption was tested locally:
+does `oxigraph serve` read the exact RocksDB directory `pyoxigraph` writes?
+
+- Wrote a store with **pyoxigraph 0.5.8** (a named graph `urn:ontology:o1:v1`),
+  `flush()`, closed it.
+- Ran **`ghcr.io/oxigraph/oxigraph:0.5.8 serve --location <that dir>`**.
+- **Named-graph SPARQL query over HTTP returned the data** — the server reads the
+  binding's on-disk format directly. **No migration; rollback is re-mounting the
+  dir embedded.**
+- **SPARQL UPDATE over HTTP** (`INSERT DATA { GRAPH … }`) returned 204 and the
+  triple was queryable — writers can use the HTTP update endpoint.
+
+So the two load-bearing assumptions (shared on-disk format, HTTP query+update)
+hold. Pin the server image to the pyoxigraph minor version in the manifests.
+
+Remaining spike work (in-cluster): a perf overlay with an `oxigraph-server`
+Deployment owning the volume; a branch pointing `clients/oxigraph.py` at it over
+HTTP for query + writes; api `replicas: 3` with no volume mount / node pin; run
+the read-capacity harness across nodes and compare to single-pod embedded.
