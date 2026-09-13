@@ -100,14 +100,14 @@ def _http_endpoint() -> str | None:
 
 
 def _post_update(endpoint: str, update: str) -> None:
-    import httpx
-    with httpx.Client(timeout=120.0, trust_env=False) as client:
-        r = client.post(
-            f"{endpoint.rstrip('/')}/update",
-            content=update.encode(),
-            headers={"Content-Type": "application/sparql-update"},
-        )
-        r.raise_for_status()
+    from ontoexplorer.clients.oxigraph import _sync_http_client
+    r = _sync_http_client().post(
+        f"{endpoint.rstrip('/')}/update",
+        content=update.encode(),
+        headers={"Content-Type": "application/sparql-update"},
+        timeout=120.0,
+    )
+    r.raise_for_status()
 
 
 async def sparql_update(update: str) -> None:

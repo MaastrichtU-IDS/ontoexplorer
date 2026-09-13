@@ -5,11 +5,13 @@ Stores one named graph per ontology version:
   urn:ontology:{ontology_id}:{version_id}:inferred   — reasoning output (Phase 6)
 """
 
+import asyncio
 import logging
 import time
 from io import BytesIO
 from pathlib import Path
 
+import httpx
 import pyoxigraph
 import rdflib
 
@@ -21,6 +23,38 @@ _store: pyoxigraph.Store | None = None
 _ro_store: pyoxigraph.Store | None = None
 _ro_store_opened_at: float = 0.0
 _RO_STORE_TTL: float = 60.0  # refresh read-only snapshot every 60 s
+
+# Pooled, keep-alive HTTP clients for the oxigraph server (oxigraph-as-a-service).
+# A fresh client per request meant a new TCP+HTTP handshake on every /sparql
+# call — a perf run showed that capping content throughput and *collapsing* it
+# under concurrency (connection churn), while a pooled client held ~1.7 ms/req.
+# One long-lived pooled client per process removes that. httpx.Client is
+# thread-safe, so the sync one is shared across the to_thread/celery threads that
+# drive the store proxy; the async one is bound to the running event loop.
+_HTTP_LIMITS = httpx.Limits(max_keepalive_connections=64, max_connections=256, keepalive_expiry=30.0)
+_sync_http: "tuple[type, httpx.Client] | None" = None
+_async_http: "tuple[tuple, httpx.AsyncClient] | None" = None
+
+
+def _sync_http_client() -> httpx.Client:
+    """Process-wide pooled sync client. Keyed on the httpx.Client class so a test
+    monkeypatch (which swaps the class) transparently rebuilds it."""
+    global _sync_http
+    cls = httpx.Client
+    if _sync_http is None or _sync_http[0] is not cls:
+        _sync_http = (cls, cls(limits=_HTTP_LIMITS, trust_env=False))
+    return _sync_http[1]
+
+
+def _async_http_client() -> httpx.AsyncClient:
+    """Pooled async client for the current event loop. Keyed on (class, loop id)
+    so each uvicorn worker process reuses one, and a per-test loop (or a test
+    monkeypatch) rebuilds cleanly."""
+    global _async_http
+    key = (httpx.AsyncClient, id(asyncio.get_running_loop()))
+    if _async_http is None or _async_http[0] != key:
+        _async_http = (key, httpx.AsyncClient(limits=_HTTP_LIMITS, trust_env=False))
+    return _async_http[1]
 
 
 class _HttpStoreProxy:
@@ -101,8 +135,6 @@ def _http_query(endpoint: str, query: str, default_graph_uris=None, named_graph_
     import re
     from urllib.parse import urlencode
 
-    import httpx
-
     is_graph = re.match(r"\s*(?:#[^\n]*\n\s*|PREFIX\b[^\n]*\n\s*|BASE\b[^\n]*\n\s*)*(CONSTRUCT|DESCRIBE)\b",
                         query, re.IGNORECASE) is not None
     accept = "application/n-triples" if is_graph else "application/sparql-results+json"
@@ -111,13 +143,13 @@ def _http_query(endpoint: str, query: str, default_graph_uris=None, named_graph_
         params.append(("default-graph-uri", u))
     for u in (named_graph_uris or []):
         params.append(("named-graph-uri", u))
-    with httpx.Client(timeout=get_settings().sparql_query_timeout_seconds, trust_env=False) as client:
-        resp = client.post(
-            f"{endpoint.rstrip('/')}/query",
-            content=urlencode(params).encode(),
-            headers={"Accept": accept, "Content-Type": "application/x-www-form-urlencoded"},
-        )
-        resp.raise_for_status()
+    resp = _sync_http_client().post(
+        f"{endpoint.rstrip('/')}/query",
+        content=urlencode(params).encode(),
+        headers={"Accept": accept, "Content-Type": "application/x-www-form-urlencoded"},
+        timeout=get_settings().sparql_query_timeout_seconds,
+    )
+    resp.raise_for_status()
     if is_graph:
         return pyoxigraph.parse(resp.content, format=pyoxigraph.RdfFormat.N_TRIPLES)
     return pyoxigraph.parse_query_results(resp.content, pyoxigraph.QueryResultsFormat.JSON)
@@ -143,23 +175,23 @@ def _http_write_endpoint() -> str | None:
 
 def _http_load_graph(endpoint: str, iri: str, data: bytes, content_type: str, *, replace: bool) -> None:
     """DROP (if replace) then bulk-load `data` into graph `iri` on the server."""
-    import httpx
-
-    with httpx.Client(timeout=600.0, trust_env=False) as client:
-        if replace:
-            r = client.post(
-                f"{endpoint.rstrip('/')}/update",
-                content=f"DROP SILENT GRAPH <{iri}>".encode(),
-                headers={"Content-Type": "application/sparql-update"},
-            )
-            r.raise_for_status()
+    client = _sync_http_client()
+    if replace:
         r = client.post(
-            f"{endpoint.rstrip('/')}/store",
-            params={"graph": iri},
-            content=data,
-            headers={"Content-Type": content_type},
+            f"{endpoint.rstrip('/')}/update",
+            content=f"DROP SILENT GRAPH <{iri}>".encode(),
+            headers={"Content-Type": "application/sparql-update"},
+            timeout=600.0,
         )
         r.raise_for_status()
+    r = client.post(
+        f"{endpoint.rstrip('/')}/store",
+        params={"graph": iri},
+        content=data,
+        headers={"Content-Type": content_type},
+        timeout=600.0,
+    )
+    r.raise_for_status()
 
 
 def load_graph(ontology_id: str, version_id: str, graph: rdflib.Graph) -> int:
@@ -246,12 +278,13 @@ def delete_graph(ontology_id: str, version_id: str, inferred: bool = False) -> N
     iri = graph_iri(ontology_id, version_id, inferred)
     ep = _http_write_endpoint()
     if ep:
-        import httpx
-        with httpx.Client(timeout=120.0, trust_env=False) as client:
-            r = client.post(f"{ep.rstrip('/')}/update",
-                            content=f"DROP SILENT GRAPH <{iri}>".encode(),
-                            headers={"Content-Type": "application/sparql-update"})
-            r.raise_for_status()
+        r = _sync_http_client().post(
+            f"{ep.rstrip('/')}/update",
+            content=f"DROP SILENT GRAPH <{iri}>".encode(),
+            headers={"Content-Type": "application/sparql-update"},
+            timeout=120.0,
+        )
+        r.raise_for_status()
     else:
         get_store().remove_graph(pyoxigraph.NamedNode(iri))
 
@@ -337,8 +370,6 @@ async def content_query_http(
     """
     from urllib.parse import urlencode
 
-    import httpx
-
     # SPARQL protocol: query + dataset URIs form-encoded in the body. Encoded
     # explicitly to bytes (repeated keys for multiple graph URIs).
     params: list[tuple[str, str]] = [("query", query)]
@@ -348,11 +379,11 @@ async def content_query_http(
         params.append(("named-graph-uri", u))
     body = urlencode(params).encode()
 
-    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-        resp = await client.post(
-            endpoint.rstrip("/") + "/query",
-            content=body,
-            headers={"Accept": accept, "Content-Type": "application/x-www-form-urlencoded"},
-        )
-        resp.raise_for_status()
-        return resp.content, resp.headers.get("content-type", "application/sparql-results+json")
+    resp = await _async_http_client().post(
+        endpoint.rstrip("/") + "/query",
+        content=body,
+        headers={"Accept": accept, "Content-Type": "application/x-www-form-urlencoded"},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return resp.content, resp.headers.get("content-type", "application/sparql-results+json")
