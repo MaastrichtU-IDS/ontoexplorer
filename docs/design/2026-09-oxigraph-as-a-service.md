@@ -114,3 +114,42 @@ Remaining spike work (in-cluster): a perf overlay with an `oxigraph-server`
 Deployment owning the volume; a branch pointing `clients/oxigraph.py` at it over
 HTTP for query + writes; api `replicas: 3` with no volume mount / node pin; run
 the read-capacity harness across nodes and compare to single-pod embedded.
+
+## Refactor inventory — scoped to the API process (2026-09-13)
+
+Grepping the embedded-Oxigraph surface found ~113 call sites, but the key insight
+is that **only the API process must become stateless** to scale to `replicas:N`.
+The workers (`worker-heavy` RW, `worker-light` RO) are single-per-node by design
+and can keep the embedded mount — they don't need to scale out. So the refactor
+surface is just the API-process read paths, not the whole codebase.
+
+**API process → must route to the HTTP server (the actual work):**
+- `api/sparql.py` — `/sparql/content` (and `/sparql`): simplest — proxy the query
+  straight to the server's `/query` and return its bytes (like the old Fuseki
+  passthrough), no in-process serialisation.
+- `api/ols/*` (classes_v2, individuals, ontologies, properties, terms) — the OLS
+  v2 read API; `get_store().query(...)`.
+- `api/ontologies.py` — `/inferred` (now `quads_for_pattern`), term/hierarchy reads.
+- `api/mod.py` — MOD-API reads.
+- `api/admin/health.py` — swap the store-open check for an HTTP ping.
+- `modules/search/{autocomplete,evaluator}.py` — reached from the API search routes.
+- `modules/{profile,meta_profile}/detector.py` — **audit each**: the `/detect`
+  routes may run inline in the API (→ HTTP) or be queued to a worker (→ embedded).
+
+**Workers → keep embedded (no change):**
+- `modules/ingestion/pipeline.py`, `modules/jobs/tasks.py` — ingest/reason/purge
+  (writes; the sole RW opener stays embedded, or writes via the server's HTTP
+  update/load — decide in the spike).
+- `modules/ingestion/import_resolver.py`, `modules/metadata/{dcat,void}.py`,
+  `modules/diff/*` — all run inside worker tasks.
+- `modules/search/indexer.py` — index build (worker).
+
+**The abstraction:** replace `get_store().query(q, default_graph=…, named_graphs=…)`
+and `sparql_query(q)` in the API paths with a `content_query(...)` that routes
+embedded (workers) vs HTTP (API) by config (`OXIGRAPH_HTTP_ENDPOINT`); rewrite the
+API's few `quads_for_pattern` scans as equivalent SPARQL so they route too. Ship
+behind the flag (empty = embedded, current behaviour) so it's non-breaking and the
+same image works both ways — the spike just sets the env var on the perf API.
+
+Step 0 (above) already proved the server reads the volume and answers query+update
+over HTTP, so this refactor is the remaining risk, and it's bounded to the list above.
