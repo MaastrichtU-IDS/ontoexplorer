@@ -453,3 +453,33 @@ async def admin_backfill_metadata(_: User = Depends(_require_admin)):
     from ontoexplorer.modules.jobs.tasks import backfill_metadata
     task = backfill_metadata.delay()
     return {"status": "queued", "task_id": task.id}
+
+
+@router.patch("/ontologies/{ontology_id}/owner", summary="Reassign (or clear) an ontology's owner")
+async def admin_set_ontology_owner(
+    ontology_id: str,
+    user_id: str | None = Body(None, embed=True),
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set (or clear, with null) an ontology's owner.
+
+    The only path to un-orphan an ontology: owner_id is ON DELETE SET NULL, so a
+    deleted account leaves ontologies ownerless, and since #118 those are
+    admin/maintainer-only to edit. This lets an admin hand one to a real owner
+    (or deliberately clear it) without a direct DB edit.
+    """
+    from ontoexplorer.models.db import Ontology
+
+    ont = (await db.execute(select(Ontology).where(Ontology.id == ontology_id))).scalar_one_or_none()
+    if ont is None:
+        raise HTTPException(status_code=404, detail="Ontology not found")
+
+    if user_id is not None:
+        target = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        if target is None:
+            raise HTTPException(status_code=422, detail=f"No such user: {user_id}")
+
+    ont.owner_id = user_id
+    await db.commit()
+    return {"ontology_id": ontology_id, "owner_id": user_id}
