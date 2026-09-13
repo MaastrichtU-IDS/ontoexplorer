@@ -48,11 +48,30 @@ python scripts/perf/write_throughput.py      --base https://<instance>
   (one job fails). Distinct submissions do not. Candidate for a defensive
   dedup-on-submit.
 
-**Structural ceiling**
-- The api opens Oxigraph as a read-only RocksDB secondary off the RWO volume, so
-  it cannot scale horizontally (replicas pin to one node). Extra uvicorn workers
-  in the one pod are the only in-place read lever; running Oxigraph as a network
-  service would make the api stateless and horizontally scalable (bigger change).
+**Structural ceiling — RESOLVED (0.4.7 + 0.4.8, oxigraph-as-a-service)**
+- The api opened Oxigraph as a read-only RocksDB secondary off the RWO volume, so
+  it could not scale horizontally (replicas pinned to one node). That ceiling is
+  now lifted: content + metadata run as `oxigraph serve` HTTP servers (sole volume
+  owners), and the api/workers read *and write* over HTTP (flag-gated by
+  `OXIGRAPH_HTTP_ENDPOINT` / `METADATA_HTTP_ENDPOINT`; empty = embedded).
+- Measured in `ontoexplorer-perf` (api `replicas:3` spread across 3 nodes, no
+  store mounts). Read throughput, `SELECT ?s WHERE { GRAPH ?g { ?s ?p ?o } } LIMIT
+  5` over a 60k-triple graph, 4 parallel load-gen pods:
+
+  | config | conc-1 latency | aggregate rps |
+  |---|---|---|
+  | 0.4.7 api, per-request httpx client, r3 | 23 ms | ~345, collapses at conc≥32 |
+  | 0.4.8 api, **pooled** client, r1 | 5.5 ms | 1125 |
+  | 0.4.8 api, pooled client, r3 | 5.5 ms | 1256 |
+  | oxigraph server direct (2 cores) | — | 1508 |
+
+  - **HTTP-client pooling (0.4.8) was the api-side bottleneck**: a fresh client per
+    request cost ~18 ms of handshake and collapsed throughput under concurrency.
+  - **The read ceiling is now the shared oxigraph server** (~1.5k rps), not the api
+    (r1 ≈ r3, since all api pods funnel to one content server). A single api pod
+    already beats the old embedded single-pod baseline (~630 rps). Scaling SPARQL
+    reads further is a *store* lever (server CPU / read replicas), decoupled from
+    the api — which now scales freely for all non-store work and for HA.
 
 ## Note
 
