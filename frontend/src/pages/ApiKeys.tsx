@@ -155,7 +155,8 @@ export default function ApiKeys() {
       {isLoading ? (
         <p style={{ color: 'var(--text-dim)' }}>Loading…</p>
       ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+        <table style={{ minWidth: 480, width: '100%', borderCollapse: 'collapse', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
           <thead>
             <tr style={{ background: 'var(--bg-secondary)' }}>
               {['Name', 'Scopes', 'Created', 'Last used', ''].map(h => (
@@ -200,6 +201,7 @@ export default function ApiKeys() {
             )}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   )

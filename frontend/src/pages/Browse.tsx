@@ -5,12 +5,14 @@ import { useVersions } from '../hooks/useVersions'
 import ClassTree from '../components/ClassTree'
 import TermPanel from '../components/TermPanel'
 import ResizeHandle from '../components/ResizeHandle'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 const PANE_MIN = 200
 const PANE_MAX = 600
 const PANE_DEFAULT = 280
 
 export default function Browse() {
+  const isMobile = useIsMobile()
   const { oid, vid } = useParams<{ oid: string; vid: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -40,12 +42,15 @@ export default function Browse() {
   }
 
   return (
-    <div style={{ display: 'flex', height: 'calc(100vh - var(--nav-height))', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', height: 'calc(100vh - var(--nav-height))', overflow: 'hidden' }}>
       {/* Left pane */}
       <div style={{
-        width: paneWidth, flexShrink: 0,
+        width: isMobile ? '100%' : paneWidth, flexShrink: 0,
+        maxHeight: isMobile ? '45vh' : undefined,
         display: 'flex', flexDirection: 'column',
-        background: 'var(--bg-secondary)', borderRight: '1px solid var(--border)',
+        background: 'var(--bg-secondary)',
+        borderRight: isMobile ? 'none' : '1px solid var(--border)',
+        borderBottom: isMobile ? '1px solid var(--border)' : 'none',
         overflow: 'hidden',
       }}>
         {/* Ontology list */}
@@ -105,7 +110,7 @@ export default function Browse() {
       </div>
 
       {/* Resize handle */}
-      <ResizeHandle onDelta={handleDelta} />
+      {!isMobile && <ResizeHandle onDelta={handleDelta} />}
 
       {/* Right pane */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>

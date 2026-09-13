@@ -40,7 +40,7 @@ export default function HistoryTab({ ontologyId, shortname, currentVersionId, ve
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: 14, display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'monospace', fontSize: 11 }}>
+      <div style={{ padding: 14, display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'monospace', fontSize: 11, flexWrap: 'wrap' }}>
         <span style={{ color: 'var(--text-dim)' }}>Compare</span>
         <select
           value={fromVid}

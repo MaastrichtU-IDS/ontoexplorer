@@ -45,7 +45,7 @@ export function TablePager({ total, page, pageSize, onPage, onPageSize }: TableP
   })
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
       <label style={{ color: 'var(--text-dim)', fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}>
         Rows:
         <input
