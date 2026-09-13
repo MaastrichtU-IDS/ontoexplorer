@@ -421,12 +421,37 @@ async def _reconcile_ontology_iri(
 
 async def _move_named_graph(old_ontology_id: str, new_ontology_id: str, version_id: str) -> None:
     """Copy quads from the old named graph to the new one and drop the old."""
-    from ontoexplorer.clients.oxigraph import get_store, graph_iri
+    from ontoexplorer.clients.oxigraph import _http_write_endpoint, get_store, graph_iri
+
+    old_iri = graph_iri(old_ontology_id, version_id)
+    new_iri = graph_iri(new_ontology_id, version_id)
+
+    ep = _http_write_endpoint()
+    if ep:
+        # Server owns the volume: rename the graph server-side in one update.
+        import httpx
+        update = (
+            f"INSERT {{ GRAPH <{new_iri}> {{ ?s ?p ?o }} }} "
+            f"WHERE {{ GRAPH <{old_iri}> {{ ?s ?p ?o }} }}; "
+            f"DROP SILENT GRAPH <{old_iri}>"
+        )
+
+        def _do_move_http() -> None:
+            with httpx.Client(timeout=120.0, trust_env=False) as client:
+                r = client.post(
+                    f"{ep.rstrip('/')}/update",
+                    content=update.encode(),
+                    headers={"Content-Type": "application/sparql-update"},
+                )
+                r.raise_for_status()
+
+        await asyncio.to_thread(_do_move_http)
+        return
 
     def _do_move() -> None:
         store = get_store()
-        old_named = pyoxigraph.NamedNode(graph_iri(old_ontology_id, version_id))
-        new_named = pyoxigraph.NamedNode(graph_iri(new_ontology_id, version_id))
+        old_named = pyoxigraph.NamedNode(old_iri)
+        new_named = pyoxigraph.NamedNode(new_iri)
         store.add_graph(new_named)
         for q in store.quads_for_pattern(None, None, None, old_named):
             store.add(pyoxigraph.Quad(q.subject, q.predicate, q.object, new_named))

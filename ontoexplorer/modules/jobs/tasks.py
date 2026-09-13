@@ -778,15 +778,21 @@ async def _reason_and_persist(db, version, version_id: str, ontology_id: str, jo
     # Load inferred triples into Oxigraph under :inferred named graph
     inferred_iri = graph_iri(ontology_id, version_id, inferred=True)
     if inferred_nt.strip():
-        import io as _io
-        inferred_named = pyoxigraph.NamedNode(inferred_iri)
-        store.remove_graph(inferred_named)
-        store.add_graph(inferred_named)
-        store.bulk_load(
-            _io.BytesIO(inferred_nt),
-            "application/n-triples",
-            to_graph=inferred_named,
-        )
+        from ontoexplorer.clients.oxigraph import _http_load_graph, _http_write_endpoint
+        _ep = _http_write_endpoint()
+        if _ep:
+            # Server owns the volume: replace the inferred graph over HTTP.
+            _http_load_graph(_ep, inferred_iri, inferred_nt, "application/n-triples", replace=True)
+        else:
+            import io as _io
+            inferred_named = pyoxigraph.NamedNode(inferred_iri)
+            store.remove_graph(inferred_named)
+            store.add_graph(inferred_named)
+            store.bulk_load(
+                _io.BytesIO(inferred_nt),
+                "application/n-triples",
+                to_graph=inferred_named,
+            )
 
     # Materialise the inferred hierarchy for the navigation tree. Deriving it
     # per request meant fetching and parsing the whole classification (12 s on
