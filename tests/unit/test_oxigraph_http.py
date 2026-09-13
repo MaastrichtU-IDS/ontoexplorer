@@ -45,3 +45,32 @@ async def test_posts_query_and_dataset_to_query_endpoint(captured):
     assert captured["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
     assert captured["client_kwargs"].get("trust_env") is False      # never via egress proxy
     assert ctype == "application/sparql-results+json"
+
+
+@pytest.mark.anyio
+async def test_get_store_returns_proxy_when_endpoint_set(monkeypatch):
+    from ontoexplorer.config import get_settings
+    from ontoexplorer.clients import oxigraph as ox
+    monkeypatch.setattr(get_settings(), "oxigraph_read_only", True, raising=False)
+    monkeypatch.setattr(get_settings(), "oxigraph_http_endpoint", "http://oxi.svc:7878", raising=False)
+    store = ox.get_store()
+    assert type(store).__name__ == "_HttpStoreProxy"
+
+
+def test_quads_for_pattern_builds_sparql_and_rebuilds_quads(monkeypatch):
+    """The proxy turns a pattern into SPARQL and reconstructs native Quads from
+    the (embedded-run) solution — verified here without a server."""
+    import pyoxigraph
+    from ontoexplorer.clients import oxigraph as ox
+
+    # A real embedded store to answer the SELECT the proxy generates.
+    backing = pyoxigraph.Store()
+    g = pyoxigraph.NamedNode("urn:g")
+    backing.add(pyoxigraph.Quad(pyoxigraph.NamedNode("urn:a"), pyoxigraph.NamedNode("urn:p"),
+                                pyoxigraph.NamedNode("urn:o"), g))
+    proxy = ox._HttpStoreProxy("http://unused")
+    monkeypatch.setattr(proxy, "query", lambda q, **k: backing.query(q))
+    quads = list(proxy.quads_for_pattern(None, pyoxigraph.NamedNode("urn:p"), None, g))
+    assert len(quads) == 1 and isinstance(quads[0], pyoxigraph.Quad)
+    assert quads[0].subject.value == "urn:a" and quads[0].object.value == "urn:o"
+    assert quads[0].graph_name.value == "urn:g"
