@@ -214,3 +214,43 @@ graph rename, and the metadata insert/delete-where/drop cycle all return the
 expected triple counts. All in-cluster clients use `trust_env=False` (never via
 egress-proxy). CI covers the wiring with a mocked httpx. Next: brick (2), the
 perf namespace.
+
+### Update (2026-09-13): perf-namespace results — ceiling lifted, then moved
+
+Validated the full stateless stack in an ephemeral `ontoexplorer-perf` namespace:
+content + metadata each a single `oxigraph serve` (sole volume owner), `api`
+stateless (no store mounts, no nodeSelector) spread across all 3 nodes via a
+hostname `topologySpreadConstraint`, worker-heavy writing over HTTP. In-cluster
+write path confirmed on 0.4.7 (bulk-load 60k triples, append, delete,
+graph-rename — all correct counts).
+
+Read throughput, query `SELECT ?s WHERE { GRAPH ?g { ?s ?p ?o } } LIMIT 5` over a
+60k-triple graph (4 parallel load-gen pods to beat a single asyncio client's
+~600 rps ceiling):
+
+| config | conc-1 latency | aggregate rps (4×conc24) |
+|---|---|---|
+| 0.4.7 api, per-request httpx client, r3 | 23 ms | ~345, **collapses** at conc≥32 |
+| 0.4.8 api, pooled client, r1 (single pod) | 5.5 ms | **1125** |
+| 0.4.8 api, pooled client, r3 | 5.5 ms | **1256** |
+| oxigraph server direct (bypass api), 2 cores | — | **1508** |
+
+Findings:
+1. **The RWO single-pod ceiling is gone.** api runs `replicas:3` across three
+   nodes with no store volume and no node-pin — impossible before (the embedded
+   RocksDB RWO claim pinned api to one node at `replicas:1`).
+2. **Connection pooling was the api-side bottleneck** (shipped in 0.4.8): a fresh
+   httpx client per request cost ~18 ms of handshake (23 → 5.5 ms conc-1) and
+   *collapsed* throughput under concurrency. Pooling removed both.
+3. **The read ceiling has moved to the shared oxigraph server** (~1.5k rps at the
+   server, ~1.26k through the api). r1 ≈ r3 because every api pod funnels to the
+   one content server — SPARQL read throughput is now gated by the store, not the
+   api. Even a *single* api pod (1125 rps) beats the old embedded single-pod
+   baseline (~630 rps, phase-1), on a harder query.
+4. **Horizontal api scaling still pays** for everything that isn't a single shared
+   store read — request handling, the many Redis/Postgres-backed endpoints, TLS,
+   serialisation — and for HA (3 pods survive a node loss). Scaling SPARQL reads
+   further is now a *store* lever (more server CPU, or read replicas), decoupled
+   from the api. That decoupling is the point of the refactor.
+
+The perf namespace was torn down after measurement (ephemeral, not GitOps-managed).
