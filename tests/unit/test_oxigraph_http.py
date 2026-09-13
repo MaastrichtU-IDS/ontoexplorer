@@ -22,7 +22,7 @@ def captured(monkeypatch):
         def __init__(self, *a, **k): seen["client_kwargs"] = k
         async def __aenter__(self): return self
         async def __aexit__(self, *a): return False
-        async def post(self, url, content=None, headers=None):
+        async def post(self, url, content=None, headers=None, params=None, timeout=None, **kw):
             seen.update(url=url, body=content.decode(), headers=headers)
             return _Resp()
 
@@ -98,7 +98,7 @@ def sync_http(monkeypatch):
         def __init__(self, *a, **k): _Client.kwargs = k
         def __enter__(self): return self
         def __exit__(self, *a): return False
-        def post(self, url, params=None, content=None, headers=None):
+        def post(self, url, params=None, content=None, headers=None, timeout=None, **kw):
             calls.append({"url": url, "params": params,
                           "body": content.decode() if content else None, "headers": headers})
             return _Resp()
@@ -156,3 +156,32 @@ def test_metadata_writes_route_http(monkeypatch, sync_http):
 
 def _Client_trust_env_false():
     return httpx.Client.kwargs.get("trust_env") is False
+
+
+def test_sync_http_client_is_pooled(monkeypatch):
+    """The sync client is created once and reused (keep-alive pool), not per call."""
+    from ontoexplorer.clients import oxigraph as ox
+    made = []
+
+    class _C:
+        def __init__(self, *a, **k): made.append(self)
+
+    monkeypatch.setattr(httpx, "Client", _C)
+    a = ox._sync_http_client()
+    b = ox._sync_http_client()
+    assert a is b and len(made) == 1
+
+
+@pytest.mark.anyio
+async def test_async_http_client_is_pooled(monkeypatch):
+    """The async client is reused within an event loop."""
+    from ontoexplorer.clients import oxigraph as ox
+    made = []
+
+    class _AC:
+        def __init__(self, *a, **k): made.append(self)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _AC)
+    a = ox._async_http_client()
+    b = ox._async_http_client()
+    assert a is b and len(made) == 1
