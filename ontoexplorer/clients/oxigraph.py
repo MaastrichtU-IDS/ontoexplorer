@@ -74,7 +74,10 @@ def get_store():
     """
     global _store, _ro_store, _ro_store_opened_at
     settings = get_settings()
-    if settings.oxigraph_read_only and settings.oxigraph_http_endpoint:
+    if settings.oxigraph_http_endpoint:
+        # Server owns the volume (sole opener): every process reads via the proxy
+        # and writes via the routed write functions — none opens embedded, avoiding
+        # the "read-only alongside a writer is undefined behaviour" trap.
         return _HttpStoreProxy(settings.oxigraph_http_endpoint)
     path = settings.oxigraph_data_path
     Path(path).mkdir(parents=True, exist_ok=True)
@@ -125,46 +128,76 @@ def graph_iri(ontology_id: str, version_id: str, inferred: bool = False) -> str:
     return f"{base}:inferred" if inferred else base
 
 
+def _graph_triple_count(iri: str) -> int:
+    """Triple count of a named graph via the routed store (embedded or HTTP)."""
+    ng = pyoxigraph.NamedNode(iri)
+    return sum(1 for _ in get_store().quads_for_pattern(None, None, None, ng))
+
+
+def _http_write_endpoint() -> str | None:
+    """The oxigraph server to write through (sole owner in oxigraph-as-a-service
+    mode). Reads/writes both go via HTTP then, so the volume is opened by nobody
+    but the server."""
+    return get_settings().oxigraph_http_endpoint or None
+
+
+def _http_load_graph(endpoint: str, iri: str, data: bytes, content_type: str, *, replace: bool) -> None:
+    """DROP (if replace) then bulk-load `data` into graph `iri` on the server."""
+    import httpx
+
+    with httpx.Client(timeout=600.0, trust_env=False) as client:
+        if replace:
+            r = client.post(
+                f"{endpoint.rstrip('/')}/update",
+                content=f"DROP SILENT GRAPH <{iri}>".encode(),
+                headers={"Content-Type": "application/sparql-update"},
+            )
+            r.raise_for_status()
+        r = client.post(
+            f"{endpoint.rstrip('/')}/store",
+            params={"graph": iri},
+            content=data,
+            headers={"Content-Type": content_type},
+        )
+        r.raise_for_status()
+
+
 def load_graph(ontology_id: str, version_id: str, graph: rdflib.Graph) -> int:
-    """
-    Load an rdflib Graph into a named Oxigraph graph.
+    """Load an rdflib Graph into a named graph, replacing existing content.
 
-    Returns the number of triples loaded.
-    Replaces any existing content in the named graph.
+    Returns the number of triples loaded. Routes to the HTTP server when
+    OXIGRAPH_HTTP_ENDPOINT is set, else embedded.
     """
-    store = get_store()
     iri = graph_iri(ontology_id, version_id)
-    named_graph = pyoxigraph.NamedNode(iri)
-
-    # Serialise rdflib graph to N-Triples for fast bulk load
     nt_bytes = graph.serialize(format="nt").encode("utf-8")
-
-    # Clear existing content in this named graph
-    store.remove_graph(named_graph)
-    store.add_graph(named_graph)
-
-    # Bulk-load via N-Triples
-    store.bulk_load(BytesIO(nt_bytes), "application/n-triples", base_iri=iri, to_graph=named_graph)
-
-    count = sum(1 for _ in store.quads_for_pattern(None, None, None, named_graph))
+    ep = _http_write_endpoint()
+    if ep:
+        _http_load_graph(ep, iri, nt_bytes, "application/n-triples", replace=True)
+    else:
+        store = get_store()
+        named_graph = pyoxigraph.NamedNode(iri)
+        store.remove_graph(named_graph)
+        store.add_graph(named_graph)
+        store.bulk_load(BytesIO(nt_bytes), "application/n-triples", base_iri=iri, to_graph=named_graph)
+    count = _graph_triple_count(iri)
     logger.info("Loaded %d triples into <%s>", count, iri)
     return count
 
 
 def bulk_load_bytes(ontology_id: str, version_id: str, data: bytes, mime_type: str) -> int:
-    """
-    Load raw ontology bytes directly into a named Oxigraph graph, bypassing rdflib.
-
-    Returns the number of triples loaded.
-    Replaces any existing content in the named graph.
-    """
-    store = get_store()
+    """Load raw ontology bytes into a named graph, replacing existing content.
+    Routes HTTP when configured, else embedded."""
     iri = graph_iri(ontology_id, version_id)
-    named_graph = pyoxigraph.NamedNode(iri)
-    store.remove_graph(named_graph)
-    store.add_graph(named_graph)
-    store.bulk_load(BytesIO(data), mime_type, base_iri=iri, to_graph=named_graph)
-    count = sum(1 for _ in store.quads_for_pattern(None, None, None, named_graph))
+    ep = _http_write_endpoint()
+    if ep:
+        _http_load_graph(ep, iri, data, mime_type, replace=True)
+    else:
+        store = get_store()
+        named_graph = pyoxigraph.NamedNode(iri)
+        store.remove_graph(named_graph)
+        store.add_graph(named_graph)
+        store.bulk_load(BytesIO(data), mime_type, base_iri=iri, to_graph=named_graph)
+    count = _graph_triple_count(iri)
     logger.info("Loaded %d triples into <%s>", count, iri)
     return count
 
@@ -186,13 +219,12 @@ def append_bytes_to_graph(ontology_id: str, version_id: str, data: bytes, ext: s
     Formats not directly supported by Oxigraph (e.g. OBO) are converted via rdflib first.
     Returns the updated total triple count for the named graph.
     """
-    store = get_store()
     iri = graph_iri(ontology_id, version_id)
     named_graph = pyoxigraph.NamedNode(iri)
 
     mime = _EXT_TO_MIME.get(ext)
     if mime:
-        store.bulk_load(BytesIO(data), mime, to_graph=named_graph)
+        payload, content_type = data, mime
     else:
         # OBO or unrecognised format: use rdflib as intermediary
         import rdflib as _rdflib
@@ -200,16 +232,28 @@ def append_bytes_to_graph(ontology_id: str, version_id: str, data: bytes, ext: s
         fmt = _guess_format(data)
         g = _rdflib.Graph()
         g.parse(data=data, format=fmt)
-        nt_bytes = g.serialize(format="nt").encode("utf-8")
-        store.bulk_load(BytesIO(nt_bytes), "application/n-triples", to_graph=named_graph)
+        payload, content_type = g.serialize(format="nt").encode("utf-8"), "application/n-triples"
 
-    return sum(1 for _ in store.quads_for_pattern(None, None, None, named_graph))
+    ep = _http_write_endpoint()
+    if ep:
+        _http_load_graph(ep, iri, payload, content_type, replace=False)  # append
+    else:
+        get_store().bulk_load(BytesIO(payload), content_type, to_graph=named_graph)
+    return _graph_triple_count(iri)
 
 
 def delete_graph(ontology_id: str, version_id: str, inferred: bool = False) -> None:
-    store = get_store()
     iri = graph_iri(ontology_id, version_id, inferred)
-    store.remove_graph(pyoxigraph.NamedNode(iri))
+    ep = _http_write_endpoint()
+    if ep:
+        import httpx
+        with httpx.Client(timeout=120.0, trust_env=False) as client:
+            r = client.post(f"{ep.rstrip('/')}/update",
+                            content=f"DROP SILENT GRAPH <{iri}>".encode(),
+                            headers={"Content-Type": "application/sparql-update"})
+            r.raise_for_status()
+    else:
+        get_store().remove_graph(pyoxigraph.NamedNode(iri))
 
 
 def sparql_query(

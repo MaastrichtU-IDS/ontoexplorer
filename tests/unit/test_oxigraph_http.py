@@ -74,3 +74,85 @@ def test_quads_for_pattern_builds_sparql_and_rebuilds_quads(monkeypatch):
     assert len(quads) == 1 and isinstance(quads[0], pyoxigraph.Quad)
     assert quads[0].subject.value == "urn:a" and quads[0].object.value == "urn:o"
     assert quads[0].graph_name.value == "urn:g"
+
+
+def test_get_store_returns_proxy_even_when_writable(monkeypatch):
+    """In server mode the WORKER (read_only=False) must also get the proxy, so it
+    never opens the embedded RocksDB the server owns (undefined-behaviour trap)."""
+    from ontoexplorer.config import get_settings
+    from ontoexplorer.clients import oxigraph as ox
+    monkeypatch.setattr(get_settings(), "oxigraph_read_only", False, raising=False)
+    monkeypatch.setattr(get_settings(), "oxigraph_http_endpoint", "http://oxi.svc:7878", raising=False)
+    assert type(ox.get_store()).__name__ == "_HttpStoreProxy"
+
+
+@pytest.fixture
+def sync_http(monkeypatch):
+    """Capture every sync httpx POST the write path makes (no server in CI)."""
+    calls = []
+
+    class _Resp:
+        def raise_for_status(self): pass
+
+    class _Client:
+        def __init__(self, *a, **k): _Client.kwargs = k
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def post(self, url, params=None, content=None, headers=None):
+            calls.append({"url": url, "params": params,
+                          "body": content.decode() if content else None, "headers": headers})
+            return _Resp()
+
+    monkeypatch.setattr(httpx, "Client", _Client)
+    return calls
+
+
+def _endpoint(monkeypatch, which="oxigraph_http_endpoint"):
+    from ontoexplorer.config import get_settings
+    monkeypatch.setattr(get_settings(), which, "http://oxi.svc:7878", raising=False)
+
+
+def test_load_graph_http_drops_then_loads(monkeypatch, sync_http):
+    import rdflib
+    from ontoexplorer.clients import oxigraph as ox
+    _endpoint(monkeypatch)
+    # _graph_triple_count issues a query via the proxy; stub it to avoid a server.
+    monkeypatch.setattr(ox, "_graph_triple_count", lambda iri: 1)
+    g = rdflib.Graph()
+    g.add((rdflib.URIRef("urn:a"), rdflib.URIRef("urn:p"), rdflib.URIRef("urn:b")))
+    ox.load_graph("ont", "v1", g)
+    assert sync_http[0]["url"].endswith("/update") and "DROP SILENT GRAPH" in sync_http[0]["body"]
+    assert sync_http[1]["url"].endswith("/store") and sync_http[1]["params"]["graph"] == ox.graph_iri("ont", "v1")
+    assert _Client_trust_env_false()
+
+
+def test_append_http_loads_without_drop(monkeypatch, sync_http):
+    from ontoexplorer.clients import oxigraph as ox
+    _endpoint(monkeypatch)
+    monkeypatch.setattr(ox, "_graph_triple_count", lambda iri: 1)
+    ox.append_bytes_to_graph("ont", "v1", b"<urn:a> <urn:p> <urn:b> .", "ttl")
+    assert len(sync_http) == 1
+    assert sync_http[0]["url"].endswith("/store")  # append: no DROP
+
+
+def test_delete_graph_http_drops(monkeypatch, sync_http):
+    from ontoexplorer.clients import oxigraph as ox
+    _endpoint(monkeypatch)
+    ox.delete_graph("ont", "v1")
+    assert sync_http[0]["url"].endswith("/update") and "DROP SILENT GRAPH" in sync_http[0]["body"]
+
+
+def test_metadata_writes_route_http(monkeypatch, sync_http):
+    import asyncio
+    from ontoexplorer.clients import metadata_store as ms
+    _endpoint(monkeypatch, "metadata_http_endpoint")
+    asyncio.run(ms.insert_turtle("<urn:s> <urn:p> <urn:o> .", graph_iri="urn:meta"))
+    assert sync_http[-1]["url"].endswith("/store") and sync_http[-1]["params"]["graph"] == "urn:meta"
+    asyncio.run(ms.sparql_update("DELETE WHERE { GRAPH <urn:meta> { ?s ?p ?o } }"))
+    assert sync_http[-1]["url"].endswith("/update") and "DELETE" in sync_http[-1]["body"]
+    asyncio.run(ms.delete_graph("urn:meta"))
+    assert "DROP SILENT GRAPH" in sync_http[-1]["body"]
+
+
+def _Client_trust_env_false():
+    return httpx.Client.kwargs.get("trust_env") is False

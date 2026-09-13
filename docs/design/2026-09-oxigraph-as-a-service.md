@@ -187,3 +187,30 @@ must also go through HTTP** — the piece deferred until now:
 namespace with a single RW `oxigraph serve` (content) + one for metadata, api
 `replicas:3` with no mounts/pin, workers pointed at the servers; (3) measure read
 scaling vs the ~630 rps single-pod baseline.
+
+### Update (2026-09-13): write path done
+
+Brick (1) is implemented and validated live against `oxigraph:0.5.8`. Both stores'
+write paths now route over HTTP when their endpoint is set, flag-gated and
+non-breaking (empty endpoint = embedded, unchanged):
+
+- Content (`clients/oxigraph.py`): `load_graph`, `bulk_load_bytes`,
+  `append_bytes_to_graph`, `delete_graph` branch to `_http_load_graph`
+  (`POST /store?graph=<g>` for bulk load, `POST /update` `DROP SILENT GRAPH` for
+  replace/delete). `get_store()` now returns the read proxy for **every** process
+  when the endpoint is set — workers included — so nobody opens the embedded
+  RocksDB the server owns. The two direct write sites outside the centralised
+  functions were converted too: `pipeline._move_named_graph` (IRI reconcile →
+  one `INSERT{…}WHERE{…}; DROP` update) and `tasks._reason_and_persist` (inferred
+  graph replace → `_http_load_graph(replace=True)`).
+- Metadata (`clients/metadata_store.py`): `sparql_update`, `insert_turtle`,
+  `delete_graph` route to `POST /update` / `POST /store`; `flush()` is a no-op in
+  server mode (the server is the sole process — nothing to make visible to a
+  now-absent read-only secondary); `get_metadata_store()` returns the proxy for
+  all processes when its endpoint is set.
+
+Live checks (docker `oxigraph serve`): replace/append/bulk-load/count/delete,
+graph rename, and the metadata insert/delete-where/drop cycle all return the
+expected triple counts. All in-cluster clients use `trust_env=False` (never via
+egress-proxy). CI covers the wiring with a mocked httpx. Next: brick (2), the
+perf namespace.

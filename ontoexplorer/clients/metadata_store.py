@@ -65,7 +65,10 @@ def get_metadata_store() -> pyoxigraph.Store:
     proxy when METADATA_HTTP_ENDPOINT is set (oxigraph-as-a-service)."""
     global _store, _ro_store, _ro_store_opened_at
     settings = get_settings()
-    if settings.oxigraph_read_only and settings.metadata_http_endpoint:
+    if settings.metadata_http_endpoint:
+        # Server owns the metadata volume (sole opener): every process reads via
+        # the proxy and writes via the routed write functions — none opens the
+        # embedded store. Mirrors clients.oxigraph.get_store's server mode.
         return _HttpMetadataProxy(settings.metadata_http_endpoint)
     path = settings.metadata_store_path
     Path(path).mkdir(parents=True, exist_ok=True)
@@ -91,9 +94,29 @@ def get_metadata_store() -> pyoxigraph.Store:
     return _store
 
 
+def _http_endpoint() -> str | None:
+    """The metadata SPARQL server, or None for embedded mode."""
+    return get_settings().metadata_http_endpoint or None
+
+
+def _post_update(endpoint: str, update: str) -> None:
+    import httpx
+    with httpx.Client(timeout=120.0, trust_env=False) as client:
+        r = client.post(
+            f"{endpoint.rstrip('/')}/update",
+            content=update.encode(),
+            headers={"Content-Type": "application/sparql-update"},
+        )
+        r.raise_for_status()
+
+
 async def sparql_update(update: str) -> None:
     """Run a SPARQL Update (e.g. the version-scoped DELETE/WHERE) on the store."""
-    await asyncio.to_thread(get_metadata_store().update, update)
+    ep = _http_endpoint()
+    if ep:
+        await asyncio.to_thread(_post_update, ep, update)
+    else:
+        await asyncio.to_thread(get_metadata_store().update, update)
 
 
 async def insert_turtle(ttl: str, graph_iri: str | None = None) -> None:
@@ -102,6 +125,18 @@ async def insert_turtle(ttl: str, graph_iri: str | None = None) -> None:
     Append, not replace — the shared catalogue/provenance graphs accumulate
     across versions; per-version replacement is done by the caller's DELETE.
     """
+    ep = _http_endpoint()
+    if ep:
+        # Graph Store Protocol: POST appends into the named graph (all callers
+        # pass one). trust_env=False keeps the in-cluster call off egress-proxy.
+        from ontoexplorer.clients.oxigraph import _http_load_graph
+        if graph_iri is None:
+            raise ValueError("insert_turtle over HTTP requires a named graph")
+        await asyncio.to_thread(
+            _http_load_graph, ep, graph_iri, ttl.encode(), "text/turtle", replace=False
+        )
+        return
+
     graph = pyoxigraph.NamedNode(graph_iri) if graph_iri else pyoxigraph.DefaultGraph()
 
     def _load() -> None:
@@ -113,7 +148,11 @@ async def insert_turtle(ttl: str, graph_iri: str | None = None) -> None:
 async def delete_graph(graph_iri: str) -> None:
     """Drop all triples in a named graph. Idempotent (no error if absent),
     matching the old ``DROP SILENT GRAPH``."""
-    await asyncio.to_thread(get_metadata_store().remove_graph, pyoxigraph.NamedNode(graph_iri))
+    ep = _http_endpoint()
+    if ep:
+        await asyncio.to_thread(_post_update, ep, f"DROP SILENT GRAPH <{graph_iri}>")
+    else:
+        await asyncio.to_thread(get_metadata_store().remove_graph, pyoxigraph.NamedNode(graph_iri))
 
 
 async def flush() -> None:
@@ -125,5 +164,10 @@ async def flush() -> None:
     the store would not see freshly-written metadata until the writer restarted.
     The content store avoids this only because its writes are large enough to
     flush on their own. Call this after each version's metadata is written.
+
+    No-op in server mode: the server is the sole process and its writes are
+    already durable and visible to every HTTP reader with no secondary to refresh.
     """
+    if _http_endpoint():
+        return
     await asyncio.to_thread(get_metadata_store().flush)
