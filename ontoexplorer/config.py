@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     oxigraph_data_path: str = "/data/oxigraph"
     oxigraph_read_only: bool = False  # set True in API container; worker keeps write access
 
+    # Oxigraph-as-a-service (spike, see docs/design/2026-09-oxigraph-as-a-service.md):
+    # when set, API-process content SPARQL is proxied to this HTTP endpoint (an
+    # `oxigraph serve` server) instead of the embedded RocksDB, so the API can be
+    # stateless and scale horizontally. Empty = embedded (current behaviour).
+    oxigraph_http_endpoint: str = ""
+
     # Metadata triplestore (embedded pyoxigraph, replaced Jena Fuseki) — a
     # separate store from the content one; serves /sparql. Same RW/RO model as
     # oxigraph (governed by oxigraph_read_only: worker RW, API RO secondary).
