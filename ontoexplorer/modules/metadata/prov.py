@@ -16,9 +16,10 @@ def prov_subject_iris(version_id: str, app_base_url: str) -> list[str]:
     excluded: it is shared between every version ingested from the same URL, so
     deleting by it would remove another version's triples.
     """
+    base = app_base_url.rstrip("/")   # app_url often has a trailing slash -> avoid //
     return [
-        f"{app_base_url}/api/v1/versions/{version_id}/provenance",
-        f"{app_base_url}/api/v1/ontologies/{version_id}",
+        f"{base}/api/v1/versions/{version_id}/provenance",
+        f"{base}/api/v1/ontologies/{version_id}",
     ]
 
 
@@ -38,6 +39,7 @@ def build_ingestion_activity(
     g = rdflib.Graph()
     g.bind("prov", PROV)
 
+    app_base_url = app_base_url.rstrip("/")   # app_url often has a trailing slash -> avoid //
     activity = URIRef(f"{app_base_url}/api/v1/versions/{version_id}/provenance")
     entity = URIRef(f"{app_base_url}/api/v1/ontologies/{version_id}")
     now = Literal(datetime.now(UTC).isoformat(), datatype=XSD.dateTime)

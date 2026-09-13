@@ -460,6 +460,12 @@ async def _write_fair_metadata(
         )
         void_stats = compute_void_stats_sparql(ontology_id, version_id)
 
+        # Surface the ontology's own declared title/description/license/creator
+        # from the content store into the catalogue record.
+        from ontoexplorer.modules.metadata.dcat import extract_ontology_annotations
+        ann = extract_ontology_annotations(ontology_id, version_id, ontology_iri)
+        _lic = ann["license"]
+
         dcat_graph = build_dcat_record(
             ontology_id=ontology_id,
             version_id=version_id,
@@ -468,6 +474,10 @@ async def _write_fair_metadata(
             minio_download_url=download_url,
             format_ext=version.format,
             void_stats=void_stats,
+            title=ann["title"],
+            description=ann["description"],
+            creators=ann["creators"],
+            license_url=_lic if (_lic or "").startswith(("http://", "https://")) else None,
             app_base_url=str(settings.app_url),
         )
 

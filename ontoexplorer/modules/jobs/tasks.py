@@ -1544,11 +1544,20 @@ def backfill_metadata() -> dict:
 
     from ontoexplorer.database import make_celery_db_session
     from ontoexplorer.models.db import Ontology, OntologyVersion
+    from ontoexplorer.clients.metadata_store import delete_graph as _drop_graph
+    from ontoexplorer.clients.metadata_store import flush as _flush_meta
     from ontoexplorer.modules.ingestion.pipeline import _write_fair_metadata
     from ontoexplorer.modules.ingestion.source_resolver import ResolvedSource, SourceMode
+    from ontoexplorer.modules.metadata.metadata_writer import META_GRAPH, PROV_GRAPH
 
     async def _run() -> dict:
         attempted = 0
+        # Clear the shared catalogue/provenance graphs first so this is a clean
+        # re-derive, not an append onto whatever (possibly stale, e.g. old IRI
+        # shapes) is already there. Per-version graphs are replaced by each write.
+        await _drop_graph(META_GRAPH)
+        await _drop_graph(PROV_GRAPH)
+        await _flush_meta()
         async with make_celery_db_session()() as db:
             rows = (await db.execute(
                 select(OntologyVersion, Ontology)

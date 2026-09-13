@@ -19,8 +19,53 @@ def dcat_subject_iris(ontology_id: str, version_id: str, app_base_url: str) -> l
     Deletion needs these and cannot re-derive them by parsing, so they live
     beside the builder rather than being spelled out a second time elsewhere.
     """
-    dataset = f"{app_base_url}/api/v1/ontologies/{ontology_id}/{version_id}"
+    base = app_base_url.rstrip("/")   # app_url often has a trailing slash -> avoid //
+    dataset = f"{base}/api/v1/ontologies/{ontology_id}/{version_id}"
     return [dataset, f"{dataset}/download"]
+
+
+# Ontology-level annotation predicates to surface into DCAT, in preference order.
+_TITLE_PREDS = [
+    "http://purl.org/dc/terms/title", "http://purl.org/dc/elements/1.1/title",
+    "http://www.w3.org/2004/02/skos/core#prefLabel", "http://www.w3.org/2000/01/rdf-schema#label",
+]
+_DESC_PREDS = [
+    "http://purl.org/dc/terms/description", "http://purl.org/dc/elements/1.1/description",
+    "http://www.w3.org/2000/01/rdf-schema#comment",
+]
+_LICENSE_PREDS = ["http://purl.org/dc/terms/license", "http://purl.org/dc/elements/1.1/rights"]
+_CREATOR_PREDS = ["http://purl.org/dc/terms/creator", "http://purl.org/dc/elements/1.1/creator"]
+
+
+def extract_ontology_annotations(ontology_id: str, version_id: str, ontology_iri: str) -> dict:
+    """Read the ontology node's own title/description/license/creator from the
+    content store, so the FAIR record reflects what the ontology declares rather
+    than being a bare stats stub. Best-effort — missing values are simply omitted.
+    """
+    from ontoexplorer.clients.oxigraph import graph_iri, sparql_query
+
+    g = graph_iri(ontology_id, version_id)
+
+    def _query(preds: list[str], limit: int) -> list[str]:
+        values = " ".join(f"<{p}>" for p in preds)
+        try:
+            rows = sparql_query(
+                f"SELECT DISTINCT ?o WHERE {{ GRAPH <{g}> {{ <{ontology_iri}> ?p ?o . "
+                f"VALUES ?p {{ {values} }} }} }} LIMIT {limit}"
+            )
+        except Exception:
+            return []
+        return [(r["o"].value if hasattr(r["o"], "value") else str(r["o"])) for r in rows]
+
+    title = _query(_TITLE_PREDS, 1)
+    desc = _query(_DESC_PREDS, 1)
+    lic = _query(_LICENSE_PREDS, 1)
+    return {
+        "title": title[0] if title else None,
+        "description": desc[0] if desc else None,
+        "license": lic[0] if lic else None,
+        "creators": _query(_CREATOR_PREDS, 20),
+    }
 
 
 def build_dcat_record(
@@ -34,6 +79,9 @@ def build_dcat_record(
     void_stats: VoidStats,
     owner_name: str | None = None,
     license_url: str | None = None,
+    title: str | None = None,
+    description: str | None = None,
+    creators: list[str] | None = None,
     app_base_url: str = "http://localhost:8000",
 ) -> rdflib.Graph:
     """
@@ -49,7 +97,8 @@ def build_dcat_record(
     g.bind("schema", SCHEMA)
     g.bind("prov", PROV)
 
-    dataset = URIRef(f"{app_base_url}/api/v1/ontologies/{ontology_id}/{version_id}")
+    base = app_base_url.rstrip("/")   # app_url often has a trailing slash -> avoid //
+    dataset = URIRef(f"{base}/api/v1/ontologies/{ontology_id}/{version_id}")
     ontology_node = URIRef(ontology_iri)
     now = Literal(datetime.now(UTC).isoformat(), datatype=XSD.dateTime)
 
@@ -59,12 +108,26 @@ def build_dcat_record(
     g.add((dataset, DCTERMS.isVersionOf, ontology_node))
     g.add((dataset, DCTERMS.created, now))
 
+    # Descriptive metadata the ontology declares about itself (surfaced from the
+    # content store), falling back to the app's shortname/title for dct:title so a
+    # record is never title-less.
+    if title:
+        g.add((dataset, DCTERMS.title, Literal(title)))
+    if description:
+        g.add((dataset, DCTERMS.description, Literal(description)))
+    for creator in (creators or []):
+        # A creator can be an IRI (ORCID, a URL) or a plain name.
+        node = URIRef(creator) if creator.startswith(("http://", "https://")) else Literal(creator)
+        g.add((dataset, DCTERMS.creator, node))
+
     if version_iri:
         g.add((dataset, OWL.versionIRI, URIRef(version_iri)))
 
     if owner_name:
         g.add((dataset, DCTERMS.publisher, Literal(owner_name)))
 
+    # License: prefer an explicit URL, else what the ontology declares (which may
+    # be an IRI or a plain string).
     if license_url:
         g.add((dataset, DCTERMS.license, URIRef(license_url)))
 
