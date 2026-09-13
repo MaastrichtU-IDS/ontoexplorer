@@ -26,3 +26,20 @@ class MockResizeObserver {
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = function () {}
 }
+
+// jsdom has no matchMedia; useIsMobile() (NavBar, DashboardLayout, several pages)
+// subscribes to it. Default to non-matching (desktop) so components render their
+// wide layout under test — tests that need mobile can override window.innerWidth
+// and dispatch a change on the returned MediaQueryList.
+if (!window.matchMedia) {
+  window.matchMedia = ((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    dispatchEvent() { return false },
+  })) as unknown as typeof window.matchMedia
+}

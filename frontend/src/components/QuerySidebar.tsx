@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import Yasgui from '@triply/yasgui'
 import { useAuth } from '../hooks/useAuth'
 import { api, SavedQuery, StarterQuery } from '../lib/api'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 interface Props {
   yasguiRef: React.RefObject<InstanceType<typeof Yasgui> | null>
@@ -19,6 +20,7 @@ interface FormState {
 const EMPTY_FORM: FormState = { name: '', description: '', tags: [], tagInput: '', is_public: false }
 
 export default function QuerySidebar({ yasguiRef }: Props) {
+  const isMobile = useIsMobile()
   const { user } = useAuth()
   const navigate = useNavigate()
 
@@ -160,10 +162,15 @@ export default function QuerySidebar({ yasguiRef }: Props) {
   }, [starters])
 
   const base: React.CSSProperties = {
-    width: 200,
+    // Desktop: a fixed 200px left rail. Mobile: a full-width, height-capped panel
+    // stacked above the results, so it doesn't swallow the screen when the split
+    // goes vertical (see Sparql.tsx).
+    width: isMobile ? '100%' : 200,
     flexShrink: 0,
+    maxHeight: isMobile ? '38vh' : undefined,
     background: 'var(--bg-secondary)',
-    borderRight: '1px solid var(--border)',
+    borderRight: isMobile ? 'none' : '1px solid var(--border)',
+    borderBottom: isMobile ? '1px solid var(--border)' : undefined,
     display: 'flex',
     flexDirection: 'column',
     fontSize: '0.75rem',

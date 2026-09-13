@@ -48,7 +48,7 @@ export default function CoverageSection({ ontologyId, versionId }: {
     <section id="coverage" style={{ padding: '1rem' }}>
       <h2 style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: '0.5rem' }}>Coverage</h2>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '0.5rem', marginBottom: '1rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: '0.5rem', marginBottom: '1rem' }}>
         {TYPE_ORDER.map(t => {
           const b = record.by_type[t]
           return (

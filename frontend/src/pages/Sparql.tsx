@@ -4,6 +4,7 @@ import Yasgui from '@triply/yasgui'
 import '@triply/yasgui/build/yasgui.min.css'
 import './Sparql.css'
 import QuerySidebar from '../components/QuerySidebar'
+import { useIsMobile } from '../hooks/useIsMobile'
 import { api } from '../lib/api'
 import { ScopeToolbar } from '../components/sparql/ScopeToolbar'
 import { hasPrefix, prependPrefix, extractBaseIri } from '../components/sparql/prefixUtils'
@@ -32,6 +33,7 @@ LIMIT 10`
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function Sparql() {
+  const isMobile = useIsMobile()
   const containerRef = useRef<HTMLDivElement>(null)
   const resultsWrapperRef = useRef<HTMLDivElement>(null)
   const yasguiRef = useRef<InstanceType<typeof Yasgui> | null>(null)
@@ -335,7 +337,7 @@ export default function Sparql() {
           color: 'var(--red-soft)', fontSize: 'var(--font-size-sm)', flexShrink: 0,
         }}>{queryError}</div>
       )}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'row', overflow: 'hidden', minHeight: 0 }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: isMobile ? 'column' : 'row', overflow: isMobile ? 'auto' : 'hidden', minHeight: 0 }}>
         <QuerySidebar yasguiRef={yasguiRef} />
         <div ref={resultsWrapperRef} style={{ flex: 1, minHeight: 0, position: 'relative' }}>
           <div ref={containerRef} data-testid="yasgui-container" style={{

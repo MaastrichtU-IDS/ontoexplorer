@@ -320,3 +320,31 @@ input:focus, textarea:focus, select:focus {
 .ontology-row:hover {
   background: var(--bg-hover);
 }
+
+/* ============================================================
+   RESPONSIVE BASE (mobile ≤767px)
+   The app is largely inline-styled, so structural responsiveness
+   lives in components via the useIsMobile() hook. These rules are
+   the element-level safety net that inline styles don't cover:
+   keep wide, unbounded content (code blocks, tables, media) inside
+   the viewport instead of forcing the whole page to scroll sideways.
+   ============================================================ */
+img, svg, video, canvas { max-width: 100%; }
+
+pre {
+  overflow-x: auto;      /* long code/query lines scroll in place... */
+  max-width: 100%;       /* ...instead of widening the page */
+}
+
+@media (max-width: 767px) {
+  /* Never let the page itself scroll sideways; specific wide widgets
+     opt back into their own horizontal scroll. */
+  html, body { overflow-x: hidden; }
+
+  /* (Wide data tables already sit in their own overflow-x:auto wrapper, so they
+     scroll in place — no table-level rule needed, and forcing display:block here
+     would break their column alignment.) */
+
+  /* Form controls never force overflow in a narrow column. */
+  input, textarea, select { max-width: 100%; }
+}
