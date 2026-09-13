@@ -1,22 +1,27 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Link, Navigate, Route, Routes, useSearchParams } from 'react-router-dom'
 import NavBar from './components/NavBar'
 import AuthGuard from './components/AuthGuard'
 import DashboardLayout from './components/DashboardLayout'
-import Home from './pages/Home'
-import Search from './pages/Search'
-import Ontologies from './pages/Ontologies'
-import Dashboard from './pages/Dashboard'
-import ApiKeys from './pages/ApiKeys'
-import Webhooks from './pages/Webhooks'
-import Stats from './pages/Stats'
-import Profile from './pages/Profile'
-import OntologyPage from './pages/OntologyPage'
-import Login from './pages/Login'
-import AuthCallback from './pages/AuthCallback'
-import AdminPage from './pages/AdminPage'
-import Sparql from './pages/Sparql'
-import SparqlGallery from './pages/SparqlGallery'
+
+// Route pages are code-split: each becomes its own chunk loaded on navigation,
+// so the initial bundle isn't dominated by heavy pages (YASGUI on /sparql,
+// recharts on the dashboard). The shell (NavBar/AuthGuard/DashboardLayout) stays
+// eager so it paints immediately.
+const Home = lazy(() => import('./pages/Home'))
+const Search = lazy(() => import('./pages/Search'))
+const Ontologies = lazy(() => import('./pages/Ontologies'))
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const ApiKeys = lazy(() => import('./pages/ApiKeys'))
+const Webhooks = lazy(() => import('./pages/Webhooks'))
+const Stats = lazy(() => import('./pages/Stats'))
+const Profile = lazy(() => import('./pages/Profile'))
+const OntologyPage = lazy(() => import('./pages/OntologyPage'))
+const Login = lazy(() => import('./pages/Login'))
+const AuthCallback = lazy(() => import('./pages/AuthCallback'))
+const AdminPage = lazy(() => import('./pages/AdminPage'))
+const Sparql = lazy(() => import('./pages/Sparql'))
+const SparqlGallery = lazy(() => import('./pages/SparqlGallery'))
 
 interface VersionInfo { version: string; git_ref: string | null; git_sha: string | null }
 
@@ -92,11 +97,22 @@ function CompareRedirect() {
   return <Navigate to={`/ontologies?${next}`} replace />
 }
 
+function PageFallback() {
+  return (
+    <div style={{ padding: '3rem 1.5rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
+      Loading…
+    </div>
+  )
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ paddingTop: 'var(--nav-height)', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <NavBar />
-      <div style={{ flex: 1 }}>{children}</div>
+      {/* Suspense sits inside the shell so the nav/footer stay painted while a
+          lazily-loaded page chunk resolves — only the content area shows the
+          fallback. Covers the dashboard/admin group too (Shell wraps AuthGuard). */}
+      <div style={{ flex: 1 }}><Suspense fallback={<PageFallback />}>{children}</Suspense></div>
       <Footer />
     </div>
   )
@@ -116,7 +132,7 @@ export default function App() {
       <Route path="/sparql" element={<Shell><Sparql /></Shell>} />
       <Route path="/sparql/gallery" element={<Shell><SparqlGallery /></Shell>} />
       <Route path="/login" element={<Shell><Login /></Shell>} />
-      <Route path="/auth/:provider/callback" element={<AuthCallback />} />
+      <Route path="/auth/:provider/callback" element={<Suspense fallback={<PageFallback />}><AuthCallback /></Suspense>} />
       <Route element={<Shell><AuthGuard /></Shell>}>
         <Route element={<DashboardLayout />}>
           <Route path="/dashboard" element={<Dashboard />} />
