@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="OntoExplorer">
-  <!-- Dark rounded tile: reads on both light and dark browser tab bars -->
-  <rect width="32" height="32" rx="7" fill="#0f172a"/>
+  <!-- Arctic theme: the accent-blue tile reads on both light and dark tab bars -->
+  <rect width="32" height="32" rx="7" fill="#2b8dd6"/>
   <!-- is-a hierarchy: a parent class over two subclasses (an ontology in miniature) -->
-  <g stroke="#22c55e" stroke-width="2.1" stroke-linecap="round">
+  <g stroke="#ffffff" stroke-width="2.1" stroke-linecap="round">
     <line x1="16" y1="9" x2="8.5" y2="22.5"/>
     <line x1="16" y1="9" x2="23.5" y2="22.5"/>
   </g>
-  <g fill="#22c55e">
+  <g fill="#ffffff">
     <circle cx="16" cy="9" r="3.7"/>
     <circle cx="8.5" cy="22.5" r="3.7"/>
     <circle cx="23.5" cy="22.5" r="3.7"/>

@@ -30,7 +30,7 @@ export const THEMES: ThemeDef[] = [
 ]
 
 export const DEFAULT_DARK = 'dark'
-export const DEFAULT_LIGHT = 'light'
+export const DEFAULT_LIGHT = 'arctic'
 
 const STORAGE_KEY = 'oe-theme'
 
@@ -69,9 +69,9 @@ export function systemTheme(): string {
     : DEFAULT_DARK
 }
 
-/** Stored choice wins; otherwise follow the OS. */
+/** Stored choice wins; otherwise the site default is Arctic. */
 export function resolveInitialTheme(): string {
-  return getStoredTheme() ?? systemTheme()
+  return getStoredTheme() ?? 'arctic'
 }
 
 function applyToDom(id: string): void {
