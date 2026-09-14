@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { api, slugFromIri, type Ontology, type OntologyVersion } from '../lib/api'
 import { useAuth } from '../hooks/useAuth'
 import ReindexWithReasoner from '../components/ReindexWithReasoner'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 const INGEST_POLL_MS = 1500
 const INGEST_TRACK_TIMEOUT_MS = 30 * 60_000
@@ -311,6 +312,7 @@ function DefaultVersionEditor({ ontology, versions }: { ontology: Ontology; vers
 }
 
 function OntologyRow({ ontology }: { ontology: Ontology }) {
+  const isMobile = useIsMobile()
   const [confirming, setConfirming] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [checkState, setCheckState] = useState<CheckState>('idle')
@@ -369,7 +371,7 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
       <td style={{ padding: '0.75rem 1rem', verticalAlign: 'top' }}>
 
         {/* Two-column layout: content (left) · status + delete (right) */}
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? '0.6rem' : '1rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
 
           {/* Left: name, fields, date, stats, download */}
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -441,7 +443,7 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
           </div>
 
           {/* Right: status + download + check update + delete */}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem', flexShrink: 0 }}>
+          <div style={{ display: 'flex', flexDirection: isMobile ? 'row' : 'column', flexWrap: 'wrap', alignItems: 'center', justifyContent: isMobile ? 'flex-start' : undefined, gap: '0.5rem', flexShrink: 0, alignSelf: isMobile ? 'stretch' : undefined }}>
             {latest && <StatusDot status={latest.status} />}
             {latest && (
               <a
