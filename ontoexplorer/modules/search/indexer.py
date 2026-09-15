@@ -20,6 +20,16 @@ _SEARCH_TTL = 30 * 24 * 3600  # 30 days, same as ELK classification TTL
 # DRON indexes 771k of them, so the old figure was far below what the pipeline
 # actually handles. Override with INDEX_INDIVIDUAL_LIMIT.
 IND_INDEX_THRESHOLD = int(os.getenv("INDEX_INDIVIDUAL_LIMIT", str(1_000_000)))
+# pyowl2_profiles.detect_profiles builds a whole-graph render context (scans the
+# store via quads_for_pattern); on very large ontologies (e.g. uberon ~26k
+# classes) it does not complete in reasonable time and, run synchronously inside
+# build_index, blocks the version from ever reaching "ready". Skip profile
+# detection above this class-count threshold. Empirical: cl (19,167 classes)
+# completes; uberon (26k) and mondo-simple (36k) do not. The /owl-profile
+# endpoint already returns a graceful "not computed" when the entry is absent.
+# (A wall-clock-bounded detection would be a more robust follow-up than a
+# class-count proxy.)
+OWL_PROFILE_MAX_CLASSES = int(os.getenv("OWL_PROFILE_MAX_CLASSES", "20000"))
 
 
 @dataclass
@@ -677,7 +687,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
     _populate_coverage_cache(
         version_id, entities, deprecated_iris, labels_by_iri, defs_by_iri, r
     )
-    _populate_owl_profile_cache(version_id, ontology_id, r)
+    _populate_owl_profile_cache(version_id, ontology_id, r, class_count)
     _populate_reuse_cache(version_id, ontology_id, entities, r)
 
     return IndexStats(
@@ -966,8 +976,19 @@ def _populate_coverage_cache(
     r.setex(coverage_cache_key(version_id), _SEARCH_TTL, json.dumps(payload))
 
 
-def _populate_owl_profile_cache(version_id: str, ontology_id: str, r: "redis.Redis") -> None:
-    """Run OWL 2 profile detection and write result to Redis with the same TTL as stats."""
+def _populate_owl_profile_cache(
+    version_id: str, ontology_id: str, r: "redis.Redis", class_count: int = 0
+) -> None:
+    """Run OWL 2 profile detection and write result to Redis with the same TTL as stats.
+
+    Skipped for ontologies above OWL_PROFILE_MAX_CLASSES: detect_profiles scans the
+    whole graph and, run inline here, would otherwise hang build_index (and so
+    block the version reaching "ready") on very large ontologies. When skipped no
+    cache entry is written, so the /owl-profile endpoint reports "not computed".
+    """
+    if class_count > OWL_PROFILE_MAX_CLASSES:
+        # Skipped: detection is infeasible at this scale and would hang indexing.
+        return
     from ontoexplorer.modules.owl_profile.detector import detect_profiles
     from ontoexplorer.modules.owl_profile.cache import owl_profile_cache_key
     from ontoexplorer.clients.oxigraph import get_store
