@@ -118,7 +118,7 @@ function ProfileForm({ initial, catalog, onSaved, onCancel }: {
           <select style={{ ...inputStyle, minWidth: 160 }} value={form.reasoner} onChange={e => changeReasoner(e.target.value)}>
             {classifyReasoners.map(r => (
               <option key={r.name} value={r.name} disabled={!r.available}>
-                {r.name}{r.available ? '' : ' (unavailable)'} — {r.profile}
+                {r.name}{r.version ? ` ${r.version}` : ''}{r.available ? '' : ' (unavailable)'} — {r.profile}
               </option>
             ))}
           </select>
@@ -220,6 +220,27 @@ export function ReasonerProfilesPanel() {
           onSaved={() => { invalidate(); setEditing(null) }}
           onCancel={() => setEditing(null)}
         />
+      )}
+
+      {(catalog ?? []).length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 6 }}>Available reasoners</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {(catalog ?? []).map(r => (
+              <span key={r.name} title={`${r.profile} profile`} style={{
+                display: 'inline-flex', alignItems: 'baseline', gap: 6, fontSize: 12,
+                padding: '3px 10px', borderRadius: 4, border: '1px solid var(--border)',
+                background: 'var(--bg-secondary)', opacity: r.available ? 1 : 0.5,
+              }}>
+                <span style={{ fontWeight: 600 }}>{r.name}</span>
+                <span style={{ color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                  {r.version || '—'}
+                </span>
+                {!r.available && <span style={{ color: 'var(--red)' }}>unavailable</span>}
+              </span>
+            ))}
+          </div>
+        </div>
       )}
 
       {isLoading ? <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>Loading…</p> : (

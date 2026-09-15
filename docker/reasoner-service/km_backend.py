@@ -15,6 +15,7 @@ justifications.
 """
 from __future__ import annotations
 
+import os
 import shutil
 from registry import ReasonerInfo
 from classifier import ClassificationResult
@@ -27,6 +28,7 @@ class KmBackend:
         name="km", profile="SROIQ / OWL 2 DL",
         capabilities=frozenset({"classify", "consistency"}),
         available=_KM_BIN is not None,
+        version=os.getenv("KM_VERSION", ""),
         param_schema=(
             {"key": "route", "type": "enum", "default": "auto",
              "choices": ["auto", "manual", "default", "default8", "default1",

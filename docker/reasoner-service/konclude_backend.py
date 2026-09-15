@@ -60,11 +60,23 @@ def _transitive_superclasses(
     return superclasses
 
 
+def _konclude_version() -> str:
+    try:
+        import subprocess, re
+        out = subprocess.run([_KONCLUDE_BIN or "Konclude", "-h"],
+                             capture_output=True, text=True, timeout=10)
+        m = re.search(r"Version (v[\w.\-]+)", (out.stdout or "") + (out.stderr or ""))
+        return m.group(1) if m else ""
+    except Exception:
+        return ""
+
+
 class KoncludeBackend:
     info = ReasonerInfo(
         name="konclude", profile="OWL 2 (all profiles)",
         capabilities=frozenset({"classify", "consistency"}),
         available=_KONCLUDE_BIN is not None,
+        version=_konclude_version(),
     )
 
     def classify_ntriples(

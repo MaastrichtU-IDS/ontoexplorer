@@ -493,6 +493,8 @@ export interface ReasonerInfo {
   profile: string
   capabilities: string[]
   available: boolean
+  /** Backend version string (e.g. rustdl "0.4.28", km "v0.2.21"); "" if unknown. */
+  version?: string
   /** Tunable parameters this reasoner accepts; drives the profile-editor form. */
   param_schema?: ReasonerParamSpec[]
 }
