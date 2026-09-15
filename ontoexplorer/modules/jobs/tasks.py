@@ -51,6 +51,15 @@ celery_app.conf.update(
         "ontoexplorer.load_imports": {"queue": "write"},
         "ontoexplorer.purge_version_artifacts": {"queue": "write"},
         "ontoexplorer.backfill_metadata": {"queue": "write"},
+        # index_ontology and embed_ontology are read-only on the store but
+        # memory-heavy (search-index build / fastembed vectors of large
+        # ontologies). Route them to a dedicated "index" queue drained by a
+        # low-concurrency worker so they can't stack up on the "light" read
+        # worker and OOM it — the "light" worker can then run reads at high
+        # concurrency again. Both read the store read-only, so they stay off
+        # the single-RW "write" worker.
+        "ontoexplorer.index_ontology": {"queue": "index"},
+        "ontoexplorer.embed_ontology": {"queue": "index"},
     },
     beat_schedule={
         "poll-for-updates-hourly": {
