@@ -437,6 +437,16 @@ function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid }: {
     staleTime: 120_000,
   })
   const langs = useOntologyLanguages(version?.ontology_id, version?.id)
+  // Reasoner catalog carries the backend version string for the reasoner this
+  // version was classified with.
+  const { data: reasonerCatalog } = useQuery({
+    queryKey: ['reasoners'],
+    queryFn: () => api.reasoners.list(),
+    staleTime: 300_000,
+  })
+  const reasonerVersion = version?.reasoner
+    ? (reasonerCatalog?.find(r => r.name === version.reasoner)?.version || '')
+    : ''
 
   if (!version) {
     return <div style={{ padding: '2rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</div>
@@ -503,7 +513,7 @@ function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid }: {
                 background: 'var(--bg-secondary)',
                 color: 'var(--text-muted)', borderRadius: 3, padding: '1px 7px',
               }}>
-                {version.reasoner}
+                {version.reasoner}{reasonerVersion ? ` ${reasonerVersion}` : ''}
               </span>
             </MetaRow>
           )}

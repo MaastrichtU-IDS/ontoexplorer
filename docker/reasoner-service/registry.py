@@ -21,6 +21,10 @@ class ReasonerInfo:
     profile: str
     capabilities: frozenset[str]
     available: bool
+    # Version of the underlying reasoner (e.g. rustdl "0.4.28", km "v0.2.21",
+    # Konclude "v0.7.0-1138"). Empty when it can't be determined. Surfaced in the
+    # UI (add-ontology advanced options, admin reasoners tab, ontology metadata).
+    version: str = ""
     # Tunable parameters this backend accepts, as a tuple of specs the admin UI
     # renders into typed, validated form fields. Each spec is a dict:
     #   {key, type: 'bool'|'int'|'enum', default, label, help,

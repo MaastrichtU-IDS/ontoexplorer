@@ -584,6 +584,17 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
   })
   const profiles = profilesData?.profiles ?? []
 
+  // Reasoner catalog carries backend version strings; map reasoner name -> version
+  // so each profile option can show which reasoner build it runs on.
+  const { data: reasonerCatalog } = useQuery({
+    queryKey: ['reasoners'],
+    queryFn: () => api.reasoners.list(),
+    enabled: showAdvanced,
+    staleTime: 300_000,
+  })
+  const reasonerVersion = (name: string) =>
+    reasonerCatalog?.find(r => r.name === name)?.version || ''
+
   // Ingestion runs in a Celery worker, so POST /ontologies only queues it. The
   // returned task_id is also the ingestion job's id, so poll GET /jobs/{id} for
   // the outcome — a submission that fails before any version exists (unreachable
@@ -786,7 +797,11 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
                 >
                   <option value="">(default)</option>
                   {profiles.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                      {` — ${p.reasoner}`}
+                      {reasonerVersion(p.reasoner) ? ` ${reasonerVersion(p.reasoner)}` : ''}
+                    </option>
                   ))}
                 </select>
               </label>

@@ -55,6 +55,10 @@ RUN chmod +x /usr/local/bin/Konclude \
 # km (native binary; links only libc/libgcc, already present).
 COPY --from=km-build /km /usr/local/bin/km
 RUN chmod +x /usr/local/bin/km
+# km has no runtime --version, so bake the build rev in for the /reasoners version
+# field (km_backend reads $KM_VERSION). Redeclared here so the runtime stage sees it.
+ARG KM_REV=v0.2.21
+ENV KM_VERSION=${KM_REV}
 
 COPY main.py classify_worker.py consistency_worker.py justify_worker.py classifier.py cache.py \
      registry.py rustdl_backend.py konclude_backend.py km_backend.py incremental_km.py ./

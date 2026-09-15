@@ -6,11 +6,20 @@ from registry import ReasonerInfo
 from classifier import ClassificationResult
 
 
+def _rustdl_version() -> str:
+    try:
+        import importlib.metadata as _md
+        return _md.version("rustdl")
+    except Exception:
+        return ""
+
+
 class RustdlBackend:
     info = ReasonerInfo(
         name="rustdl", profile="DL (SROIQ)",
         capabilities=frozenset({"classify", "consistency", "justify"}),
         available=importlib.util.find_spec("rustdl") is not None,
+        version=_rustdl_version(),
         param_schema=(
             {"key": "saturation_only", "type": "bool", "default": False,
              "label": "EL saturation only",
