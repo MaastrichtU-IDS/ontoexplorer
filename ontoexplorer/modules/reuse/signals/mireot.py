@@ -68,21 +68,26 @@ def detect_mireot(
     """
     found: list[MireotTerm] = []
 
-    # Step 1: enumerate distinct foreign subjects.
-    # Use a SPARQL ASK-style enumeration constrained to the named graph.
-    subjects_q = f"""
-        SELECT DISTINCT ?s WHERE {{
+    # Enumerate every IRI subject in the graph together with its predicate
+    # multiset in a SINGLE aggregate query. detect_mireot previously issued one
+    # SPARQL query per foreign-namespace subject, so an ontology that MIREOTs
+    # tens of thousands of foreign terms (e.g. uberon) triggered tens of
+    # thousands of round-trips and took 30+ minutes to index. One GROUP BY ?s ?p
+    # pass returns the same information in a single round-trip; the per-subject
+    # filtering and minimal-axiomatization checks below are unchanged.
+    counts_by_subject: dict[str, dict[str, int]] = {}
+    preds_all_q = f"""
+        SELECT ?s ?p (COUNT(*) AS ?n) WHERE {{
             GRAPH <{graph_iri}> {{
                 ?s ?p ?o .
                 FILTER(isIRI(?s))
             }}
-        }}
+        }} GROUP BY ?s ?p
     """
-    subject_iris = [
-        sol["s"].value for sol in store.query(subjects_q)
-    ]
+    for sol in store.query(preds_all_q):
+        counts_by_subject.setdefault(sol["s"].value, {})[sol["p"].value] = int(sol["n"].value)
 
-    for s in subject_iris:
+    for s, pred_counts in counts_by_subject.items():
         if any(s.startswith(ns) for ns in host_namespaces):
             continue  # native — host's own namespace
         prefix, _ = iri_to_prefix(s)
@@ -92,18 +97,6 @@ def detect_mireot(
             continue  # also native (mixed-namespace forms of the host prefix)
         if prefix in import_prefix_set:
             continue  # source IS imported → not MIREOT
-
-        # Step 2: fetch all predicates with this subject in this graph.
-        preds_q = f"""
-            SELECT ?p (COUNT(*) AS ?n) WHERE {{
-                GRAPH <{graph_iri}> {{
-                    <{s}> ?p ?o .
-                }}
-            }} GROUP BY ?p
-        """
-        pred_counts: dict[str, int] = {}
-        for sol in store.query(preds_q):
-            pred_counts[sol["p"].value] = int(sol["n"].value)
 
         # Step 3: check minimal-axiomatization rules.
         if any(p in pred_counts for p in _DISQUALIFYING_PREDS):
