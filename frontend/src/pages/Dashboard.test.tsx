@@ -152,8 +152,11 @@ test('expanding Advanced reveals a reasoner-profile select populated from reason
   // controls also render profile dropdowns on this page).
   const opts = within(select)
   expect(opts.getByRole('option', { name: '(default)' })).toBeInTheDocument()
-  expect(await opts.findByRole('option', { name: 'rustdl (default)' })).toBeInTheDocument()
-  expect(opts.getByRole('option', { name: 'konclude' })).toBeInTheDocument()
+  // Options now append the profile's reasoner (and its version when known):
+  // "<profile name> — <reasoner> [<version>]". Version is absent here (this
+  // test's reasoner-catalog mock carries none), so match the name+reasoner.
+  expect(await opts.findByRole('option', { name: /rustdl \(default\).*rustdl/ })).toBeInTheDocument()
+  expect(opts.getByRole('option', { name: /konclude.*konclude/ })).toBeInTheDocument()
 })
 
 test('submitting with Advanced left collapsed calls submitByIri with no reasoner', async () => {
@@ -174,8 +177,10 @@ test('choosing a reasoner profile under Advanced threads it into the submit call
   fireEvent.click(screen.getByText('+ Add Ontology'))
   fireEvent.click(screen.getByText(/Advanced/))
 
-  const select = await screen.findByLabelText(/reasoner profile/i)
-  await waitFor(() => expect(screen.getByRole('option', { name: 'konclude' })).toBeInTheDocument())
+  const select = await screen.findByLabelText(/reasoner profile/i) as HTMLSelectElement
+  // Scope to the add-form select (ontology-card reindex controls also render
+  // profile dropdowns) and match by substring — options read "<name> — <reasoner>".
+  await waitFor(() => expect(within(select).getByRole('option', { name: /konclude/ })).toBeInTheDocument())
   fireEvent.change(select, { target: { value: 'p2' } })
 
   fireEvent.change(screen.getByLabelText(/ontology iri or url/i), {
