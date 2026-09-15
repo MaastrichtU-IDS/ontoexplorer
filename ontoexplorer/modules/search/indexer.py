@@ -540,6 +540,16 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
     pipe = r.pipeline(transaction=False)
     class_count = property_count = 0
     # individual_count was set above during threshold-gated collection
+    # Flush the write pipeline every _FLUSH_ENTITIES entities so its in-memory
+    # command buffer stays bounded. A single non-transactional pipeline over a
+    # 26k+ class ontology otherwise queues millions of ZADD suffix entries in
+    # worker memory before one execute(), which drove ~15 GiB RSS and OOM-killed
+    # the indexing worker on large OBO ontologies (uberon/cl/mondo). The writes
+    # are independent (distinct keys, additive ZADD/SADD), so periodic flushing
+    # is semantically identical to one final execute(); the pipeline is reusable
+    # after execute(), and the trailing meta/expire commands run in the final one.
+    _FLUSH_ENTITIES = 2000
+    _since_flush = 0
 
     for iri, entity_type in entities.items():
         if iri in deprecated_iris:
@@ -597,6 +607,11 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
             class_count += 1
         elif entity_type != "individual":
             property_count += 1
+
+        _since_flush += 1
+        if _since_flush >= _FLUSH_ENTITIES:
+            pipe.execute()
+            _since_flush = 0
 
     # Inject owl:Thing as a queryable built-in class for any ontology that has classes.
     # It is not declared as a owl:Class in ontology files so it would otherwise be absent.
