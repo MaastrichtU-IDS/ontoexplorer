@@ -18,7 +18,7 @@
 
 # --- km-build: compile kobayashi-marust's `km` binary (Rust) ---
 FROM rust:1-slim-bookworm AS km-build
-ARG KM_REV=v0.2.21
+ARG KM_REV=v1.3.0
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 RUN git clone https://github.com/bio-ontology-research-group/kobayashi-marust.git /src \
@@ -57,7 +57,7 @@ COPY --from=km-build /km /usr/local/bin/km
 RUN chmod +x /usr/local/bin/km
 # km has no runtime --version, so bake the build rev in for the /reasoners version
 # field (km_backend reads $KM_VERSION). Redeclared here so the runtime stage sees it.
-ARG KM_REV=v0.2.21
+ARG KM_REV=v1.3.0
 ENV KM_VERSION=${KM_REV}
 
 COPY main.py classify_worker.py consistency_worker.py justify_worker.py classifier.py cache.py \
