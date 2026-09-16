@@ -71,7 +71,10 @@ def _check_oxigraph() -> str:
     try:
         from ontoexplorer.clients.oxigraph import get_store
         store = get_store()
-        len(store)  # forces a RocksDB read; raises if the store is unusable
+        # A bounded ASK proves the store is readable. Do NOT use len(store): it
+        # runs SELECT COUNT(*) over every named graph, which on a large corpus is
+        # tens of millions of triples (~40s) and dominated /admin/overview.
+        store.query("ASK { GRAPH ?g { ?s ?p ?o } }")
         return "ok"
     except Exception as exc:
         return f"error: {exc}"
