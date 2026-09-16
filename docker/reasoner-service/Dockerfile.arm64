@@ -60,7 +60,7 @@ RUN cp "$(find /src -type f -name Konclude -path '*[Rr]elease*' | head -1)" /Kon
 
 # --- km-build: compile kobayashi-marust's `km` binary natively for aarch64 ---
 FROM rust:1-slim-bookworm AS km-build
-ARG KM_REV=v0.2.21
+ARG KM_REV=v1.3.0
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 RUN git clone https://github.com/bio-ontology-research-group/kobayashi-marust.git /src \

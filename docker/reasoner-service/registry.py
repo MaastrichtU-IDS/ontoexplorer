@@ -21,7 +21,7 @@ class ReasonerInfo:
     profile: str
     capabilities: frozenset[str]
     available: bool
-    # Version of the underlying reasoner (e.g. rustdl "0.4.28", km "v0.2.21",
+    # Version of the underlying reasoner (e.g. rustdl "0.4.28", km "v1.3.0",
     # Konclude "v0.7.0-1138"). Empty when it can't be determined. Surfaced in the
     # UI (add-ontology advanced options, admin reasoners tab, ontology metadata).
     version: str = ""
