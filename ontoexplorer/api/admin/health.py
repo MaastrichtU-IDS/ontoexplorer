@@ -13,7 +13,7 @@ from ontoexplorer.config import get_settings
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import User
 
-from ._common import _reasoning_status, _require_admin, _search_redis
+from ._common import _elk_redis, _require_admin, _search_redis
 
 router = APIRouter()
 
@@ -237,15 +237,63 @@ async def admin_overview(
 
     search_r = await asyncio.to_thread(_search_redis)
 
-    async def _onto_entry(row) -> dict:
+    # Batch the per-version lookups. Previously each ontology triggered its own
+    # Redis exists/scan calls (via a freshly-created elk client) plus a Job query
+    # on the shared async session (which serialises) — an N+1 that ran ~30 s cold
+    # on a large corpus. Precompute everything in three round-trips instead.
+
+    # (a) versions with a pending/running reason job -> "running"
+    running_vids: set[str] = set()
+    if version_ids:
+        job_rows = (await db.execute(
+            text("""
+                SELECT DISTINCT version_id FROM jobs
+                WHERE version_id IN :ids AND type = 'reason'
+                  AND status IN ('pending', 'running')
+            """).bindparams(bindparam("ids", expanding=True)),
+            {"ids": version_ids},
+        )).all()
+        running_vids = {str(r.version_id) for r in job_rows}
+
+    # (b) versions with a cached classification (any reasoner) -> "ready", and
+    # (c) the indexed / profile-computed flags — one elk SCAN + one search pipeline.
+    def _batch_redis():
+        classified: set[str] = set()
+        try:
+            elk = _elk_redis()
+            for k in elk.scan_iter(match="classification:*", count=500):
+                # key is classification:{vid} or classification:{vid}:{reasoner}
+                parts = k.split(":")
+                if len(parts) >= 2:
+                    classified.add(parts[1])
+        except Exception:
+            pass
+        idx: dict[str, bool] = {}
+        prof: dict[str, bool] = {}
+        try:
+            pipe = search_r.pipeline(transaction=False)
+            for vid in version_ids:
+                pipe.exists(f"search:meta:{vid}")
+                pipe.exists(f"owl_profile:{vid}")
+            flags = pipe.execute()
+            for i, vid in enumerate(version_ids):
+                idx[vid] = bool(flags[2 * i])
+                prof[vid] = bool(flags[2 * i + 1])
+        except Exception:
+            pass
+        return classified, idx, prof
+
+    classified_vids, indexed_map, profile_map = await asyncio.to_thread(_batch_redis)
+
+    def _onto_entry(row) -> dict:
         vid = str(row["version_id"])
-        indexed = await asyncio.to_thread(
-            lambda: bool(search_r.exists(f"search:meta:{vid}"))
+        indexed = indexed_map.get(vid, False)
+        profile_computed = profile_map.get(vid, False)
+        reasoning = (
+            "ready" if vid in classified_vids
+            else "running" if vid in running_vids
+            else "not_started"
         )
-        profile_computed = await asyncio.to_thread(
-            lambda: bool(search_r.exists(f"owl_profile:{vid}"))
-        )
-        reasoning = await _reasoning_status(vid, row.get("reasoner"), db)
         created = row["version_created_at"]
         meta_resolved = row["meta_resolved"] or {}
         label = row["ont_title"] or meta_resolved.get("title") or None
@@ -269,7 +317,7 @@ async def admin_overview(
             "version_created_at": created.isoformat() if created else None,
         }
 
-    ontologies = await asyncio.gather(*[_onto_entry(r) for r in rows])
+    ontologies = [_onto_entry(r) for r in rows]
 
     job_rows = (await db.execute(
         text("""
