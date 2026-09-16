@@ -7,7 +7,7 @@ key (Authorization: Bearer). BioPortal listing needs a BioPortal API key.
 
   python load_ontologies.py --source lov --limit 15               # dry run
   python load_ontologies.py --source bioportal --limit 10 --max-classes 50000 --bp-key ... 
-  python load_ontologies.py --source both --apply --oe-key oe_... --bp-key ...
+  python load_ontologies.py --source both --apply --oe-key oe_... --bp-key ... --group bulk-import
 """
 import argparse, sys, time
 import httpx
@@ -89,8 +89,10 @@ def existing(base, oe_key):
         if o.get("shortname"): names.add(str(o["shortname"]).lower())
     return iris, names
 
-def submit(base, oe_key, item):
+def submit(base, oe_key, item, groups=None):
     body = {item["kind"]: item["id"]}
+    if groups:
+        body["groups"] = groups
     r = httpx.post(f"{base}/api/v1/ontologies", json=body,
                    headers={"Authorization": f"Bearer {oe_key}"}, timeout=60, follow_redirects=True)
     return r.status_code, (r.json() if r.headers.get("content-type","").startswith("application/json") else r.text[:200])
@@ -105,6 +107,10 @@ def main():
     ap.add_argument("--bp-key", default="", help="BioPortal API key")
     ap.add_argument("--apply", action="store_true", help="actually submit (default: dry run)")
     ap.add_argument("--delay", type=float, default=2.0, help="seconds between submits")
+    ap.add_argument("--group", action="append", default=[], metavar="TAG",
+                    help="extra group tag applied to every loaded ontology (repeatable). "
+                         "Each ontology is ALSO tagged with its source group "
+                         "('bioportal' or 'lov'), so you can filter by source or by batch.")
     a = ap.parse_args()
 
     items = []
@@ -130,7 +136,8 @@ def main():
         print("! --apply requires --oe-key", file=sys.stderr); sys.exit(2)
     ok=fail=0
     for it in fresh:
-        code, resp = submit(a.base, a.oe_key, it)
+        groups = [it["src"], *a.group]
+        code, resp = submit(a.base, a.oe_key, it, groups)
         tag = resp.get("task_id","")[:8] if isinstance(resp, dict) else ""
         print(f"  {'OK ' if code<300 else 'ERR'} http={code} task={tag} {it['src']}:{it['label'][:40]}")
         ok += code < 300; fail += code >= 300
