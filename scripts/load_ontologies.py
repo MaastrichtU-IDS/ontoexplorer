@@ -77,16 +77,27 @@ def bioportal_list(bp_key, limit, max_classes, acronyms=None):
     return out
 
 def existing(base, oe_key):
+    # Paginate through ALL ontologies so dedup works on a large corpus. Without
+    # an explicit limit the API returns only the first page, so on an instance
+    # that already holds many ontologies the loader would re-submit ones past
+    # page 1 (harmless server-side, but wasteful re-downloads).
     h = {"Authorization": f"Bearer {oe_key}"} if oe_key else {}
-    r = httpx.get(f"{base}/api/v1/ontologies", headers=h, timeout=60, follow_redirects=True)
-    r.raise_for_status()
-    data = r.json()
-    items = data if isinstance(data, list) else data.get("ontologies", data.get("items", []))
     iris, names = set(), set()
-    for o in items:
-        for k in ("iri", "namespace", "shortname", "acronym"):
-            if o.get(k): iris.add(str(o[k]).rstrip("/#"))
-        if o.get("shortname"): names.add(str(o["shortname"]).lower())
+    offset, PAGE = 0, 500
+    while True:
+        r = httpx.get(f"{base}/api/v1/ontologies", headers=h,
+                      params={"limit": PAGE, "offset": offset},
+                      timeout=60, follow_redirects=True)
+        r.raise_for_status()
+        data = r.json()
+        items = data if isinstance(data, list) else data.get("ontologies", data.get("items", []))
+        for o in items:
+            for k in ("iri", "namespace", "shortname", "acronym"):
+                if o.get(k): iris.add(str(o[k]).rstrip("/#"))
+            if o.get("shortname"): names.add(str(o["shortname"]).lower())
+        if len(items) < PAGE:
+            break
+        offset += PAGE
     return iris, names
 
 def submit(base, oe_key, item, groups=None):
