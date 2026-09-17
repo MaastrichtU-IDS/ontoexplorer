@@ -163,6 +163,138 @@ def _build_class_expr(store, graph_node, node, label_fn, depth: int = 0) -> dict
     return {"type": "unknown"}
 
 
+# ── Blank-node axiom closure (oxigraph-as-a-service) ──────────────────────────
+# The HTTP store proxy cannot resolve a stored blank node by label: a bound
+# BlankNode term is inlined into SPARQL as `_:x`, which in query syntax is a
+# fresh existential variable, so `quads_for_pattern(<bnode>, …)` matches the
+# WHOLE graph. Every walker that dereferences a blank node (`_build_class_expr`,
+# `_rdf_list_items`) therefore reads garbage over the proxy — e.g. it renders
+# `complementOf(hasPart some Process)` as a plain `hasPart some Process`, twice.
+#
+# Fix: fetch a term's blank-node axiom skeleton in ONE CONSTRUCT (so every
+# blank-node label in the result is internally consistent), load it into a small
+# embedded store, and run the existing walkers against that. The closure emits
+# only the seed's own triples plus blank-subject triples reachable through the
+# axiom-internal predicates below — named fillers stay leaf IRIs, so even a class
+# near the root stays tiny (SULO Object: 19 triples; GO biological_process: 45).
+
+_RDFS = "http://www.w3.org/2000/01/rdf-schema#"
+
+# Axiom-INTERNAL predicates, traversed transitively to reach nested structure.
+# subClassOf / equivalentClass are deliberately EXCLUDED — repeating them would
+# climb the class hierarchy and pull the whole ontology into the closure.
+_CLOSURE_STRUCT_PP = "|".join(
+    f"<{p}>" for p in (
+        _OWL + "onProperty", _OWL + "someValuesFrom", _OWL + "allValuesFrom",
+        _OWL + "hasValue", _OWL + "onClass", _OWL + "complementOf",
+        _OWL + "intersectionOf", _OWL + "unionOf", _OWL + "oneOf",
+        _OWL + "onDatatype", _OWL + "withRestrictions", _OWL + "members",
+        _RDF + "first", _RDF + "rest", _OWL + "inverseOf",
+    )
+)
+# ENTRY predicates connect a seed to an axiom root (one hop, either direction).
+_CLOSURE_ENTRY_F = " ".join(
+    f"<{p}>" for p in (
+        _RDFS + "subClassOf", _OWL + "equivalentClass", _OWL + "disjointWith",
+        _OWL + "disjointUnionOf",
+    )
+)
+_CLOSURE_ENTRY_B = " ".join(
+    f"<{p}>" for p in (
+        _RDFS + "subClassOf", _OWL + "equivalentClass", _OWL + "disjointWith",
+    )
+)
+
+
+# Cap on how many named seeds a closure inlines. Each seed contributes a small
+# UNION of index-anchored branches; a class page never needs more (the ancestor
+# walks that pass many seeds cap their own output well below this).
+_CLOSURE_MAX_SEEDS = 64
+
+
+def _axiom_closure_construct(g_iri: str, seed_iris: list[str]) -> str:
+    """CONSTRUCT the blank-node axiom skeleton around a set of named seeds.
+
+    Captures, in one query so all blank-node labels are self-consistent: each
+    seed's own triples, the anonymous super/equivalent/disjoint expressions
+    hanging off it, and the anonymous subclasses (general class axioms) whose
+    target is a seed — plus the structural closure of each. Only blank-subject
+    triples (and the seeds' own) are emitted, keeping it bounded by the seeds'
+    definitions rather than the graph size.
+
+    Each seed is INLINED (not passed via VALUES): a VALUES-bound term is not
+    pushed into the property-path evaluation, so `?root (struct)* ?s` degrades to
+    a whole-graph path scan and times out. Inlining keeps every branch anchored
+    on the seed's index entry (0.02 s vs 30 s on GO).
+    """
+    branches: list[str] = []
+    for s in seed_iris[:_CLOSURE_MAX_SEEDS]:
+        c = f"<{s}>"
+        branches.append(f"{{ {c} ?p ?o . BIND({c} AS ?s) }}")
+        branches.append(
+            f"{{ {c} ?ef ?root . VALUES ?ef {{ {_CLOSURE_ENTRY_F} }} "
+            f"FILTER(isBlank(?root)) ?root ({_CLOSURE_STRUCT_PP})* ?s . "
+            f"FILTER(isBlank(?s)) ?s ?p ?o . }}"
+        )
+        branches.append(
+            f"{{ ?root ?eb {c} . VALUES ?eb {{ {_CLOSURE_ENTRY_B} }} "
+            f"FILTER(isBlank(?root)) ?root ({_CLOSURE_STRUCT_PP})* ?s . "
+            f"FILTER(isBlank(?s)) ?s ?p ?o . }}"
+        )
+    body = " UNION ".join(branches)
+    return f"CONSTRUCT {{ ?s ?p ?o }} WHERE {{ GRAPH <{g_iri}> {{ {body} }} }}"
+
+
+def _bnode_walk_store(store, g_iri: str, seed_iris: list[str]):
+    """Return the store to use for blank-node axiom walks of ``seed_iris``.
+
+    When ``store`` is the HTTP proxy (which can't resolve stored blank nodes),
+    materialise the seeds' axiom closure into an embedded store; otherwise the
+    embedded store already walks blank nodes natively, so return it unchanged.
+    """
+    import pyoxigraph
+    from ontoexplorer.clients.oxigraph import _HttpStoreProxy, _http_query
+    from ontoexplorer.config import get_settings
+
+    seeds = [s for s in dict.fromkeys(seed_iris) if s]
+    if not seeds or not isinstance(store, _HttpStoreProxy):
+        return store
+    ep = get_settings().oxigraph_http_endpoint
+    construct = _axiom_closure_construct(g_iri, seeds)
+    triples = _http_query(ep, construct, None, [g_iri])
+    gn = pyoxigraph.NamedNode(g_iri)
+    local = pyoxigraph.Store()
+    local.extend(
+        pyoxigraph.Quad(t.subject, t.predicate, t.object, gn) for t in triples
+    )
+    return local
+
+
+def _adc_map_via_sparql(store, g_iri: str) -> dict[str, list[str]]:
+    """owl:AllDisjointClasses membership (member IRI → co-member IRIs).
+
+    Uses property paths (``owl:members/rdf:rest*/rdf:first``) to enumerate list
+    members inside a single query, so it never dereferences a blank node by
+    label — unlike a `quads_for_pattern` list walk, which the HTTP proxy cannot
+    resolve (it would read the whole graph for the anonymous list node).
+    """
+    q = f"""
+        PREFIX owl: <http://www.w3.org/2002/07/owl#>
+        PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+        SELECT DISTINCT ?a ?b WHERE {{ GRAPH <{g_iri}> {{
+            ?adc rdf:type owl:AllDisjointClasses ;
+                 owl:members/rdf:rest*/rdf:first ?a , ?b .
+            FILTER(isIRI(?a) && isIRI(?b) && STR(?a) < STR(?b))
+        }} }}
+    """
+    adc: dict[str, list[str]] = {}
+    for row in store.query(q):
+        a, b = row["a"].value, row["b"].value
+        adc.setdefault(a, []).append(b)
+        adc.setdefault(b, []).append(a)
+    return adc
+
+
 def _find_subclass_path(store, g_iri: str, sub_iri: str, sup_iri: str, label_fn) -> list[list[dict]]:
     """BFS over asserted rdfs:subClassOf edges to find a minimal named-class path sub → sup."""
     import pyoxigraph as ox
@@ -1978,16 +2110,21 @@ async def get_term(
         _RDFS_SC_NODE = _ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
         _OWL_EQ_CLASS = _ox.NamedNode(_OWL + "equivalentClass")
         _OWL_DISJOINT_NODE = _ox.NamedNode(_OWL + "disjointWith")
-        _OWL_ADC_NODE      = _ox.NamedNode(_OWL + "AllDisjointClasses")
-        _OWL_MEMBERS_NODE  = _ox.NamedNode(_OWL + "members")
         _OWL_DISJOINT_UNION_NODE = _ox.NamedNode(_OWL + "disjointUnionOf")
-        _RDF_TYPE_NODE     = _ox.NamedNode(_RDF + "type")
+
+        # Blank-node axiom walks (super/equivalent/disjoint expressions, general
+        # class axioms) go through the term's closure store: the HTTP proxy can't
+        # dereference a stored blank node, so both the root-finding pattern
+        # queries AND the recursive walk must run against the same self-consistent
+        # closure (see _bnode_walk_store). The graph-wide AllDisjointClasses map
+        # stays on `store` but via a blank-node-free SPARQL path.
+        _bn = _bnode_walk_store(store, g_iri, [term_iri])
 
         # Superclass expressions — blank-node targets of rdfs:subClassOf
         superclass_expressions: list[dict] = []
-        for _quad in store.quads_for_pattern(_term_node, _RDFS_SC_NODE, None, _graph_node):
+        for _quad in _bn.quads_for_pattern(_term_node, _RDFS_SC_NODE, None, _graph_node):
             if isinstance(_quad.object, _ox.BlankNode):
-                _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
+                _expr = _build_class_expr(_bn, _graph_node, _quad.object, _label)
                 if _expr.get("type") != "unknown":
                     superclass_expressions.append(_expr)
 
@@ -1996,48 +2133,38 @@ async def get_term(
 
         # Equivalent classes (owl:equivalentClass)
         equivalent_to: list[dict] = []
-        for _quad in store.quads_for_pattern(_term_node, _OWL_EQ_CLASS, None, _graph_node):
-            _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
+        for _quad in _bn.quads_for_pattern(_term_node, _OWL_EQ_CLASS, None, _graph_node):
+            _expr = _build_class_expr(_bn, _graph_node, _quad.object, _label)
             if _expr.get("type") != "unknown":
                 equivalent_to.append(_expr)
 
         # Disjoint with (owl:disjointWith)
         disjoint_with: list[dict] = []
-        for _quad in store.quads_for_pattern(_term_node, _OWL_DISJOINT_NODE, None, _graph_node):
-            _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
+        for _quad in _bn.quads_for_pattern(_term_node, _OWL_DISJOINT_NODE, None, _graph_node):
+            _expr = _build_class_expr(_bn, _graph_node, _quad.object, _label)
             if _expr.get("type") != "unknown":
                 disjoint_with.append(_expr)
 
         # AllDisjointClasses map: iri → co-member IRIs
-        _adc_map: dict[str, list[str]] = {}
-        for _q in store.quads_for_pattern(None, _RDF_TYPE_NODE, _OWL_ADC_NODE, _graph_node):
-            _mem_qs = list(store.quads_for_pattern(_q.subject, _OWL_MEMBERS_NODE, None, _graph_node))
-            if not _mem_qs:
-                continue
-            _miris = [
-                m.value for m in _rdf_list_items(store, _graph_node, _mem_qs[0].object)
-                if isinstance(m, _ox.NamedNode)
-            ]
-            for _miri in _miris:
-                _adc_map.setdefault(_miri, []).extend(o for o in _miris if o != _miri)
+        _adc_map = _adc_map_via_sparql(store, g_iri)
 
         # NOTE: inferred_disjoint_with moved to /expanded endpoint.
 
         # Disjoint union of (owl:disjointUnionOf) — each value is an rdf:List
         disjoint_union_of: list[list[dict]] = []
-        for _quad in store.quads_for_pattern(_term_node, _OWL_DISJOINT_UNION_NODE, None, _graph_node):
+        for _quad in _bn.quads_for_pattern(_term_node, _OWL_DISJOINT_UNION_NODE, None, _graph_node):
             _members = [
-                _build_class_expr(store, _graph_node, _item, _label)
-                for _item in _rdf_list_items(store, _graph_node, _quad.object)
+                _build_class_expr(_bn, _graph_node, _item, _label)
+                for _item in _rdf_list_items(_bn, _graph_node, _quad.object)
             ]
             if _members:
                 disjoint_union_of.append(_members)
 
         # General class axioms — blank nodes whose rdfs:subClassOf target is this term
         general_class_axioms: list[dict] = []
-        for _quad in store.quads_for_pattern(None, _RDFS_SC_NODE, _term_node, _graph_node):
+        for _quad in _bn.quads_for_pattern(None, _RDFS_SC_NODE, _term_node, _graph_node):
             if isinstance(_quad.subject, _ox.BlankNode):
-                _expr = _build_class_expr(store, _graph_node, _quad.subject, _label)
+                _expr = _build_class_expr(_bn, _graph_node, _quad.subject, _label)
                 if _expr.get("type") != "unknown":
                     general_class_axioms.append(_expr)
 
@@ -2558,26 +2685,8 @@ async def get_term_usage_page(
         return {"kind": "property", "offset": offset, "limit": limit,
                 "items": rows[:limit], "has_more": has_more}
 
-    # class_usage path needs _adc_map
-    import pyoxigraph as _ox
-    def _compute_adc_map(s):
-        _graph_node = _ox.NamedNode(g_iri)
-        _OWL_ADC_NODE     = _ox.NamedNode(_OWL + "AllDisjointClasses")
-        _OWL_MEMBERS_NODE = _ox.NamedNode(_OWL + "members")
-        _RDF_TYPE_NODE    = _ox.NamedNode(_RDF + "type")
-        adc: dict[str, list[str]] = {}
-        for q in s.quads_for_pattern(None, _RDF_TYPE_NODE, _OWL_ADC_NODE, _graph_node):
-            mem_qs = list(s.quads_for_pattern(q.subject, _OWL_MEMBERS_NODE, None, _graph_node))
-            if not mem_qs:
-                continue
-            miris = [
-                m.value for m in _rdf_list_items(s, _graph_node, mem_qs[0].object)
-                if isinstance(m, _ox.NamedNode)
-            ]
-            for miri in miris:
-                adc.setdefault(miri, []).extend(o for o in miris if o != miri)
-        return adc
-
+    # class_usage path needs _adc_map (blank-node-free SPARQL — the HTTP proxy
+    # can't walk the anonymous members list by label).
     cu_q = f"""
         PREFIX owl:  <http://www.w3.org/2002/07/owl#>
         PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -2603,7 +2712,7 @@ async def get_term_usage_page(
         ORDER BY ?class
         OFFSET {sql_offset} LIMIT {sql_limit}
     """
-    _adc_map = await asyncio.to_thread(_compute_adc_map, store)
+    _adc_map = await asyncio.to_thread(_adc_map_via_sparql, store, g_iri)
     rows = await asyncio.to_thread(
         _sparql_class_usage, store, cu_q, disj_q, _label, _adc_map, term_iri, g_iri
     )
@@ -2740,18 +2849,20 @@ async def get_term_expanded(
         _graph_node   = _ox.NamedNode(g_iri)
         _RDFS_SC_NODE = _ox.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
         _OWL_DISJOINT_NODE = _ox.NamedNode(_OWL + "disjointWith")
-        _OWL_ADC_NODE      = _ox.NamedNode(_OWL + "AllDisjointClasses")
-        _OWL_MEMBERS_NODE  = _ox.NamedNode(_OWL + "members")
-        _RDF_TYPE_NODE     = _ox.NamedNode(_RDF + "type")
+
+        # Ancestors' blank-node axiom walks go through a closure seeded at the
+        # ancestors (the HTTP proxy can't dereference stored blank nodes); the
+        # AllDisjointClasses map uses a blank-node-free SPARQL path on `store`.
+        _bn = _bnode_walk_store(store, g_iri, _all_ancestor_iris)
 
         # inferred_superclass_expressions
         inferred_superclass_expressions: list[dict] = []
         _seen_expr_keys: set[str] = set()
         for _sup_iri in _all_ancestor_iris[:20]:
             _sup_node = _ox.NamedNode(_sup_iri)
-            for _quad in store.quads_for_pattern(_sup_node, _RDFS_SC_NODE, None, _graph_node):
+            for _quad in _bn.quads_for_pattern(_sup_node, _RDFS_SC_NODE, None, _graph_node):
                 if isinstance(_quad.object, _ox.BlankNode):
-                    _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
+                    _expr = _build_class_expr(_bn, _graph_node, _quad.object, _label)
                     if _expr.get("type") != "unknown":
                         _key = _json_mod.dumps(_expr, sort_keys=True)
                         if _key not in _seen_expr_keys:
@@ -2765,17 +2876,7 @@ async def get_term_expanded(
                 break
 
         # _adc_map (full graph scan; isolated to this endpoint now)
-        _adc_map: dict[str, list[str]] = {}
-        for _q in store.quads_for_pattern(None, _RDF_TYPE_NODE, _OWL_ADC_NODE, _graph_node):
-            _mem_qs = list(store.quads_for_pattern(_q.subject, _OWL_MEMBERS_NODE, None, _graph_node))
-            if not _mem_qs:
-                continue
-            _miris = [
-                m.value for m in _rdf_list_items(store, _graph_node, _mem_qs[0].object)
-                if isinstance(m, _ox.NamedNode)
-            ]
-            for _miri in _miris:
-                _adc_map.setdefault(_miri, []).extend(o for o in _miris if o != _miri)
+        _adc_map = _adc_map_via_sparql(store, g_iri)
 
         # Prefetch partner labels in one pipeline
         partner_iris: list[str] = []
@@ -2788,8 +2889,8 @@ async def get_term_expanded(
         _seen_disjoint_keys: set[str] = set()
         for _sup_iri in _all_ancestor_iris:
             _sup_node = _ox.NamedNode(_sup_iri)
-            for _quad in store.quads_for_pattern(_sup_node, _OWL_DISJOINT_NODE, None, _graph_node):
-                _expr = _build_class_expr(store, _graph_node, _quad.object, _label)
+            for _quad in _bn.quads_for_pattern(_sup_node, _OWL_DISJOINT_NODE, None, _graph_node):
+                _expr = _build_class_expr(_bn, _graph_node, _quad.object, _label)
                 if _expr.get("type") != "unknown":
                     _key = _json_mod.dumps(_expr, sort_keys=True)
                     if _key not in _seen_disjoint_keys:
