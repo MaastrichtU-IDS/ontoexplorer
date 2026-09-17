@@ -38,7 +38,11 @@ def lov_list(limit):
         if latest and prefix not in seen:
             seen.add(prefix)
             out.append({"id": (latest if latest.endswith(".n3") else latest + ".n3"), "kind": "url",
-                        "label": b.get("title", {}).get("value", prefix), "src": "lov", "key": prefix.lower()})
+                        "label": b.get("title", {}).get("value", prefix), "src": "lov", "key": prefix.lower(),
+                        # The vocabulary namespace (?v) is what the API stores as `iri`;
+                        # dedup on it so already-loaded vocabs aren't re-ingested (the
+                        # .n3 distribution URL never matches the stored iri).
+                        "ns": b.get("v", {}).get("value", "").rstrip("/#")})
     return out[:limit] if limit else out
 
 # Curated seed of popular biomedical ontologies. This key's /ontologies only
@@ -136,6 +140,7 @@ def main():
     seen, names = existing(a.base, a.oe_key) if a.oe_key else (set(), set())
     fresh = [it for it in items
              if it["id"].rstrip("/#").split("?")[0] not in seen
+             and (it.get("ns") or "\x00") not in seen
              and (it.get("key") or "~") not in names]
     print(f"# candidates={len(items)} already-loaded-skipped={len(items)-len(fresh)} to-submit={len(fresh)} apply={a.apply}")
     for it in fresh:
