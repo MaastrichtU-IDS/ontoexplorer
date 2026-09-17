@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams, useSearchParams, useLocation } from 'react-router-dom'
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
-import { useOntologies } from '../hooks/useOntologies'
 import { useVersions } from '../hooks/useVersions'
 import { useTerm } from '../hooks/useTerm'
 import { useIsMobile } from '../hooks/useIsMobile'
-import { slugFromIri, OntologyVersion, OntologyMetadataEntry, SearchResult, Term, api } from '../lib/api'
+import { OntologyVersion, OntologyMetadataEntry, SearchResult, Term, api } from '../lib/api'
 import ClassTree from '../components/ClassTree'
 import TermPanel from '../components/TermPanel'
 import ResizeHandle from '../components/ResizeHandle'
@@ -873,9 +872,16 @@ export default function OntologyPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const isMobile = useIsMobile()
-  const { ontologies, isLoading: ontologiesLoading } = useOntologies()
-
-  const ontology = ontologies.find(o => slugFromIri(o.iri) === slug || o.shortname === slug)
+  // Resolve the ontology server-side by its slug (shortname). Scanning the
+  // client-side list broke once the catalogue grew past the list's page cap —
+  // any ontology beyond it 404'd as "not found".
+  const { data: ontology, isLoading: ontologyLoading } = useQuery({
+    queryKey: ['ontology', 'resolve', slug],
+    queryFn: () => api.ontologies.get(slug!),
+    enabled: !!slug,
+    retry: false,
+    staleTime: 60_000,
+  })
   const { data: versionsData, isLoading: versionsLoading } = useVersions(ontology?.id)
   const versions = versionsData?.versions ?? []
 
@@ -960,7 +966,7 @@ export default function OntologyPage() {
     if (isMobile) setMobilePane('detail')
   }
 
-  if (!ontologiesLoading && !ontology) {
+  if (!ontologyLoading && !ontology) {
     return (
       <div style={{ padding: '2rem', color: 'var(--text-dim)' }}>
         Ontology <code style={{ color: 'var(--accent)' }}>{slug}</code> not found.

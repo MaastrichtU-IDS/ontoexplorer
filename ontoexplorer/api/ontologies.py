@@ -802,9 +802,12 @@ async def list_ontologies(
 
 # ── Single ontology metadata ───────────────────────────────────────────────────
 
-@router.get("/{ontology_id}", summary="Ontology metadata")
+@router.get("/{ontology_id}", summary="Ontology metadata (by id or shortname)")
 async def get_ontology(ontology_id: str, request: Request, db: AsyncSession = Depends(get_db)):
-    ontology = await _get_ontology_or_404(db, ontology_id)
+    # Accept either a UUID or a shortname slug so the ontology page resolves
+    # server-side (the SPA links by shortname; a large catalogue no longer needs
+    # to be fully client-side loaded to open a page).
+    ontology = await _resolve_ontology_or_404(db, ontology_id)
     owner = None
     if ontology.owner_id:
         owner = (await db.execute(
@@ -3671,6 +3674,29 @@ async def delete_ontology(
 async def _get_ontology_or_404(db: AsyncSession, ontology_id: str) -> Ontology:
     result = await db.execute(select(Ontology).where(Ontology.id == ontology_id))
     ontology = result.scalar_one_or_none()
+    if not ontology:
+        raise HTTPException(status_code=404, detail="Ontology not found")
+    return ontology
+
+
+async def _resolve_ontology_or_404(db: AsyncSession, ident: str) -> Ontology:
+    """Resolve an ontology by UUID id OR by shortname (the URL slug).
+
+    The SPA links to /ontologies/{shortname} and shortname is unique + NOT NULL,
+    so a server-side lookup here resolves every app-generated link regardless of
+    how large the catalogue is — the client used to scan its (500-capped) list,
+    which broke for any ontology past the cap.
+    """
+    from sqlalchemy import func as _func, or_ as _or
+    result = await db.execute(
+        select(Ontology).where(
+            _or(Ontology.id == ident, _func.lower(Ontology.shortname) == ident.lower())
+        )
+        # Prefer an exact id match if both somehow matched (ids are UUIDs, so a
+        # slug can't collide with one in practice).
+        .order_by((Ontology.id == ident).desc())
+    )
+    ontology = result.scalars().first()
     if not ontology:
         raise HTTPException(status_code=404, detail="Ontology not found")
     return ontology
