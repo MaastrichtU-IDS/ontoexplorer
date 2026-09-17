@@ -53,6 +53,8 @@ const GROUP_LABELS: Record<string, string> = {
   metadata:    'Metadata',
   obo:         'OBO Foundry',
   biomedical:  'Biomedical',
+  bioportal:   'BioPortal',
+  lov:         'LOV',
 }
 
 const GROUP_COLORS: Record<string, { bg: string; border: string; color: string }> = {
@@ -61,6 +63,8 @@ const GROUP_COLORS: Record<string, { bg: string; border: string; color: string }
   metadata:    { bg: 'rgba(198,120,221,0.12)', border: 'rgba(198,120,221,0.4)', color: 'var(--od-purple)' },
   obo:         { bg: 'rgba(152,195,121,0.12)', border: 'rgba(152,195,121,0.4)', color: 'var(--od-green)' },
   biomedical:  { bg: 'rgba(224,108,117,0.12)', border: 'rgba(224,108,117,0.4)', color: 'var(--error)' },
+  bioportal:   { bg: 'rgba(86,182,194,0.12)',  border: 'rgba(86,182,194,0.4)',  color: 'var(--od-cyan)' },
+  lov:         { bg: 'rgba(240,136,62,0.12)',  border: 'rgba(240,136,62,0.4)',  color: 'var(--orange)' },
 }
 
 const ALL_GROUPS = Object.keys(GROUP_LABELS)
