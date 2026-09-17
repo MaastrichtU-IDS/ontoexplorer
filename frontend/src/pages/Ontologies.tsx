@@ -522,19 +522,21 @@ export default function Ontologies() {
           {(query || group || profile || reuses) ? 'No ontologies match your filter.' : 'No ontologies loaded yet.'}
         </p>
       ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <tbody>
-            {ontologies.map(o => (
-              <OntologyRow key={o.id} o={o} profileEntry={profileByOntologyId.get(o.id)} />
-            ))}
-          </tbody>
-        </table>
+        <>
+          <p style={{ color: 'var(--text-dim)', fontSize: 11, margin: '0 0 0.5rem' }}>
+            {ontologies.length} ontolog{ontologies.length === 1 ? 'y' : 'ies'}
+            {(query || group || profile || reuses || langs.size > 0) && ' matching filter'}
+          </p>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <tbody>
+              {ontologies.map(o => (
+                <OntologyRow key={o.id} o={o} profileEntry={profileByOntologyId.get(o.id)} />
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
 
-      <p style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: '1rem' }}>
-        {ontologies.length} ontolog{ontologies.length === 1 ? 'y' : 'ies'}
-        {(query || group || profile || reuses || langs.size > 0) && ' matching filter'}
-      </p>
       </>}
     </div>
   )
