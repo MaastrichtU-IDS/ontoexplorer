@@ -239,6 +239,8 @@ export interface Ontology {
   label?: string | null
   description?: string | null
   languages?: OntologyLanguage[]
+  /** Language/expressivity tier of the latest ready version: rdf | rdfs | rdfs-plus | owl. */
+  language_tier?: LanguageTier | null
   /** Public identity of the uploader ("Added by"). Never includes email. */
   owner_display_name?: string | null
   owner_orcid?: string | null
@@ -790,11 +792,22 @@ export interface ProfileResult {
   sample_violations: ProfileSampleViolation[]
 }
 
+/** Language/expressivity tier — a coarser axis than the OWL 2 profile. */
+export type LanguageTier = 'rdf' | 'rdfs' | 'rdfs-plus' | 'owl'
+
+export interface LanguageResult {
+  tier: LanguageTier
+  label: string
+  /** First construct that pinned the tier, e.g. "owl:Restriction" (or null). */
+  construct: string | null
+}
+
 export interface OwlProfileRecord {
   el: ProfileResult
   rl: ProfileResult
   ql: ProfileResult
   dl: ProfileResult
+  language?: LanguageResult
   indexed_at: string
 }
 
@@ -811,6 +824,7 @@ export interface OwlProfileFleetEntry {
   rl_violations: number
   ql_violations: number
   dl_violations: number
+  language_tier?: LanguageTier | null
 }
 
 export interface OwlProfileFleet {
@@ -821,6 +835,10 @@ export interface OwlProfileFleet {
     rl_count: number
     ql_count: number
     dl_count: number
+    tier_rdf_count?: number
+    tier_rdfs_count?: number
+    tier_rdfs_plus_count?: number
+    tier_owl_count?: number
   }
 }
 
@@ -1214,11 +1232,12 @@ export const api = {
   },
 
   ontologies: {
-    list: (offset = 0, limit = 50, q?: string, group?: string, profile?: ProfileName, reuses?: string, mine = false) => {
+    list: (offset = 0, limit = 50, q?: string, group?: string, profile?: ProfileName, reuses?: string, mine = false, language?: LanguageTier) => {
       const params = new URLSearchParams({ offset: String(offset), limit: String(limit) })
       if (q) params.set('q', q)
       if (group) params.set('group', group)   // single group filter sent to API
       if (profile) params.set('profile', profile)
+      if (language) params.set('language', language)
       if (reuses) params.set('reuses', reuses)
       if (mine) params.set('mine', 'true')
       return request<{ ontologies: Ontology[]; offset: number; limit: number }>(

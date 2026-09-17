@@ -36,6 +36,42 @@ const PROFILE_LABELS: Record<string, string> = {
   dl: 'OWL 2 DL',
 }
 
+// Language/expressivity tier — a coarser axis than the OWL 2 profile. Each tier
+// gets its own accent so an RDFS vocabulary reads as RDFS at a glance instead of
+// only surfacing as "OWL 2 DL" / "OWL Full".
+const TIER_STYLE: Record<string, { label: string; color: string; hint: string }> = {
+  rdf: { label: 'RDF', color: '#8a8f98', hint: 'Instance data only — no schema constructs.' },
+  rdfs: { label: 'RDFS', color: '#2f9e6f', hint: 'RDFS schema only — no OWL logical constructs.' },
+  'rdfs-plus': { label: 'RDFS-Plus', color: '#3b82c4', hint: 'RDFS plus lightweight OWL (equivalence, property characteristics, identity).' },
+  owl: { label: 'OWL', color: '#8b5cf6', hint: 'Uses OWL class expressions / restrictions — see the profile below.' },
+}
+
+function LanguageTierBadge({ tier, construct }: { tier: string; construct: string | null }) {
+  const t = TIER_STYLE[tier] ?? { label: tier.toUpperCase(), color: 'var(--accent)', hint: '' }
+  return (
+    <div data-testid="language-tier" style={{ marginBottom: '0.9rem' }}>
+      <span
+        style={{
+          display: 'inline-block',
+          padding: '2px 10px',
+          borderRadius: 999,
+          fontSize: 12,
+          fontWeight: 700,
+          color: '#fff',
+          background: t.color,
+          letterSpacing: 0.3,
+        }}
+      >
+        {t.label}
+      </span>
+      <span style={{ color: 'var(--text-muted)', fontSize: 11, marginLeft: 8 }}>
+        {t.hint}
+        {construct ? ` (via ${construct})` : ''}
+      </span>
+    </div>
+  )
+}
+
 function ProfileCard({
   name,
   result,
@@ -347,8 +383,12 @@ export default function OwlProfileSection({
           marginBottom: '0.75rem',
         }}
       >
-        OWL 2 Profile
+        Profile &amp; expressivity
       </h2>
+
+      {record.language && (
+        <LanguageTierBadge tier={record.language.tier} construct={record.language.construct} />
+      )}
 
       <div
         style={{

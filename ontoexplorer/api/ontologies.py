@@ -562,6 +562,7 @@ async def list_ontologies(
     q: str | None = Query(None, description="Keyword filter on ontology name, IRI, or description"),
     group: str | None = Query(None, description="Filter by group tag (upper, obo, fair, biomedical)"),
     profile: str | None = Query(None, description="Filter by OWL 2 profile: el | rl | ql | dl"),
+    language: str | None = Query(None, description="Filter by language tier: rdf | rdfs | rdfs-plus | owl"),
     reuses: str | None = Query(None, description="Filter: latest version reuses this prefix"),
     mine: bool = Query(False, description="Only ontologies the caller owns or maintains"),
     limit: int = Query(50, ge=1, le=500),
@@ -581,6 +582,15 @@ async def list_ontologies(
                 status_code=422,
                 detail=f"Invalid profile '{profile}'. Must be one of: {', '.join(PROFILE_NAMES)}",
             )
+    # Validate ?language= (language/expressivity tier) param
+    if language is not None:
+        from ontoexplorer.modules.owl_profile.language import LANGUAGE_TIERS
+        language = language.lower()
+        if language not in LANGUAGE_TIERS:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid language '{language}'. Must be one of: {', '.join(LANGUAGE_TIERS)}",
+            )
 
     # When filtering by q or profile we must load all and filter in Python.
     # At current scale (~24 ontologies) this is negligible; revisit if catalog grows large.
@@ -599,7 +609,7 @@ async def list_ontologies(
             stmt = stmt.where(func.jsonb_array_length(Ontology.groups) == 0)
         else:
             stmt = stmt.where(text("groups @> cast(:grp as jsonb)").bindparams(grp=_json_grp.dumps([group])))
-    if not q and not profile and not reuses:
+    if not q and not profile and not language and not reuses:
         stmt = stmt.offset(offset).limit(limit)
     result = await db.execute(stmt)
     ontologies = result.scalars().all()
@@ -613,17 +623,28 @@ async def list_ontologies(
     # Batch-load cached stats from Redis (no Oxigraph queries)
     stats_by_vid: dict = {}
     langs_by_vid: dict[str, list[dict]] = {}
+    tier_by_vid: dict[str, str] = {}
     try:
         from ontoexplorer.modules.search.indexer import _get_redis, _stats_cache_key, _langs_key
+        from ontoexplorer.modules.owl_profile.cache import owl_profile_cache_key
         r = _get_redis()
         pipe = r.pipeline(transaction=False)
         vid_list = [v.id for v in latest_by_oid.values()]
         for vid in vid_list:
             pipe.get(_stats_cache_key(vid))
-        stats_raws = pipe.execute()
+        for vid in vid_list:
+            pipe.get(owl_profile_cache_key(vid))
+        _raws = pipe.execute()
+        stats_raws = _raws[:len(vid_list)]
+        prof_raws = _raws[len(vid_list):]
         for vid, raw in zip(vid_list, stats_raws):
             if raw:
                 stats_by_vid[vid] = _json.loads(raw)
+        for vid, raw in zip(vid_list, prof_raws):
+            if raw:
+                _tier = (_json.loads(raw).get("language") or {}).get("tier")
+                if _tier:
+                    tier_by_vid[vid] = _tier
         # Batch-load language counts for indexed versions
         from ontoexplorer.modules.search.lang import canonical_lang
         pipe2 = r.pipeline(transaction=False)
@@ -700,6 +721,7 @@ async def list_ontologies(
             d["triple_count"] = s.get("triple_count") or v.triple_count
             d["individual_count"] = s.get("individual_count")
             d["languages"] = langs_by_vid.get(v.id, [])
+            d["language_tier"] = tier_by_vid.get(v.id)
             meta = meta_by_oid.get(o.id, {})
             d["label"] = o.title or meta.get("title") or s.get("label") or ""
             d["description"] = meta.get("description") or s.get("description") or ""
@@ -713,6 +735,7 @@ async def list_ontologies(
             d["triple_count"] = None
             d["individual_count"] = None
             d["languages"] = []
+            d["language_tier"] = None
             meta = meta_by_oid.get(o.id, {})
             d["label"] = o.title or meta.get("title") or ""
             d["description"] = meta.get("description") or ""
@@ -723,6 +746,13 @@ async def list_ontologies(
         from ontoexplorer.api.owl_profile import filter_ontology_ids_by_profile
         all_ids = [r["id"] for r in rows]
         matching_ids = await filter_ontology_ids_by_profile(db, all_ids, profile)
+        rows = [r for r in rows if r["id"] in matching_ids]
+
+    # Language/expressivity tier filter (rdf | rdfs | rdfs-plus | owl).
+    if language:
+        from ontoexplorer.api.owl_profile import filter_ontology_ids_by_language
+        all_ids = [r["id"] for r in rows]
+        matching_ids = await filter_ontology_ids_by_language(db, all_ids, language)
         rows = [r for r in rows if r["id"] in matching_ids]
 
     # Reuse filter: keep only ontologies whose latest ready version reuses target_prefix

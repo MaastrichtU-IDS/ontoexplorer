@@ -1376,15 +1376,19 @@ def refresh_owl_profile(version_id: str, ontology_id: str) -> dict:
     import json as _json
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
     from ontoexplorer.modules.owl_profile.detector import detect_profiles
+    from ontoexplorer.modules.owl_profile.language import detect_language
     from ontoexplorer.modules.owl_profile.cache import owl_profile_cache_key
     from ontoexplorer.modules.search.indexer import _get_redis, _SEARCH_TTL
 
     g = graph_iri(ontology_id, version_id)
-    payload = detect_profiles(get_store(), graph_iri=g,
+    store = get_store()
+    payload = detect_profiles(store, graph_iri=g,
                               ontology_id=ontology_id, version_id=version_id)
+    payload["language"] = detect_language(store, graph_iri=g)
     _get_redis().setex(owl_profile_cache_key(version_id), _SEARCH_TTL, _json.dumps(payload))
     log.info("owl_profile_refresh_done", version_id=version_id)
     return {"status": "done", "version_id": version_id,
+            "language": payload["language"]["tier"],
             "verdicts": {p: payload[p]["in_profile"] for p in ("el", "rl", "ql", "dl")}}
 
 

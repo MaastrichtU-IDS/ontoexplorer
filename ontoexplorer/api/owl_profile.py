@@ -65,9 +65,12 @@ async def get_fleet_profile(db: AsyncSession = Depends(get_db)):
     keys = [owl_profile_cache_key(str(row.id)) for row in rows]
     payloads = await asyncio.to_thread(r.mget, keys) if keys else []
 
+    from ontoexplorer.modules.owl_profile.language import LANGUAGE_TIERS
+
     ontologies = []
     totals: dict[str, int] = {f"{p}_count": 0 for p in PROFILE_NAMES}
     totals["fleet_size"] = 0
+    totals.update({f"tier_{t.replace('-', '_')}_count": 0 for t in LANGUAGE_TIERS})
 
     for row, raw in zip(rows, payloads):
         if not raw:
@@ -86,26 +89,26 @@ async def get_fleet_profile(db: AsyncSession = Depends(get_db)):
             entry[f"{p}_violations"] = data.get(p, {}).get("total_violations", 0)
             if in_p:
                 totals[f"{p}_count"] += 1
+        tier = (data.get("language") or {}).get("tier")
+        entry["language_tier"] = tier
+        if tier in LANGUAGE_TIERS:
+            totals[f"tier_{tier.replace('-', '_')}_count"] += 1
         ontologies.append(entry)
 
     return {"ontologies": ontologies, "totals": totals}
 
 
-async def filter_ontology_ids_by_profile(
-    db: AsyncSession,
-    ontology_ids: list[str],
-    profile: str,
-) -> set[str]:
-    """Return the subset of *ontology_ids* whose latest ready version is in *profile*.
+async def _latest_ready_profile_payloads(
+    db: AsyncSession, ontology_ids: list[str]
+) -> list[tuple[str, dict]]:
+    """(ontology_id, owl_profile payload) for each id's latest ready version.
 
-    Uses the fleet-rollup subquery pattern: one SQL round-trip to get latest ready
-    versions, then one Redis mget for the cache payloads.
-
-    Assumes *profile* has already been validated and lower-cased by the caller.
+    Fleet-rollup pattern: one SQL round-trip for the latest ready versions, then
+    one Redis mget for the cached payloads. Ontologies without a cached payload
+    are omitted.
     """
     if not ontology_ids:
-        return set()
-
+        return []
     subq = (
         select(
             OntologyVersion.ontology_id,
@@ -128,20 +131,45 @@ async def filter_ontology_ids_by_profile(
             )
         )
     ).all()
-
     if not version_rows:
-        return set()
-
+        return []
     r = _get_redis()
     keys = [owl_profile_cache_key(str(vr.id)) for vr in version_rows]
     raws = await asyncio.to_thread(r.mget, keys)
+    return [
+        (vr.ontology_id, json.loads(raw))
+        for vr, raw in zip(version_rows, raws)
+        if raw
+    ]
 
+
+async def filter_ontology_ids_by_profile(
+    db: AsyncSession,
+    ontology_ids: list[str],
+    profile: str,
+) -> set[str]:
+    """Subset of *ontology_ids* whose latest ready version is in OWL 2 *profile*.
+
+    Assumes *profile* has already been validated and lower-cased by the caller.
+    """
     matching: set[str] = set()
-    for vr, raw in zip(version_rows, raws):
-        if not raw:
-            continue
-        data = json.loads(raw)
+    for oid, data in await _latest_ready_profile_payloads(db, ontology_ids):
         if data.get(profile, {}).get("in_profile", False):
-            matching.add(vr.ontology_id)
+            matching.add(oid)
 
+    return matching
+
+
+async def filter_ontology_ids_by_language(
+    db: AsyncSession,
+    ontology_ids: list[str],
+    tier: str,
+) -> set[str]:
+    """Subset of *ontology_ids* whose latest ready version is in language *tier*
+    (rdf | rdfs | rdfs-plus | owl). Assumes *tier* is already validated.
+    """
+    matching: set[str] = set()
+    for oid, data in await _latest_ready_profile_payloads(db, ontology_ids):
+        if (data.get("language") or {}).get("tier") == tier:
+            matching.add(oid)
     return matching

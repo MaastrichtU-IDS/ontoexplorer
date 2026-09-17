@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useOntologySearch } from '../hooks/useOntologySearch'
 import { useRepositoryLanguages } from '../hooks/useRepositoryLanguages'
 import { useIsMobile } from '../hooks/useIsMobile'
-import { api, Ontology, OwlProfileFleetEntry, ProfileName, slugFromIri } from '../lib/api'
+import { api, Ontology, OwlProfileFleetEntry, ProfileName, LanguageTier, slugFromIri } from '../lib/api'
 import Coverage from './Coverage'
 import OwlProfile from './OwlProfile'
 import Compare from './Compare'
@@ -146,6 +146,7 @@ const OntologyRow = memo(function OntologyRow({ o, profileEntry }: { o: Ontology
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ color: 'var(--accent)', fontWeight: 500 }}>{displayName(o)}</span>
           <IriChip iri={o.iri} />
+          <TierChip tier={o.language_tier} />
           <ProfileBadges entry={profileEntry} />
           {knownGroups.map(g => {
             const c = GROUP_COLORS[g]
@@ -264,6 +265,40 @@ const PROFILES: { value: '' | ProfileName; label: string }[] = [
   { value: 'rl', label: 'OWL 2 RL' },
 ]
 
+// ── Expressivity (language tier) filter ───────────────────────────────────────
+
+const TIERS: { value: '' | LanguageTier; label: string }[] = [
+  { value: '',          label: 'All' },
+  { value: 'owl',       label: 'OWL' },
+  { value: 'rdfs-plus', label: 'RDFS-Plus' },
+  { value: 'rdfs',      label: 'RDFS' },
+  { value: 'rdf',       label: 'RDF' },
+]
+
+const TIER_BADGE: Record<string, { label: string; color: string }> = {
+  rdf: { label: 'RDF', color: '#8a8f98' },
+  rdfs: { label: 'RDFS', color: '#2f9e6f' },
+  'rdfs-plus': { label: 'RDFS-Plus', color: '#3b82c4' },
+  owl: { label: 'OWL', color: '#8b5cf6' },
+}
+
+function TierChip({ tier }: { tier?: string | null }) {
+  if (!tier) return null
+  const t = TIER_BADGE[tier]
+  if (!t) return null
+  return (
+    <span
+      title={`Language tier: ${t.label}`}
+      style={{
+        fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 999,
+        color: '#fff', background: t.color, whiteSpace: 'nowrap',
+      }}
+    >
+      {t.label}
+    </span>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function Ontologies() {
@@ -283,11 +318,12 @@ export default function Ontologies() {
   const [query, setQuery] = useState('')
   const [group, setGroup] = useState('')
   const [profile, setProfile] = useState<'' | ProfileName>('')
+  const [language, setLanguage] = useState<'' | LanguageTier>('')
   const [langs, setLangs] = useState<Set<string>>(new Set())
   const [sortCol, setSortCol] = useState<SortCol>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const reuses = searchParams.get('reuses') ?? undefined
-  const { data, isLoading } = useOntologySearch(query, group || undefined, profile || undefined, reuses)
+  const { data, isLoading } = useOntologySearch(query, group || undefined, profile || undefined, reuses, language || undefined)
   const repoLangs = useRepositoryLanguages()
   const { data: profileFleet } = useQuery({
     queryKey: ['owl-profile', 'fleet'],
@@ -421,6 +457,33 @@ export default function Ontologies() {
               }}
             >
               {p.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Expressivity (language tier) filter chips */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.6rem' }}>
+        <span style={{ fontSize: 11, color: 'var(--text-dim)', marginRight: 2 }}>Expressivity:</span>
+        {TIERS.map(t => {
+          const active = language === t.value
+          const c = t.value ? TIER_BADGE[t.value] : null
+          return (
+            <button
+              key={t.value}
+              onClick={() => setLanguage(t.value)}
+              title={t.value ? `Show only ${t.label} vocabularies` : 'Show all ontologies'}
+              style={{
+                fontSize: 12, padding: '4px 12px', borderRadius: 20,
+                border: '1px solid',
+                borderColor: active ? (c ? c.color : 'var(--accent)') : 'var(--border)',
+                cursor: 'pointer',
+                background: active ? (c ? c.color : 'var(--accent)') : 'var(--bg-secondary)',
+                color: active ? '#fff' : 'var(--text-dim)',
+                fontWeight: active ? 700 : 500,
+              }}
+            >
+              {t.label}
             </button>
           )
         })}
