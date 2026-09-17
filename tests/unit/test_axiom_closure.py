@@ -19,12 +19,15 @@ import pyoxigraph as ox
 
 from ontoexplorer.api.ontologies import (
     _CLOSURE_STRUCT_PP,
+    _adc_map_via_sparql,
     _axiom_closure_construct,
     _bnode_walk_store,
     _build_class_expr,
+    _sparql_usage,
 )
 
 _OWL = "http://www.w3.org/2002/07/owl#"
+_RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 _RDFS = "http://www.w3.org/2000/01/rdf-schema#"
 
 
@@ -98,3 +101,77 @@ def test_embedded_store_passthrough_walks_complement_natively():
             },
         }
     ]
+
+
+def _label(iri):
+    return iri.rsplit("/", 1)[-1].rsplit("#", 1)[-1].rsplit(":", 1)[-1]
+
+
+def test_adc_map_via_sparql_walks_members_list():
+    # owl:AllDisjointClasses over an rdf:List, resolved with a property path
+    # (owl:members/rdf:rest*/rdf:first) instead of a blank-node deref.
+    g = ox.NamedNode("urn:g")
+    adc = ox.BlankNode()
+    l0, l1, l2 = ox.BlankNode(), ox.BlankNode(), ox.BlankNode()
+    A, B, C = ox.NamedNode("urn:A"), ox.NamedNode("urn:B"), ox.NamedNode("urn:C")
+    FIRST = ox.NamedNode(_RDF + "first")
+    REST = ox.NamedNode(_RDF + "rest")
+    NIL = ox.NamedNode(_RDF + "nil")
+    store = ox.Store()
+    store.add_graph(g)
+    for s, p, o in [
+        (adc, ox.NamedNode(_RDF + "type"), ox.NamedNode(_OWL + "AllDisjointClasses")),
+        (adc, ox.NamedNode(_OWL + "members"), l0),
+        (l0, FIRST, A), (l0, REST, l1),
+        (l1, FIRST, B), (l1, REST, l2),
+        (l2, FIRST, C), (l2, REST, NIL),
+    ]:
+        store.add(ox.Quad(s, p, o, g))
+
+    adc_map = _adc_map_via_sparql(store, "urn:g")
+    assert sorted(adc_map["urn:A"]) == ["urn:B", "urn:C"]
+    assert sorted(adc_map["urn:B"]) == ["urn:A", "urn:C"]
+    assert sorted(adc_map["urn:C"]) == ["urn:A", "urn:B"]
+
+
+def test_sparql_usage_renders_restriction_manchester():
+    # `C subClassOf (P some D)` should render `C SubClassOf P some D` as Manchester
+    # tokens with the filler as a resolvable IRI. Embedded store, so the walk is
+    # native (the closure path is exercised end-to-end against a live server).
+    g = ox.NamedNode("urn:g")
+    base = "http://example.org/"
+    C, P, D = ox.NamedNode(base + "C"), ox.NamedNode(base + "P"), ox.NamedNode(base + "D")
+    restr = ox.BlankNode()
+    store = ox.Store()
+    store.add_graph(g)
+    for s, p, o in [
+        (C, ox.NamedNode(_RDFS + "subClassOf"), restr),
+        (restr, ox.NamedNode(_RDF + "type"), ox.NamedNode(_OWL + "Restriction")),
+        (restr, ox.NamedNode(_OWL + "onProperty"), P),
+        (restr, ox.NamedNode(_OWL + "someValuesFrom"), D),
+        (C, ox.NamedNode(_RDFS + "label"), ox.Literal("C")),
+        (D, ox.NamedNode(_RDFS + "label"), ox.Literal("D")),
+    ]:
+        store.add(ox.Quad(s, p, o, g))
+
+    base_q = f"""
+        PREFIX owl:  <{_OWL}>
+        PREFIX rdfs: <{_RDFS}>
+        SELECT ?class ?relation ?restrictType ?filler ?r WHERE {{ GRAPH <urn:g> {{
+            ?class rdfs:subClassOf ?r . BIND("subClassOf" AS ?relation)
+            ?r owl:onProperty <{base}P> . FILTER(isIRI(?class))
+            ?r owl:someValuesFrom ?filler . BIND("some" AS ?restrictType)
+        }} }}
+        ORDER BY ?class
+    """
+    rows = _sparql_usage(store, "urn:g", base_q, 0, 10, _label, base + "P")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["class_iri"] == base + "C"
+    assert row["restriction"] == "some"
+    assert row["filler_iri"] == base + "D"
+    # Manchester carries the class, the property and the filler as IRI tokens.
+    iri_tokens = [t for t in row["manchester"] if t.get("t") == "iri"]
+    assert [t["iri"] for t in iri_tokens] == [base + "C", base + "P", base + "D"]
+    text = "".join(t.get("v", "") for t in row["manchester"] if t.get("t") == "text")
+    assert "SubClassOf" in text and "some" in text

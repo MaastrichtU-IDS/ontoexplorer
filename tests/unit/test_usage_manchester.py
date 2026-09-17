@@ -63,7 +63,7 @@ def test_property_usage_renders_whole_restriction_axiom():
             }}
         }}
     """
-    rows = _sparql_usage(store, q, _local, _GRAPH.value)
+    rows = _sparql_usage(store, _GRAPH.value, q, 0, 10, _local, has_father.value)
     assert len(rows) == 1
     toks = rows[0]["manchester"]
     assert _mos_text(toks) == "Man SubClassOf hasFather some Man"
@@ -99,7 +99,7 @@ def test_property_usage_marks_external_filler_not_clickable():
             }}
         }}
     """
-    rows = _sparql_usage(store, q, _local, _GRAPH.value)
+    rows = _sparql_usage(store, _GRAPH.value, q, 0, 10, _local, prop.value)
     toks = rows[0]["manchester"]
     assert _mos_text(toks) == "A SubClassOf p only Thing"
     assert _clickable(toks)["http://external.example/Thing"] is False
@@ -129,7 +129,7 @@ def test_class_usage_disjoint_renders_manchester():
             GRAPH <{_GRAPH.value}> {{ ?class owl:disjointWith <{man.value}> . FILTER(isIRI(?class)) }}
         }}
     """
-    rows = _sparql_class_usage(store, cu_q, disj_q, _local, {}, man.value, _GRAPH.value)
+    rows = _sparql_class_usage(store, _GRAPH.value, cu_q, 0, 10, disj_q, _local, {}, man.value)
     assert len(rows) == 1
     assert rows[0]["relation"] == "disjointWith"
     assert _mos_text(rows[0]["manchester"]) == "Woman DisjointWith Man"
@@ -181,6 +181,6 @@ def test_class_usage_as_filler_renders_manchester():
         PREFIX owl: <{_OWL}>
         SELECT ?class WHERE {{ GRAPH <{_GRAPH.value}> {{ ?class owl:disjointWith <{man.value}> . FILTER(isIRI(?class)) }} }}
     """
-    rows = _sparql_class_usage(store, cu_q, disj_q, _local, {}, man.value, _GRAPH.value)
+    rows = _sparql_class_usage(store, _GRAPH.value, cu_q, 0, 10, disj_q, _local, {}, man.value)
     assert len(rows) == 1
     assert _mos_text(rows[0]["manchester"]) == "Parent SubClassOf hasChild some Man"
