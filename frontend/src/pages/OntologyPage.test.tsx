@@ -38,6 +38,8 @@ vi.mock('../lib/api', async () => {
       ontologies: {
         ...(actual as any).api.ontologies,
         list: vi.fn().mockResolvedValue({ ontologies: [mockOntology] }),
+        // OntologyPage resolves the ontology server-side by slug via get().
+        get: vi.fn().mockResolvedValue(mockOntology),
         recordView: mockRecordView,
         versions: vi.fn().mockResolvedValue({ versions: [mockVersion] }),
         stats: vi.fn().mockResolvedValue({
