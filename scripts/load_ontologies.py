@@ -51,6 +51,25 @@ def lov_list(limit):
 BP_SEED = ["BFO","RO","IAO","OBI","SIO","DOID","PATO","UO","ENVO","CL","SO","ECO",
            "UBERON","HP","MONDO","MP","OBA","FOODON","AGRO","GO","CHEBI","NCIT"]
 
+OBO_REGISTRY = "https://obofoundry.org/registry/ontologies.jsonld"
+
+def obo_foundry_acronyms():
+    """Acronyms of all active (non-obsolete) OBO Foundry ontologies.
+
+    This BioPortal key can fetch any public ontology by acronym (metrics +
+    download) but its /ontologies only lists SIO, so it can't enumerate the
+    catalogue. The OBO Foundry registry is a clean, key-free source of ~200
+    biomedical ontologies, each with a dereferenceable PURL that bioportal_list
+    already prefers; the BioPortal metrics call still supplies the class-count
+    used for the giant cap.
+    """
+    r = httpx.get(OBO_REGISTRY, follow_redirects=True, timeout=90)
+    r.raise_for_status()
+    onts = r.json().get("ontologies", [])
+    return [o["id"].upper() for o in onts
+            if o.get("id") and not o.get("is_obsolete")
+            and o.get("activity_status", "active") != "inactive"]
+
 def bioportal_list(bp_key, limit, max_classes, acronyms=None):
     """Ontologies whose latest submission has <= max_classes (skip the giants)."""
     acrs = acronyms or BP_SEED
@@ -120,6 +139,10 @@ def main():
     ap.add_argument("--max-classes", type=int, default=50000, help="BioPortal size cap")
     ap.add_argument("--oe-key", default="", help="OntoExplorer write API key")
     ap.add_argument("--bp-key", default="", help="BioPortal API key")
+    ap.add_argument("--acronyms", default="",
+                    help="BioPortal acronyms to enumerate instead of the built-in seed: "
+                         "a comma-separated list, or 'obo' for the full OBO Foundry registry. "
+                         "The --max-classes cap still applies (skips giants).")
     ap.add_argument("--apply", action="store_true", help="actually submit (default: dry run)")
     ap.add_argument("--delay", type=float, default=2.0, help="seconds between submits")
     ap.add_argument("--group", action="append", default=[], metavar="TAG",
@@ -135,7 +158,14 @@ def main():
         if not a.bp_key:
             print("! bioportal source requested but --bp-key missing; skipping bioportal", file=sys.stderr)
         else:
-            items += bioportal_list(a.bp_key, a.limit, a.max_classes)
+            if a.acronyms == "obo":
+                acrs = obo_foundry_acronyms()
+                print(f"# OBO Foundry: {len(acrs)} active ontologies", file=sys.stderr)
+            elif a.acronyms:
+                acrs = [x.strip().upper() for x in a.acronyms.split(",") if x.strip()]
+            else:
+                acrs = None   # built-in BP_SEED
+            items += bioportal_list(a.bp_key, a.limit, a.max_classes, acronyms=acrs)
 
     seen, names = existing(a.base, a.oe_key) if a.oe_key else (set(), set())
     fresh = [it for it in items
