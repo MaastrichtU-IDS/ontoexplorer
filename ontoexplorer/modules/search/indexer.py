@@ -990,12 +990,17 @@ def _populate_owl_profile_cache(
         # Skipped: detection is infeasible at this scale and would hang indexing.
         return
     from ontoexplorer.modules.owl_profile.detector import detect_profiles
+    from ontoexplorer.modules.owl_profile.language import detect_language
     from ontoexplorer.modules.owl_profile.cache import owl_profile_cache_key
     from ontoexplorer.clients.oxigraph import get_store
     from ontoexplorer.clients.oxigraph import graph_iri as _graph_iri
     store = get_store()
     g = _graph_iri(ontology_id, version_id)
     payload = detect_profiles(store, graph_iri=g, ontology_id=ontology_id, version_id=version_id)
+    # Coarser language/expressivity tier (RDF/RDFS/RDFS-Plus/OWL) — a few cheap
+    # ASKs, so an RDFS vocabulary is identified as such instead of surfacing only
+    # as "OWL 2 DL"/"OWL Full".
+    payload["language"] = detect_language(store, graph_iri=g)
     r.setex(owl_profile_cache_key(version_id), _SEARCH_TTL, json.dumps(payload))
 
 

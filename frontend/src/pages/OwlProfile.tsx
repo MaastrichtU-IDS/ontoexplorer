@@ -202,10 +202,33 @@ export default function OwlProfile() {
       >
         W3C OWL 2 defines four tractable profiles — DL, EL, QL, and RL — each
         with different expressivity/reasoning trade-offs. This page shows which
-        profiles each ontology version conforms to.
+        profiles each ontology version conforms to. The language tier below is a
+        coarser axis: whether a vocabulary is plain RDFS, lightweight RDFS-Plus,
+        or full OWL.
       </p>
 
+      {/* Language / expressivity tiers */}
+      <h2 style={{ fontSize: '0.9rem', fontWeight: 600, margin: '0 0 0.5rem' }}>
+        Language / expressivity
+      </h2>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+          gap: '0.75rem',
+          marginBottom: '1.25rem',
+        }}
+      >
+        <SummaryCard label="OWL" count={totals.tier_owl_count ?? 0} total={totals.fleet_size} testId="summary-tier-owl" />
+        <SummaryCard label="RDFS-Plus" count={totals.tier_rdfs_plus_count ?? 0} total={totals.fleet_size} testId="summary-tier-rdfs-plus" />
+        <SummaryCard label="RDFS" count={totals.tier_rdfs_count ?? 0} total={totals.fleet_size} testId="summary-tier-rdfs" />
+        <SummaryCard label="RDF" count={totals.tier_rdf_count ?? 0} total={totals.fleet_size} testId="summary-tier-rdf" />
+      </div>
+
       {/* Summary cards */}
+      <h2 style={{ fontSize: '0.9rem', fontWeight: 600, margin: '0 0 0.5rem' }}>
+        OWL 2 profiles
+      </h2>
       <div
         style={{
           display: 'grid',

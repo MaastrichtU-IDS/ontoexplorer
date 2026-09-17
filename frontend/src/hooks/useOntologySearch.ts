@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
-import { api, ProfileName } from '../lib/api'
+import { api, ProfileName, LanguageTier } from '../lib/api'
 
 function useDebounce<T>(value: T, ms: number): T {
   const [debounced, setDebounced] = useState(value)
@@ -11,11 +11,17 @@ function useDebounce<T>(value: T, ms: number): T {
   return debounced
 }
 
-export function useOntologySearch(query: string, group?: string, profile?: ProfileName, reuses?: string) {
+export function useOntologySearch(
+  query: string,
+  group?: string,
+  profile?: ProfileName,
+  reuses?: string,
+  language?: LanguageTier,
+) {
   const q = useDebounce(query.trim(), 250)
   return useQuery({
-    queryKey: ['ontologies', 'search', q, group ?? '', profile ?? '', reuses ?? ''],
-    queryFn: () => api.ontologies.list(0, 200, q || undefined, group || undefined, profile, reuses),
+    queryKey: ['ontologies', 'search', q, group ?? '', profile ?? '', reuses ?? '', language ?? ''],
+    queryFn: () => api.ontologies.list(0, 200, q || undefined, group || undefined, profile, reuses, false, language),
     staleTime: 30_000,
   })
 }
