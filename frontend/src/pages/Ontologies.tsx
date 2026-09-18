@@ -257,22 +257,26 @@ const GROUPS: { value: string; label: string }[] = [
 
 // ── Profile filter ────────────────────────────────────────────────────────────
 
-const PROFILES: { value: '' | ProfileName; label: string }[] = [
-  { value: '',   label: 'All' },
-  { value: 'dl', label: 'OWL 2 DL' },
-  { value: 'el', label: 'OWL 2 EL' },
-  { value: 'ql', label: 'OWL 2 QL' },
-  { value: 'rl', label: 'OWL 2 RL' },
-]
+// ── Expressivity filter ───────────────────────────────────────────────────────
+// One selector combining the language tiers with the OWL 2 profiles. Tiers drive
+// the `language` filter; profiles drive the `profile` filter; the two are mutually
+// exclusive in the UI (picking one clears the other). Ordered coarsest→finest:
+// the OWL 2 profiles sit under OWL (between OWL and RDFS-Plus).
+type ExprOption =
+  | { kind: 'all'; label: string }
+  | { kind: 'tier'; value: LanguageTier; label: string }
+  | { kind: 'profile'; value: ProfileName; label: string }
 
-// ── Expressivity (language tier) filter ───────────────────────────────────────
-
-const TIERS: { value: '' | LanguageTier; label: string }[] = [
-  { value: '',          label: 'All' },
-  { value: 'owl',       label: 'OWL' },
-  { value: 'rdfs-plus', label: 'RDFS-Plus' },
-  { value: 'rdfs',      label: 'RDFS' },
-  { value: 'rdf',       label: 'RDF' },
+const EXPRESSIVITY_OPTIONS: ExprOption[] = [
+  { kind: 'all',                          label: 'All' },
+  { kind: 'tier',    value: 'owl',        label: 'OWL' },
+  { kind: 'profile', value: 'dl',         label: 'OWL 2 DL' },
+  { kind: 'profile', value: 'el',         label: 'OWL 2 EL' },
+  { kind: 'profile', value: 'ql',         label: 'OWL 2 QL' },
+  { kind: 'profile', value: 'rl',         label: 'OWL 2 RL' },
+  { kind: 'tier',    value: 'rdfs-plus',  label: 'RDFS-Plus' },
+  { kind: 'tier',    value: 'rdfs',       label: 'RDFS' },
+  { kind: 'tier',    value: 'rdf',        label: 'RDF' },
 ]
 
 const TIER_BADGE: Record<string, { label: string; color: string }> = {
@@ -432,58 +436,45 @@ export default function Ontologies() {
         })}
       </div>
 
-      {/* OWL 2 profile filter chips */}
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.6rem' }}>
-        <span style={{ fontSize: 11, color: 'var(--text-dim)', marginRight: 2 }}>OWL Profile:</span>
-        {PROFILES.map(p => {
-          const active = profile === p.value
-          const c = p.value ? PROFILE_BADGE_COLORS[p.value] : null
-          return (
-            <button
-              key={p.value}
-              onClick={() => setProfile(p.value)}
-              title={p.value ? `Show only ontologies that conform to OWL 2 ${p.value.toUpperCase()}` : 'Show all ontologies'}
-              style={{
-                fontSize: 12, padding: '4px 12px', borderRadius: 20,
-                border: '1px solid',
-                borderColor: active && c ? c.border : active ? 'var(--accent)' : 'var(--border)',
-                cursor: 'pointer',
-                background: active
-                  ? (c ? c.bg : 'var(--accent)')
-                  : (c ? c.bg : 'var(--bg-secondary)'),
-                color: c ? c.color : (active ? 'var(--on-accent)' : 'var(--text-dim)'),
-                fontWeight: active ? 700 : 500,
-                opacity: active || !c ? 1 : 0.65,
-              }}
-            >
-              {p.label}
-            </button>
-          )
-        })}
-      </div>
-
-      {/* Expressivity (language tier) filter chips */}
+      {/* Expressivity filter chips — language tiers with the OWL 2 profiles
+          nested under OWL. Tiers set `language`; profiles set `profile`; the two
+          axes are mutually exclusive in the UI (selecting one clears the other). */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.6rem' }}>
         <span style={{ fontSize: 11, color: 'var(--text-dim)', marginRight: 2 }}>Expressivity:</span>
-        {TIERS.map(t => {
-          const active = language === t.value
-          const c = t.value ? TIER_BADGE[t.value] : null
+        {EXPRESSIVITY_OPTIONS.map(opt => {
+          const active =
+            opt.kind === 'all' ? (profile === '' && language === '')
+            : opt.kind === 'tier' ? language === opt.value
+            : profile === opt.value
+          const activeColor =
+            opt.kind === 'tier' ? TIER_BADGE[opt.value]?.color
+            : opt.kind === 'profile' ? PROFILE_BADGE_COLORS[opt.value]?.color
+            : 'var(--accent)'
+          const onClick = () => {
+            if (opt.kind === 'all') { setProfile(''); setLanguage('') }
+            else if (opt.kind === 'tier') { setLanguage(opt.value); setProfile('') }
+            else { setProfile(opt.value); setLanguage('') }
+          }
+          const title =
+            opt.kind === 'all' ? 'Show all ontologies'
+            : opt.kind === 'tier' ? `Show only ${opt.label} vocabularies`
+            : `Show only ontologies that conform to OWL 2 ${opt.value.toUpperCase()}`
           return (
             <button
-              key={t.value}
-              onClick={() => setLanguage(t.value)}
-              title={t.value ? `Show only ${t.label} vocabularies` : 'Show all ontologies'}
+              key={opt.kind === 'all' ? 'all' : opt.value}
+              onClick={onClick}
+              title={title}
               style={{
                 fontSize: 12, padding: '4px 12px', borderRadius: 20,
                 border: '1px solid',
-                borderColor: active ? (c ? c.color : 'var(--accent)') : 'var(--border)',
+                borderColor: active ? (activeColor ?? 'var(--accent)') : 'var(--border)',
                 cursor: 'pointer',
-                background: active ? (c ? c.color : 'var(--accent)') : 'var(--bg-secondary)',
+                background: active ? (activeColor ?? 'var(--accent)') : 'var(--bg-secondary)',
                 color: active ? '#fff' : 'var(--text-dim)',
                 fontWeight: active ? 700 : 500,
               }}
             >
-              {t.label}
+              {opt.label}
             </button>
           )
         })}
