@@ -104,6 +104,10 @@ class KoncludeBackend:
         ).decode("utf-8")
         onto = pyhornedowl.open_ontology_from_string(rdfxml, serialization="rdf")
         owx = onto.save_to_string(serialization="owx")
+        # horned-owl's RDF reader drops owl:AllDisjointClasses; reinstate it in the
+        # OWL/XML fed to Konclude so disjointness-dependent inferences survive.
+        import disjoint_fix
+        owx = disjoint_fix.owl_xml_with_disjointness(owx, store)
 
         tmp = tempfile.mkdtemp()
         in_owx, out_owx = os.path.join(tmp, "in.owx"), os.path.join(tmp, "out.owx")

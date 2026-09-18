@@ -73,12 +73,34 @@ class RustdlBackend:
         if saturation_only:
             logging.getLogger("reasoner-service").info(
                 "rustdl_saturation_only version_id=%s", version_id)
-        cls = rustdl.classify_bytes(
-            rdfxml, format="rdf-xml",
-            per_pair_timeout_ms=per_pair_timeout_ms,
-            global_timeout_ms=global_timeout_ms,
-            saturation_only=saturation_only,
-        )
+
+        def _classify(data, fmt):
+            return rustdl.classify_bytes(
+                data, format=fmt,
+                per_pair_timeout_ms=per_pair_timeout_ms,
+                global_timeout_ms=global_timeout_ms,
+                saturation_only=saturation_only,
+            )
+
+        # horned-owl's RDF/XML reader drops owl:AllDisjointClasses, and rustdl's
+        # rdf-xml path drops even pairwise disjointWith injected as a work-around,
+        # so an ontology stating disjointness via AllDisjointClasses loses it and
+        # under-classifies (e.g. cardinality-covering defined classes). When such
+        # axioms are present, reinstate them via OWL functional syntax — which
+        # rustdl parses faithfully — falling back to the plain RDF/XML path if the
+        # OFN build fails (never worse than before). See disjoint_fix.
+        import disjoint_fix
+        cls = None
+        if disjoint_fix.has_all_disjoint_classes(store):
+            try:
+                ofn = disjoint_fix.functional_with_disjointness(rdfxml, store)
+                cls = _classify(ofn.encode("utf-8"), "ofn")
+            except Exception:
+                logging.getLogger("reasoner-service").warning(
+                    "rustdl_disjoint_ofn_fallback version_id=%s", version_id,
+                    exc_info=True)
+        if cls is None:
+            cls = _classify(rdfxml, "rdf-xml")
 
         # Asserted subClassOf pairs (to exclude from the inferred `superclasses`).
         RDFS_SUB = pyoxigraph.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
