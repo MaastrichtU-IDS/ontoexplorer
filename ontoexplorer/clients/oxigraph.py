@@ -7,6 +7,7 @@ Stores one named graph per ontology version:
 
 import asyncio
 import logging
+import re
 import time
 from io import BytesIO
 from pathlib import Path
@@ -216,19 +217,64 @@ def load_graph(ontology_id: str, version_id: str, graph: rdflib.Graph) -> int:
     return count
 
 
+_VALID_LANG_TAG = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$")
+_MIME_TO_RDFLIB = {
+    "application/rdf+xml": "xml", "text/turtle": "turtle",
+    "application/n-triples": "nt", "application/ld+json": "json-ld",
+}
+
+
+def _sanitize_to_ntriples(data: bytes, mime_type: str) -> bytes:
+    """Re-parse leniently with rdflib and emit N-Triples with invalid BCP-47
+    language tags dropped.
+
+    oxigraph's RDF/XML parser (and horned-owl's — they share the same strict Rust
+    library) reject a malformed language tag such as `@e` for the WHOLE document,
+    while real-world OWL files (gsso, mamo, htn, …) carry a handful of them. rdflib
+    tolerates them, so this is the fallback when the strict bulk load 400s: drop
+    the bad tag (keeping the literal value) and hand oxigraph clean N-Triples.
+    """
+    g = rdflib.Graph()
+    fmt = _MIME_TO_RDFLIB.get(mime_type)
+    g.parse(data=data, format=fmt) if fmt else g.parse(data=data)
+    for s, p, o in list(g):
+        if isinstance(o, rdflib.Literal) and o.language and not _VALID_LANG_TAG.match(o.language):
+            g.remove((s, p, o))
+            g.add((s, p, rdflib.Literal(str(o), datatype=o.datatype)))
+    return g.serialize(format="nt", encoding="utf-8")
+
+
 def bulk_load_bytes(ontology_id: str, version_id: str, data: bytes, mime_type: str) -> int:
     """Load raw ontology bytes into a named graph, replacing existing content.
-    Routes HTTP when configured, else embedded."""
+    Routes HTTP when configured, else embedded. On a strict-parser rejection
+    (e.g. an invalid language tag), falls back to an rdflib re-parse that sanitises
+    the offending tags — see _sanitize_to_ntriples."""
     iri = graph_iri(ontology_id, version_id)
     ep = _http_write_endpoint()
     if ep:
-        _http_load_graph(ep, iri, data, mime_type, replace=True)
+        try:
+            _http_load_graph(ep, iri, data, mime_type, replace=True)
+        except httpx.HTTPStatusError as exc:
+            if exc.response is not None and exc.response.status_code == 400:
+                logger.warning("bulk load of <%s> rejected (%s); retrying via rdflib sanitize",
+                               iri, (exc.response.text or "")[:120])
+                nt = _sanitize_to_ntriples(data, mime_type)
+                _http_load_graph(ep, iri, nt, "application/n-triples", replace=True)
+            else:
+                raise
     else:
         store = get_store()
         named_graph = pyoxigraph.NamedNode(iri)
         store.remove_graph(named_graph)
         store.add_graph(named_graph)
-        store.bulk_load(BytesIO(data), mime_type, base_iri=iri, to_graph=named_graph)
+        try:
+            store.bulk_load(BytesIO(data), mime_type, base_iri=iri, to_graph=named_graph)
+        except (SyntaxError, ValueError) as exc:
+            logger.warning("bulk load of <%s> rejected (%s); retrying via rdflib sanitize", iri, exc)
+            nt = _sanitize_to_ntriples(data, mime_type)
+            store.remove_graph(named_graph)
+            store.add_graph(named_graph)
+            store.bulk_load(BytesIO(nt), "application/n-triples", base_iri=iri, to_graph=named_graph)
     count = _graph_triple_count(iri)
     logger.info("Loaded %d triples into <%s>", count, iri)
     return count
