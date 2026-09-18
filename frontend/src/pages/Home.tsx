@@ -4,7 +4,7 @@ import { useQuery, useQueries } from '@tanstack/react-query'
 import { useOntologies } from '../hooks/useOntologies'
 import { useGlobalSearch } from '../hooks/useSearch'
 import { useDebounced } from '../hooks/useDebounced'
-import { slugFromIri, SearchResult, api } from '../lib/api'
+import { SearchResult, api } from '../lib/api'
 import SearchBar from '../components/SearchBar'
 import OntologyPicker from '../components/OntologyPicker'
 import SourceBadge from '../components/SourceBadge'
@@ -244,23 +244,23 @@ function KeywordSearch({ typeFilters, onTypeFiltersChange }: {
   // 60s Redis response cache so refinements feel instant.
   const debouncedQuery = useDebounced(query.trim(), 200)
   const activeQuery = debouncedQuery.length >= 2 ? debouncedQuery : ''
-  const { ontologies } = useOntologies()
   const { data, isFetching } = useGlobalSearch(activeQuery, activeQuery.length >= 2, typeFilters)
   const results = data?.results ?? []
   const semanticResults = data?.semantic_results ?? []
 
+  // Build the term link from the result itself (shortname → clean slug, else the
+  // ontology_id, which the term page resolves server-side). This works for every
+  // result regardless of catalogue size — the old lookup against the page-capped
+  // ontology list left results from ontologies past the cap un-clickable.
   function pathFor(r: SearchResult): string | null {
-    const ont = ontologies.find(o => o.id === r.ontology_id)
-    if (!ont || !r.version_id) return null
-    return `/ontologies/${slugFromIri(ont.iri)}/${r.version_id}?term=${encodeURIComponent(r.iri)}`
+    if (!r.version_id) return null
+    const slug = r.ontology_shortname || r.ontology_id
+    if (!slug) return null
+    return `/ontologies/${encodeURIComponent(slug)}/${r.version_id}?term=${encodeURIComponent(r.iri)}`
   }
 
   function ontologyNameFor(r: SearchResult): string | null {
-    const ont = ontologies.find(o => o.id === r.ontology_id)
-    if (!ont) return null
-    if (ont.shortname) return ont.shortname
-    const last = ont.iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? ont.iri
-    return last.replace(/\.(owl|ttl|rdf|obo|json|xml|nt)$/i, '')
+    return r.ontology_shortname || null
   }
 
   return (
@@ -488,18 +488,19 @@ function MOSQuery({ relation, onRelationChange }: {
       : (firstError.body?.detail ?? firstError.body?.error ?? firstError.message)
     : null
 
+  // Build the term link from the result itself (shortname → clean slug, else the
+  // ontology_id, which the term page resolves server-side). This works for every
+  // result regardless of catalogue size — the old lookup against the page-capped
+  // ontology list left results from ontologies past the cap un-clickable.
   function pathFor(r: SearchResult): string | null {
-    const ont = ontologies.find(o => o.id === r.ontology_id)
-    if (!ont || !r.version_id) return null
-    return `/ontologies/${slugFromIri(ont.iri)}/${r.version_id}?term=${encodeURIComponent(r.iri)}`
+    if (!r.version_id) return null
+    const slug = r.ontology_shortname || r.ontology_id
+    if (!slug) return null
+    return `/ontologies/${encodeURIComponent(slug)}/${r.version_id}?term=${encodeURIComponent(r.iri)}`
   }
 
   function ontologyNameFor(r: SearchResult): string | null {
-    const ont = ontologies.find(o => o.id === r.ontology_id)
-    if (!ont) return null
-    if (ont.shortname) return ont.shortname
-    const last = ont.iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? ont.iri
-    return last.replace(/\.(owl|ttl|rdf|obo|json|xml|nt)$/i, '')
+    return r.ontology_shortname || null
   }
 
   return (
