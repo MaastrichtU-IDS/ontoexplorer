@@ -1,7 +1,8 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import TermPanel from './TermPanel'
+import TermPanel, { shouldExplodeExpr } from './TermPanel'
+import type { ClassExprNode } from '../lib/api'
 
 const mockTerm = {
   iri: 'http://purl.obolibrary.org/obo/GO_0008219',
@@ -254,6 +255,57 @@ describe('used-in-axioms Manchester rendering', () => {
     expect(manLink).toHaveAttribute(
       'href', `/ontologies/fam/v1?term=${encodeURIComponent('http://ex.org/Man')}`)
     expect(screen.getAllByRole('link', { name: 'hasFather' }).length).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('Manchester frame pretty-printing', () => {
+  const named = (label: string): ClassExprNode => ({ type: 'named', iri: `http://ex.org/${label}`, label })
+  const someExpr = (): ClassExprNode => ({ type: 'some', property: named('p'), filler: named('X') })
+
+  test('shouldExplodeExpr breaks a conjunction with a non-atomic operand', () => {
+    // A frame that mixes a class name with restrictions explodes.
+    expect(shouldExplodeExpr({ type: 'and', operands: [named('pizza'), someExpr()] })).toBe(true)
+    expect(shouldExplodeExpr({ type: 'or', operands: [someExpr(), someExpr()] })).toBe(true)
+  })
+
+  test('shouldExplodeExpr keeps atomic and trivial lists inline', () => {
+    // Pure "A or B or C" of class names stays on one line.
+    expect(shouldExplodeExpr({ type: 'or', operands: [named('a'), named('b'), named('c')] })).toBe(false)
+    // A single-operand boolean and non-boolean nodes never explode.
+    expect(shouldExplodeExpr({ type: 'and', operands: [someExpr()] })).toBe(false)
+    expect(shouldExplodeExpr(someExpr())).toBe(false)
+  })
+
+  test('renders a complex equivalent-class frame as a vertical Manchester block', () => {
+    const hasPart = named('has direct part')
+    const cheeses = ['mozzarella', 'gorgonzola', 'parmesan', 'pecorino romano']
+    mockCurrentTerm = {
+      ...mockTerm,
+      equivalentTo: [{
+        type: 'and',
+        operands: [
+          named('pizza'),
+          ...cheeses.map((c): ClassExprNode => ({ type: 'exactly', property: hasPart, n: '1', filler: named(c) })),
+          { type: 'only', property: hasPart, filler: { type: 'or', operands: cheeses.map(named) } },
+        ],
+      }],
+    } as unknown as typeof mockTerm
+
+    wrap(<TermPanel ontologyId="pizza" versionId="v1" termIri="http://ex.org/pizza" slug="pizza" />)
+
+    // The top-level conjunction becomes a vertical frame; the inline `or (...)`
+    // filler does NOT (all-atomic, stays on one line) — so exactly one frame.
+    expect(screen.getAllByTestId('expr-frame').length).toBe(1)
+    // 6 operands → 5 leading `and` connectives in the gutter; the inner `or`
+    // stays inline so its connective text is `or`, not `and`.
+    expect(screen.getAllByText('and').length).toBe(5)
+    // The four `exactly` cardinality restrictions each render their keyword.
+    expect(screen.getAllByText('exactly').length).toBe(4)
+    // Every operand's class name still renders as a clickable link (labels with
+    // spaces are quoted in the link text, so match on a substring).
+    for (const c of cheeses) {
+      expect(screen.getAllByRole('link', { name: new RegExp(c) }).length).toBeGreaterThanOrEqual(1)
+    }
   })
 })
 
