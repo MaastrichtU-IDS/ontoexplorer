@@ -154,3 +154,32 @@ def test_rustdl_classifies_four_cheese_with_alldisjoint():
         "TraditionalFourCheesePizza should be inferred ⊑ FourCheesePizza "
         f"(AllDisjointClasses reinstated); got superclasses={supers}"
     )
+
+
+def test_rustdl_falls_back_when_disjoint_builder_panics(monkeypatch):
+    """A pyo3 PanicException in the OWL/XML builder (py-horned-owl serializer
+    panics on some multi-byte UTF-8) must NOT kill the classify — it must degrade
+    to the plain RDF path. PanicException is a BaseException, not an Exception, so
+    the backend catches BaseException; this guards that wiring."""
+    pytest.importorskip("pyoxigraph")
+    pytest.importorskip("pyhornedowl")
+    pytest.importorskip("rustdl")
+    import disjoint_fix
+    from rustdl_backend import RustdlBackend
+
+    class FakePanic(BaseException):
+        pass
+
+    def boom(*_a, **_k):
+        raise FakePanic("simulated serializer panic")
+
+    monkeypatch.setattr(disjoint_fix, "owl_xml_with_disjointness_from_rdf", boom)
+
+    nt = _four_cheese_ntriples()
+    # Must return a valid classification (via the rdf-xml fallback) rather than
+    # raising. The fallback drops the disjointness, so the subsumption is absent —
+    # the point of this test is that it did not crash.
+    result = RustdlBackend().classify_ntriples(nt, "test-fallback")
+    assert result.class_count > 0
+    supers = result.superclasses.get(P + "TraditionalFourCheesePizza", [])
+    assert P + "FourCheesePizza" not in supers
