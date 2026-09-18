@@ -21,7 +21,10 @@ export function useOntologySearch(
   const q = useDebounce(query.trim(), 250)
   return useQuery({
     queryKey: ['ontologies', 'search', q, group ?? '', profile ?? '', reuses ?? '', language ?? ''],
-    queryFn: () => api.ontologies.list(0, 200, q || undefined, group || undefined, profile, reuses, false, language),
+    // Fetch the whole (group/profile/language-scoped) set, not a 200-row page:
+    // the list view has no pagination and applies the Lang filter client-side, so
+    // a low cap silently truncated large groups (e.g. LOV has 750+ ontologies).
+    queryFn: () => api.ontologies.list(0, 2000, q || undefined, group || undefined, profile, reuses, false, language),
     staleTime: 30_000,
   })
 }
