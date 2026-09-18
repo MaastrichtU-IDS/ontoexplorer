@@ -33,6 +33,10 @@ def _row_to_dict(row: Any) -> dict:
         "version_id": row.version_id,
         "ontology_id": row.ontology_id,
         "source": row.source or "",
+        # Carried so the client can build the term link + ontology badge without
+        # loading the (page-capped) ontology list — results from ontologies past
+        # that cap were otherwise un-clickable.
+        "ontology_shortname": getattr(row, "ontology_shortname", None) or "",
     }
 
 
@@ -68,9 +72,11 @@ async def pg_entity_search(
         SELECT ei.iri, ei.primary_label, ei.short, ei.type,
                ei.version_id, ei.ontology_id, ei.source,
                ei.primary_label_norm,
+               COALESCE(o.shortname, '') AS ontology_shortname,
                CASE WHEN ei.primary_label_norm = :norm THEN 0 ELSE 1 END AS tier
         FROM entity_index ei
         JOIN versions v ON v.id = ei.version_id
+        JOIN ontologies o ON o.id = ei.ontology_id
         WHERE v.status NOT IN ('pending','failed','deprecated')
           AND ei.primary_label_norm LIKE :prefix
           {type_filter_sql}
@@ -101,9 +107,11 @@ async def pg_entity_search(
         tsv_sql = text(f"""
             SELECT ei.iri, ei.primary_label, ei.short, ei.type,
                    ei.version_id, ei.ontology_id, ei.source,
-                   ei.primary_label_norm
+                   ei.primary_label_norm,
+                   COALESCE(o.shortname, '') AS ontology_shortname
             FROM entity_index ei
             JOIN versions v ON v.id = ei.version_id
+            JOIN ontologies o ON o.id = ei.ontology_id
             WHERE v.status NOT IN ('pending','failed','deprecated')
               AND ei.search_tsv @@ to_tsquery('simple', :tsq)
               AND ei.primary_label_norm NOT LIKE :prefix

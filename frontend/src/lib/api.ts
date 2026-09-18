@@ -453,6 +453,9 @@ export interface SearchResult {
   score?: number
   version_id?: string
   ontology_id?: string
+  /** Shortname of the source ontology — lets the client build the term link and
+   *  ontology badge without loading the (page-capped) ontology list. */
+  ontology_shortname?: string
   lang?: string | null
   cross_language?: boolean
 }
