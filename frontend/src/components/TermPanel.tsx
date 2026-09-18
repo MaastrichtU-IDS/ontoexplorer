@@ -429,6 +429,22 @@ function InferredSuperclasses({ items, slug, vid, ontologyId, versionId, termIri
   )
 }
 
+// An "atomic" expression renders as a single short token (a class name, a
+// literal, or an unresolved node) and never needs its own line.
+export function isAtomicExpr(n: ClassExprNode): boolean {
+  return n.type === 'named' || n.type === 'literal' || n.type === 'unknown'
+}
+
+// A conjunction/disjunction is "exploded" onto multiple lines (Manchester frame
+// style) when it has ≥2 operands and at least one is non-atomic — i.e. a
+// restriction or a nested boolean. `A or B or C` of plain class names stays
+// inline; `X and (p some Y) and (q exactly 1 Z)` breaks one operand per line.
+export function shouldExplodeExpr(n: ClassExprNode): boolean {
+  return (n.type === 'and' || n.type === 'or')
+    && n.operands.length >= 2
+    && n.operands.some(o => !isAtomicExpr(o))
+}
+
 function ExprNode({ node, slug, vid, parens = false }: {
   node: ClassExprNode; slug: string; vid: string; parens?: boolean
 }): React.ReactElement {
@@ -477,6 +493,28 @@ function ExprNode({ node, slug, vid, parens = false }: {
     case 'and':
     case 'or': {
       const op = node.type
+      // Pretty-print a complex frame vertically: one operand per line, the
+      // connective ('and'/'or') right-aligned in a gutter so operands line up,
+      // parens carried on the first/last line. Nested frames indent naturally
+      // because each operand renders in its own cell.
+      if (shouldExplodeExpr(node)) {
+        const last = node.operands.length - 1
+        return (
+          <span data-testid="expr-frame" style={{ display: 'inline-flex', flexDirection: 'column', rowGap: 2, verticalAlign: 'top' }}>
+            {node.operands.map((operand, i) => (
+              <span key={i} style={{ display: 'flex', columnGap: '0.4em', alignItems: 'baseline' }}>
+                <span style={{ flexShrink: 0, minWidth: '2.4em', textAlign: 'right' }}>
+                  {i > 0 ? kw(op) : (needsParens ? <span style={{ color: 'var(--text-dim)' }}>(</span> : null)}
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <ExprNode node={operand} slug={slug} vid={vid} parens />
+                  {i === last && needsParens && <span style={{ color: 'var(--text-dim)' }}>{' )'}</span>}
+                </span>
+              </span>
+            ))}
+          </span>
+        )
+      }
       content = (
         <span>
           {node.operands.map((operand, i) => (
