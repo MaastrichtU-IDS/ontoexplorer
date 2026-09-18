@@ -93,12 +93,19 @@ class RustdlBackend:
         cls = None
         if disjoint_fix.has_all_disjoint_classes(store):
             try:
-                ofn = disjoint_fix.functional_with_disjointness(rdfxml, store)
-                cls = _classify(ofn.encode("utf-8"), "ofn")
-            except Exception:
+                # OWL/XML (not OFN): py-horned-owl's OFN serializer panics on some
+                # multi-byte UTF-8. Catch BaseException — a pyo3 PanicException is
+                # NOT an `Exception` subclass, so a serializer panic here would
+                # otherwise kill the whole classify subprocess instead of falling
+                # back. On any failure we drop to the plain RDF/XML path, which
+                # classifies without the disjointness rather than crashing.
+                owx = disjoint_fix.owl_xml_with_disjointness_from_rdf(rdfxml, store)
+                cls = _classify(owx.encode("utf-8"), "owx")
+            except BaseException:  # noqa: BLE001 — includes pyo3 PanicException
                 logging.getLogger("reasoner-service").warning(
-                    "rustdl_disjoint_ofn_fallback version_id=%s", version_id,
+                    "rustdl_disjoint_owx_fallback version_id=%s", version_id,
                     exc_info=True)
+                cls = None
         if cls is None:
             cls = _classify(rdfxml, "rdf-xml")
 

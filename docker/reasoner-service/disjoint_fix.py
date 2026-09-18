@@ -121,12 +121,31 @@ def inject_owx_disjointness(owx: str, groups: list[list[str]]) -> str:
 
 def functional_with_disjointness(rdfxml, store) -> str:
     """OWL functional syntax for ``store``, with dropped ``AllDisjointClasses``
-    reinstated. ``rdfxml`` is the RDF/XML serialization of the same graph."""
+    reinstated. ``rdfxml`` is the RDF/XML serialization of the same graph.
+
+    NOTE: py-horned-owl's OFN serializer panics on some multi-byte UTF-8 content
+    ("not a char boundary"); prefer :func:`owl_xml_with_disjointness_from_rdf`
+    (OWL/XML) for feeding rustdl, and always guard the call with `except
+    BaseException` since a pyo3 PanicException is not an `Exception` subclass.
+    """
     import pyhornedowl
 
     src = rdfxml if isinstance(rdfxml, str) else bytes(rdfxml).decode("utf-8", "replace")
     ofn = pyhornedowl.open_ontology_from_string(src, "rdf").save_to_string("ofn")
     return inject_ofn_disjointness(ofn, all_disjoint_class_groups(store))
+
+
+def owl_xml_with_disjointness_from_rdf(rdfxml, store) -> str:
+    """OWL/XML for ``store`` (built from ``rdfxml`` via py-horned-owl) with dropped
+    ``AllDisjointClasses`` reinstated. Preferred over the OFN builder for rustdl:
+    the OWL/XML serializer avoids the OFN serializer's UTF-8 char-boundary panic.
+    Callers must still guard with `except BaseException` (a serializer panic
+    surfaces as a pyo3 PanicException, which does not derive from `Exception`)."""
+    import pyhornedowl
+
+    src = rdfxml if isinstance(rdfxml, str) else bytes(rdfxml).decode("utf-8", "replace")
+    owx = pyhornedowl.open_ontology_from_string(src, "rdf").save_to_string("owx")
+    return inject_owx_disjointness(owx, all_disjoint_class_groups(store))
 
 
 def owl_xml_with_disjointness(owx: str, store) -> str:
