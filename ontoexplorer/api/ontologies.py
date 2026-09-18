@@ -105,10 +105,13 @@ def _build_class_expr(store, graph_node, node, label_fn, depth: int = 0) -> dict
                     "filler": _build_class_expr(store, graph_node, hv[0], label_fn, depth + 1)}
 
         for owl_pred, kw in [
+            # OWL 2 exact cardinality is owl:cardinality / owl:qualifiedCardinality
+            # (there is no owl:exactCardinality / owl:exactQualifiedCardinality) —
+            # using the wrong term made every `exactly n` restriction render as `?`.
             (_OWL + "minCardinality", "min"), (_OWL + "maxCardinality", "max"),
-            (_OWL + "exactCardinality", "exactly"),
+            (_OWL + "cardinality", "exactly"),
             (_OWL + "minQualifiedCardinality", "min"), (_OWL + "maxQualifiedCardinality", "max"),
-            (_OWL + "exactQualifiedCardinality", "exactly"),
+            (_OWL + "qualifiedCardinality", "exactly"),
         ]:
             cl = props.get(owl_pred, [])
             if cl:
@@ -2277,10 +2280,10 @@ async def get_term(
                     UNION {{ ?r owl:hasValue ?filler . BIND("value" AS ?restrictType) }}
                     UNION {{ ?r owl:minCardinality ?filler . BIND("min" AS ?restrictType) }}
                     UNION {{ ?r owl:maxCardinality ?filler . BIND("max" AS ?restrictType) }}
-                    UNION {{ ?r owl:exactCardinality ?filler . BIND("exactly" AS ?restrictType) }}
+                    UNION {{ ?r owl:cardinality ?filler . BIND("exactly" AS ?restrictType) }}
                     UNION {{ ?r owl:minQualifiedCardinality ?filler . BIND("min" AS ?restrictType) }}
                     UNION {{ ?r owl:maxQualifiedCardinality ?filler . BIND("max" AS ?restrictType) }}
-                    UNION {{ ?r owl:exactQualifiedCardinality ?filler . BIND("exactly" AS ?restrictType) }}
+                    UNION {{ ?r owl:qualifiedCardinality ?filler . BIND("exactly" AS ?restrictType) }}
                 }}
             }}
             ORDER BY ?class ?relation ?restrictType
@@ -2726,10 +2729,10 @@ async def get_term_usage_page(
                     UNION {{ ?r owl:hasValue ?filler . BIND("value" AS ?restrictType) }}
                     UNION {{ ?r owl:minCardinality ?filler . BIND("min" AS ?restrictType) }}
                     UNION {{ ?r owl:maxCardinality ?filler . BIND("max" AS ?restrictType) }}
-                    UNION {{ ?r owl:exactCardinality ?filler . BIND("exactly" AS ?restrictType) }}
+                    UNION {{ ?r owl:cardinality ?filler . BIND("exactly" AS ?restrictType) }}
                     UNION {{ ?r owl:minQualifiedCardinality ?filler . BIND("min" AS ?restrictType) }}
                     UNION {{ ?r owl:maxQualifiedCardinality ?filler . BIND("max" AS ?restrictType) }}
-                    UNION {{ ?r owl:exactQualifiedCardinality ?filler . BIND("exactly" AS ?restrictType) }}
+                    UNION {{ ?r owl:qualifiedCardinality ?filler . BIND("exactly" AS ?restrictType) }}
                 }}
             }}
             ORDER BY ?class ?relation ?restrictType

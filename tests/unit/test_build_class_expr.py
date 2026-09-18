@@ -70,3 +70,42 @@ def test_union_of_datatypes_renders_recursively():
 
     assert ast["type"] == "or"
     assert [op["iri"] for op in ast["operands"]] == [dt1.value, dt2.value]
+
+
+def test_qualified_exact_cardinality_renders():
+    """owl:qualifiedCardinality + owl:onClass -> `p exactly n C`.
+
+    Regression: OWL 2 exact (qualified) cardinality is owl:qualifiedCardinality /
+    owl:cardinality — there is no owl:exactQualifiedCardinality / owl:exactCardinality.
+    The builder used the non-existent terms, so every `exactly n` restriction fell
+    through to {'type': 'unknown'} and rendered as `?` (e.g. pizza's four-cheese
+    equivalent axiom).
+    """
+    r = ox.BlankNode("r")
+    store = _store(
+        (r, ox.NamedNode(_RDF + "type"), ox.NamedNode(_OWL + "Restriction")),
+        (r, ox.NamedNode(_OWL + "onProperty"), ox.NamedNode("http://ex/hasDirectPart")),
+        (r, ox.NamedNode(_OWL + "qualifiedCardinality"),
+         ox.Literal("1", datatype=ox.NamedNode(_XSD + "nonNegativeInteger"))),
+        (r, ox.NamedNode(_OWL + "onClass"), ox.NamedNode("http://ex/Gorgonzola")),
+    )
+    ast = _build_class_expr(store, _GRAPH, r, _label)
+    assert ast["type"] == "exactly"
+    assert ast["n"] == "1"
+    assert ast["property"]["iri"] == "http://ex/hasDirectPart"
+    assert ast["filler"]["iri"] == "http://ex/Gorgonzola"
+
+
+def test_unqualified_exact_cardinality_renders():
+    """owl:cardinality (no onClass) -> `p exactly n` with no filler."""
+    r = ox.BlankNode("r2")
+    store = _store(
+        (r, ox.NamedNode(_RDF + "type"), ox.NamedNode(_OWL + "Restriction")),
+        (r, ox.NamedNode(_OWL + "onProperty"), ox.NamedNode("http://ex/hasTopping")),
+        (r, ox.NamedNode(_OWL + "cardinality"),
+         ox.Literal("2", datatype=ox.NamedNode(_XSD + "nonNegativeInteger"))),
+    )
+    ast = _build_class_expr(store, _GRAPH, r, _label)
+    assert ast["type"] == "exactly"
+    assert ast["n"] == "2"
+    assert "filler" not in ast
