@@ -388,10 +388,48 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
     except Exception:
         pass
 
+    # Host identity, so the reuse arm below can exclude the ontology's own terms.
+    # HTO-style ontologies aren't in the bioregistry, so their own IRIs and the
+    # host IRI both resolve to the generic "obo" prefix — which is exactly what
+    # makes `prefix == host_prefix` a clean native/reused separator.
+    from ontoexplorer.modules.reuse.bioregistry import iri_to_prefix
+    host_iri = ""
+    try:
+        for row in sparql_query(f"""
+            SELECT ?ont WHERE {{
+                GRAPH <{named_graph}> {{
+                    ?ont a <http://www.w3.org/2002/07/owl#Ontology> . FILTER(isIRI(?ont))
+                }}
+            }} LIMIT 1
+        """):
+            v = row["ont"]
+            host_iri = v.value if hasattr(v, "value") else str(v)
+            break
+    except Exception:
+        host_iri = ""
+    try:
+        host_prefix = iri_to_prefix(host_iri)[0] if host_iri else None
+    except Exception:
+        host_prefix = None
+    host_namespaces = [host_iri + "#", host_iri + "/"] if host_iri else []
+
     def _get_source(iri: str) -> str:
+        # 1) Formal owl:imports — clean import names (e.g. "sulo", "pro").
         for base, name in import_source_map.items():
             if iri.startswith(base):
                 return name
+        # 2) Reuse — a term referenced from an external namespace without an
+        #    owl:imports (e.g. HTO reusing ChEBI / FoodOn / UBERON terms). Mirror
+        #    the reuse detector: skip host-native terms, then tag with the term's
+        #    bioregistry prefix. Keeps term chips consistent with the Reuse report.
+        if any(iri.startswith(ns) for ns in host_namespaces):
+            return ""
+        try:
+            prefix, _ = iri_to_prefix(iri)
+        except Exception:
+            prefix = None
+        if prefix and prefix != host_prefix:
+            return prefix
         return ""
 
     # Collect entity IRIs with their types.
