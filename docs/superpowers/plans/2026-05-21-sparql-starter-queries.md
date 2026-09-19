@@ -315,7 +315,7 @@ Verify the `users` table has columns `id`, `provider`, `subject`, `display_name`
 - [ ] **Step 3: Run the migration locally**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 alembic upgrade head 2>&1 | tail -10
 ```
 
@@ -338,7 +338,7 @@ Expected: one row showing the system user.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add ontoexplorer/models/db.py alembic/versions/d7e8f9a0b1c2_add_starter_to_saved_queries.py
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): add is_starter + category columns and seed 10 starter queries
@@ -506,7 +506,7 @@ def test_parse_rq_ignores_unknown_metadata_keys():
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 python -m pytest tests/unit/test_sparql_starters_parser.py -q
 ```
 
@@ -647,7 +647,7 @@ Expected: PASS, all parser tests green.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add ontoexplorer/modules/sparql_starters/__init__.py ontoexplorer/modules/sparql_starters/parser.py tests/unit/test_sparql_starters_parser.py
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): parsers for starter-library intake (JSON + .rq)
@@ -713,7 +713,7 @@ async def test_starters_not_in_public_listing(client):
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 python -m pytest tests/integration/test_sparql_starters.py -q
 ```
 
@@ -818,7 +818,7 @@ async def list_starters(db: AsyncSession = Depends(get_db)):
 6. **Register the new router** in the FastAPI app. Find where `router` from `sparql_queries` is mounted. Look in `ontoexplorer/main.py`:
 
 ```bash
-grep -n "sparql_queries" /home/micheldumontier/code/ontoexplorer/ontoexplorer/main.py
+grep -n "sparql_queries" /path/to/ontoexplorer/ontoexplorer/main.py
 ```
 
 Add a parallel line for `starters_router`. Example pattern: if you see `app.include_router(sparql_queries_router)`, add `app.include_router(sparql_queries_starters_router)` with appropriate import. Specifically, in `main.py`:
@@ -851,7 +851,7 @@ Expected: all pre-existing tests still pass (or at most are skipping due to envi
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add ontoexplorer/api/sparql_queries.py ontoexplorer/main.py tests/integration/test_sparql_starters.py
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): GET /sparql/starters; exclude starters from /queries and /queries/public
@@ -965,7 +965,7 @@ async def test_import_url_allows_localhost_http(admin_client, monkeypatch):
 The `admin_client` fixture must exist in `tests/conftest.py`. Check it:
 
 ```bash
-grep -n "admin_client\|fixture.*admin" /home/micheldumontier/code/ontoexplorer/tests/conftest.py | head
+grep -n "admin_client\|fixture.*admin" /path/to/ontoexplorer/tests/conftest.py | head
 ```
 
 If `admin_client` doesn't exist, create it. Open `tests/conftest.py` and append:
@@ -1168,7 +1168,7 @@ If tests fail because the `admin_client` fixture doesn't work as drafted, debug 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add ontoexplorer/api/sparql_queries.py tests/integration/test_sparql_starters.py tests/conftest.py
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): admin-only POST /sparql/starters/import (paste, file, URL)
@@ -1261,7 +1261,7 @@ export interface ImportStartersResponse {
 - [ ] **Step 2: TS check**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep "api\.ts" | grep -v node_modules
+cd /path/to/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep "api\.ts" | grep -v node_modules
 ```
 
 Expected: empty.
@@ -1269,7 +1269,7 @@ Expected: empty.
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/lib/api.ts
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): api client methods for starter listing + admin import
@@ -1365,7 +1365,7 @@ describe('QuerySidebar — Starters', () => {
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npx vitest run src/components/QuerySidebar.starters.test.tsx --reporter=basic
 ```
 
@@ -1522,7 +1522,7 @@ Delete it. The component now always renders the main JSX; anonymous handling is 
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npx vitest run src/components/QuerySidebar.starters.test.tsx --reporter=basic
 ```
 
@@ -1547,7 +1547,7 @@ Expected: empty.
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/QuerySidebar.tsx frontend/src/components/QuerySidebar.starters.test.tsx
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): Starters tab in QuerySidebar, visible to anon users
@@ -1777,7 +1777,7 @@ Expected: PASS, 4 tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/admin/StarterQueriesPanel.tsx frontend/src/components/admin/StarterQueriesPanel.test.tsx
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(admin): StarterQueriesPanel with paste/upload/URL import zones
@@ -1819,7 +1819,7 @@ Locate the JSX section that lists admin panels. Add a new section near the botto
 - [ ] **Step 2: Run all the relevant tests**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npx vitest run src/pages/AdminPage src/components/admin/StarterQueriesPanel --reporter=basic
 ```
 
@@ -1836,7 +1836,7 @@ Expected: empty.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/pages/AdminPage.tsx
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(admin): mount StarterQueriesPanel on AdminPage
@@ -1856,7 +1856,7 @@ EOF
 - [ ] **Step 1: Full frontend test run**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npx vitest run --reporter=basic 2>&1 | tail -25
 ```
 
@@ -1865,7 +1865,7 @@ Expected: all tests pass. Pre-existing failures in unrelated files (`OwlProfileS
 - [ ] **Step 2: Backend test run**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 python -m pytest tests/unit/test_sparql_starters_parser.py tests/integration/test_sparql_starters.py -q 2>&1 | tail -10
 ```
 
@@ -1882,7 +1882,7 @@ Expected: empty.
 - [ ] **Step 4: File inventory**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git log --since="3 hours ago" --stat | head -100
 ```
 

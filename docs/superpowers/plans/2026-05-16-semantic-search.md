@@ -52,7 +52,7 @@ def test_term_embedding_model_importable():
 - [ ] **Step 2: Run to confirm it fails**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 python -m pytest tests/unit/test_embedder.py::test_term_embedding_model_importable -v
 ```
 Expected: `ImportError: cannot import name 'TermEmbedding'`
@@ -1182,14 +1182,14 @@ export function useGlobalSearch(query: string, semantic = false) {
 - [ ] **Step 6: Run TypeScript typecheck**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit
+cd /path/to/ontoexplorer/frontend && npx tsc --noEmit
 ```
 Expected: no errors
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/lib/api.ts frontend/src/hooks/useSearch.ts frontend/src/hooks/useSearch.test.ts
 git commit -m "feat(semantic): update frontend API client and types for semantic search"
 ```
@@ -1251,7 +1251,7 @@ describe('Home semantic results', () => {
 - [ ] **Step 2: Run test to confirm failure**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend && npx vitest run src/pages/Home.semantic.test.tsx
+cd /path/to/ontoexplorer/frontend && npx vitest run src/pages/Home.semantic.test.tsx
 ```
 Expected: FAIL — "Semantically similar" not found
 
@@ -1332,7 +1332,7 @@ Find the closing of `KeywordSearch` (the line with `<ResultList results={results
 - [ ] **Step 4: Run the test**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend && npx vitest run src/pages/Home.semantic.test.tsx
+cd /path/to/ontoexplorer/frontend && npx vitest run src/pages/Home.semantic.test.tsx
 ```
 Expected: PASS
 
@@ -1346,7 +1346,7 @@ Expected: no errors
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/pages/Home.tsx frontend/src/pages/Home.semantic.test.tsx
 git commit -m "feat(semantic): show semantically similar section in global search"
 ```
@@ -1413,7 +1413,7 @@ describe('OntologySearchBar semantic', () => {
 - [ ] **Step 2: Run test to confirm it passes (API typing already fixed)**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend && npx vitest run src/pages/OntologyPage.semantic.test.tsx
+cd /path/to/ontoexplorer/frontend && npx vitest run src/pages/OntologyPage.semantic.test.tsx
 ```
 Expected: PASS (the API type was already updated in Task 7)
 
@@ -1509,7 +1509,7 @@ Also update the condition `{open && results.length > 0 && (` to `{open && (resul
 - [ ] **Step 4: Run TypeScript typecheck**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit
+cd /path/to/ontoexplorer/frontend && npx tsc --noEmit
 ```
 Expected: no errors
 
@@ -1523,14 +1523,14 @@ Expected: all tests pass
 - [ ] **Step 6: Run all Python tests**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer && python -m pytest tests/unit/ -v -m "not slow"
+cd /path/to/ontoexplorer && python -m pytest tests/unit/ -v -m "not slow"
 ```
 Expected: all tests pass
 
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/pages/OntologyPage.tsx frontend/src/pages/OntologyPage.semantic.test.tsx
 git commit -m "feat(semantic): show semantically similar terms in ontology search dropdown"
 ```

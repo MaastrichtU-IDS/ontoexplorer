@@ -75,14 +75,14 @@ def _text(v: str) -> TextToken:
 
 - [ ] **Step 2: Sanity-check the import**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer && uv run python -c "from ontoexplorer.modules.diff.manchester import _text, TextToken, IriToken, ManchesterLine, ManchesterFrame; print(_text('hi'))"`
+Run: `cd /path/to/ontoexplorer && uv run python -c "from ontoexplorer.modules.diff.manchester import _text, TextToken, IriToken, ManchesterLine, ManchesterFrame; print(_text('hi'))"`
 
 Expected: `{'t': 'text', 'v': 'hi'}`
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add ontoexplorer/modules/diff/manchester.py
 git commit -m "feat(diff/manchester): token type definitions and _text helper"
 ```
@@ -135,7 +135,7 @@ def test_known_iris_returns_empty_for_empty_graph():
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/unit/test_manchester_render.py -v -k known_iris 2>&1 | tail -5`
+Run: `cd /path/to/ontoexplorer && uv run pytest tests/unit/test_manchester_render.py -v -k known_iris 2>&1 | tail -5`
 
 Expected: 2 FAILED (cannot import `_known_iris`).
 
@@ -1235,7 +1235,7 @@ The three call sites are in close proximity (see Phase 2 Task 8's edits). Read t
 
 - [ ] **Step 4: Run all unit tests**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/unit/ 2>&1 | tail -3`
+Run: `cd /path/to/ontoexplorer && uv run pytest tests/unit/ 2>&1 | tail -3`
 
 Expected: all green.
 
@@ -1281,14 +1281,14 @@ Then in the `DiffEntity` shape, change:
 
 - [ ] **Step 2: TypeScript check**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -15`
+Run: `cd /path/to/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -15`
 
 Expected: errors point at `ManchesterFrame.tsx` (the component still takes a string). Those are fixed in Task 10.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/lib/api.ts
 git commit -m "feat(frontend): ManchesterFrame token type definitions"
 ```
@@ -1393,14 +1393,14 @@ export default function ManchesterFrame({ frame, shortname }: Props) {
 
 - [ ] **Step 2: Quick TS check**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -15`
+Run: `cd /path/to/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -15`
 
 Expected: errors should now move to `DiffResultView.tsx` (the consumer doesn't pass `shortname` yet). That's fixed in Task 11.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/ManchesterFrame.tsx
 git commit -m "refactor(frontend): ManchesterFrame renders tokens with clickable IRIs"
 ```
@@ -1499,20 +1499,20 @@ If the prop names for the picked ontologies differ, match what's actually in the
 
 - [ ] **Step 4: Type-check**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10`
+Run: `cd /path/to/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10`
 
 Expected: no new errors related to ManchesterFrame.
 
 - [ ] **Step 5: Run frontend tests to catch regressions**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx vitest run 2>&1 | tail -10`
+Run: `cd /path/to/ontoexplorer/frontend && npx vitest run 2>&1 | tail -10`
 
 Expected: same baseline as before (pre-existing failures persist; no new failures introduced).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/DiffResultView.tsx frontend/src/pages/
 git commit -m "feat(frontend): pipe ontology shortname into ManchesterFrame for clickable IRIs"
 ```
@@ -1611,14 +1611,14 @@ test('added/removed lines use respective color and line marker', () => {
 
 - [ ] **Step 2: Run the new tests**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx vitest run ManchesterFrame.test.tsx 2>&1 | tail -10`
+Run: `cd /path/to/ontoexplorer/frontend && npx vitest run ManchesterFrame.test.tsx 2>&1 | tail -10`
 
 Expected: 4 passed.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/ManchesterFrame.test.tsx
 git commit -m "test(frontend): ManchesterFrame renders links and tooltips correctly"
 ```

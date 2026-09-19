@@ -112,7 +112,7 @@ MOD_RATE_LIMIT_AUTH=10000
 - [ ] **Step 4: Sync dependencies**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer && uv sync
+cd /path/to/ontoexplorer && uv sync
 ```
 
 Expected: resolves jinja2, no errors.
@@ -257,7 +257,7 @@ def test_dcat_namespace():
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/unit/test_mod_context.py -v
+cd /path/to/ontoexplorer && uv run pytest tests/unit/test_mod_context.py -v
 ```
 
 Expected: `ModuleNotFoundError: No module named 'ontoexplorer.modules.mod'`
@@ -294,7 +294,7 @@ MOD_CONTEXT: dict = {
 - [ ] **Step 4: Run tests to confirm pass**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/unit/test_mod_context.py -v
+cd /path/to/ontoexplorer && uv run pytest tests/unit/test_mod_context.py -v
 ```
 
 Expected: 3 passed.
@@ -406,7 +406,7 @@ def test_rdf_response_jsonld_has_graph_key_for_list():
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/unit/test_mod_response.py -v
+cd /path/to/ontoexplorer && uv run pytest tests/unit/test_mod_response.py -v
 ```
 
 Expected: `ModuleNotFoundError`.
@@ -521,7 +521,7 @@ class RDFResponse(Response):
 - [ ] **Step 4: Run tests to confirm pass**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/unit/test_mod_response.py -v
+cd /path/to/ontoexplorer && uv run pytest tests/unit/test_mod_response.py -v
 ```
 
 Expected: all 13 tests pass.
@@ -615,7 +615,7 @@ async def test_different_ips_have_separate_counters():
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/unit/test_mod_ratelimit.py -v
+cd /path/to/ontoexplorer && uv run pytest tests/unit/test_mod_ratelimit.py -v
 ```
 
 Expected: `ModuleNotFoundError`.
@@ -676,7 +676,7 @@ async def mod_rate_limit(
 - [ ] **Step 4: Run tests to confirm pass**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/unit/test_mod_ratelimit.py -v
+cd /path/to/ontoexplorer && uv run pytest tests/unit/test_mod_ratelimit.py -v
 ```
 
 Expected: 4 passed.
@@ -857,7 +857,7 @@ def test_search_results_graph():
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/unit/test_mod_builder.py -v
+cd /path/to/ontoexplorer && uv run pytest tests/unit/test_mod_builder.py -v
 ```
 
 Expected: `ModuleNotFoundError`.
@@ -1196,7 +1196,7 @@ def _add_pagination(g: Graph, col: URIRef, base: str, total: int, page: int, pag
 - [ ] **Step 4: Run tests to confirm pass**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/unit/test_mod_builder.py -v
+cd /path/to/ontoexplorer && uv run pytest tests/unit/test_mod_builder.py -v
 ```
 
 Expected: all 12 tests pass.
@@ -1760,7 +1760,7 @@ And register the router after `app.include_router(health_router)`:
 - [ ] **Step 3: Verify the app starts without errors**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer && uv run python -c "from ontoexplorer.main import create_app; app = create_app(); print('OK')"
+cd /path/to/ontoexplorer && uv run python -c "from ontoexplorer.main import create_app; app = create_app(); print('OK')"
 ```
 
 Expected: `OK`
@@ -1964,7 +1964,7 @@ async def test_catalogue_html(client, ready_ontology):
 - [ ] **Step 2: Run integration tests**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/integration/test_mod_api.py -v
+cd /path/to/ontoexplorer && uv run pytest tests/integration/test_mod_api.py -v
 ```
 
 Expected: all 11 tests pass.
@@ -1972,7 +1972,7 @@ Expected: all 11 tests pass.
 - [ ] **Step 3: Run full test suite to confirm no regressions**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/ -v --ignore=tests/integration/test_reasoning.py --ignore=tests/integration/test_reasoning_api.py -x
+cd /path/to/ontoexplorer && uv run pytest tests/ -v --ignore=tests/integration/test_reasoning.py --ignore=tests/integration/test_reasoning_api.py -x
 ```
 
 Expected: all existing tests pass.

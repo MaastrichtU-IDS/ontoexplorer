@@ -17,7 +17,7 @@
 - Default reasoner when a request omits one: env `DEFAULT_REASONER`, defaulting to `whelk` (preserves today's behaviour). This is the *service-level* default; the app-level default is SP2.
 - Justification response `format` field values: `"ntriples"` (whelk/rdflib) | `"manchester"` (rustdl).
 - Tests that need an optional engine use `pytest.importorskip(...)` (rustdl) or skip when the Konclude binary is absent (`shutil.which`), mirroring `test_whelk_classifier.py:26`.
-- Commits use `git -c user.email=michel.dumontier@gmail.com` and end with the `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` trailer.
+- Commits use `git -c user.email=admin@example.org` and end with the `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` trailer.
 - HTTP contract changes are backward-compatible: omitting `reasoner` must behave exactly as today.
 
 ---
@@ -130,7 +130,7 @@ Expected: PASS (2 passed).
 ```bash
 cd ~/code/ontoexplorer
 git add -A
-git -c user.email=michel.dumontier@gmail.com commit -m "refactor: rename elk-service -> reasoner-service
+git -c user.email=admin@example.org commit -m "refactor: rename elk-service -> reasoner-service
 
 Directory, compose service, config settings, and app client references.
 ELK_SERVICE_URL / ELK_SERVICE_TIMEOUT kept as deprecated env aliases.
@@ -313,7 +313,7 @@ Expected: PASS (3 passed).
 ```bash
 cd ~/code/ontoexplorer
 git add docker/reasoner-service/cache.py docker/reasoner-service/test_reasoner_scoped_cache.py
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(reasoner-service): scope Redis cache keys by reasoner
+git -c user.email=admin@example.org commit -m "feat(reasoner-service): scope Redis cache keys by reasoner
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -582,7 +582,7 @@ Expected: PASS (5 passed). `available` flags will be `False` where the engine is
 ```bash
 cd ~/code/ontoexplorer
 git add docker/reasoner-service/registry.py docker/reasoner-service/rustdl_backend.py docker/reasoner-service/konclude_backend.py docker/reasoner-service/test_registry.py
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(reasoner-service): capability-aware reasoner registry + whelk/rdflib adapters
+git -c user.email=admin@example.org commit -m "feat(reasoner-service): capability-aware reasoner registry + whelk/rdflib adapters
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -736,7 +736,7 @@ Expected: PASS (2 passed).
 ```bash
 cd ~/code/ontoexplorer
 git add docker/reasoner-service/rustdl_backend.py docker/reasoner-service/test_rustdl_backend.py
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(reasoner-service): rustdl classification backend via owl-dl-py
+git -c user.email=admin@example.org commit -m "feat(reasoner-service): rustdl classification backend via owl-dl-py
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -818,7 +818,7 @@ Expected: PASS (3 passed).
 ```bash
 cd ~/code/ontoexplorer
 git add docker/reasoner-service/rustdl_backend.py docker/reasoner-service/test_rustdl_backend.py
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(reasoner-service): rustdl native justifications (Manchester)
+git -c user.email=admin@example.org commit -m "feat(reasoner-service): rustdl native justifications (Manchester)
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -987,7 +987,7 @@ Expected: PASS (1 passed) when the binary is present. If py-horned-owl's seriali
 ```bash
 cd ~/code/ontoexplorer
 git add docker/reasoner-service/konclude_backend.py docker/reasoner-service/test_konclude_backend.py
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(reasoner-service): Konclude classification backend (subprocess)
+git -c user.email=admin@example.org commit -m "feat(reasoner-service): Konclude classification backend (subprocess)
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -1187,7 +1187,7 @@ Expected: PASS or SKIP for every test (rustdl/konclude/whelk tests skip when the
 ```bash
 cd ~/code/ontoexplorer
 git add docker/reasoner-service/main.py docker/reasoner-service/test_reasoners_endpoint.py
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(reasoner-service): reasoner-aware HTTP contract + GET /reasoners
+git -c user.email=admin@example.org commit -m "feat(reasoner-service): reasoner-aware HTTP contract + GET /reasoners
 
 reasoner field on /classify & /justification, reasoner-scoped cache routing,
 422 for no-justify reasoners, format field on justification response.
@@ -1303,7 +1303,7 @@ Expected: each prints `{'http://example.org/A': ['http://example.org/C']}` (orde
 ```bash
 cd ~/code/ontoexplorer
 git add docker/reasoner-service/Dockerfile
-git -c user.email=michel.dumontier@gmail.com commit -m "build(reasoner-service): bundle rustdl wheel + Konclude binary
+git -c user.email=admin@example.org commit -m "build(reasoner-service): bundle rustdl wheel + Konclude binary
 
 Multi-stage build: maturin-built owl-dl-py wheel and the prebuilt Konclude
 binary (emulated on arm64). All four reasoners available at runtime.

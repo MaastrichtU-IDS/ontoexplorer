@@ -151,7 +151,7 @@ async def test_diff_status_for_pair_stale_when_inferred_missing(db_session):
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/integration/test_admin.py -v -k diff_status_for_pair 2>&1 | tail -15`
+Run: `cd /path/to/ontoexplorer && uv run pytest tests/integration/test_admin.py -v -k diff_status_for_pair 2>&1 | tail -15`
 
 Expected: 5 FAILED (cannot import `_diff_status_for_pair`).
 
@@ -222,7 +222,7 @@ Expected: 5 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add ontoexplorer/api/admin.py tests/integration/test_admin.py
 git commit -m "feat(admin): _diff_status_for_pair helper"
 ```
@@ -1073,14 +1073,14 @@ In the `admin: { ... }` block (starting [api.ts:1126](frontend/src/lib/api.ts#L1
 
 - [ ] **Step 3: Type-check**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10`
+Run: `cd /path/to/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10`
 
 Expected: clean (no errors mentioning `api.ts` or the new types).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/lib/api.ts
 git commit -m "feat(api): admin per-version + diff queue client methods"
 ```
@@ -1172,7 +1172,7 @@ describe('usePagedTable', () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx vitest run src/hooks/usePagedTable.test.ts 2>&1 | tail -10`
+Run: `cd /path/to/ontoexplorer/frontend && npx vitest run src/hooks/usePagedTable.test.ts 2>&1 | tail -10`
 
 Expected: 7 FAILED (module not found).
 
@@ -1251,14 +1251,14 @@ export function usePagedTable<T>(rows: T[], scopeKey: string): UsePagedTableResu
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx vitest run src/hooks/usePagedTable.test.ts 2>&1 | tail -10`
+Run: `cd /path/to/ontoexplorer/frontend && npx vitest run src/hooks/usePagedTable.test.ts 2>&1 | tail -10`
 
 Expected: 7 passed.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/hooks/usePagedTable.ts frontend/src/hooks/usePagedTable.test.ts
 git commit -m "feat(frontend): usePagedTable hook with localStorage-persisted pageSize"
 ```
@@ -1346,7 +1346,7 @@ describe('TablePager', () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx vitest run src/components/TablePager.test.tsx 2>&1 | tail -10`
+Run: `cd /path/to/ontoexplorer/frontend && npx vitest run src/components/TablePager.test.tsx 2>&1 | tail -10`
 
 Expected: 7 FAILED (module not found).
 
@@ -1446,14 +1446,14 @@ export function TablePager({ total, page, pageSize, onPage, onPageSize }: TableP
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx vitest run src/components/TablePager.test.tsx 2>&1 | tail -10`
+Run: `cd /path/to/ontoexplorer/frontend && npx vitest run src/components/TablePager.test.tsx 2>&1 | tail -10`
 
 Expected: 7 passed.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/TablePager.tsx frontend/src/components/TablePager.test.tsx
 git commit -m "feat(frontend): TablePager component"
 ```
@@ -1651,7 +1651,7 @@ Since `WorkersPanel` currently returns a single `<div>` containing the table, ch
 - [ ] **Step 4: Type-check + Vitest**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10
 npx vitest run 2>&1 | tail -5
 ```
@@ -1661,7 +1661,7 @@ Both expected: clean (no new errors).
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/pages/AdminPage.tsx
 git commit -m "feat(admin): configurable paging via TablePager on Ontology/Jobs/Workers tables"
 ```
@@ -1824,7 +1824,7 @@ function VersionsSubRows({
 - [ ] **Step 2: Type-check + run all tests**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10
 npx vitest run 2>&1 | tail -5
 ```
@@ -1838,7 +1838,7 @@ Start the dev server: `cd frontend && npm run dev`. Log in as admin, navigate to
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/pages/AdminPage.tsx
 git commit -m "feat(admin): expandable rows showing all versions per ontology"
 ```
@@ -1993,7 +1993,7 @@ Thread `pairDiffStates` and `onPairDiff` from `OntologyTable` (which received th
 - [ ] **Step 6: Type-check + Vitest**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10
 npx vitest run 2>&1 | tail -5
 ```
@@ -2003,7 +2003,7 @@ Expected: clean.
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/pages/AdminPage.tsx
 git commit -m "feat(admin): Diff vs prev column + per-pair/bulk diff queue actions"
 ```
@@ -2143,7 +2143,7 @@ For Reasoning:
 - [ ] **Step 4: Type-check + Vitest**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10
 npx vitest run 2>&1 | tail -5
 ```
@@ -2153,7 +2153,7 @@ Expected: clean.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/pages/AdminPage.tsx
 git commit -m "feat(admin): per-version action buttons (index/embed/reason/ingest) in sub-rows"
 ```
@@ -2167,7 +2167,7 @@ git commit -m "feat(admin): per-version action buttons (index/embed/reason/inges
 - [ ] **Step 1: Run the full test suite**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 uv run pytest tests/integration/test_admin.py 2>&1 | tail -5
 cd frontend && npx vitest run 2>&1 | tail -5
 ```
@@ -2177,7 +2177,7 @@ Both expected: all green.
 - [ ] **Step 2: Rebuild containers**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 docker compose build api
 docker compose up -d api
 ```

@@ -65,7 +65,7 @@ def test_ontology_profile_model_fields():
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 uv run pytest tests/integration/test_profile.py::test_ontology_profile_model_fields -v
 ```
 Expected: FAIL with `ImportError: cannot import name 'OntologyProfile'`
@@ -1273,7 +1273,7 @@ export function useDetectProfile(ontologyId: string, versionId: string) {
 - [ ] **Step 3: Type-check**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit 2>&1
+cd /path/to/ontoexplorer/frontend && npx tsc --noEmit 2>&1
 ```
 Expected: no output (clean)
 
@@ -1414,7 +1414,7 @@ Replace with:
 - [ ] **Step 2: Type-check**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit 2>&1
+cd /path/to/ontoexplorer/frontend && npx tsc --noEmit 2>&1
 ```
 Expected: no output
 
@@ -1822,14 +1822,14 @@ Replace with:
 - [ ] **Step 3: Type-check**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit 2>&1
+cd /path/to/ontoexplorer/frontend && npx tsc --noEmit 2>&1
 ```
 Expected: no output
 
 - [ ] **Step 4: Run all profile backend tests**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 uv run pytest tests/integration/test_profile.py -v
 ```
 Expected: all tests PASS

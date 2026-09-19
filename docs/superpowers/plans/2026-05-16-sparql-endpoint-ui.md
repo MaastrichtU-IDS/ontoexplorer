@@ -42,7 +42,7 @@ In `ontoexplorer/config.py`, add after `oxigraph_read_only: bool = False`:
 - [ ] **Step 2: Verify the settings load without error**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 python -c "from ontoexplorer.config import get_settings; s = get_settings(); print(s.oxigraph_sparql_url, s.sparql_query_timeout_seconds)"
 ```
 
@@ -202,7 +202,7 @@ async def test_sparql_comment_does_not_trigger_guard(client):
 - [ ] **Step 2: Run the tests to confirm they fail**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 uv run pytest tests/integration/test_sparql.py -v 2>&1 | head -40
 ```
 
@@ -318,7 +318,7 @@ async def _extract_query_and_accept(request: Request) -> tuple[str, str]:
 - [ ] **Step 4: Run tests and confirm they pass**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 uv run pytest tests/integration/test_sparql.py -v
 ```
 
@@ -327,7 +327,7 @@ Expected: all 7 tests PASS.
 - [ ] **Step 5: Run the full test suite to check for regressions**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 uv run pytest tests/ -v --tb=short 2>&1 | tail -20
 ```
 
@@ -365,7 +365,7 @@ No `ports:` mapping — the service is internal only, reachable at `http://oxigr
 - [ ] **Step 2: Verify the compose file is valid**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 docker compose config --quiet && echo "compose OK"
 ```
 
@@ -388,7 +388,7 @@ git commit -m "feat(sparql): add oxigraph-sparql read-only Docker service"
 - [ ] **Step 1: Install the package**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npm install @triplydb/yasgui
 ```
 
@@ -397,7 +397,7 @@ Expected: `@triplydb/yasgui` appears in `package.json` dependencies.
 - [ ] **Step 2: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/package.json frontend/package-lock.json
 git commit -m "feat(sparql): add @triplydb/yasgui dependency"
 ```
@@ -481,7 +481,7 @@ export default function Sparql() {
 - [ ] **Step 2: Check for TypeScript errors**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npx tsc --noEmit 2>&1 | grep -i "sparql\|yasgui" || echo "no TS errors for Sparql/Yasgui"
 ```
 
@@ -497,7 +497,7 @@ Re-run `npx tsc --noEmit` and confirm those errors are gone.
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/pages/Sparql.tsx
 git add frontend/src/declarations.d.ts 2>/dev/null; true
 git commit -m "feat(sparql): YASGUI-based Sparql page component"
@@ -539,7 +539,7 @@ const navLinks = [
 - [ ] **Step 3: Type-check**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npx tsc --noEmit
 ```
 
@@ -548,7 +548,7 @@ Expected: no errors.
 - [ ] **Step 4: Run existing frontend tests**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npm run test:run
 ```
 
@@ -557,7 +557,7 @@ Expected: all tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/App.tsx frontend/src/components/NavBar.tsx
 git commit -m "feat(sparql): add /sparql route and NavBar link"
 ```
