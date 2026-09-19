@@ -324,6 +324,7 @@ export default function Ontologies() {
   const [profile, setProfile] = useState<'' | ProfileName>('')
   const [language, setLanguage] = useState<'' | LanguageTier>('')
   const [langs, setLangs] = useState<Set<string>>(new Set())
+  const [langsExpanded, setLangsExpanded] = useState(false)
   const [sortCol, setSortCol] = useState<SortCol>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const reuses = searchParams.get('reuses') ?? undefined
@@ -480,40 +481,60 @@ export default function Ontologies() {
         })}
       </div>
 
-      {/* Language filter chips */}
-      {repoLangs.length > 0 && (
-        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center', marginBottom: '1rem' }}>
-          <span style={{ fontSize: 11, color: 'var(--text-dim)', marginRight: 2 }}>Lang:</span>
-          {repoLangs.map(({ lang, label_count }) => {
-            const active = langs.has(lang)
-            return (
-              <button
-                key={lang}
-                onClick={() => toggleLang(lang)}
-                title={`${label_count.toLocaleString()} labels`}
-                style={{
-                  fontSize: 11, padding: '2px 8px', borderRadius: 20, cursor: 'pointer',
-                  border: '1px solid rgba(86,182,194,0.35)',
-                  background: 'rgba(86,182,194,0.10)',
-                  color: 'var(--od-cyan)',
-                  fontWeight: active ? 700 : 600,
-                  opacity: active ? 1 : 0.65,
-                }}
-              >
-                {lang || '—'}
+      {/* Language filter chips — collapsible: the row lists every repository
+          language, which is long once a multilingual corpus (e.g. LOV) is loaded.
+          Collapsed shows the top N by label count plus any selected language. */}
+      {repoLangs.length > 0 && (() => {
+        const COLLAPSED = 12
+        const shown = langsExpanded
+          ? repoLangs
+          : repoLangs.filter((l, i) => i < COLLAPSED || langs.has(l.lang))
+        const hidden = repoLangs.length - shown.length
+        const moreStyle = { fontSize: 11, color: 'var(--text-dim)', padding: '2px 6px', cursor: 'pointer', background: 'none', border: 'none' } as const
+        return (
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center', marginBottom: '1rem' }}>
+            <span style={{ fontSize: 11, color: 'var(--text-dim)', marginRight: 2 }}>Lang:</span>
+            {shown.map(({ lang, label_count }) => {
+              const active = langs.has(lang)
+              return (
+                <button
+                  key={lang}
+                  onClick={() => toggleLang(lang)}
+                  title={`${label_count.toLocaleString()} labels`}
+                  style={{
+                    fontSize: 11, padding: '2px 8px', borderRadius: 20, cursor: 'pointer',
+                    border: '1px solid rgba(86,182,194,0.35)',
+                    background: 'rgba(86,182,194,0.10)',
+                    color: 'var(--od-cyan)',
+                    fontWeight: active ? 700 : 600,
+                    opacity: active ? 1 : 0.65,
+                  }}
+                >
+                  {lang || '—'}
+                </button>
+              )
+            })}
+            {!langsExpanded && hidden > 0 && (
+              <button onClick={() => setLangsExpanded(true)} style={moreStyle}>
+                +{hidden} more
               </button>
-            )
-          })}
-          {langs.size > 0 && (
-            <button
-              onClick={() => setLangs(new Set())}
-              style={{ fontSize: 11, color: 'var(--text-dim)', padding: '2px 6px' }}
-            >
-              clear
-            </button>
-          )}
-        </div>
-      )}
+            )}
+            {langsExpanded && repoLangs.length > COLLAPSED && (
+              <button onClick={() => setLangsExpanded(false)} style={moreStyle}>
+                show less
+              </button>
+            )}
+            {langs.size > 0 && (
+              <button
+                onClick={() => setLangs(new Set())}
+                style={{ fontSize: 11, color: 'var(--text-dim)', padding: '2px 6px' }}
+              >
+                clear
+              </button>
+            )}
+          </div>
+        )
+      })()}
 
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
