@@ -8,7 +8,7 @@ export interface PickerLanguage {
 }
 
 // Render a BCP-47 tag in its own language ("el" → "Ελληνικά", "ja" → "日本語").
-function endonym(tag: string): string {
+export function endonym(tag: string): string {
   if (!tag) return 'untagged'
   try {
     return new Intl.DisplayNames([tag], { type: 'language', fallback: 'code' }).of(tag) || tag

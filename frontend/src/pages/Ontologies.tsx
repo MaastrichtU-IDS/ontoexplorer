@@ -9,6 +9,7 @@ import Coverage from './Coverage'
 import OwlProfile from './OwlProfile'
 import Compare from './Compare'
 import { Reuse } from './Reuse'
+import { endonym } from '../components/LanguagePicker'
 
 type Tab = 'list' | 'coverage' | 'profiles' | 'compare' | 'reuse'
 const TAB_VALUES: Tab[] = ['list', 'coverage', 'profiles', 'compare', 'reuse']
@@ -500,7 +501,7 @@ export default function Ontologies() {
                 <button
                   key={lang}
                   onClick={() => toggleLang(lang)}
-                  title={`${label_count.toLocaleString()} labels`}
+                  title={`${endonym(lang)} — ${label_count.toLocaleString()} labels`}
                   style={{
                     fontSize: 11, padding: '2px 8px', borderRadius: 20, cursor: 'pointer',
                     border: '1px solid rgba(86,182,194,0.35)',
@@ -511,6 +512,7 @@ export default function Ontologies() {
                   }}
                 >
                   {lang || '—'}
+                  <span style={{ opacity: 0.6, marginLeft: 4, fontWeight: 500 }}>{fmtCount(label_count)}</span>
                 </button>
               )
             })}
