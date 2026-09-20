@@ -16,8 +16,8 @@
 - Reasoner is bound per version and immutable after ingest (no re-classify endpoint in SP2).
 - Justification `format` values: `"ntriples"` (whelk/rdflib) | `"manchester"` (rustdl). A reasoner lacking the justify capability → the reasoner-service returns HTTP 422; the app converts that to `{"reasoning_available": false, ...}`, never a 500.
 - Submit-time reasoner validation is a guardrail: if `GET /reasoners` is unreachable, fall back to accepting the four known names and log a warning — never hard-block ingest on the service being down.
-- Non-standard local env: `python` is not on PATH and `uv run` fails (network). Use `/Users/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest`. The app test suite needs the full app env (sqlalchemy etc.); if a needed dep is missing install it targeted via `UV_HTTP_TIMEOUT=300 uv pip install <name>` — never `uv sync`.
-- Commits use `git -c user.email=michel.dumontier@gmail.com` and end with the `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` trailer.
+- Non-standard local env: `python` is not on PATH and `uv run` fails (network). Use `/path/to/ontoexplorer/.venv/bin/python -m pytest`. The app test suite needs the full app env (sqlalchemy etc.); if a needed dep is missing install it targeted via `UV_HTTP_TIMEOUT=300 uv pip install <name>` — never `uv sync`.
+- Commits use `git -c user.email=admin@example.org` and end with the `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` trailer.
 - No UI work (SP3): the app returns the data; typed Manchester rendering and the admin dropdown are out of scope.
 
 ---
@@ -128,7 +128,7 @@ Expected: a `reasoner | character varying | not null` row, and existing versions
 
 ```bash
 git add ontoexplorer/models/db.py alembic/versions/*add_reasoner* tests/test_reasoner_column_migration.py
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(app): add reasoner column to versions (default whelk)
+git -c user.email=admin@example.org commit -m "feat(app): add reasoner column to versions (default whelk)
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -274,7 +274,7 @@ Expected: PASS (2 passed). (If `pytest-asyncio` isn't configured, mirror how the
 
 ```bash
 git add ontoexplorer/config.py ontoexplorer/clients/reasoning.py tests/test_default_reasoner_config.py tests/test_list_reasoners_client.py
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(app): DEFAULT_REASONER setting + reasoners discovery client helpers
+git -c user.email=admin@example.org commit -m "feat(app): DEFAULT_REASONER setting + reasoners discovery client helpers
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -404,7 +404,7 @@ Expected: PASS (3 passed).
 
 ```bash
 git add ontoexplorer/api/ontologies.py ontoexplorer/modules/jobs/tasks.py ontoexplorer/modules/ingestion/pipeline.py tests/test_submit_reasoner.py
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(app): select+validate reasoner at ingest, persist on version
+git -c user.email=admin@example.org commit -m "feat(app): select+validate reasoner at ingest, persist on version
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -513,7 +513,7 @@ Expected: PASS (2 passed).
 
 ```bash
 git add ontoexplorer/clients/reasoning.py tests/test_reasoning_client_reasoner.py
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(app): reasoning client threads reasoner; 422 -> reasoning_available:false
+git -c user.email=admin@example.org commit -m "feat(app): reasoning client threads reasoner; 422 -> reasoning_available:false
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -583,7 +583,7 @@ Expected: PASS.
 
 ```bash
 git add ontoexplorer/modules/jobs/tasks.py ontoexplorer/api/ontologies.py tests/test_run_reasoning_uses_version_reasoner.py
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(app): classify + term inferences use the version's reasoner
+git -c user.email=admin@example.org commit -m "feat(app): classify + term inferences use the version's reasoner
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -682,7 +682,7 @@ Integration (best-effort, stack running): ingest a tiny ontology with `reasoner=
 
 ```bash
 git add ontoexplorer/api/ontologies.py tests/test_justification_reasoner_routing.py
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(app): justification routes version reasoner; manchester passthrough + no-justify handling
+git -c user.email=admin@example.org commit -m "feat(app): justification routes version reasoner; manchester passthrough + no-justify handling
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```

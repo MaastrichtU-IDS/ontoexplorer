@@ -77,7 +77,7 @@ async def test_version_has_source_url_field(db_session):
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 uv run pytest tests/integration/test_auto_sync.py -v
 ```
 

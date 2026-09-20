@@ -87,7 +87,7 @@ async def test_saved_query_crud(db_session):
 - [ ] **Step 2: Run to verify it fails**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 uv run pytest tests/unit/test_saved_queries_model.py -v
 ```
 
@@ -608,7 +608,7 @@ In `frontend/src/lib/api.ts`, add `savedQueries` inside the `export const api = 
 - [ ] **Step 3: Verify TypeScript compilation**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit
+cd /path/to/ontoexplorer/frontend && npx tsc --noEmit
 ```
 
 Expected: No errors
@@ -963,7 +963,7 @@ export default function QuerySidebar({ yasguiRef }: Props) {
 - [ ] **Step 2: Verify TypeScript compilation**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit
+cd /path/to/ontoexplorer/frontend && npx tsc --noEmit
 ```
 
 Expected: No errors
@@ -1106,7 +1106,7 @@ export default function Sparql() {
 - [ ] **Step 2: Verify TypeScript compilation**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit
+cd /path/to/ontoexplorer/frontend && npx tsc --noEmit
 ```
 
 Expected: No errors
@@ -1328,7 +1328,7 @@ Add route after `<Route path="/sparql" ...>`:
 - [ ] **Step 3: Verify TypeScript compilation**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit
+cd /path/to/ontoexplorer/frontend && npx tsc --noEmit
 ```
 
 Expected: No errors
@@ -1336,7 +1336,7 @@ Expected: No errors
 - [ ] **Step 4: Run full test suite**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 uv run pytest tests/ -v --tb=short 2>&1 | tail -30
 ```
 
