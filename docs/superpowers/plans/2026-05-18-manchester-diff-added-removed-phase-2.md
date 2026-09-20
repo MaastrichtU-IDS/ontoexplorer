@@ -90,7 +90,7 @@ def _to_curie(iri: str) -> str:
 
 - [ ] **Step 2: Sanity-check the constants import cleanly**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer && uv run python -c "from ontoexplorer.modules.diff.manchester import _BUILTIN_ANNOTATION_PROPS, _to_curie; print(len(_BUILTIN_ANNOTATION_PROPS), _to_curie('http://www.w3.org/2000/01/rdf-schema#label'))"`
+Run: `cd /path/to/ontoexplorer && uv run python -c "from ontoexplorer.modules.diff.manchester import _BUILTIN_ANNOTATION_PROPS, _to_curie; print(len(_BUILTIN_ANNOTATION_PROPS), _to_curie('http://www.w3.org/2000/01/rdf-schema#label'))"`
 
 Expected: `20 rdfs:label`
 
@@ -140,7 +140,7 @@ def test_discover_annotation_props_returns_empty_for_graph_without_any():
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/unit/test_manchester_render.py -v -k discover_annotation_props 2>&1 | tail -5`
+Run: `cd /path/to/ontoexplorer && uv run pytest tests/unit/test_manchester_render.py -v -k discover_annotation_props 2>&1 | tail -5`
 
 Expected: 2 FAILED with `_discover_annotation_props` not defined.
 
@@ -966,7 +966,7 @@ The Phase 1 frontend (`DiffResultView.tsx`) only shows the manchester_frame insi
 
 - [ ] **Step 1: Read the current EntityRow expanded block**
 
-Run: `grep -n "expanded && op === 'modified'\|manchester_frame" /home/micheldumontier/code/ontoexplorer/frontend/src/components/DiffResultView.tsx | head`
+Run: `grep -n "expanded && op === 'modified'\|manchester_frame" /path/to/ontoexplorer/frontend/src/components/DiffResultView.tsx | head`
 
 Locate the conditional that gates the expanded panel.
 
@@ -1014,20 +1014,20 @@ Replace with — different header label depending on op:
 
 - [ ] **Step 3: Type-check**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -5`
+Run: `cd /path/to/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -5`
 
 Expected: no new errors (only the pre-existing Sparql.test.tsx fixture issue).
 
 - [ ] **Step 4: Run frontend tests**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx vitest run 2>&1 | tail -5`
+Run: `cd /path/to/ontoexplorer/frontend && npx vitest run 2>&1 | tail -5`
 
 Expected: all tests still pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/DiffResultView.tsx
 git commit -m "feat(frontend): render manchester_frame for added/removed entity rows"
 ```

@@ -155,7 +155,7 @@ Expected: PASS, 7 tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/sparql/iriResolver.ts frontend/src/components/sparql/iriResolver.test.ts
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): iriResolver helpers for term-page navigation
@@ -367,7 +367,7 @@ Expected: PASS, 12 tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/sparql/labelEnricher.ts frontend/src/components/sparql/labelEnricher.test.ts
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): labelEnricher for SPARQL result rdfs:label decoration
@@ -592,7 +592,7 @@ Expected: PASS, 6 tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/sparql/iriClickHandler.ts frontend/src/components/sparql/iriClickHandler.test.ts
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): event-delegated IRI click handler
@@ -712,7 +712,7 @@ Expected: empty.
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/sparql/ScopeToolbar.tsx frontend/src/components/sparql/ScopeToolbar.test.tsx
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): labels toggle button on ScopeToolbar
@@ -1013,7 +1013,7 @@ Expected: empty.
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/pages/Sparql.tsx frontend/src/pages/Sparql.test.tsx
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): wire IRI click handler and labels-toggle enrichment
@@ -1068,7 +1068,7 @@ Open `/sparql` in the dev server:
 If anything was tweaked during the sweep:
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add -A
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 chore(sparql): post-merge cleanup for result enrichment

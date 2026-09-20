@@ -158,7 +158,7 @@ Expected: PASS, 14 tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/sparql/prefixUtils.ts frontend/src/components/sparql/prefixUtils.test.ts
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): prefix helpers for IRI autocomplete
@@ -310,7 +310,7 @@ Expected: PASS, 10 tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/sparql/positionUtils.ts frontend/src/components/sparql/positionUtils.test.ts
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): cursor-position classifier for IRI autocomplete
@@ -563,7 +563,7 @@ Expected: PASS, 9 tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/sparql/ontoCompleter.ts frontend/src/components/sparql/ontoCompleter.test.ts
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): Yasqe autocompleter for IRI / CURIE completion
@@ -679,7 +679,7 @@ Expected: PASS, 16 tests (13 existing + 3 new).
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/sparql/ScopeToolbar.tsx frontend/src/components/sparql/ScopeToolbar.test.tsx
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): ScopeToolbar emits onOntologyAdded on chip add
@@ -854,7 +854,7 @@ Expected: no output.
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/pages/Sparql.tsx frontend/src/pages/Sparql.test.tsx
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): auto-prepend PREFIX line when ontology added to scope
@@ -982,7 +982,7 @@ Expected: no output.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/pages/Sparql.tsx frontend/src/components/sparql/ScopeToolbar.tsx frontend/src/components/sparql/ScopeToolbar.test.tsx
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): register Yasqe autocompleter for IRI completion
@@ -1036,7 +1036,7 @@ Visit `/sparql` in the running dev environment. Walk through:
 - [ ] **Step 5: Final commit (only if any fixes were needed)**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add -A
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 chore(sparql): post-merge cleanup for IRI autocomplete

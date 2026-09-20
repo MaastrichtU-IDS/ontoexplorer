@@ -13,8 +13,8 @@
 - Branch `feat/pluggable-reasoners-sp3` off `feat/pluggable-reasoners-sp2` (SP2). rustdl work happens in the separate repo `~/code/rustdl` (remote MaastrichtU-IDS/rustdl).
 - Reasoner names: whelk, rdflib, rustdl, konclude; app default whelk.
 - Every justification response after this work has `format: "manchester"`; a no-justify reasoner (Konclude) yields `reasoning_available: false` (never a 500).
-- Non-standard env: `python` not on PATH, `uv run` fails. Python tests: `/Users/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest`. reasoner-service in-container validation via `docker compose exec -T reasoner-service`. Frontend tests: from `frontend/`, use the repo's configured runner (check `frontend/package.json` — likely `npm run test` / `vitest`); if node deps aren't installed, `npm ci` in `frontend/` first.
-- Commits use `git -c user.email=michel.dumontier@gmail.com` + trailer `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`. (rustdl repo commits use the same identity.)
+- Non-standard env: `python` not on PATH, `uv run` fails. Python tests: `/path/to/ontoexplorer/.venv/bin/python -m pytest`. reasoner-service in-container validation via `docker compose exec -T reasoner-service`. Frontend tests: from `frontend/`, use the repo's configured runner (check `frontend/package.json` — likely `npm run test` / `vitest`); if node deps aren't installed, `npm ci` in `frontend/` first.
+- Commits use `git -c user.email=admin@example.org` + trailer `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`. (rustdl repo commits use the same identity.)
 - rustdl release: tag `v0.3.22`; the `release-python.yml` workflow publishes manylinux wheels to PyPI on the tag. Layer 2 must not proceed until the `v0.3.22` wheel is installable (`pip index versions rustdl` shows it) OR a locally-built linux wheel is vendored as an interim.
 
 ---
@@ -105,9 +105,9 @@ Add a `CHANGELOG.md` entry for `0.3.22` (new `render_manchester`). The workspace
 
 ```bash
 cd ~/code/rustdl
-RUSTUP_TOOLCHAIN=1.96.0 /Users/micheldumontier/code/ontoexplorer/.venv/bin/maturin build --release -m crates/owl-dl-py/Cargo.toml --out /tmp/rustdl-wheels
-/Users/micheldumontier/code/ontoexplorer/.venv/bin/python -m pip install --force-reinstall /tmp/rustdl-wheels/rustdl-0.3.22-*.whl 2>/dev/null || \
-  /Users/micheldumontier/code/ontoexplorer/.venv/bin/python -m pip install --force-reinstall /tmp/rustdl-wheels/rustdl-0.3.22-*.whl
+RUSTUP_TOOLCHAIN=1.96.0 /path/to/ontoexplorer/.venv/bin/maturin build --release -m crates/owl-dl-py/Cargo.toml --out /tmp/rustdl-wheels
+/path/to/ontoexplorer/.venv/bin/python -m pip install --force-reinstall /tmp/rustdl-wheels/rustdl-0.3.22-*.whl 2>/dev/null || \
+  /path/to/ontoexplorer/.venv/bin/python -m pip install --force-reinstall /tmp/rustdl-wheels/rustdl-0.3.22-*.whl
 ```
 Then smoke-test: write A⊑B⊑C to a temp `.rdf` (RDF/XML) and assert `rustdl.render_manchester(path)` returns non-empty Manchester strings mentioning A/B/C. (`pip` may be absent in the venv — if so use `uv pip install --force-reinstall`.)
 
@@ -116,7 +116,7 @@ Then smoke-test: write A⊑B⊑C to a temp `.rdf` (RDF/XML) and assert `rustdl.r
 ```bash
 cd ~/code/rustdl
 git add -A
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(py): render_manchester — render an ontology's axioms as Manchester
+git -c user.email=admin@example.org commit -m "feat(py): render_manchester — render an ontology's axioms as Manchester
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 git tag v0.3.22
@@ -189,7 +189,7 @@ Then POST a fresh classify for a small A⊑B⊑C with `reasoner=whelk`, then POS
 ```bash
 cd ~/code/ontoexplorer
 git add docker/reasoner-service/Dockerfile docker/reasoner-service/registry.py docker/reasoner-service/test_manchester_justification.py
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(reasoner-service): render whelk/rdflib justifications to Manchester via rustdl
+git -c user.email=admin@example.org commit -m "feat(reasoner-service): render whelk/rdflib justifications to Manchester via rustdl
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -233,7 +233,7 @@ Run: `.venv/bin/python -m pytest tests/test_justification_uniform_manchester.py 
 
 ```bash
 git add ontoexplorer/api/ontologies.py tests/test_justification_uniform_manchester.py
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(app): uniform Manchester justifications; expose reasoner on version
+git -c user.email=admin@example.org commit -m "feat(app): uniform Manchester justifications; expose reasoner on version
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -265,7 +265,7 @@ Run: `cd frontend && npm run build 2>&1 | tail` (or `npx tsc --noEmit`). Expecte
 
 ```bash
 git add frontend/src/lib/api.ts
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(ui): api client — reasoners.list, reasoner on submit, Manchester result type
+git -c user.email=admin@example.org commit -m "feat(ui): api client — reasoners.list, reasoner on submit, Manchester result type
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -303,7 +303,7 @@ Run: `cd frontend && npm run test -- Dashboard 2>&1 | tail` → PASS.
 
 ```bash
 git add frontend/src/pages/Dashboard.tsx frontend/src/pages/Dashboard.test.tsx
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(ui): reasoner selector under Advanced on add-ontology
+git -c user.email=admin@example.org commit -m "feat(ui): reasoner selector under Advanced on add-ontology
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -339,7 +339,7 @@ Run: `cd frontend && npm run test -- TermPanel 2>&1 | tail` → PASS. Then `cd f
 
 ```bash
 git add frontend/src/components/TermPanel.tsx frontend/src/components/TermPanel.test.tsx
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(ui): render Manchester justifications; disable explain for no-justify reasoners
+git -c user.email=admin@example.org commit -m "feat(ui): render Manchester justifications; disable explain for no-justify reasoners
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -375,7 +375,7 @@ Run: `cd frontend && npm run test -- OntologyPage 2>&1 | tail` → PASS. Then `c
 
 ```bash
 git add frontend/src/pages/OntologyPage.tsx frontend/src/pages/OntologyPage.test.tsx frontend/src/components/admin/OntologyTable.tsx
-git -c user.email=michel.dumontier@gmail.com commit -m "feat(ui): reasoner badge on ontology detail; drop stale ELK tooltip
+git -c user.email=admin@example.org commit -m "feat(ui): reasoner badge on ontology detail; drop stale ELK tooltip
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```

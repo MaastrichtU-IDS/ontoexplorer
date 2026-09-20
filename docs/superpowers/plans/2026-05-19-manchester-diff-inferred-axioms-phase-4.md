@@ -99,7 +99,7 @@ The `make_version` fixture should already exist; if not, add this fixture to the
 
 - [ ] **Step 2: Run to verify they fail**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/unit/test_diff_compute.py -v -k reasoning_status 2>&1 | tail -10`
+Run: `cd /path/to/ontoexplorer && uv run pytest tests/unit/test_diff_compute.py -v -k reasoning_status 2>&1 | tail -10`
 
 Expected: 5 FAILED (cannot import `_reasoning_status_for_version`).
 
@@ -147,7 +147,7 @@ Expected: 5 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add ontoexplorer/modules/diff/compute.py tests/unit/test_diff_compute.py
 git commit -m "feat(diff/compute): _reasoning_status_for_version helper"
 ```
@@ -898,7 +898,7 @@ In the same file, find the `beat_schedule` dict (at the top, with `poll-for-upda
 
 - [ ] **Step 3: Quick sanity check**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer && uv run python -c "from ontoexplorer.modules.jobs.tasks import refresh_stale_inferred_diffs; print(refresh_stale_inferred_diffs.name)"`
+Run: `cd /path/to/ontoexplorer && uv run python -c "from ontoexplorer.modules.jobs.tasks import refresh_stale_inferred_diffs; print(refresh_stale_inferred_diffs.name)"`
 
 Expected: `ontoexplorer.refresh_stale_inferred_diffs`
 
@@ -970,7 +970,7 @@ Expected: no new errors.
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/lib/api.ts
 git commit -m "feat(frontend): type definitions for inferred-axiom diff fields"
 ```
@@ -1081,7 +1081,7 @@ Expected: all 7 tests pass (4 existing + 3 new). If the existing fixture-frame t
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/ManchesterFrame.tsx frontend/src/components/ManchesterFrame.test.tsx
 git commit -m "feat(frontend): per-line [asserted]/[inferred] badge in ManchesterFrame"
 ```
@@ -1242,7 +1242,7 @@ Expected: same pass count + the 3 new tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/DiffResultView.tsx frontend/src/components/DiffResultView.test.tsx
 git commit -m "feat(frontend): inferred-unavailable notice + summary breakdown in DiffResultView"
 ```
@@ -1290,7 +1290,7 @@ Both should be clean.
 - [ ] **Step 4: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/hooks/ frontend/src/components/HistoryTab.tsx
 git commit -m "feat(frontend): poll diff endpoint every 30s while reasoning isn't ready"
 ```
@@ -1358,7 +1358,7 @@ If the API filters specific summary keys (it probably doesn't, but check `ontoex
 - [ ] **Step 3: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add tests/integration/test_diff_api.py
 git commit -m "test(diff): integration assertions for inferred_status + breakdown counts"
 ```
@@ -1372,7 +1372,7 @@ git commit -m "test(diff): integration assertions for inferred_status + breakdow
 - [ ] **Step 1: Rebuild containers**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 docker compose build worker api
 docker compose up -d worker api
 ```

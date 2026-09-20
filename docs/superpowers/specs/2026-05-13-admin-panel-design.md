@@ -12,7 +12,7 @@
 
 ## Access Control
 
-- Add `admin_emails: str = ""` to `Settings` in `ontoexplorer/config.py` (comma-separated list, e.g. `michel@maastrichtuniversity.nl`).
+- Add `admin_emails: str = ""` to `Settings` in `ontoexplorer/config.py` (comma-separated list, e.g. `admin@example.org`).
 - A helper `is_admin(user) -> bool` checks `user.email` against the parsed list.
 - `GET /api/v1/admin/overview` returns **403** if the authenticated user is not admin.
 - `GET /auth/me` gains `is_admin: bool` in its response, so the frontend can conditionally render the Admin nav link.
