@@ -79,7 +79,7 @@ describe('endpointForVersion', () => {
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npx vitest run src/components/sparql/scopeUrls.test.ts --reporter=basic
 ```
 
@@ -124,7 +124,7 @@ Expected: PASS — both pre-existing tests AND the 3 new ones.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/sparql/scopeUrls.ts frontend/src/components/sparql/scopeUrls.test.ts
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): endpointForVersion helper for diff-mode URL construction
@@ -328,7 +328,7 @@ Expected: PASS, 12 tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/sparql/diffBindings.ts frontend/src/components/sparql/diffBindings.test.ts
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): row-level diff helpers for SPARQL binding sets
@@ -608,7 +608,7 @@ Expected: empty.
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/sparql/DiffQueryView.tsx frontend/src/components/sparql/DiffQueryView.test.tsx
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): DiffQueryView component for cross-version row-diff display
@@ -722,7 +722,7 @@ The `wait` helpers (`waitFor`) require importing if not already available — th
 Inspect the existing imports/mocks first:
 
 ```bash
-head -50 /home/micheldumontier/code/ontoexplorer/frontend/src/components/sparql/ScopeToolbar.test.tsx
+head -50 /path/to/ontoexplorer/frontend/src/components/sparql/ScopeToolbar.test.tsx
 ```
 
 Adapt the new tests to match the existing module-mock pattern. The key behaviours to test are: (1) toggle renders, (2) From/To rows appear in Diff mode, (3) `onDiffScopeChange` fires with the correct shape, (4) returning to Single fires `null`.
@@ -975,7 +975,7 @@ Expected: empty.
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/components/sparql/ScopeToolbar.tsx frontend/src/components/sparql/ScopeToolbar.test.tsx
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): Single↔Diff mode toggle on ScopeToolbar with From/To pickers
@@ -1294,7 +1294,7 @@ Expected: empty.
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git add frontend/src/pages/Sparql.tsx frontend/src/pages/Sparql.test.tsx
 git -c commit.gpgsign=false commit -m "$(cat <<'EOF'
 feat(sparql): wire diff-mode query intercept + DiffQueryView mount
@@ -1318,7 +1318,7 @@ EOF
 - [ ] **Step 1: Full frontend test run**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npx vitest run --reporter=basic 2>&1 | tail -25
 ```
 
@@ -1335,7 +1335,7 @@ Expected: empty.
 - [ ] **Step 3: File inventory**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 git log --oneline e37d205..HEAD | head
 ```
 

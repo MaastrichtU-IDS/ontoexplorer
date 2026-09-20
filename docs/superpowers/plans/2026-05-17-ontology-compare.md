@@ -74,7 +74,7 @@ class OntologyComparison(Base):
 
 - [ ] **Step 2: Verify the model imports cleanly**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer && uv run python -c "from ontoexplorer.models.db import OntologyComparison; print(OntologyComparison.__tablename__)"`
+Run: `cd /path/to/ontoexplorer && uv run python -c "from ontoexplorer.models.db import OntologyComparison; print(OntologyComparison.__tablename__)"`
 
 Expected: `ontology_comparisons`
 
@@ -94,7 +94,7 @@ git commit -m "feat(models): add OntologyComparison model"
 
 - [ ] **Step 1: Find the previous migration head**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer && .venv/bin/alembic heads 2>/dev/null || uv run alembic heads`
+Run: `cd /path/to/ontoexplorer && .venv/bin/alembic heads 2>/dev/null || uv run alembic heads`
 
 Expected: one revision ID (e.g. `e1f2a3b4c5d6` from the existing tip). Note this value — you will use it as `down_revision`.
 
@@ -170,7 +170,7 @@ def downgrade() -> None:
 
 - [ ] **Step 3: Apply the migration in the dev DB**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer && docker compose exec -T api alembic upgrade head 2>&1 | tail -5`
+Run: `cd /path/to/ontoexplorer && docker compose exec -T api alembic upgrade head 2>&1 | tail -5`
 
 Expected: a line like `Running upgrade <PREVIOUS_HEAD> -> c1c0a1b2c3d4, add ontology_comparisons table`.
 
@@ -198,7 +198,7 @@ This is a pure refactor: the existing `run_diff` body that takes `(ontology_id, 
 
 - [ ] **Step 1: Read the current `run_diff`**
 
-Run: `grep -n "^def run_diff\|^def _run_diff_core" /home/micheldumontier/code/ontoexplorer/ontoexplorer/modules/diff/compute.py`
+Run: `grep -n "^def run_diff\|^def _run_diff_core" /path/to/ontoexplorer/ontoexplorer/modules/diff/compute.py`
 
 Locate the start of `run_diff`. The function body has the entire entity-comparison loop you need to extract.
 
@@ -347,7 +347,7 @@ def run_diff(
 
 - [ ] **Step 3: Run all existing diff tests to verify no regression**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/unit/test_diff_compute.py tests/unit/test_manchester_render.py -v 2>&1 | tail -20`
+Run: `cd /path/to/ontoexplorer && uv run pytest tests/unit/test_diff_compute.py tests/unit/test_manchester_render.py -v 2>&1 | tail -20`
 
 Expected: all tests pass (the count should match what's there today — refactor is behavior-preserving).
 
@@ -470,7 +470,7 @@ def test_run_comparison_same_ontology_same_version_yields_no_changes():
 
 - [ ] **Step 3: Run tests to verify they fail**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/unit/test_compare_compute.py -v 2>&1 | tail -10`
+Run: `cd /path/to/ontoexplorer && uv run pytest tests/unit/test_compare_compute.py -v 2>&1 | tail -10`
 
 Expected: `ModuleNotFoundError: No module named 'ontoexplorer.modules.compare.compute'` (or 3 FAILED with similar import error).
 
@@ -509,7 +509,7 @@ def run_comparison(
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/unit/test_compare_compute.py -v 2>&1 | tail -10`
+Run: `cd /path/to/ontoexplorer && uv run pytest tests/unit/test_compare_compute.py -v 2>&1 | tail -10`
 
 Expected: 3 passed.
 
@@ -529,7 +529,7 @@ git commit -m "feat(compare): run_comparison for cross-ontology diffs"
 
 - [ ] **Step 1: Read the existing `compute_diff` task**
 
-Run: `grep -n "compute_diff\|def compute_diff" /home/micheldumontier/code/ontoexplorer/ontoexplorer/modules/jobs/tasks.py | head -5`
+Run: `grep -n "compute_diff\|def compute_diff" /path/to/ontoexplorer/ontoexplorer/modules/jobs/tasks.py | head -5`
 
 Locate `compute_diff` so you can append the new task next to it.
 
@@ -634,7 +634,7 @@ def compute_ontology_comparison(version_from_id: str, version_to_id: str) -> dic
 
 - [ ] **Step 3: Verify the task imports cleanly**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer && uv run python -c "from ontoexplorer.modules.jobs.tasks import compute_ontology_comparison; print(compute_ontology_comparison.name)"`
+Run: `cd /path/to/ontoexplorer && uv run python -c "from ontoexplorer.modules.jobs.tasks import compute_ontology_comparison; print(compute_ontology_comparison.name)"`
 
 Expected: `ontoexplorer.compute_ontology_comparison`
 
@@ -763,7 +763,7 @@ And add this line in the `app.include_router(...)` block (immediately after the 
 
 Restart the API service so it reloads with the new router:
 
-Run: `cd /home/micheldumontier/code/ontoexplorer && docker compose restart api 2>&1 | tail -2`
+Run: `cd /path/to/ontoexplorer && docker compose restart api 2>&1 | tail -2`
 
 Then probe the OpenAPI schema:
 
@@ -793,7 +793,7 @@ git commit -m "feat(api): /api/v1/compare endpoints for cross-ontology diffs"
 
 - [ ] **Step 1: Find the existing diff API section**
 
-Run: `grep -n "diff:\|diffArbitrary\|OntologyDiff\b\|api = {" /home/micheldumontier/code/ontoexplorer/frontend/src/lib/api.ts | head -10`
+Run: `grep -n "diff:\|diffArbitrary\|OntologyDiff\b\|api = {" /path/to/ontoexplorer/frontend/src/lib/api.ts | head -10`
 
 Locate where `OntologyDiff` is defined and where `api.ontologies.diff` is wired, so you know where to add the new types.
 
@@ -841,7 +841,7 @@ In the same file, find the `api = { ... }` object. Inside it, add a new `compare
 
 - [ ] **Step 4: Run type-check**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10`
+Run: `cd /path/to/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10`
 
 Expected: no new errors (the pre-existing `Sparql.test.tsx` fixture error is unrelated and filtered out).
 
@@ -924,7 +924,7 @@ export function useTriggerComparison() {
 
 - [ ] **Step 2: Type-check**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10`
+Run: `cd /path/to/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10`
 
 Expected: no new errors.
 
@@ -947,7 +947,7 @@ This refactor pulls the entity-row rendering out of `HistoryTab.tsx` into a stan
 
 - [ ] **Step 1: Read the current entity-rendering section of `HistoryTab.tsx`**
 
-Run: `grep -n "EntityRow\|allEntities\|filtered\|by_entity_type" /home/micheldumontier/code/ontoexplorer/frontend/src/components/HistoryTab.tsx | head -20`
+Run: `grep -n "EntityRow\|allEntities\|filtered\|by_entity_type" /path/to/ontoexplorer/frontend/src/components/HistoryTab.tsx | head -20`
 
 Locate the `EntityRow` component (top of file) and where it's used inside `HistoryTab`. You'll need to move the row-rendering logic and the filter UI into the new component.
 
@@ -1323,7 +1323,7 @@ Apply this rewrite. Remove the now-unused imports (`useMemo`, `HighlightedText`,
 
 - [ ] **Step 4: Type-check**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10`
+Run: `cd /path/to/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10`
 
 Expected: no new errors.
 
@@ -1603,7 +1603,7 @@ export default function Compare() {
 
 - [ ] **Step 2: Type-check**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10`
+Run: `cd /path/to/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10`
 
 Expected: no new errors. (If `useNavigate`/`useSearchParams` aren't imported in this project's React Router version, the import should still resolve — both are in `react-router-dom` v6+.)
 
@@ -1639,7 +1639,7 @@ Inside the `<Routes>` block in `App.tsx`, add the following route immediately af
 
 - [ ] **Step 3: Type-check**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10`
+Run: `cd /path/to/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10`
 
 Expected: no new errors.
 
@@ -1684,7 +1684,7 @@ const navLinks = [
 
 - [ ] **Step 2: Type-check**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10`
+Run: `cd /path/to/ontoexplorer/frontend && npx tsc --noEmit 2>&1 | grep -v "Sparql.test.tsx" | head -10`
 
 Expected: no new errors.
 

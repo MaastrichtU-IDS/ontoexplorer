@@ -150,7 +150,7 @@ def _store(*quads: tuple) -> ox.Store:
 
 - [ ] **Step 2: Verify the test file can be discovered**
 
-Run: `cd /home/micheldumontier/code/ontoexplorer && uv run pytest tests/unit/test_manchester_render.py --collect-only`
+Run: `cd /path/to/ontoexplorer && uv run pytest tests/unit/test_manchester_render.py --collect-only`
 Expected: zero tests collected, exit code 5 (pytest's "no tests ran"), but no import errors.
 
 - [ ] **Step 3: Commit**

@@ -92,7 +92,7 @@ async def test_versions_include_triple_count(client, user_and_key, db_session):
 - [ ] **Step 2: Run tests to confirm they fail**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer
+cd /path/to/ontoexplorer
 docker compose exec api pytest tests/integration/test_ontologies.py::test_delete_ontology tests/integration/test_ontologies.py::test_delete_ontology_not_found tests/integration/test_ontologies.py::test_versions_include_triple_count -v
 ```
 
@@ -186,7 +186,7 @@ In the `ontologies` block of `api` (after `submitFile`, around line 421):
 - [ ] **Step 3: Verify TypeScript compiles**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npm run build 2>&1 | tail -20
 ```
 
@@ -254,7 +254,7 @@ test('renders correct child on /dashboard/keys', () => {
 - [ ] **Step 2: Run test to confirm it fails**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npx vitest run src/components/DashboardLayout.test.tsx
 ```
 
@@ -398,7 +398,7 @@ export default function App() {
 - [ ] **Step 2: Verify the dev server still starts**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npm run build 2>&1 | tail -10
 ```
 
@@ -501,7 +501,7 @@ test('shows confirm delete UI on delete button click', async () => {
 - [ ] **Step 2: Run the test to confirm it fails**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npx vitest run src/pages/Dashboard.test.tsx
 ```
 
@@ -833,7 +833,7 @@ export default function Dashboard() {
 - [ ] **Step 4: Run the tests**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npx vitest run src/pages/Dashboard.test.tsx
 ```
 
@@ -861,7 +861,7 @@ git commit -m "feat(ui): redesign dashboard — sidebar layout, rich table rows,
 - [ ] **Step 1: Start the frontend dev server if not running**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer/frontend
+cd /path/to/ontoexplorer/frontend
 npm run dev
 ```
 

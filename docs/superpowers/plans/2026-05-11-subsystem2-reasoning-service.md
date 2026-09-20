@@ -1843,7 +1843,7 @@ async def test_webhook_justification_events_valid(client, user_and_key):
 - [ ] **Step 12.3: Run all new tests**
 
 ```bash
-cd /home/micheldumontier/code/ontoexplorer && python -m pytest tests/integration/test_reasoning.py tests/integration/test_reasoning_api.py -v
+cd /path/to/ontoexplorer && python -m pytest tests/integration/test_reasoning.py tests/integration/test_reasoning_api.py -v
 ```
 
 Expected: all tests pass (test_reasoning_api.py tests use mocks so no Docker needed).

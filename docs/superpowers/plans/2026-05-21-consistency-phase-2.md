@@ -94,7 +94,7 @@ def test_consistency_cache_key_handles_uuid():
 - [ ] **Step 2: Run test to verify it fails**
 
 ```
-cd /home/micheldumontier/code/ontoexplorer && /home/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_cache.py -v
+cd /path/to/ontoexplorer && /path/to/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_cache.py -v
 ```
 Expected: `ModuleNotFoundError: No module named 'ontoexplorer.modules.consistency'`.
 
@@ -122,7 +122,7 @@ def consistency_cache_key(version_id: str) -> str:
 - [ ] **Step 4: Run test to verify it passes**
 
 ```
-/home/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_cache.py -v
+/path/to/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_cache.py -v
 ```
 Expected: 2 passed.
 
@@ -231,7 +231,7 @@ def test_missing_binary_raises_konclude_unavailable(tmp_path, monkeypatch):
 - [ ] **Step 2: Run test to verify it fails**
 
 ```
-/home/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_konclude.py -v
+/path/to/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_konclude.py -v
 ```
 Expected: `ImportError: cannot import name 'KoncludeResult'`.
 
@@ -390,7 +390,7 @@ def _parse_unsatisfiable_classes(classified_path: Path) -> list[str]:
 - [ ] **Step 4: Run test to verify it passes**
 
 ```
-/home/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_konclude.py -v
+/path/to/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_konclude.py -v
 ```
 Expected: 3 passed (the two real-Konclude tests will SKIP cleanly if Konclude isn't installed in the dev environment; only `test_missing_binary_raises_konclude_unavailable` always runs).
 
@@ -479,7 +479,7 @@ def test_missing_robot_raises(tmp_path):
 - [ ] **Step 2: Run test to verify it fails**
 
 ```
-/home/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_robot_explain.py -v
+/path/to/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_robot_explain.py -v
 ```
 Expected: ImportError.
 
@@ -582,7 +582,7 @@ Note: the `pyowl2_profiles.manchester` import assumes the library is installed (
 - [ ] **Step 4: Run test to verify it passes**
 
 ```
-/home/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_robot_explain.py -v
+/path/to/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_robot_explain.py -v
 ```
 Expected: 2 passed (the ROBOT test skips if ROBOT isn't installed; the missing-binary test always runs).
 
@@ -708,7 +708,7 @@ def test_invalid_scope_raises(populated_store, tmp_path):
 - [ ] **Step 2: Run test to verify it fails**
 
 ```
-/home/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_merger.py -v
+/path/to/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_merger.py -v
 ```
 Expected: ImportError on `build_merge`.
 
@@ -812,7 +812,7 @@ def _term_nt(term) -> str:
 - [ ] **Step 4: Run test to verify it passes**
 
 ```
-/home/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_merger.py -v
+/path/to/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_merger.py -v
 ```
 Expected: 4 passed.
 
@@ -913,7 +913,7 @@ def test_unreachable_source_recorded_in_skipped(tmp_path):
 - [ ] **Step 2: Run test to verify it fails**
 
 ```
-/home/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_mireot_source_resolver.py -v
+/path/to/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_mireot_source_resolver.py -v
 ```
 Expected: ImportError.
 
@@ -1053,7 +1053,7 @@ def _ext_to_rdflib_format(ext: str) -> str:
 - [ ] **Step 4: Run test to verify it passes**
 
 ```
-/home/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_mireot_source_resolver.py -v
+/path/to/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_mireot_source_resolver.py -v
 ```
 Expected: 3 passed.
 
@@ -1195,7 +1195,7 @@ def test_explain_called_only_for_first_10_unsat(populated_store, tmp_path):
 - [ ] **Step 2: Run test to verify it fails**
 
 ```
-/home/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_detector.py -v
+/path/to/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/test_detector.py -v
 ```
 Expected: ImportError on detector imports.
 
@@ -1400,7 +1400,7 @@ from ontoexplorer.modules.consistency.detector import (  # noqa: F401
 - [ ] **Step 4: Run test to verify it passes**
 
 ```
-/home/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/ -v
+/path/to/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/ -v
 ```
 Expected: all tests pass (3 new + earlier tasks still green).
 
@@ -1513,13 +1513,13 @@ Update the `import_iris = [...]` block in `check_consistency` to use the correct
 - [ ] **Step 3: Verify Celery can import the task**
 
 ```
-/home/micheldumontier/code/ontoexplorer/.venv/bin/python -c "from ontoexplorer.modules.jobs.tasks import celery_app, check_consistency; print(check_consistency.name)"
+/path/to/ontoexplorer/.venv/bin/python -c "from ontoexplorer.modules.jobs.tasks import celery_app, check_consistency; print(check_consistency.name)"
 ```
 Expected: `ontoexplorer.check_consistency`.
 
 Run the existing test suite to confirm nothing broke:
 ```
-/home/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/ -v
+/path/to/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/ -v
 ```
 Expected: all green.
 
@@ -1599,7 +1599,7 @@ In `invalidate_index`, after the existing `to_delete.append(reuse_cache_key(vers
 - [ ] **Step 3: Verify the module still loads**
 
 ```
-/home/micheldumontier/code/ontoexplorer/.venv/bin/python -c "from ontoexplorer.modules.search.indexer import build_index, _enqueue_consistency_check, invalidate_index; print('ok')"
+/path/to/ontoexplorer/.venv/bin/python -c "from ontoexplorer.modules.search.indexer import build_index, _enqueue_consistency_check, invalidate_index; print('ok')"
 ```
 Expected: `ok`.
 
@@ -1764,7 +1764,7 @@ async def test_consistency_fleet_aggregates(client, db_session):
 - [ ] **Step 2: Run test to verify it fails**
 
 ```
-/home/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest tests/integration/test_consistency_api.py -v
+/path/to/ontoexplorer/.venv/bin/python -m pytest tests/integration/test_consistency_api.py -v
 ```
 Expected: 4 failures (router doesn't exist yet).
 
@@ -2017,7 +2017,7 @@ Update the pagination guard at the end of the q-filter block:
 - [ ] **Step 5: Run integration tests**
 
 ```
-/home/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest tests/integration/test_consistency_api.py tests/integration/test_reuse_api.py tests/integration/test_ontologies.py -v
+/path/to/ontoexplorer/.venv/bin/python -m pytest tests/integration/test_consistency_api.py tests/integration/test_reuse_api.py tests/integration/test_ontologies.py -v
 ```
 Expected: all green.
 
@@ -2308,7 +2308,7 @@ Add dispatcher branch (between `'reuse'` and the fall-through `: (...)`):
 - [ ] **Step 4: Build and verify**
 
 ```
-cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit -p tsconfig.json 2>&1 | grep -E '(Consistency|api.ts)' | head -10
+cd /path/to/ontoexplorer/frontend && npx tsc --noEmit -p tsconfig.json 2>&1 | grep -E '(Consistency|api.ts)' | head -10
 ```
 Expected: no errors in the changed files.
 
@@ -2516,7 +2516,7 @@ Add dispatch (after `{tab === 'reuse' && <Reuse />}`):
 - [ ] **Step 3: Build**
 
 ```
-cd /home/micheldumontier/code/ontoexplorer/frontend && npx tsc --noEmit -p tsconfig.json 2>&1 | grep -E '(Consistency|Ontologies)' | head -10
+cd /path/to/ontoexplorer/frontend && npx tsc --noEmit -p tsconfig.json 2>&1 | grep -E '(Consistency|Ontologies)' | head -10
 ```
 Expected: no new errors.
 
@@ -2814,7 +2814,7 @@ if __name__ == "__main__":
 - [ ] **Step 6: Smoke-test (skip if ROBOT not on PATH)**
 
 ```
-which robot && /home/micheldumontier/code/ontoexplorer/.venv/bin/python -c "from scripts.consistency_bench.run import _enumerate_fleet; print('importable')"
+which robot && /path/to/ontoexplorer/.venv/bin/python -c "from scripts.consistency_bench.run import _enumerate_fleet; print('importable')"
 ```
 Expected: `importable` (full bench run is too slow for the implementer to execute; just verify the module loads).
 
@@ -2837,7 +2837,7 @@ Konclude is distributed as a static Linux x86_64 binary from <https://www.derivo
 - [ ] **Step 1: Find the runtime Dockerfile**
 
 ```
-find /home/micheldumontier/code/ontoexplorer -maxdepth 4 -name "Dockerfile*" -not -path "*/node_modules/*" -not -path "*/.venv/*"
+find /path/to/ontoexplorer -maxdepth 4 -name "Dockerfile*" -not -path "*/node_modules/*" -not -path "*/.venv/*"
 ```
 
 Identify which Dockerfile builds the API + Celery worker image. Most projects use one (`Dockerfile` at the root) or a directory like `docker/runtime.Dockerfile`.
@@ -2903,7 +2903,7 @@ After all 13 tasks land:
 
 ```bash
 # 1. Backend tests
-/home/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/ tests/integration/test_consistency_api.py -v
+/path/to/ontoexplorer/.venv/bin/python -m pytest tests/unit/consistency/ tests/integration/test_consistency_api.py -v
 
 # 2. Reindex a known-consistent fleet ontology (e.g. RO)
 #    via the admin UI or API. Wait ~30s for the Celery task.

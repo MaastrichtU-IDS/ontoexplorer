@@ -429,10 +429,10 @@ async def test_is_admin_helper_matching_email():
     from unittest.mock import MagicMock
 
     user = MagicMock()
-    user.email = "michel@maastrichtuniversity.nl"
+    user.email = "admin@example.org"
 
     with patch("ontoexplorer.config.get_settings") as mock_settings:
-        mock_settings.return_value.admin_emails = "michel@maastrichtuniversity.nl,other@example.com"
+        mock_settings.return_value.admin_emails = "admin@example.org,other@example.com"
         assert is_admin(user) is True
 
 
@@ -927,7 +927,7 @@ In `frontend/src/components/NavBar.tsx`, add the Admin link inside the `isAuthen
 Add to `.env`:
 
 ```
-ADMIN_EMAILS=michel.dumontier@maastrichtuniversity.nl
+ADMIN_EMAILS=admin@example.org
 ```
 
 Restart the API container to pick up the new env var:
