@@ -16,7 +16,7 @@
 - Reasoner is bound per version and immutable after ingest (no re-classify endpoint in SP2).
 - Justification `format` values: `"ntriples"` (whelk/rdflib) | `"manchester"` (rustdl). A reasoner lacking the justify capability → the reasoner-service returns HTTP 422; the app converts that to `{"reasoning_available": false, ...}`, never a 500.
 - Submit-time reasoner validation is a guardrail: if `GET /reasoners` is unreachable, fall back to accepting the four known names and log a warning — never hard-block ingest on the service being down.
-- Non-standard local env: `python` is not on PATH and `uv run` fails (network). Use `/Users/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest`. The app test suite needs the full app env (sqlalchemy etc.); if a needed dep is missing install it targeted via `UV_HTTP_TIMEOUT=300 uv pip install <name>` — never `uv sync`.
+- Non-standard local env: `python` is not on PATH and `uv run` fails (network). Use `/path/to/ontoexplorer/.venv/bin/python -m pytest`. The app test suite needs the full app env (sqlalchemy etc.); if a needed dep is missing install it targeted via `UV_HTTP_TIMEOUT=300 uv pip install <name>` — never `uv sync`.
 - Commits use `git -c user.email=admin@example.org` and end with the `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` trailer.
 - No UI work (SP3): the app returns the data; typed Manchester rendering and the admin dropdown are out of scope.
 

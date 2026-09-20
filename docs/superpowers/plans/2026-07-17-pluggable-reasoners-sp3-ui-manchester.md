@@ -13,7 +13,7 @@
 - Branch `feat/pluggable-reasoners-sp3` off `feat/pluggable-reasoners-sp2` (SP2). rustdl work happens in the separate repo `~/code/rustdl` (remote MaastrichtU-IDS/rustdl).
 - Reasoner names: whelk, rdflib, rustdl, konclude; app default whelk.
 - Every justification response after this work has `format: "manchester"`; a no-justify reasoner (Konclude) yields `reasoning_available: false` (never a 500).
-- Non-standard env: `python` not on PATH, `uv run` fails. Python tests: `/Users/micheldumontier/code/ontoexplorer/.venv/bin/python -m pytest`. reasoner-service in-container validation via `docker compose exec -T reasoner-service`. Frontend tests: from `frontend/`, use the repo's configured runner (check `frontend/package.json` — likely `npm run test` / `vitest`); if node deps aren't installed, `npm ci` in `frontend/` first.
+- Non-standard env: `python` not on PATH, `uv run` fails. Python tests: `/path/to/ontoexplorer/.venv/bin/python -m pytest`. reasoner-service in-container validation via `docker compose exec -T reasoner-service`. Frontend tests: from `frontend/`, use the repo's configured runner (check `frontend/package.json` — likely `npm run test` / `vitest`); if node deps aren't installed, `npm ci` in `frontend/` first.
 - Commits use `git -c user.email=admin@example.org` + trailer `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`. (rustdl repo commits use the same identity.)
 - rustdl release: tag `v0.3.22`; the `release-python.yml` workflow publishes manylinux wheels to PyPI on the tag. Layer 2 must not proceed until the `v0.3.22` wheel is installable (`pip index versions rustdl` shows it) OR a locally-built linux wheel is vendored as an interim.
 
@@ -105,9 +105,9 @@ Add a `CHANGELOG.md` entry for `0.3.22` (new `render_manchester`). The workspace
 
 ```bash
 cd ~/code/rustdl
-RUSTUP_TOOLCHAIN=1.96.0 /Users/micheldumontier/code/ontoexplorer/.venv/bin/maturin build --release -m crates/owl-dl-py/Cargo.toml --out /tmp/rustdl-wheels
-/Users/micheldumontier/code/ontoexplorer/.venv/bin/python -m pip install --force-reinstall /tmp/rustdl-wheels/rustdl-0.3.22-*.whl 2>/dev/null || \
-  /Users/micheldumontier/code/ontoexplorer/.venv/bin/python -m pip install --force-reinstall /tmp/rustdl-wheels/rustdl-0.3.22-*.whl
+RUSTUP_TOOLCHAIN=1.96.0 /path/to/ontoexplorer/.venv/bin/maturin build --release -m crates/owl-dl-py/Cargo.toml --out /tmp/rustdl-wheels
+/path/to/ontoexplorer/.venv/bin/python -m pip install --force-reinstall /tmp/rustdl-wheels/rustdl-0.3.22-*.whl 2>/dev/null || \
+  /path/to/ontoexplorer/.venv/bin/python -m pip install --force-reinstall /tmp/rustdl-wheels/rustdl-0.3.22-*.whl
 ```
 Then smoke-test: write A⊑B⊑C to a temp `.rdf` (RDF/XML) and assert `rustdl.render_manchester(path)` returns non-empty Manchester strings mentioning A/B/C. (`pip` may be absent in the venv — if so use `uv pip install --force-reinstall`.)
 
