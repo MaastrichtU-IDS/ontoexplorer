@@ -362,6 +362,7 @@ def reduce_direct_inferred(
     superclasses: dict[str, list[str]],
     unsatisfiable,
     all_classes: set[str],
+    declared_classes: set[str] | None = None,
 ) -> tuple[list[tuple[str, str, str]], set[str]]:
     """Reduce a classification to (direct inferred edges, root IRIs).
 
@@ -379,13 +380,36 @@ def reduce_direct_inferred(
       * A class absent from both maps is still a root: EL reasoners omit classes
         with no non-trivial subsumptions, and those are exactly the top-level
         classes with no subclasses.
+
+    `declared_classes`, when given, is the set of classes actually declared in
+    the ontology (owl:Class / rdfs:Class) — the only classes that are navigable
+    tree nodes, since the inferred-root read INNER JOINs entity_index. Then:
+      * External, reference-only classes (a foreign superclass such as
+        opencyc:Event, or the external side of an owl:equivalentClass the
+        reasoner chose as representative) are never emitted as roots or nodes.
+        Left in, such a class becomes an inferred root that renders as nothing
+        and silently orphans its whole native subtree.
+      * A native class whose inferred parents are all external is a root — the
+        asserted tree already treats it that way. External parents are bypassed
+        by lifting to the nearest *declared* ancestor, so a native→external→
+        native chain reattaches under the native ancestor.
+    The external inferred parents are not lost to users: the term page reads them
+    straight from the live classification. When `declared_classes` is None,
+    behaviour is unchanged (every class is a candidate node). See issue #180.
     """
     unsat = set(unsatisfiable or ())
     edges: list[tuple[str, str, str]] = []
     roots: set[str] = set()
 
+    def _reduce_nearest(cands: set[str]) -> list[str]:
+        # Drop any candidate that is a (transitive) ancestor of another.
+        return [p for p in cands if not any(p in superclasses.get(q, []) for q in cands if q != p)]
+
     for cls in sorted(all_classes):
         if cls == _OWL_NOTHING:
+            continue
+        # External, reference-only classes are not navigable tree nodes.
+        if declared_classes is not None and cls not in declared_classes:
             continue
         if cls in direct_superclasses:
             parents = [p for p in direct_superclasses[cls] if p != _OWL_THING]
@@ -396,6 +420,26 @@ def reduce_direct_inferred(
                 p for p in raw
                 if not any(p in superclasses.get(q, []) for q in raw if q != p)
             ]
+
+        if declared_classes is not None:
+            # Keep declared parents; bypass each external parent by lifting to
+            # its nearest declared ancestor(s), then reduce to nearest overall.
+            # Exclude `cls` itself: an equivalence A≡B(external) surfaces as
+            # B ⊑ A in the classification, so lifting A's external parent B would
+            # otherwise re-add A as its own parent and wrongly demote it.
+            lifted: set[str] = set()
+            for p in parents:
+                if p == cls:
+                    continue
+                if p in declared_classes:
+                    lifted.add(p)
+                else:
+                    lifted.update(
+                        a for a in superclasses.get(p, [])
+                        if a != _OWL_THING and a != cls and a in declared_classes
+                    )
+            parents = _reduce_nearest(lifted)
+
         if cls in unsat and _OWL_NOTHING not in parents:
             parents.append(_OWL_NOTHING)
 
