@@ -1,4 +1,5 @@
-/** Colored badge showing which imported ontology a term originates from. */
+/** Colored badge showing which other ontology a term originates from — either
+ *  formally imported (owl:imports) or reused by direct external IRI reference. */
 
 function sourceHue(name: string): number {
   let h = 5381
@@ -11,7 +12,7 @@ export default function SourceBadge({ source, style }: { source: string; style?:
   const hue = sourceHue(source)
   return (
     <span
-      title={`Imported from: ${source}`}
+      title={`From ontology: ${source} (imported or reused)`}
       style={{
         fontSize: 9, fontWeight: 700, letterSpacing: 0.4,
         background: `hsl(${hue}, 45%, 18%)`,
