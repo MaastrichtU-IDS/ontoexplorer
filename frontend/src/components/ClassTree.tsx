@@ -197,17 +197,27 @@ interface Props {
   expandSignal?: number
   collapseSignal?: number
   lang?: string | null
+  /** Called when mode is 'inferred' but this version has no materialised
+   *  reasoning, so the parent can fall back to the asserted view. */
+  onReasoningUnavailable?: () => void
 }
 
 const EMPTY_SET = new Set<string>()
 
-export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect, entityType = 'class', mode = 'asserted', revealIri, hideInverse = false, hideObsolete = true, expandSignal = 0, collapseSignal = 0, lang }: Props) {
+export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect, entityType = 'class', mode = 'asserted', revealIri, hideInverse = false, hideObsolete = true, expandSignal = 0, collapseSignal = 0, lang, onReasoningUnavailable }: Props) {
   const asserted = useClassTreeNodes(mode === 'asserted' ? ontologyId : null, mode === 'asserted' ? versionId : null, null, entityType, hideInverse, hideObsolete, lang)
   const inferred = useInferredTreeNodes(mode === 'inferred' ? ontologyId : null, mode === 'inferred' ? versionId : null, null, lang, hideObsolete)
 
   const { data, isLoading } = mode === 'asserted' ? asserted : inferred
   const roots: Term[] = (data as any)?.terms ?? []
   const reasoningAvailable = mode === 'inferred' ? (data as any)?.reasoning_available !== false : true
+
+  // Let a parent that defaulted to the inferred view fall back to asserted when
+  // this version has not been reasoned. Guarded so it only fires once the
+  // inferred roots have actually loaded and reported unavailability.
+  useEffect(() => {
+    if (mode === 'inferred' && !isLoading && !reasoningAvailable) onReasoningUnavailable?.()
+  }, [mode, isLoading, reasoningAvailable, onReasoningUnavailable])
 
   const { data: ancestorData } = useQuery({
     queryKey: ['ancestors', ontologyId, versionId, revealIri, mode],

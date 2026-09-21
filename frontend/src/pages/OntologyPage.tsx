@@ -908,7 +908,16 @@ export default function OntologyPage() {
   })
   const individualCount = versionStats?.individual_count ?? 0
 
-  const [classMode, setClassMode] = useState<HierarchyMode>('asserted')
+  // Default to the inferred (reasoned) hierarchy when the version has been
+  // reasoned; ClassTree calls onReasoningUnavailable to fall back to asserted
+  // for versions with no materialised reasoning. A manual toggle sticks.
+  const [classMode, setClassMode] = useState<HierarchyMode>('inferred')
+  const classModeUserSet = useRef(false)
+  useEffect(() => {
+    // A newly selected version re-defaults to inferred and forgets the toggle.
+    setClassMode('inferred')
+    classModeUserSet.current = false
+  }, [activeVid])
   const [mobilePane, setMobilePane] = useState<'tree' | 'detail'>('tree')
   const [detailTab, setDetailTab] = useState<'info' | 'profile' | 'history' | 'coverage' | 'owl-profile' | 'reuse'>('info')
   const location = useLocation()
@@ -1075,7 +1084,7 @@ export default function OntologyPage() {
                 {(['asserted', 'inferred'] as HierarchyMode[]).map(m => (
                   <button
                     key={m}
-                    onClick={() => setClassMode(m)}
+                    onClick={() => { classModeUserSet.current = true; setClassMode(m) }}
                     style={{
                       padding: '2px 6px', fontSize: 10, border: 'none', cursor: 'pointer',
                       background: classMode === m ? 'var(--accent)' : 'transparent',
@@ -1095,6 +1104,7 @@ export default function OntologyPage() {
               hideObsolete={hideObsolete}
               expandSignal={classExpand} collapseSignal={classCollapse}
               lang={effectiveLang}
+              onReasoningUnavailable={() => { if (!classModeUserSet.current) setClassMode('asserted') }}
             />
           </div>
           <CollapsibleSection label="Object Properties" defaultOpen={true} headerExtra={<ExpandToggleBtn
