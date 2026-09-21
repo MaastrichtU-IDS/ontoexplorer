@@ -23,6 +23,10 @@ _EXT_MAP: dict[str, OntologyFormat] = {
     ".xml": OntologyFormat.RDF_XML,
     ".ttl": OntologyFormat.TURTLE,
     ".turtle": OntologyFormat.TURTLE,
+    # N3 is a superset of Turtle; the vocabularies served this way in practice
+    # (e.g. every LOV distribution) are Turtle-compatible, so parse them as
+    # Turtle rather than reject them for lack of a dedicated N3 parser.
+    ".n3": OntologyFormat.TURTLE,
     ".nt": OntologyFormat.N_TRIPLES,
     ".nq": OntologyFormat.N_QUADS,
     ".jsonld": OntologyFormat.JSON_LD,
@@ -39,6 +43,13 @@ _MIME_MAP: dict[str, OntologyFormat] = {
     "application/owl+xml": OntologyFormat.OWL_XML,
     "text/turtle": OntologyFormat.TURTLE,
     "application/x-turtle": OntologyFormat.TURTLE,
+    # N3 parsed as Turtle (see _EXT_MAP). LOV serves every distribution as
+    # text/n3, which otherwise matched nothing and fell through to byte
+    # sniffing — failing whenever the file opened with a blank node or a bare
+    # subject IRI instead of `@prefix`.
+    "text/n3": OntologyFormat.TURTLE,
+    "text/rdf+n3": OntologyFormat.TURTLE,
+    "application/n3": OntologyFormat.TURTLE,
     "application/n-triples": OntologyFormat.N_TRIPLES,
     "application/n-quads": OntologyFormat.N_QUADS,
     "application/ld+json": OntologyFormat.JSON_LD,
