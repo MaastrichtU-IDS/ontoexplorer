@@ -49,6 +49,43 @@ def normalise_label(label: str) -> str:
     return label
 
 
+_CAMEL_BOUNDARY_1 = re.compile(r"([a-z0-9])([A-Z])")       # aB   -> a B
+_CAMEL_BOUNDARY_2 = re.compile(r"([A-Z]+)([A-Z][a-z])")    # XMLP -> XML P
+_VERSION_SEGMENT = re.compile(r"^(v?\d+(\.\d+)*|current|latest|\d{4}(\d\d){0,2})$", re.I)
+
+
+def humanize_local_name(short: str) -> str:
+    """Display-friendly form of a bare IRI local name, for entities whose source
+    ontology provides no label (e.g. 'AccidentInvolvingVehicle' -> 'Accident
+    Involving Vehicle', 'top_data_property' -> 'top data property'). Mirrors the
+    camel/snake/kebab splitting of pg_indexer.split_compound_labels but is for
+    display, not search tokenisation. Returns the input unchanged when there is
+    nothing to split."""
+    if not short:
+        return short
+    s = _CAMEL_BOUNDARY_1.sub(r"\1 \2", short)
+    s = _CAMEL_BOUNDARY_2.sub(r"\1 \2", s)
+    s = s.replace("_", " ").replace("-", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s or short
+
+
+def short_namespace_token(namespace: str) -> str:
+    """Readable short token for an external namespace bioregistry can't resolve —
+    its last meaningful path segment, minus file extension and version-like
+    segments (e.g. '.../ELSEWeb/elseweb-data.owl#' -> 'elseweb-data',
+    '.../PR-owl-guide-20031209/wine#' -> 'wine'). Better than showing the full
+    namespace URL on a source chip."""
+    if not namespace:
+        return ""
+    parts = [p for p in re.split(r"[/#]", namespace) if p and p not in ("http:", "https:")]
+    for seg in reversed(parts):
+        s = re.sub(r"\.(owl|rdf|ttl|xml|jsonld|n3)$", "", seg, flags=re.I)
+        if s and not _VERSION_SEGMENT.match(s):
+            return s
+    return parts[-1] if parts else ""
+
+
 def _prefix_key(version_id: str) -> str:
     return f"search:entities:{version_id}:prefix"
 
@@ -360,7 +397,16 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
     if profile is None:
         from ontoexplorer.modules.profile.registry import default_profile
         profile = default_profile()
-    label_props = profile["label_props"]
+    # Floor the detected label properties with the standard baseline. The
+    # auto-detector picks label_props per ontology and can return a non-empty
+    # but incomplete set (missing the property an ontology actually names its
+    # terms with), which the old code used as-is — leaving those entities
+    # nameless. Unioning the canonical LABEL_PROPS (rdfs:label, skos:prefLabel,
+    # dc(terms):title, schema:name) can't pull in dependency labels (the label
+    # query is scoped to this ontology's own entities in its own graph); it only
+    # recovers names that were being missed.
+    from ontoexplorer.modules.profile.registry import LABEL_PROPS
+    label_props = list(dict.fromkeys(list(profile.get("label_props") or []) + LABEL_PROPS))
     synonym_props = profile["synonym_props"]
     definition_props = profile["definition_props"]
     deprecated_props = profile["deprecated_props"]
@@ -425,12 +471,17 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         if any(iri.startswith(ns) for ns in host_namespaces):
             return ""
         try:
-            prefix, _ = iri_to_prefix(iri)
+            prefix, resolved = iri_to_prefix(iri)
         except Exception:
-            prefix = None
-        if prefix and prefix != host_prefix:
+            prefix, resolved = None, False
+        if not prefix or prefix == host_prefix:
+            return ""
+        if resolved:
             return prefix
-        return ""
+        # Unresolved: `prefix` is the raw namespace URL. Show a short readable
+        # token on the chip instead of the full URL. (This shortening is
+        # display-only — the reuse report groups on iri_to_prefix directly.)
+        return short_namespace_token(prefix)
 
     # Collect entity IRIs with their types.
     # OWL types are checked first; RDFS fallbacks only fill gaps for non-OWL
@@ -613,10 +664,14 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
 
         short = _short_iri(iri)
 
-        # primary_label: first English label, or first label of any lang, or short IRI
+        # primary_label: first English label, or first label of any lang, or —
+        # when the source ontology gives no label at all — a humanized form of
+        # the IRI local name (CamelCase/snake/kebab split) rather than the raw
+        # identifier. The raw `short` is still indexed for search below, so this
+        # only improves display, never search recall.
         primary_label = next(
             (e["value"] for e in labels_list if e["lang"] == "en"),
-            labels_list[0]["value"] if labels_list else short,
+            labels_list[0]["value"] if labels_list else humanize_local_name(short),
         )
 
         pipe.hset(_iri_key(version_id, iri), mapping={
