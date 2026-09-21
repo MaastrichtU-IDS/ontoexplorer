@@ -428,7 +428,11 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
             v = row["imp"]
             imp_iri = v.value if hasattr(v, "value") else str(v)
             clean = imp_iri.rstrip("/")
-            short_name = clean.split("/")[-1].split("#")[-1]
+            # Readable label: strip the file extension (.owl/.rdf/…) and any
+            # version-like segment from the import IRI's tail, so an import of
+            # '.../dogont.owl' reads 'dogont', not 'dogont.owl'. Falls back to
+            # the bare last segment.
+            short_name = short_namespace_token(clean) or clean.split("/")[-1].split("#")[-1]
             if short_name:
                 import_source_map[clean] = short_name
     except Exception:

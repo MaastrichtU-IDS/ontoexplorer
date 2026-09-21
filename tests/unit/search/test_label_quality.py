@@ -46,3 +46,17 @@ class TestShortNamespaceToken:
 
     def test_empty_is_safe(self):
         assert short_namespace_token("") == ""
+
+    # Import-IRI forms (no trailing separator) — used to label owl:imports
+    # sources so '.../dogont.owl' reads 'dogont', not 'dogont.owl'.
+    def test_import_owl_iri_strips_extension(self):
+        assert short_namespace_token("http://elite.polito.it/ontologies/dogont.owl") == "dogont"
+        assert short_namespace_token("http://www.loa-cnr.it/ontologies/DUL.owl") == "DUL"
+
+    def test_import_rdf_iri_strips_extension(self):
+        assert short_namespace_token(
+            "http://iserve.kmi.open.ac.uk/ns/msm/msm-2014-09-03.rdf"
+        ) == "msm-2014-09-03"
+
+    def test_import_without_extension_unchanged(self):
+        assert short_namespace_token("http://purl.oclc.org/NET/ssnx/ssn") == "ssn"
