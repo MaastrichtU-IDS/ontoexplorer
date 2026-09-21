@@ -134,6 +134,86 @@ def test_owl_nothing_is_not_itself_a_root_entry():
     assert OWL_NOTHING not in roots
 
 
+# ── declared_classes: external inferred parents are bypassed (issue #180) ──────
+
+def test_native_class_under_external_parent_is_a_root():
+    """bio:Event ⊑ opencyc:Event(external) → Event is a root, external is no node."""
+    edges, roots = reduce_direct_inferred(
+        direct_superclasses={"http://n/Event": ["http://ext/Event"]},
+        superclasses={"http://n/Event": ["http://ext/Event"]},
+        unsatisfiable=[],
+        all_classes={"http://n/Event", "http://ext/Event"},
+        declared_classes={"http://n/Event"},
+    )
+    assert "http://n/Event" in roots
+    assert "http://ext/Event" not in roots          # external is never a root
+    assert edges == []                               # nor an edge target
+
+
+def test_external_class_is_never_a_node():
+    _, roots = reduce_direct_inferred(
+        direct_superclasses={}, superclasses={}, unsatisfiable=[],
+        all_classes={"http://ext/Foreign", "http://n/A"},
+        declared_classes={"http://n/A"},
+    )
+    assert roots == {"http://n/A"}
+
+
+def test_native_reattaches_under_native_ancestor_through_external():
+    """C ⊑ X(external) ⊑ D(native) → edge C ⊑ D, X bypassed."""
+    edges, roots = reduce_direct_inferred(
+        direct_superclasses={"http://n/C": ["http://ext/X"]},
+        superclasses={"http://n/C": ["http://ext/X", "http://n/D"],
+                      "http://ext/X": ["http://n/D"]},
+        unsatisfiable=[],
+        all_classes={"http://n/C", "http://ext/X", "http://n/D"},
+        declared_classes={"http://n/C", "http://n/D"},
+    )
+    assert ("http://n/C", "http://n/D", INFERRED_KIND) in edges
+    assert not any(e[1] == "http://ext/X" for e in edges)   # external never a parent
+    assert "http://n/D" in roots and "http://n/C" not in roots
+
+
+def test_equivalent_to_external_class_stays_a_root():
+    """A ≡ B(external): reasoner emits A ⊑ B and the back-edge B ⊑ A; A must
+    remain a root, not be demoted under the external B or self-looped."""
+    edges, roots = reduce_direct_inferred(
+        direct_superclasses={"http://n/Rel": ["http://ext/Rel"]},
+        superclasses={"http://n/Rel": ["http://ext/Rel"],
+                      "http://ext/Rel": ["http://n/Rel"]},   # equivalence back-edge
+        unsatisfiable=[],
+        all_classes={"http://n/Rel", "http://ext/Rel"},
+        declared_classes={"http://n/Rel"},
+    )
+    assert "http://n/Rel" in roots
+    assert "http://ext/Rel" not in roots
+    assert edges == []
+
+
+def test_multiple_external_parents_collapse_to_one_native_root():
+    edges, roots = reduce_direct_inferred(
+        direct_superclasses={"http://n/Event": ["http://a/Event", "http://b/Event", "http://c/Event"]},
+        superclasses={"http://n/Event": ["http://a/Event", "http://b/Event", "http://c/Event"]},
+        unsatisfiable=[],
+        all_classes={"http://n/Event", "http://a/Event", "http://b/Event", "http://c/Event"},
+        declared_classes={"http://n/Event"},
+    )
+    assert roots == {"http://n/Event"}
+    assert edges == []
+
+
+def test_declared_classes_none_keeps_legacy_behaviour():
+    """Without declared_classes, an external-only parent is still an edge target
+    and a root (pre-#180 behaviour, relied on by callers that don't pass it)."""
+    edges, roots = reduce_direct_inferred(
+        direct_superclasses={"http://n/C": ["http://ext/X"]},
+        superclasses={}, unsatisfiable=[],
+        all_classes={"http://n/C", "http://ext/X"},
+    )
+    assert ("http://n/C", "http://ext/X", INFERRED_KIND) in edges
+    assert "http://ext/X" in roots
+
+
 # ── storage and reads ─────────────────────────────────────────────────────────
 
 @pytest.mark.anyio
