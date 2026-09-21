@@ -23,11 +23,9 @@ vi.mock('../hooks/useClassTree', () => ({
   },
 }))
 
+const h = vi.hoisted(() => ({ inferred: { terms: [], reasoning_available: true } as any }))
 vi.mock('../hooks/useInferredTree', () => ({
-  useInferredTreeNodes: () => ({
-    data: { terms: [], reasoning_available: true },
-    isLoading: false,
-  }),
+  useInferredTreeNodes: () => ({ data: h.inferred, isLoading: false }),
 }))
 
 function wrap(ui: React.ReactElement) {
@@ -66,6 +64,17 @@ test('ArrowDown traverses every unique row in a DAG instead of looping', () => {
 
   const cRow = container.querySelector('[data-iri="http://ex.org/C"]') as HTMLElement
   expect(cRow.style.outline).toContain('var(--accent)')
+})
+
+test('inferred mode with no reasoning calls onReasoningUnavailable (parent falls back)', () => {
+  h.inferred = { terms: [], reasoning_available: false }
+  const onUnavail = vi.fn()
+  wrap(
+    <ClassTree ontologyId="go" versionId="v1" selectedIri={null} onSelect={() => {}}
+      mode="inferred" onReasoningUnavailable={onUnavail} />,
+  )
+  expect(onUnavail).toHaveBeenCalled()
+  h.inferred = { terms: [], reasoning_available: true }  // restore for other tests
 })
 
 test('selected node has accent color', () => {
