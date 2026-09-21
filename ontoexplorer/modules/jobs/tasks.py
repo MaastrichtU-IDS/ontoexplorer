@@ -841,14 +841,19 @@ async def _reason_and_persist(db, version, version_id: str, ontology_id: str, jo
         #
         # Redis stays in the union: it is authoritative once built, and covers
         # anything indexing derives that a plain type assertion does not.
-        _all |= _named_classes_in_store(str(version.ontology_id), version_id)
-        _all |= {
+        # Classes actually declared in this ontology (owl:Class / rdfs:Class) —
+        # exactly the entity_index node set. These are the only navigable tree
+        # nodes; external classes the ontology merely references as inferred
+        # superclasses must not become inferred roots (they render as nothing
+        # and orphan their native subtree — see issue #180).
+        _declared = _named_classes_in_store(str(version.ontology_id), version_id) | {
             m.decode() if isinstance(m, bytes) else m
             for m in _get_redis().smembers(_type_key(version_id, "class"))
         }
+        _all |= _declared
         _edges, _roots = reduce_direct_inferred(
             _c.get("direct_superclasses", {}), _c.get("superclasses", {}),
-            _c.get("unsatisfiable", []), _all,
+            _c.get("unsatisfiable", []), _all, declared_classes=_declared,
         )
         await replace_edges(db, version_id, _edges, kinds=(INFERRED_KIND,))
         await replace_inferred_roots(db, version_id, _roots)
