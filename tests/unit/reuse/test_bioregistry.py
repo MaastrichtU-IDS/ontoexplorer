@@ -31,3 +31,38 @@ def test_prefix_back_to_canonical_iri():
     canonical = prefix_to_canonical_iri("ro")
     assert canonical is not None
     assert "obolibrary.org" in canonical or "ro" in canonical.lower()
+
+
+# --- local supplement (vocabularies bioregistry lacks a namespace-variant for) ---
+
+def test_supplement_erlangen_crm_variant_resolves():
+    # bioregistry has cidoc.crm but not the Erlangen OWL-DL namespace variant.
+    prefix, resolved = iri_to_prefix("http://erlangen-crm.org/current/E1_CRM_Entity")
+    assert prefix == "ecrm"
+    assert resolved is True
+
+
+def test_supplement_oclc_ssnx_variant_resolves():
+    prefix, resolved = iri_to_prefix("http://purl.oclc.org/NET/ssnx/ssn#System")
+    assert prefix == "ssn"
+    assert resolved is True
+
+
+def test_supplement_arco_family_collapses_all_modules():
+    # A single family entry covers every per-module namespace under it.
+    for module in ("core", "location", "context-description", "catalogue"):
+        prefix, resolved = iri_to_prefix(f"https://w3id.org/arco/ontology/{module}/SomeTerm")
+        assert prefix == "arco"
+        assert resolved is True
+
+
+def test_bioregistry_takes_precedence_over_supplement():
+    # dcterms is registered in bioregistry; the supplement must not shadow it.
+    prefix, resolved = iri_to_prefix("http://purl.org/dc/terms/title")
+    assert prefix == "dcterms"
+    assert resolved is True
+
+
+def test_genuinely_unknown_stays_unresolved():
+    prefix, resolved = iri_to_prefix("http://ontology.example.org/oneoff/Thing")
+    assert resolved is False

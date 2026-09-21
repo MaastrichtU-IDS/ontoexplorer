@@ -12,6 +12,34 @@ from __future__ import annotations
 
 import bioregistry
 
+# Common vocabularies bioregistry does not yet resolve, because it has no
+# `providers` entry for the namespace variant we see (e.g. the Erlangen OWL-DL
+# rendering of CIDOC-CRM, the OCLC/ssnx namespace for SSN) or no `part_of`
+# entry for a modular ontology network (e.g. ArCo's per-module namespaces).
+# Each key is a namespace prefix (matched by str.startswith, so a single family
+# entry covers every module under it); the value is the prefix an upstream
+# bioregistry contribution would produce. These are being submitted upstream as
+# `providers`/`part_of` entries — see docs/bioregistry-contributions.md — so
+# drop each row here once its PR lands in a bioregistry release.
+_LOCAL_NS_PREFIX: dict[str, str] = {
+    "http://erlangen-crm.org/current/": "ecrm",
+    "http://erlangen-crm.org/efrbroo/": "efrbroo",
+    "http://purl.oclc.org/NET/ssnx/ssn#": "ssn",
+    "http://purl.oclc.org/NET/ssnx/qu/qu#": "qu",
+    "http://www.ontologydesignpatterns.org/ont/dul/DUL.owl#": "dul",
+    "http://www.ontologydesignpatterns.org/ont/dul/IOLite.owl#": "iolite",
+    "http://www.loa-cnr.it/ontologies/DUL.owl#": "dul",
+    "http://spinrdf.org/sp#": "sp",
+    "https://www.gleif.org/ontology/Base/": "gleif",
+    "https://www.omg.org/spec/LCC/Languages/LanguageRepresentation/": "lcc",
+    "https://www.omg.org/spec/LCC/Countries/CountryRepresentation/": "lcc",
+    # Family roots (str.startswith covers every module under them).
+    "https://w3id.org/arco/ontology/": "arco",
+    "https://w3id.org/italia/onto/": "italia",
+}
+# Longest-first so a more specific namespace wins over a broader family root.
+_LOCAL_NS_KEYS: list[str] = sorted(_LOCAL_NS_PREFIX, key=len, reverse=True)
+
 
 def iri_to_prefix(iri: str) -> tuple[str | None, bool]:
     """Resolve an IRI to a canonical bioregistry prefix.
@@ -30,12 +58,25 @@ def iri_to_prefix(iri: str) -> tuple[str | None, bool]:
             return obo_prefix, True
 
     parsed = bioregistry.parse_iri(iri)
-    if parsed is None:
-        return _raw_namespace(iri), False
-    prefix, _identifier = parsed
-    if prefix is None:
-        return _raw_namespace(iri), False
-    return prefix, True
+    if parsed is not None:
+        prefix, _identifier = parsed
+        if prefix is not None:
+            return prefix, True
+
+    # Curated supplement for vocabularies bioregistry hasn't registered yet.
+    local = _local_prefix(iri)
+    if local is not None:
+        return local, True
+
+    return _raw_namespace(iri), False
+
+
+def _local_prefix(iri: str) -> str | None:
+    """Resolve an IRI against the curated `_LOCAL_NS_PREFIX` supplement."""
+    for ns in _LOCAL_NS_KEYS:
+        if iri.startswith(ns):
+            return _LOCAL_NS_PREFIX[ns]
+    return None
 
 
 def prefix_to_canonical_iri(prefix: str) -> str | None:
