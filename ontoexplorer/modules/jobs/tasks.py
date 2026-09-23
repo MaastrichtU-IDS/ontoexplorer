@@ -53,13 +53,20 @@ celery_app.conf.update(
         "ontoexplorer.backfill_metadata": {"queue": "write"},
         # index_ontology and embed_ontology are read-only on the store but
         # memory-heavy (search-index build / fastembed vectors of large
-        # ontologies). Route them to a dedicated "index" queue drained by a
-        # low-concurrency worker so they can't stack up on the "light" read
-        # worker and OOM it — the "light" worker can then run reads at high
-        # concurrency again. Both read the store read-only, so they stay off
-        # the single-RW "write" worker.
+        # ontologies). Route them to dedicated queues drained by low-concurrency
+        # workers so they can't stack up on the "light" read worker and OOM it —
+        # the "light" worker can then run reads at high concurrency again. Both
+        # read the store read-only, so they stay off the single-RW "write" worker.
+        #
+        # index_ontology and embed_ontology get SEPARATE queues: index_ontology
+        # is what flips a version to status="ready" (keyword search / browse),
+        # while embed_ontology builds pgvector term embeddings for semantic
+        # search — far slower and strictly optional. Sharing one queue let a
+        # backlog of slow embeds starve index_ontology, leaving freshly-ingested
+        # ontologies stuck below "ready". Split so indexing (readiness) is never
+        # blocked by embedding (a nice-to-have that can lag).
         "ontoexplorer.index_ontology": {"queue": "index"},
-        "ontoexplorer.embed_ontology": {"queue": "index"},
+        "ontoexplorer.embed_ontology": {"queue": "embed"},
     },
     beat_schedule={
         "poll-for-updates-hourly": {
