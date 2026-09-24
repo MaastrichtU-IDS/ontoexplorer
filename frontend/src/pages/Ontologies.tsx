@@ -1,8 +1,8 @@
-import { useState, useMemo, memo, useRef } from 'react'
+import { useState, useMemo, memo, useRef, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useWindowVirtualizer } from '@tanstack/react-virtual'
-import { useOntologySearch } from '../hooks/useOntologySearch'
+import { useOntologiesInfinite } from '../hooks/useOntologiesInfinite'
 import { useRepositoryLanguages } from '../hooks/useRepositoryLanguages'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { api, Ontology, OwlProfileFleetEntry, ProfileName, LanguageTier, slugFromIri } from '../lib/api'
@@ -328,7 +328,22 @@ export default function Ontologies() {
   const [sortCol, setSortCol] = useState<SortCol>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const reuses = searchParams.get('reuses') ?? undefined
-  const { data, isLoading } = useOntologySearch(query, group || undefined, profile || undefined, reuses, language || undefined)
+  // Server-side pagination: the server owns sort + every filter (incl. the
+  // language-code facet), and we page in on scroll. `ontologies` is the pages
+  // flattened; `total` is the full match count for the header.
+  const {
+    ontologies, total, isLoading,
+    fetchNextPage, hasNextPage, isFetchingNextPage,
+  } = useOntologiesInfinite({
+    query,
+    group: group || undefined,
+    profile: profile || undefined,
+    reuses,
+    language: language || undefined,
+    langs: [...langs],
+    sort: sortCol,
+    dir: sortDir,
+  })
   const repoLangs = useRepositoryLanguages()
   const { data: profileFleet } = useQuery({
     queryKey: ['owl-profile', 'fleet'],
@@ -354,25 +369,10 @@ export default function Ontologies() {
     else { setSortCol(col); setSortDir('asc') }
   }
 
-  const ontologies = useMemo(() => {
-    const list = data?.ontologies ?? []
-    const langFiltered = langs.size === 0
-      ? list
-      : list.filter(o => (o.languages ?? []).some(l => langs.has(l.lang)))
-    return [...langFiltered].sort((a, b) => {
-      const cmp = sortCol === 'name'
-        ? displayName(a).localeCompare(displayName(b))
-        : new Date(a.latest_version?.created_at ?? a.created_at).getTime()
-          - new Date(b.latest_version?.created_at ?? b.created_at).getTime()
-      return sortDir === 'asc' ? cmp : -cmp
-    })
-  }, [data, langs, sortCol, sortDir])
-
-  // Virtualize the list: the catalog is ~1900 rows and each row is non-trivial,
-  // so mounting them all pushes LCP to ~10s. Window-scroll virtualization keeps
-  // the full-page scroll UX while rendering only the visible window. Rows are
-  // variable-height (optional label/languages/description/stats + expand toggle),
-  // so heights are measured dynamically via measureElement's ResizeObserver.
+  // Virtualize the list: rows are non-trivial and the catalog is large, so
+  // window-scroll virtualization renders only the visible window while keeping
+  // the full-page scroll UX. Rows are variable-height (optional label/languages/
+  // description/stats + expand toggle), measured dynamically via measureElement.
   const listRef = useRef<HTMLDivElement>(null)
   const rowVirtualizer = useWindowVirtualizer({
     count: ontologies.length,
@@ -381,6 +381,16 @@ export default function Ontologies() {
     getItemKey: (i) => ontologies[i].id,
     scrollMargin: listRef.current?.offsetTop ?? 0,
   })
+
+  // Infinite scroll: fetch the next page once the virtualizer is rendering
+  // within a few rows of the end of what's loaded.
+  const virtualItems = rowVirtualizer.getVirtualItems()
+  const lastVisibleIndex = virtualItems.length ? virtualItems[virtualItems.length - 1].index : 0
+  useEffect(() => {
+    if (lastVisibleIndex >= ontologies.length - 8 && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage()
+    }
+  }, [lastVisibleIndex, ontologies.length, hasNextPage, isFetchingNextPage, fetchNextPage])
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '0.75rem 0.75rem' : '2rem 1.5rem' }}>
@@ -614,11 +624,11 @@ export default function Ontologies() {
       ) : (
         <>
           <p style={{ color: 'var(--text-dim)', fontSize: 11, margin: '0 0 0.5rem' }}>
-            {ontologies.length} ontolog{ontologies.length === 1 ? 'y' : 'ies'}
+            {(total ?? ontologies.length)} ontolog{(total ?? ontologies.length) === 1 ? 'y' : 'ies'}
             {(query || group || profile || reuses || langs.size > 0) && ' matching filter'}
           </p>
           <div ref={listRef} style={{ position: 'relative', height: rowVirtualizer.getTotalSize(), width: '100%' }}>
-            {rowVirtualizer.getVirtualItems().map(vi => {
+            {virtualItems.map(vi => {
               const o = ontologies[vi.index]
               return (
                 <div
@@ -635,6 +645,11 @@ export default function Ontologies() {
               )
             })}
           </div>
+          {isFetchingNextPage && (
+            <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', textAlign: 'center', padding: '0.75rem' }}>
+              Loading more…
+            </p>
+          )}
         </>
       )}
 

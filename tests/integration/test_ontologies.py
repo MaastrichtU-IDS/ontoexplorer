@@ -147,3 +147,48 @@ async def test_get_nonexistent_ontology(client, user_and_key):
         headers={"Authorization": f"Bearer {raw_key}"},
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_list_pagination_sort_and_total(client, user_and_key, db_session):
+    """The list endpoint paginates server-side: echoes offset/limit/total, sorts
+    by name (case-insensitive), and slices cleanly so infinite scroll can page
+    through it. Written to tolerate rows left by other tests (shared DB)."""
+    from ontoexplorer.models.db import Ontology
+    _, raw_key = user_and_key
+    auth = {"Authorization": f"Bearer {raw_key}"}
+
+    base = (await client.get("/api/v1/ontologies?limit=1", headers=auth)).json()["total"]
+
+    # Unique prefix → these three sort contiguously and are identifiable amid any
+    # pre-existing rows. Mixed case verifies case-insensitive ordering.
+    P = "zzzpag-"
+    for sn in (f"{P}Charlie", f"{P}alpha", f"{P}Bravo"):
+        db_session.add(Ontology(iri=f"http://example.org/{sn}.owl", shortname=sn))
+    await db_session.commit()
+
+    # total reflects the three new rows.
+    r_asc = (await client.get(f"/api/v1/ontologies?limit={base + 10}&sort=name&dir=asc", headers=auth)).json()
+    assert r_asc["total"] == base + 3
+    mine_asc = [o["shortname"] for o in r_asc["ontologies"] if o["shortname"].startswith(P)]
+    assert mine_asc == [f"{P}alpha", f"{P}Bravo", f"{P}Charlie"]   # case-insensitive
+
+    # Descending flips their relative order.
+    r_desc = (await client.get(f"/api/v1/ontologies?limit={base + 10}&sort=name&dir=desc", headers=auth)).json()
+    mine_desc = [o["shortname"] for o in r_desc["ontologies"] if o["shortname"].startswith(P)]
+    assert mine_desc == [f"{P}Charlie", f"{P}Bravo", f"{P}alpha"]
+
+    # Pagination mechanics: two disjoint pages concatenate to the combined page.
+    p0 = (await client.get("/api/v1/ontologies?limit=2&offset=0&sort=name&dir=asc", headers=auth)).json()
+    p1 = (await client.get("/api/v1/ontologies?limit=2&offset=2&sort=name&dir=asc", headers=auth)).json()
+    combined = (await client.get("/api/v1/ontologies?limit=4&offset=0&sort=name&dir=asc", headers=auth)).json()
+    assert p0["offset"] == 0 and p0["limit"] == 2 and len(p0["ontologies"]) == 2
+    assert [o["id"] for o in p0["ontologies"]] + [o["id"] for o in p1["ontologies"]] == [o["id"] for o in combined["ontologies"]]
+
+    # Offset past the end is an empty page, not an error.
+    r_end = await client.get("/api/v1/ontologies?limit=2&offset=999999", headers=auth)
+    assert r_end.status_code == 200 and r_end.json()["ontologies"] == []
+
+    # Bad sort/dir are rejected.
+    assert (await client.get("/api/v1/ontologies?sort=bogus", headers=auth)).status_code == 422
+    assert (await client.get("/api/v1/ontologies?dir=sideways", headers=auth)).status_code == 422
