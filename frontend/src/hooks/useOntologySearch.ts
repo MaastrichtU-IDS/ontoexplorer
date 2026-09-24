@@ -24,7 +24,9 @@ export function useOntologySearch(
     // Fetch the whole (group/profile/language-scoped) set, not a 200-row page:
     // the list view has no pagination and applies the Lang filter client-side, so
     // a low cap silently truncated large groups (e.g. LOV has 750+ ontologies).
-    queryFn: () => api.ontologies.list(0, 2000, q || undefined, group || undefined, profile, reuses, false, language),
+    // view='list' → lean per-row projection (~half the bytes); the table only
+    // needs name/chips/counts/modified-date, and OntologyPicker only id + iri.
+    queryFn: () => api.ontologies.list(0, 2000, q || undefined, group || undefined, profile, reuses, false, language, 'list'),
     staleTime: 30_000,
   })
 }

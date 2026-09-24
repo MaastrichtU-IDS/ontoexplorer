@@ -1235,7 +1235,7 @@ export const api = {
   },
 
   ontologies: {
-    list: (offset = 0, limit = 50, q?: string, group?: string, profile?: ProfileName, reuses?: string, mine = false, language?: LanguageTier) => {
+    list: (offset = 0, limit = 50, q?: string, group?: string, profile?: ProfileName, reuses?: string, mine = false, language?: LanguageTier, view?: 'list') => {
       const params = new URLSearchParams({ offset: String(offset), limit: String(limit) })
       if (q) params.set('q', q)
       if (group) params.set('group', group)   // single group filter sent to API
@@ -1243,6 +1243,9 @@ export const api = {
       if (language) params.set('language', language)
       if (reuses) params.set('reuses', reuses)
       if (mine) params.set('mine', 'true')
+      // 'list' asks for the lean table projection (~half the payload); the row
+      // only needs modified-date + counts + language/profile chips.
+      if (view) params.set('view', view)
       return request<{ ontologies: Ontology[]; offset: number; limit: number }>(
         `/ontologies?${params}`
       )

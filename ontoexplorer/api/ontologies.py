@@ -560,6 +560,32 @@ async def patch_ontology(
 
 # ── List ───────────────────────────────────────────────────────────────────────
 
+# Fields the /ontologies list view (the table) actually renders. `view=list`
+# projects each row to just these, which roughly halves the payload (~2.7MB →
+# ~1.4MB at ~1900 rows): `latest_version` collapses to its `created_at` (the row
+# only needs modified-date + "has a ready version"), the long `description` is
+# capped, and unused siblings (owner/title/sync/version-id) are dropped. The full
+# shape stays the default so other consumers and the API contract are unchanged.
+_LIST_VIEW_FIELDS = (
+    "id", "iri", "shortname", "label", "groups", "created_at",
+    "class_count", "object_property_count", "datatype_property_count",
+    "annotation_property_count", "individual_count", "triple_count",
+    "languages", "language_tier",
+)
+_LIST_DESC_CAP = 500
+
+
+def _leanify_list_row(r: dict) -> dict:
+    lv = r.get("latest_version")
+    desc = r.get("description") or ""
+    if len(desc) > _LIST_DESC_CAP:
+        desc = desc[:_LIST_DESC_CAP].rsplit(" ", 1)[0] + "…"
+    out = {k: r.get(k) for k in _LIST_VIEW_FIELDS}
+    out["latest_version"] = {"created_at": lv.get("created_at")} if lv else None
+    out["description"] = desc
+    return out
+
+
 @router.get("", summary="List ontologies")
 async def list_ontologies(
     q: str | None = Query(None, description="Keyword filter on ontology name, IRI, or description"),
@@ -568,6 +594,7 @@ async def list_ontologies(
     language: str | None = Query(None, description="Filter by language tier: rdf | rdfs | rdfs-plus | owl"),
     reuses: str | None = Query(None, description="Filter: latest version reuses this prefix"),
     mine: bool = Query(False, description="Only ontologies the caller owns or maintains"),
+    view: str | None = Query(None, description="Response shape: 'list' returns a lean per-row projection for the table view; default is the full shape"),
     limit: int = Query(50, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -799,6 +826,9 @@ async def list_ontologies(
     elif profile or reuses:
         # Profile or reuse filter already applied above; now apply pagination
         rows = rows[offset: offset + limit]
+
+    if view == "list":
+        rows = [_leanify_list_row(r) for r in rows]
 
     return {"ontologies": rows, "offset": offset, "limit": limit}
 
