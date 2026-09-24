@@ -1,0 +1,65 @@
+name: E2E (perf, a11y, usability)
+
+# Runs the Playwright suite against a deployed environment. Not on every PR —
+# it needs a live target and takes a few minutes — but on demand and nightly so
+# regressions in real user-facing performance/accessibility get caught.
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Target site URL'
+        required: false
+        default: 'https://ontoexplorer.dev.k8s.semanticscience.org'
+      projects:
+        description: 'Playwright projects (space-separated: chromium firefox webkit mobile throttled)'
+        required: false
+        default: 'chromium'
+  schedule:
+    - cron: '0 4 * * *'  # nightly 04:00 UTC against the dev deployment
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Playwright (${{ github.event.inputs.projects || 'chromium' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Browsers + system libs preinstalled; keep in sync with @playwright/test.
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-jammy
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      E2E_BASE_URL: ${{ github.event.inputs.base_url || 'https://ontoexplorer.dev.k8s.semanticscience.org' }}
+      E2E_PERF: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Run E2E
+        # Timing checks are soft; functional/a11y-blocker failures still fail the job.
+        run: |
+          PROJ=""
+          for p in ${{ github.event.inputs.projects || 'chromium' }}; do PROJ="$PROJ --project=$p"; done
+          npx playwright test $PROJ
+
+      - name: Aggregate report
+        if: always()
+        run: node e2e/report.mjs || true
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-report
+          path: frontend/e2e-report
+          retention-days: 14
+
+      - name: Job summary
+        if: always()
+        run: cat e2e-report/SUMMARY.md >> "$GITHUB_STEP_SUMMARY" || true
