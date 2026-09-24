@@ -630,7 +630,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
                 lang_counts[lang_tag] = lang_counts.get(lang_tag, 0) + 1
 
     # Invalidate root terms cache so API serves fresh data with the new source fields
-    for key in r.scan_iter(f"terms_root:{version_id}:*"):
+    for key in r.scan_iter(f"terms_root:{version_id}:*", count=5000):
         r.delete(key)
 
     # Write to Redis via pipeline
