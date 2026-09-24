@@ -1,6 +1,7 @@
-import { useState, useMemo, memo } from 'react'
+import { useState, useMemo, memo, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
+import { useWindowVirtualizer } from '@tanstack/react-virtual'
 import { useOntologySearch } from '../hooks/useOntologySearch'
 import { useRepositoryLanguages } from '../hooks/useRepositoryLanguages'
 import { useIsMobile } from '../hooks/useIsMobile'
@@ -132,12 +133,11 @@ const OntologyRow = memo(function OntologyRow({ o, profileEntry }: { o: Ontology
   const lastModified = latest?.created_at ?? o.created_at
 
   return (
-    <tr
+    <div
       className="ontology-row"
       onClick={() => latest && navigate(`/ontologies/${o.shortname ?? slugFromIri(o.iri)}`)}
-      style={{ cursor: latest ? 'pointer' : 'default', borderBottom: '2px solid var(--border)' }}
+      style={{ cursor: latest ? 'pointer' : 'default', borderBottom: '2px solid var(--border)', padding: '10px 12px' }}
     >
-      <td style={{ padding: '10px 12px' }}>
         {/* Name · IRI chip · group badges */}
         {o.label && (
           <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', marginBottom: 2 }}>
@@ -233,8 +233,7 @@ const OntologyRow = memo(function OntologyRow({ o, profileEntry }: { o: Ontology
             modified {new Date(lastModified).toLocaleDateString()}
           </span>
         </div>
-      </td>
-    </tr>
+    </div>
   )
 })
 
@@ -368,6 +367,20 @@ export default function Ontologies() {
       return sortDir === 'asc' ? cmp : -cmp
     })
   }, [data, langs, sortCol, sortDir])
+
+  // Virtualize the list: the catalog is ~1900 rows and each row is non-trivial,
+  // so mounting them all pushes LCP to ~10s. Window-scroll virtualization keeps
+  // the full-page scroll UX while rendering only the visible window. Rows are
+  // variable-height (optional label/languages/description/stats + expand toggle),
+  // so heights are measured dynamically via measureElement's ResizeObserver.
+  const listRef = useRef<HTMLDivElement>(null)
+  const rowVirtualizer = useWindowVirtualizer({
+    count: ontologies.length,
+    estimateSize: () => 96,
+    overscan: 8,
+    getItemKey: (i) => ontologies[i].id,
+    scrollMargin: listRef.current?.offsetTop ?? 0,
+  })
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '0.75rem 0.75rem' : '2rem 1.5rem' }}>
@@ -604,13 +617,24 @@ export default function Ontologies() {
             {ontologies.length} ontolog{ontologies.length === 1 ? 'y' : 'ies'}
             {(query || group || profile || reuses || langs.size > 0) && ' matching filter'}
           </p>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <tbody>
-              {ontologies.map(o => (
-                <OntologyRow key={o.id} o={o} profileEntry={profileByOntologyId.get(o.id)} />
-              ))}
-            </tbody>
-          </table>
+          <div ref={listRef} style={{ position: 'relative', height: rowVirtualizer.getTotalSize(), width: '100%' }}>
+            {rowVirtualizer.getVirtualItems().map(vi => {
+              const o = ontologies[vi.index]
+              return (
+                <div
+                  key={vi.key}
+                  data-index={vi.index}
+                  ref={rowVirtualizer.measureElement}
+                  style={{
+                    position: 'absolute', top: 0, left: 0, width: '100%',
+                    transform: `translateY(${vi.start - rowVirtualizer.options.scrollMargin}px)`,
+                  }}
+                >
+                  <OntologyRow o={o} profileEntry={profileByOntologyId.get(o.id)} />
+                </div>
+              )
+            })}
+          </div>
         </>
       )}
 
