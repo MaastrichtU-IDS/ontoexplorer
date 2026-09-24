@@ -65,7 +65,7 @@ async def get_repository_languages():
         r = _get_redis()
         counts: dict[str, int] = {}
         prefix = "search:meta:"
-        for meta_key in r.scan_iter(f"{prefix}*"):
+        for meta_key in r.scan_iter(f"{prefix}*", count=5000):
             meta = r.hgetall(meta_key)
             if meta.get("schema_version") != "v2":
                 continue

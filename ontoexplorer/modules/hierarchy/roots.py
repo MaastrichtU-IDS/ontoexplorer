@@ -67,7 +67,7 @@ def invalidate_root_cache(redis, version_id: str) -> int:
     the rest stale for a month.
     """
     removed = 0
-    for key in redis.scan_iter(match=f"terms_root:{version_id}:*"):
+    for key in redis.scan_iter(match=f"terms_root:{version_id}:*", count=5000):
         redis.delete(key)
         removed += 1
     return removed

@@ -248,7 +248,7 @@ def purge_version_artifacts(ontology_id: str, version_id: str, minio_key: str | 
     def _drop_redis():
         from ontoexplorer.modules.search.indexer import _get_redis
         r = _get_redis()
-        for key in r.scan_iter(match=f"*{version_id}*"):
+        for key in r.scan_iter(match=f"*{version_id}*", count=5000):
             r.delete(key)
 
     _step("redis_index", _drop_redis)
@@ -1075,7 +1075,7 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
             from ontoexplorer.modules.search.indexer import _get_redis
             _r = _get_redis()
             for _pattern in ("search:result:*", "search:autocomplete:*", "search:term:*"):
-                for _k in _r.scan_iter(_pattern, count=500):
+                for _k in _r.scan_iter(_pattern, count=5000):
                     _r.delete(_k)
         except Exception:
             pass
