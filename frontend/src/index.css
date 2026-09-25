@@ -164,11 +164,13 @@
 
   --text: #1a2a3a;
   --text-bright: #0d1a28;
-  --text-muted: #6a8aa8;
-  --text-dim: #93aec6;
-  --gray: #93aec6;
+  /* WCAG AA: dim/muted/accent raised to >=4.5:1 on this theme's light surfaces
+     (arctic is the default theme, so this is what most visitors see). */
+  --text-muted: #546d85;
+  --text-dim: #587390;
+  --gray: #587390;
 
-  --accent: #2b8dd6;
+  --accent: #1c6fb8;
   --on-accent: #ffffff;
   --accent-blue: #5ba4d9;
   --accent-purple: #7e57c2;
@@ -180,7 +182,7 @@
   --red: #c93b3b;
   --red-soft: #d05a5a;
   --orange: #b5791f;
-  --blue: #2b8dd6;
+  --blue: #1c6fb8;
   --yellow: #b5791f;
   --purple: #7e57c2;
   --error: #c93b3b;

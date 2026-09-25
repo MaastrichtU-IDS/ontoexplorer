@@ -1057,6 +1057,7 @@ export default function OntologyPage() {
       {versions.length > 1 && (
         <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)' }}>
           <select
+            aria-label="Select ontology version"
             value={activeVid ?? ''}
             onChange={e => navigate(`/ontologies/${slug}/${e.target.value}`, { replace: true })}
             style={{ width: '100%', fontSize: 'var(--font-size-sm)' }}
