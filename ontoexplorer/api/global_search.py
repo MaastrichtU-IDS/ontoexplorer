@@ -54,29 +54,62 @@ def _is_expression(node) -> bool:
 
 # ── Repository-wide languages ─────────────────────────────────────────────────
 
+# Repository-wide language inventory changes only when an ontology is (re)indexed;
+# the home page loads it on every visit. Cache it, and compute it with pipelined
+# Redis reads — the previous per-version round-trips took ~9s across ~1900 ontologies.
+_REPO_LANGS_CACHE_KEY = "repo:languages:v2"
+_REPO_LANGS_TTL = 300  # seconds
+
+
 @router.get("/languages", summary="All languages present across indexed ontologies")
 async def get_repository_languages():
     """Aggregate language tags from every indexed ontology version in Redis."""
     import asyncio
+    import json as _json
 
     def _aggregate() -> list[dict]:
         from ontoexplorer.modules.search.indexer import _get_redis, _langs_key
         from ontoexplorer.modules.search.lang import canonical_lang
         r = _get_redis()
-        counts: dict[str, int] = {}
+
+        cached = r.get(_REPO_LANGS_CACHE_KEY)
+        if cached:
+            return _json.loads(cached)
+
         prefix = "search:meta:"
-        for meta_key in r.scan_iter(f"{prefix}*", count=5000):
-            meta = r.hgetall(meta_key)
-            if meta.get("schema_version") != "v2":
-                continue
-            version_id = meta_key[len(prefix):]
-            for lang, count in r.hgetall(_langs_key(version_id)).items():
+        meta_keys = list(r.scan_iter(f"{prefix}*", count=5000))
+
+        # Keep only v2-schema versions — one pipelined batch instead of a full
+        # hgetall round-trip per key.
+        pipe = r.pipeline(transaction=False)
+        for k in meta_keys:
+            pipe.hget(k, "schema_version")
+        schema_versions = pipe.execute()
+        version_ids = [
+            k[len(prefix):] for k, sv in zip(meta_keys, schema_versions) if sv == "v2"
+        ]
+
+        # Fetch every version's language counts in a single pipelined batch.
+        pipe2 = r.pipeline(transaction=False)
+        for vid in version_ids:
+            pipe2.hgetall(_langs_key(vid))
+        lang_maps = pipe2.execute()
+
+        counts: dict[str, int] = {}
+        for mapping in lang_maps:
+            for lang, count in (mapping or {}).items():
                 key = canonical_lang(lang)
                 counts[key] = counts.get(key, 0) + int(count)
-        return sorted(
+
+        result = sorted(
             [{"lang": k, "label_count": v} for k, v in counts.items()],
             key=lambda x: x["lang"],
         )
+        try:
+            r.set(_REPO_LANGS_CACHE_KEY, _json.dumps(result), ex=_REPO_LANGS_TTL)
+        except Exception:
+            pass
+        return result
 
     return await asyncio.to_thread(_aggregate)
 
