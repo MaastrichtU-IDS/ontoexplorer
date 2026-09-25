@@ -328,24 +328,34 @@ async def pg_autocomplete_entities(
         # Lower the word-similarity threshold for this fallback (default 0.6 is
         # too strict for short-drop typos); scoped to the transaction.
         await db.execute(text("SET LOCAL pg_trgm.word_similarity_threshold = 0.4"))
+        # Bound the fuzzy candidate set (:pool) before ranking. A common short
+        # fragment matches `<%` against tens/hundreds of thousands of labels;
+        # ranking them all by word_similarity was the ~9-30s cold autocomplete
+        # cost. The trgm GIN scan stops at :pool, then we rank only that pool.
         fuzzy_sql = text(f"""
-            SELECT ei.iri, ei.primary_label, ei.short, ei.type,
-                   ei.version_id, ei.ontology_id, ei.primary_label_norm,
+            SELECT c.iri, c.primary_label, c.short, c.type,
+                   c.version_id, c.ontology_id, c.primary_label_norm,
                    COALESCE(o.shortname, '') AS ontology_shortname
-            FROM entity_index ei
-            JOIN versions v ON v.id = ei.version_id
-            JOIN ontologies o ON o.id = ei.ontology_id
-            WHERE v.status NOT IN ('pending','failed','deprecated')
-              AND :norm <% ei.primary_label_norm
-              AND ei.primary_label_norm NOT LIKE :prefix
-              {type_filter_sql}
-              {ontology_filter_sql}
-              {version_filter_sql}
-            ORDER BY word_similarity(:norm, ei.primary_label_norm) DESC,
-                     LENGTH(ei.primary_label_norm), ei.iri
+            FROM (
+                SELECT ei.iri, ei.primary_label, ei.short, ei.type,
+                       ei.version_id, ei.ontology_id, ei.primary_label_norm,
+                       word_similarity(:norm, ei.primary_label_norm) AS ws
+                FROM entity_index ei
+                WHERE :norm <% ei.primary_label_norm
+                  AND ei.primary_label_norm NOT LIKE :prefix
+                  {type_filter_sql}
+                  {ontology_filter_sql}
+                  {version_filter_sql}
+                LIMIT :pool
+            ) c
+            JOIN versions v ON v.id = c.version_id
+                AND v.status NOT IN ('pending','failed','deprecated')
+            JOIN ontologies o ON o.id = c.ontology_id
+            ORDER BY c.ws DESC, LENGTH(c.primary_label_norm), c.iri
             LIMIT :over
         """)
-        params3: dict = {"norm": norm, "prefix": norm + "%", "over": limit * _OVERSAMPLE}
+        params3: dict = {"norm": norm, "prefix": norm + "%",
+                         "over": limit * _OVERSAMPLE, "pool": _prefix_pool_size(limit)}
         if excluded_types:
             params3["excluded"] = list(excluded_types)
         if ontology_ids:
