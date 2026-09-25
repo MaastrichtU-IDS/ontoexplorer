@@ -40,6 +40,46 @@ def _row_to_dict(row: Any) -> dict:
     }
 
 
+def _rank_prefix_rows(rows: list, norm: str, limit: int) -> list:
+    """Rank a bounded pool of prefix matches and dedup by IRI (first-seen-wins).
+
+    The SQL fetches the pool in index order (`primary_label_norm COLLATE "C"`,
+    which the text_pattern_ops btree can satisfy with early termination) instead
+    of sorting the whole `LIKE 'x%'` match set — the latter forced a full sort +
+    join of every match before LIMIT, which is what made common prefixes (`cell`)
+    take seconds. Ranking then happens here on the small pool by the original
+    tiered key: exact label first, then shortest label, then alphabetical. The
+    exact term is a proper prefix of every other match, so it sorts first under C
+    ordering and is always present in the pool.
+    """
+    ordered = sorted(
+        rows,
+        key=lambda r: (
+            0 if r.primary_label_norm == norm else 1,
+            len(r.primary_label_norm),
+            r.primary_label_norm,
+            r.iri,
+        ),
+    )
+    seen: set[str] = set()
+    out: list = []
+    for r in ordered:
+        if r.iri in seen:
+            continue
+        seen.add(r.iri)
+        out.append(r)
+        if len(out) >= limit:
+            break
+    return out
+
+
+# Stage-1 prefix pool: fetch this many index-ordered candidates, then rank in
+# Python. Generous enough for cross-ontology dedup + short-label coverage on
+# common prefixes, small enough to fetch/sort cheaply.
+def _prefix_pool_size(limit: int) -> int:
+    return max(limit * 20, 500)
+
+
 async def pg_entity_search(
     db: AsyncSession,
     q: str,
@@ -62,43 +102,36 @@ async def pg_entity_search(
 
     type_filter_sql = "AND ei.type = ANY(:types)" if types else ""
 
-    # Stage 1: prefix-on-primary-label. Uses the text_pattern_ops btree.
-    # Filter to ready non-deprecated versions via the JOIN.
-    # Within tier-1 (prefix match), sort by label LENGTH then alphabetically so
-    # the label closest in length to the query wins. Without this, an unrelated
-    # short label that happens to be lex-earlier sorts above the obvious target:
-    # e.g. `membran` → "membrana tympaniformis" outranking "membrane".
+    # Stage 1: prefix-on-primary-label. Fetch a bounded pool in the
+    # text_pattern_ops btree's own (C-collation) order — an index range scan that
+    # terminates early — then rank the pool in Python (_rank_prefix_rows) by
+    # exact-first, shortest-label, alphabetical. Ranking in SQL via ORDER BY
+    # LENGTH() forced a full sort + join of every `LIKE 'x%'` match before LIMIT,
+    # which made common prefixes (`cell`) take seconds.
     prefix_sql = text(f"""
         SELECT ei.iri, ei.primary_label, ei.short, ei.type,
                ei.version_id, ei.ontology_id, ei.source,
                ei.primary_label_norm,
-               COALESCE(o.shortname, '') AS ontology_shortname,
-               CASE WHEN ei.primary_label_norm = :norm THEN 0 ELSE 1 END AS tier
+               COALESCE(o.shortname, '') AS ontology_shortname
         FROM entity_index ei
         JOIN versions v ON v.id = ei.version_id
         JOIN ontologies o ON o.id = ei.ontology_id
         WHERE v.status NOT IN ('pending','failed','deprecated')
           AND ei.primary_label_norm LIKE :prefix
           {type_filter_sql}
-        ORDER BY tier, LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
-        LIMIT :over
+        ORDER BY ei.primary_label_norm COLLATE "C", ei.iri
+        LIMIT :pool
     """)
-    over = limit * _OVERSAMPLE
-    params: dict = {"norm": norm, "prefix": norm + "%", "over": over}
+    params: dict = {"norm": norm, "prefix": norm + "%", "pool": _prefix_pool_size(limit)}
     if types:
         params["types"] = list(types)
     result = await db.execute(prefix_sql, params)
-    prefix_rows = result.all()
+    ranked = _rank_prefix_rows(result.all(), norm, limit)
 
-    seen_iris: set[str] = set()
-    merged: list[dict] = []
-    for row in prefix_rows:
-        if row.iri in seen_iris:
-            continue
-        seen_iris.add(row.iri)
-        merged.append(_row_to_dict(row))
-        if len(merged) >= limit:
-            return merged[:limit]
+    seen_iris: set[str] = {row.iri for row in ranked}
+    merged: list[dict] = [_row_to_dict(row) for row in ranked]
+    if len(merged) >= limit:
+        return merged[:limit]
 
     # Stage 2: word-suffix fallback via tsvector. Only runs if prefix tier didn't fill.
     # Multi-word queries are AND'd; the last token is prefix-matched (user may
@@ -119,7 +152,7 @@ async def pg_entity_search(
             ORDER BY LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
             LIMIT :over
         """)
-        params2: dict = {"tsq": _build_tsquery(norm), "prefix": norm + "%", "over": over}
+        params2: dict = {"tsq": _build_tsquery(norm), "prefix": norm + "%", "over": limit * _OVERSAMPLE}
         if types:
             params2["types"] = list(types)
         result = await db.execute(tsv_sql, params2)
@@ -174,10 +207,11 @@ async def pg_autocomplete_entities(
     if version_id:
         version_filter_sql = "AND ei.version_id = :version_id"
 
-    # Stage 1: btree text_pattern_ops prefix scan.
-    # Within tier-1, sort by label LENGTH so the label closest in size to the
-    # query wins over coincidentally-alphabetically-earlier but longer labels
-    # (e.g. `membran` → "membrane" beats "membrana tympaniformis").
+    # Stage 1: btree text_pattern_ops prefix scan. Fetch a bounded pool in the
+    # index's C-collation order (early-terminating range scan), then rank in
+    # Python (_rank_prefix_rows: exact-first, shortest-label) — same reason as
+    # pg_entity_search: an ORDER BY LENGTH() sorted the whole match set and made
+    # common prefixes slow.
     prefix_sql = text(f"""
         SELECT ei.iri, ei.primary_label, ei.short, ei.type,
                ei.version_id, ei.ontology_id, ei.primary_label_norm,
@@ -190,11 +224,10 @@ async def pg_autocomplete_entities(
           {type_filter_sql}
           {ontology_filter_sql}
           {version_filter_sql}
-        ORDER BY CASE WHEN ei.primary_label_norm = :norm THEN 0 ELSE 1 END,
-                 LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
-        LIMIT :over
+        ORDER BY ei.primary_label_norm COLLATE "C", ei.iri
+        LIMIT :pool
     """)
-    params: dict = {"norm": norm, "prefix": norm + "%", "over": limit * _OVERSAMPLE}
+    params: dict = {"norm": norm, "prefix": norm + "%", "pool": _prefix_pool_size(limit)}
     if excluded_types:
         params["excluded"] = list(excluded_types)
     if ontology_ids:
@@ -202,14 +235,10 @@ async def pg_autocomplete_entities(
     if version_id:
         params["version_id"] = version_id
     result = await db.execute(prefix_sql, params)
+    ranked = _rank_prefix_rows(result.all(), norm, limit)
 
-    seen_iris: set[str] = set()
-    out: list[dict] = []
-    for row in result.all():
-        if row.iri in seen_iris:
-            continue
-        seen_iris.add(row.iri)
-        out.append({
+    def _ac_row(row: Any) -> dict:
+        return {
             "iri": row.iri,
             "label": row.primary_label,
             "short": row.short,
@@ -218,9 +247,12 @@ async def pg_autocomplete_entities(
             "ontology_id": row.ontology_id,
             "ontology_shortname": row.ontology_shortname,
             "primary_label_norm": row.primary_label_norm,
-        })
-        if len(out) >= limit:
-            return out[:limit]
+        }
+
+    seen_iris: set[str] = {row.iri for row in ranked}
+    out: list[dict] = [_ac_row(row) for row in ranked]
+    if len(out) >= limit:
+        return out[:limit]
 
     # Stage 2: tsv fallback for word-suffix matches (label or synonym contains
     # `<norm>` as a non-leading token). Only invoked when prefix tier under-fills.
