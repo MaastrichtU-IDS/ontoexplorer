@@ -137,22 +137,31 @@ async def pg_entity_search(
     # Multi-word queries are AND'd; the last token is prefix-matched (user may
     # still be typing it).
     if len(merged) < limit:
+        # Bound the candidate set first (GIN scan stops at :pool, no join/sort of
+        # every tsv match), then rank the small pool. Without this, a common token
+        # matched tens/hundreds of thousands of rows that were all joined + sorted
+        # by LENGTH before the LIMIT — seconds on the large index.
         tsv_sql = text(f"""
-            SELECT ei.iri, ei.primary_label, ei.short, ei.type,
-                   ei.version_id, ei.ontology_id, ei.source,
-                   ei.primary_label_norm,
+            SELECT c.iri, c.primary_label, c.short, c.type,
+                   c.version_id, c.ontology_id, c.source, c.primary_label_norm,
                    COALESCE(o.shortname, '') AS ontology_shortname
-            FROM entity_index ei
-            JOIN versions v ON v.id = ei.version_id
-            JOIN ontologies o ON o.id = ei.ontology_id
-            WHERE v.status NOT IN ('pending','failed','deprecated')
-              AND ei.search_tsv @@ to_tsquery('simple', :tsq)
-              AND ei.primary_label_norm NOT LIKE :prefix
-              {type_filter_sql}
-            ORDER BY LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
+            FROM (
+                SELECT ei.iri, ei.primary_label, ei.short, ei.type,
+                       ei.version_id, ei.ontology_id, ei.source, ei.primary_label_norm
+                FROM entity_index ei
+                WHERE ei.search_tsv @@ to_tsquery('simple', :tsq)
+                  AND ei.primary_label_norm NOT LIKE :prefix
+                  {type_filter_sql}
+                LIMIT :pool
+            ) c
+            JOIN versions v ON v.id = c.version_id
+                AND v.status NOT IN ('pending','failed','deprecated')
+            JOIN ontologies o ON o.id = c.ontology_id
+            ORDER BY LENGTH(c.primary_label_norm), c.primary_label_norm, c.iri
             LIMIT :over
         """)
-        params2: dict = {"tsq": _build_tsquery(norm), "prefix": norm + "%", "over": limit * _OVERSAMPLE}
+        params2: dict = {"tsq": _build_tsquery(norm), "prefix": norm + "%",
+                         "over": limit * _OVERSAMPLE, "pool": _prefix_pool_size(limit)}
         if types:
             params2["types"] = list(types)
         result = await db.execute(tsv_sql, params2)
@@ -256,26 +265,34 @@ async def pg_autocomplete_entities(
 
     # Stage 2: tsv fallback for word-suffix matches (label or synonym contains
     # `<norm>` as a non-leading token). Only invoked when prefix tier under-fills.
+    # Bound the candidate set (:pool) so a common token isn't joined + sorted in
+    # full — that was the multi-second cold cost on the autocomplete hot path.
     tsv_sql = text(f"""
-        SELECT ei.iri, ei.primary_label, ei.short, ei.type,
-               ei.version_id, ei.ontology_id, ei.primary_label_norm,
+        SELECT c.iri, c.primary_label, c.short, c.type,
+               c.version_id, c.ontology_id, c.primary_label_norm,
                COALESCE(o.shortname, '') AS ontology_shortname
-        FROM entity_index ei
-        JOIN versions v ON v.id = ei.version_id
-        JOIN ontologies o ON o.id = ei.ontology_id
-        WHERE v.status NOT IN ('pending','failed','deprecated')
-          AND ei.search_tsv @@ to_tsquery('simple', :tsq)
-          AND ei.primary_label_norm NOT LIKE :prefix
-          {type_filter_sql}
-          {ontology_filter_sql}
-          {version_filter_sql}
-        ORDER BY LENGTH(ei.primary_label_norm), ei.primary_label_norm, ei.iri
+        FROM (
+            SELECT ei.iri, ei.primary_label, ei.short, ei.type,
+                   ei.version_id, ei.ontology_id, ei.primary_label_norm
+            FROM entity_index ei
+            WHERE ei.search_tsv @@ to_tsquery('simple', :tsq)
+              AND ei.primary_label_norm NOT LIKE :prefix
+              {type_filter_sql}
+              {ontology_filter_sql}
+              {version_filter_sql}
+            LIMIT :pool
+        ) c
+        JOIN versions v ON v.id = c.version_id
+            AND v.status NOT IN ('pending','failed','deprecated')
+        JOIN ontologies o ON o.id = c.ontology_id
+        ORDER BY LENGTH(c.primary_label_norm), c.primary_label_norm, c.iri
         LIMIT :over
     """)
     params2: dict = {
         "tsq": _build_tsquery(norm),  # multi-word AND, last token prefix
         "prefix": norm + "%",
         "over": limit * _OVERSAMPLE,
+        "pool": _prefix_pool_size(limit),
     }
     if excluded_types:
         params2["excluded"] = list(excluded_types)
