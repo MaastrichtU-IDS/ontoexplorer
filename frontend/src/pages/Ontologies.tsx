@@ -1,4 +1,4 @@
-import { useState, useMemo, memo, useRef, useEffect } from 'react'
+import { useState, useMemo, memo, useRef, useEffect, lazy, Suspense } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useWindowVirtualizer } from '@tanstack/react-virtual'
@@ -6,11 +6,15 @@ import { useOntologiesInfinite } from '../hooks/useOntologiesInfinite'
 import { useRepositoryLanguages } from '../hooks/useRepositoryLanguages'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { api, Ontology, OwlProfileFleetEntry, ProfileName, LanguageTier, slugFromIri } from '../lib/api'
-import Coverage from './Coverage'
-import OwlProfile from './OwlProfile'
-import Compare from './Compare'
-import { Reuse } from './Reuse'
 import { endonym } from '../components/LanguagePicker'
+
+// The secondary tabs (Coverage/OWL Profile/Compare/Reuse — the last two pull the
+// heavier diff/compare code) only render when their tab is active, so lazy-load
+// them: the default List tab, the /ontologies landing view, ships without them.
+const Coverage = lazy(() => import('./Coverage'))
+const OwlProfile = lazy(() => import('./OwlProfile'))
+const Compare = lazy(() => import('./Compare'))
+const Reuse = lazy(() => import('./Reuse').then(m => ({ default: m.Reuse })))
 
 type Tab = 'list' | 'coverage' | 'profiles' | 'compare' | 'reuse'
 const TAB_VALUES: Tab[] = ['list', 'coverage', 'profiles', 'compare', 'reuse']
@@ -427,10 +431,14 @@ export default function Ontologies() {
         })}
       </div>
 
-      {tab === 'coverage' && <Coverage />}
-      {tab === 'profiles' && <OwlProfile />}
-      {tab === 'compare' && <Compare />}
-      {tab === 'reuse' && <Reuse />}
+      {tab !== 'list' && (
+        <Suspense fallback={<p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</p>}>
+          {tab === 'coverage' && <Coverage />}
+          {tab === 'profiles' && <OwlProfile />}
+          {tab === 'compare' && <Compare />}
+          {tab === 'reuse' && <Reuse />}
+        </Suspense>
+      )}
       {tab === 'list' && <>
       {/* Group filter chips */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.6rem' }}>
