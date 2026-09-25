@@ -130,6 +130,25 @@ def create_app() -> FastAPI:
     if settings.auth_bypass:
         log.warning("SECURITY: auth_bypass=true — every request is silently dev@localhost (do not ship)")
 
+    @app.on_event("startup")
+    async def _warm_embedder() -> None:
+        # Load the semantic-search embedding model per worker at boot, off the
+        # request path. Without this the model cold-loads on the first semantic
+        # query each of the (workers x replicas) processes handles — the erratic
+        # multi-second spikes on the home search. Background thread so startup /
+        # readiness isn't blocked.
+        import threading
+
+        def _warm() -> None:
+            try:
+                from ontoexplorer.modules.search.embedder import embed_query
+                embed_query("warmup")
+                log.info("embedder warmed")
+            except Exception as e:  # never let warmup failure affect serving
+                log.warning("embedder warmup failed", error=str(e))
+
+        threading.Thread(target=_warm, name="embedder-warmup", daemon=True).start()
+
     log.info("OntoExplorer API ready", version=__version__, environment=settings.environment)
     return app
 

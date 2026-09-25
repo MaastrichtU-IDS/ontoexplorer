@@ -244,9 +244,15 @@ function KeywordSearch({ typeFilters, onTypeFiltersChange }: {
   // 60s Redis response cache so refinements feel instant.
   const debouncedQuery = useDebounced(query.trim(), 200)
   const activeQuery = debouncedQuery.length >= 2 ? debouncedQuery : ''
-  const { data, isFetching } = useGlobalSearch(activeQuery, activeQuery.length >= 2, typeFilters)
+  // Keyword results (fast) drive the main list and its loading state. Semantic
+  // (vector) search runs as a separate, non-blocking query so a slow embed never
+  // holds up the primary results — it fills the "related concepts" section when
+  // it arrives.
+  const { data, isFetching } = useGlobalSearch(activeQuery, false, typeFilters)
+  const { data: semanticData, isFetching: semanticFetching } =
+    useGlobalSearch(activeQuery, activeQuery.length >= 2, typeFilters)
   const results = data?.results ?? []
-  const semanticResults = data?.semantic_results ?? []
+  const semanticResults = semanticData?.semantic_results ?? []
 
   // Build the term link from the result itself (shortname → clean slug, else the
   // ontology_id, which the term page resolves server-side). This works for every
@@ -323,6 +329,11 @@ function KeywordSearch({ typeFilters, onTypeFiltersChange }: {
         </p>
       )}
       <ResultList results={results} pathFor={pathFor} ontologyNameFor={ontologyNameFor} />
+      {semanticFetching && results.length > 0 && semanticResults.length === 0 && (
+        <p style={{ margin: '1rem 0 0', fontSize: 11, color: 'var(--text-dim)', textAlign: 'center' }}>
+          finding related concepts…
+        </p>
+      )}
       {semanticResults.length > 0 && (
         <>
           <div style={{
