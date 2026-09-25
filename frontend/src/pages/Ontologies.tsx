@@ -1,15 +1,20 @@
-import { useState, useMemo, memo } from 'react'
+import { useState, useMemo, memo, useRef, useEffect, lazy, Suspense } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { useOntologySearch } from '../hooks/useOntologySearch'
+import { useWindowVirtualizer } from '@tanstack/react-virtual'
+import { useOntologiesInfinite } from '../hooks/useOntologiesInfinite'
 import { useRepositoryLanguages } from '../hooks/useRepositoryLanguages'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { api, Ontology, OwlProfileFleetEntry, ProfileName, LanguageTier, slugFromIri } from '../lib/api'
-import Coverage from './Coverage'
-import OwlProfile from './OwlProfile'
-import Compare from './Compare'
-import { Reuse } from './Reuse'
 import { endonym } from '../components/LanguagePicker'
+
+// The secondary tabs (Coverage/OWL Profile/Compare/Reuse — the last two pull the
+// heavier diff/compare code) only render when their tab is active, so lazy-load
+// them: the default List tab, the /ontologies landing view, ships without them.
+const Coverage = lazy(() => import('./Coverage'))
+const OwlProfile = lazy(() => import('./OwlProfile'))
+const Compare = lazy(() => import('./Compare'))
+const Reuse = lazy(() => import('./Reuse').then(m => ({ default: m.Reuse })))
 
 type Tab = 'list' | 'coverage' | 'profiles' | 'compare' | 'reuse'
 const TAB_VALUES: Tab[] = ['list', 'coverage', 'profiles', 'compare', 'reuse']
@@ -132,12 +137,11 @@ const OntologyRow = memo(function OntologyRow({ o, profileEntry }: { o: Ontology
   const lastModified = latest?.created_at ?? o.created_at
 
   return (
-    <tr
+    <div
       className="ontology-row"
       onClick={() => latest && navigate(`/ontologies/${o.shortname ?? slugFromIri(o.iri)}`)}
-      style={{ cursor: latest ? 'pointer' : 'default', borderBottom: '2px solid var(--border)' }}
+      style={{ cursor: latest ? 'pointer' : 'default', borderBottom: '2px solid var(--border)', padding: '10px 12px' }}
     >
-      <td style={{ padding: '10px 12px' }}>
         {/* Name · IRI chip · group badges */}
         {o.label && (
           <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', marginBottom: 2 }}>
@@ -233,8 +237,7 @@ const OntologyRow = memo(function OntologyRow({ o, profileEntry }: { o: Ontology
             modified {new Date(lastModified).toLocaleDateString()}
           </span>
         </div>
-      </td>
-    </tr>
+    </div>
   )
 })
 
@@ -329,7 +332,22 @@ export default function Ontologies() {
   const [sortCol, setSortCol] = useState<SortCol>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const reuses = searchParams.get('reuses') ?? undefined
-  const { data, isLoading } = useOntologySearch(query, group || undefined, profile || undefined, reuses, language || undefined)
+  // Server-side pagination: the server owns sort + every filter (incl. the
+  // language-code facet), and we page in on scroll. `ontologies` is the pages
+  // flattened; `total` is the full match count for the header.
+  const {
+    ontologies, total, isLoading,
+    fetchNextPage, hasNextPage, isFetchingNextPage,
+  } = useOntologiesInfinite({
+    query,
+    group: group || undefined,
+    profile: profile || undefined,
+    reuses,
+    language: language || undefined,
+    langs: [...langs],
+    sort: sortCol,
+    dir: sortDir,
+  })
   const repoLangs = useRepositoryLanguages()
   const { data: profileFleet } = useQuery({
     queryKey: ['owl-profile', 'fleet'],
@@ -355,19 +373,28 @@ export default function Ontologies() {
     else { setSortCol(col); setSortDir('asc') }
   }
 
-  const ontologies = useMemo(() => {
-    const list = data?.ontologies ?? []
-    const langFiltered = langs.size === 0
-      ? list
-      : list.filter(o => (o.languages ?? []).some(l => langs.has(l.lang)))
-    return [...langFiltered].sort((a, b) => {
-      const cmp = sortCol === 'name'
-        ? displayName(a).localeCompare(displayName(b))
-        : new Date(a.latest_version?.created_at ?? a.created_at).getTime()
-          - new Date(b.latest_version?.created_at ?? b.created_at).getTime()
-      return sortDir === 'asc' ? cmp : -cmp
-    })
-  }, [data, langs, sortCol, sortDir])
+  // Virtualize the list: rows are non-trivial and the catalog is large, so
+  // window-scroll virtualization renders only the visible window while keeping
+  // the full-page scroll UX. Rows are variable-height (optional label/languages/
+  // description/stats + expand toggle), measured dynamically via measureElement.
+  const listRef = useRef<HTMLDivElement>(null)
+  const rowVirtualizer = useWindowVirtualizer({
+    count: ontologies.length,
+    estimateSize: () => 96,
+    overscan: 8,
+    getItemKey: (i) => ontologies[i].id,
+    scrollMargin: listRef.current?.offsetTop ?? 0,
+  })
+
+  // Infinite scroll: fetch the next page once the virtualizer is rendering
+  // within a few rows of the end of what's loaded.
+  const virtualItems = rowVirtualizer.getVirtualItems()
+  const lastVisibleIndex = virtualItems.length ? virtualItems[virtualItems.length - 1].index : 0
+  useEffect(() => {
+    if (lastVisibleIndex >= ontologies.length - 8 && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage()
+    }
+  }, [lastVisibleIndex, ontologies.length, hasNextPage, isFetchingNextPage, fetchNextPage])
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '0.75rem 0.75rem' : '2rem 1.5rem' }}>
@@ -404,10 +431,14 @@ export default function Ontologies() {
         })}
       </div>
 
-      {tab === 'coverage' && <Coverage />}
-      {tab === 'profiles' && <OwlProfile />}
-      {tab === 'compare' && <Compare />}
-      {tab === 'reuse' && <Reuse />}
+      {tab !== 'list' && (
+        <Suspense fallback={<p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading…</p>}>
+          {tab === 'coverage' && <Coverage />}
+          {tab === 'profiles' && <OwlProfile />}
+          {tab === 'compare' && <Compare />}
+          {tab === 'reuse' && <Reuse />}
+        </Suspense>
+      )}
       {tab === 'list' && <>
       {/* Group filter chips */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.6rem' }}>
@@ -601,16 +632,32 @@ export default function Ontologies() {
       ) : (
         <>
           <p style={{ color: 'var(--text-dim)', fontSize: 11, margin: '0 0 0.5rem' }}>
-            {ontologies.length} ontolog{ontologies.length === 1 ? 'y' : 'ies'}
+            {(total ?? ontologies.length)} ontolog{(total ?? ontologies.length) === 1 ? 'y' : 'ies'}
             {(query || group || profile || reuses || langs.size > 0) && ' matching filter'}
           </p>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <tbody>
-              {ontologies.map(o => (
-                <OntologyRow key={o.id} o={o} profileEntry={profileByOntologyId.get(o.id)} />
-              ))}
-            </tbody>
-          </table>
+          <div ref={listRef} style={{ position: 'relative', height: rowVirtualizer.getTotalSize(), width: '100%' }}>
+            {virtualItems.map(vi => {
+              const o = ontologies[vi.index]
+              return (
+                <div
+                  key={vi.key}
+                  data-index={vi.index}
+                  ref={rowVirtualizer.measureElement}
+                  style={{
+                    position: 'absolute', top: 0, left: 0, width: '100%',
+                    transform: `translateY(${vi.start - rowVirtualizer.options.scrollMargin}px)`,
+                  }}
+                >
+                  <OntologyRow o={o} profileEntry={profileByOntologyId.get(o.id)} />
+                </div>
+              )
+            })}
+          </div>
+          {isFetchingNextPage && (
+            <p style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)', textAlign: 'center', padding: '0.75rem' }}>
+              Loading more…
+            </p>
+          )}
         </>
       )}
 

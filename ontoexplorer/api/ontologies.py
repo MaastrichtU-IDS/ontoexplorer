@@ -1,6 +1,7 @@
 """Ontologies REST API — submit, list, metadata, versions, terms, download, deprecate."""
 
 import asyncio
+import re
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -560,6 +561,74 @@ async def patch_ontology(
 
 # ── List ───────────────────────────────────────────────────────────────────────
 
+# Fields the /ontologies list view (the table) actually renders. `view=list`
+# projects each row to just these, which roughly halves the payload (~2.7MB →
+# ~1.4MB at ~1900 rows): `latest_version` collapses to its `created_at` (the row
+# only needs modified-date + "has a ready version"), the long `description` is
+# capped, and unused siblings (owner/title/sync/version-id) are dropped. The full
+# shape stays the default so other consumers and the API contract are unchanged.
+_LIST_VIEW_FIELDS = (
+    "id", "iri", "shortname", "label", "groups", "created_at",
+    "class_count", "object_property_count", "datatype_property_count",
+    "annotation_property_count", "individual_count", "triple_count",
+    "languages", "language_tier",
+)
+_LIST_DESC_CAP = 500
+
+
+def _leanify_list_row(r: dict) -> dict:
+    lv = r.get("latest_version")
+    desc = r.get("description") or ""
+    if len(desc) > _LIST_DESC_CAP:
+        desc = desc[:_LIST_DESC_CAP].rsplit(" ", 1)[0] + "…"
+    out = {k: r.get(k) for k in _LIST_VIEW_FIELDS}
+    out["latest_version"] = {"created_at": lv.get("created_at")} if lv else None
+    out["description"] = desc
+    return out
+
+
+# ── Sort / filter helpers for server-side pagination ───────────────────────────
+# The list endpoint is server-authoritative for sort + language-code filter so
+# the frontend can paginate (infinite scroll) instead of fetching the whole
+# catalogue. These operate on already-built row dicts (the Python "load-all"
+# filter paths); the unfiltered/group path sorts + paginates in SQL instead.
+
+_SORT_COLS = {"name", "date"}
+_SORT_DIRS = {"asc", "desc"}
+_EXT_RE = re.compile(r"\.(owl|ttl|rdf|obo|json|xml|nt)$", re.IGNORECASE)
+
+
+def _row_display_name(r: dict) -> str:
+    """Mirror the frontend `displayName` (Ontologies.tsx): the shortname, else
+    the IRI's last path/fragment segment with a known file extension stripped."""
+    sn = r.get("shortname")
+    if sn:
+        return sn
+    iri = (r.get("iri") or "").rstrip("/#")
+    last = re.split(r"[/#]", iri)[-1] if iri else ""
+    return _EXT_RE.sub("", last) or (r.get("iri") or "")
+
+
+def _row_modified(r: dict) -> str:
+    """Timestamp for date sort: the latest version's created_at (ISO string),
+    falling back to the ontology's own created_at. ISO8601 sorts chronologically."""
+    lv = r.get("latest_version") or {}
+    return lv.get("created_at") or r.get("created_at") or ""
+
+
+def _sort_rows(rows: list[dict], sort: str, direction: str) -> list[dict]:
+    reverse = direction == "desc"
+    if sort == "date":
+        return sorted(rows, key=_row_modified, reverse=reverse)
+    return sorted(rows, key=lambda r: _row_display_name(r).casefold(), reverse=reverse)
+
+
+def _row_has_language(r: dict, langs: set[str]) -> bool:
+    """True if the ontology has labels in any of the requested language codes —
+    the server-side equivalent of the client's `langs` facet filter."""
+    return any((entry.get("lang") in langs) for entry in (r.get("languages") or []))
+
+
 @router.get("", summary="List ontologies")
 async def list_ontologies(
     q: str | None = Query(None, description="Keyword filter on ontology name, IRI, or description"),
@@ -568,6 +637,10 @@ async def list_ontologies(
     language: str | None = Query(None, description="Filter by language tier: rdf | rdfs | rdfs-plus | owl"),
     reuses: str | None = Query(None, description="Filter: latest version reuses this prefix"),
     mine: bool = Query(False, description="Only ontologies the caller owns or maintains"),
+    lang: list[str] = Query(default=[], description="Filter: has labels in this language code (repeatable, e.g. ?lang=en&lang=fr)"),
+    sort: str = Query("name", description="Sort column: name | date (last modified)"),
+    dir: str = Query("asc", description="Sort direction: asc | desc"),
+    view: str | None = Query(None, description="Response shape: 'list' returns a lean per-row projection for the table view; default is the full shape"),
     limit: int = Query(50, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -575,6 +648,12 @@ async def list_ontologies(
 ):
     import json as _json
     from sqlalchemy import func
+
+    if sort not in _SORT_COLS:
+        raise HTTPException(status_code=422, detail=f"Invalid sort '{sort}'. Must be one of: {', '.join(sorted(_SORT_COLS))}")
+    if dir not in _SORT_DIRS:
+        raise HTTPException(status_code=422, detail=f"Invalid dir '{dir}'. Must be one of: {', '.join(sorted(_SORT_DIRS))}")
+    lang_set = {code for code in lang if code}
 
     # Validate ?profile= param early (before any DB work)
     if profile is not None:
@@ -595,25 +674,59 @@ async def list_ontologies(
                 detail=f"Invalid language '{language}'. Must be one of: {', '.join(LANGUAGE_TIERS)}",
             )
 
-    # When filtering by q or profile we must load all and filter in Python.
-    # At current scale (~24 ontologies) this is negligible; revisit if catalog grows large.
-    stmt = select(Ontology).order_by(Ontology.created_at.desc())
+    # `q`, `profile`, `language` (tier), `reuses`, and `lang` (code) are all
+    # Redis/cache-derived, so those requests must load every matching row and
+    # filter/sort/slice in Python. The unfiltered/group-only browse (the hot
+    # path that transfers the whole catalogue) instead sorts + paginates in SQL,
+    # so first paint fetches one page regardless of catalogue size.
+    filtered = bool(q or profile or language or reuses or lang_set)
 
     # ?mine=true → restrict to the caller's owned/maintained ontologies (the
     # contributor dashboard). Anonymous callers get an empty list.
+    conditions = []
     if mine:
         from ontoexplorer.modules.auth.permissions import owned_or_maintained_ontology_ids
         my_ids = await owned_or_maintained_ontology_ids(db, user.id) if user else []
-        stmt = stmt.where(Ontology.id.in_(my_ids))
+        conditions.append(Ontology.id.in_(my_ids))
     if group:
         import json as _json_grp
         from sqlalchemy import text
         if group == "other":
-            stmt = stmt.where(func.jsonb_array_length(Ontology.groups) == 0)
+            conditions.append(func.jsonb_array_length(Ontology.groups) == 0)
         else:
-            stmt = stmt.where(text("groups @> cast(:grp as jsonb)").bindparams(grp=_json_grp.dumps([group])))
-    if not q and not profile and not language and not reuses:
+            conditions.append(text("groups @> cast(:grp as jsonb)").bindparams(grp=_json_grp.dumps([group])))
+
+    stmt = select(Ontology).where(*conditions)
+
+    total: int | None = None
+    if not filtered:
+        from sqlalchemy import nulls_last
+        if sort == "date":
+            # Latest READY version's created_at. NB: this is max(created_at), which
+            # can differ from the pin/version-IRI-aware default version used to
+            # populate `latest_version` in pinned/back-catalogue cases.
+            order_col = (
+                select(func.max(OntologyVersion.created_at))
+                .where(
+                    OntologyVersion.ontology_id == Ontology.id,
+                    OntologyVersion.status == "ready",
+                )
+                .correlate(Ontology)
+                .scalar_subquery()
+            )
+        else:
+            # Approximates the frontend `displayName`; for rows without a shortname
+            # this orders by full IRI rather than the IRI's last segment.
+            order_col = func.lower(func.coalesce(func.nullif(Ontology.shortname, ""), Ontology.title, Ontology.iri))
+        primary = order_col.desc() if dir == "desc" else order_col.asc()
+        stmt = stmt.order_by(nulls_last(primary), Ontology.created_at.desc())
+        total = (await db.execute(select(func.count()).select_from(Ontology).where(*conditions))).scalar_one()
         stmt = stmt.offset(offset).limit(limit)
+    else:
+        # Deterministic base order; the authoritative sort happens in Python once
+        # the Redis-derived filters have narrowed the set.
+        stmt = stmt.order_by(Ontology.created_at.desc())
+
     result = await db.execute(stmt)
     ontologies = result.scalars().all()
 
@@ -765,42 +878,38 @@ async def list_ontologies(
         matching_ids = await filter_ontology_ids_by_reuse(db, all_ids, reuses.lower())
         rows = [r for r in rows if r["id"] in matching_ids]
 
-    # Python-side filter + ranked sort when q is present.
-    # Primary rank:
-    #   0 → exact match on derived short name or IRI
-    #   1 → substring in short name or IRI  (canonical identifiers)
-    #   2 → substring in label              (ontology's own title metadata)
-    #   3 → substring in description only
-    # Within rank 1, secondary sort is match-target length (shorter = tighter match).
+    # Language-code facet filter (the client's `langs` chips, now server-side).
+    if lang_set:
+        rows = [r for r in rows if _row_has_language(r, lang_set)]
+
+    # Keyword filter: keep rows matching q on short name / IRI / label / description.
+    # Result order is the sort param (below), matching the table's sort controls —
+    # the same as the prior behaviour, where the client re-sorted server results.
     if q:
         ql = q.lower()
 
-        def _rank_score(r: dict) -> tuple[int, int]:
+        def _matches(r: dict) -> bool:
             shortname = (r.get("shortname") or "").lower()
             iri       = (r.get("iri") or "").lower()
             label     = (r.get("label") or "").lower()
             desc      = (r.get("description") or "").lower()
-            # Prefer explicit shortname; fall back to last IRI path segment
             seg  = iri.rstrip("/").rsplit("/", 1)[-1] if iri else ""
             name = shortname or seg
-            if name == ql or iri == ql:
-                return (0, 0)
-            if ql in name or ql in iri:
-                return (1, len(name))   # shorter name → tighter match → sorts first
-            if ql in label:
-                return (2, len(label))
-            if ql in desc:
-                return (3, 0)
-            return (99, 0)
+            return ql in name or ql in iri or ql in label or ql in desc
 
-        ranked = [(r, _rank_score(r)) for r in rows]
-        rows = [r for r, score in sorted(ranked, key=lambda x: x[1]) if score[0] < 99]
-        rows = rows[offset: offset + limit]
-    elif profile or reuses:
-        # Profile or reuse filter already applied above; now apply pagination
-        rows = rows[offset: offset + limit]
+        rows = [r for r in rows if _matches(r)]
 
-    return {"ontologies": rows, "offset": offset, "limit": limit}
+    if filtered:
+        # Redis-derived filter path: sort + paginate in Python (exact displayName).
+        total = len(rows)
+        rows = _sort_rows(rows, sort, dir)
+        rows = rows[offset: offset + limit]
+    # else: hot path already sorted + paginated + counted in SQL.
+
+    if view == "list":
+        rows = [_leanify_list_row(r) for r in rows]
+
+    return {"ontologies": rows, "offset": offset, "limit": limit, "total": total}
 
 
 # ── Single ontology metadata ───────────────────────────────────────────────────
