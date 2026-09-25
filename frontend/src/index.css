@@ -340,8 +340,14 @@ pre {
 
 @media (max-width: 767px) {
   /* Never let the page itself scroll sideways; specific wide widgets
-     opt back into their own horizontal scroll. */
-  html, body { overflow-x: hidden; }
+     opt back into their own horizontal scroll.
+     `clip`, not `hidden`: with body { height: 100% }, `overflow-x: hidden`
+     computes overflow-y to `auto` (the CSS visible↔non-visible rule), turning
+     body into a fixed-height internal scroll container. That left the window
+     unscrollable, so the window-scroll virtualizer on /ontologies never paged
+     past the first 50 rows on mobile. `clip` blocks sideways scroll without
+     creating a scroll container, so the page scrolls the window normally. */
+  html, body { overflow-x: clip; }
 
   /* (Wide data tables already sit in their own overflow-x:auto wrapper, so they
      scroll in place — no table-level rule needed, and forcing display:block here
