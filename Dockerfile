@@ -59,6 +59,14 @@ RUN uv sync --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
+# Bake the semantic-search embedding model into the image so it never downloads
+# at runtime. Previously the ~500MB model lived in a per-pod emptyDir and was
+# re-fetched on the first semantic query after every restart (the ~20s spikes).
+# Shipping it in the image means every worker/replica loads it locally.
+ENV FASTEMBED_CACHE_PATH=/opt/fastembed
+RUN mkdir -p /opt/fastembed \
+    && python -c "from ontoexplorer.modules.search.embedder import get_embedder; get_embedder()"
+
 # Build provenance — passed by CI (docker build --build-arg …) and surfaced by
 # GET /api/v1/version. Empty for a plain local build.
 ARG GIT_REF=""
