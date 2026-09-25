@@ -1,0 +1,10 @@
+
+# playwright e2e
+e2e-report/
+test-results/
+playwright/.cache/
+
+# docker-run HOME artifacts
+.local/
+.cache/
+ms-playwright/

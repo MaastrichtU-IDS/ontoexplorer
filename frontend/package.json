@@ -8,7 +8,10 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "e2e": "playwright test",
+    "e2e:report": "playwright show-report e2e-report",
+    "e2e:install": "playwright install --with-deps chromium firefox webkit"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.56.2",
@@ -20,6 +23,9 @@
     "recharts": "^2.12.7"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.10.1",
+    "@playwright/test": "1.63.0",
+    "@types/node": "^22.7.5",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
