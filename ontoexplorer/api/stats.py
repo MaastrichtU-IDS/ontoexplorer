@@ -159,11 +159,23 @@ async def get_usage_mine(
     }
 
 
+# The unique-entity counts fan 5x SUNIONSTORE across ~1900 per-version sets, which
+# is several seconds server-side. Stats only change on (re)index, and this loads on
+# every home-page visit — so cache the whole result briefly.
+_PUBLIC_STATS_CACHE_KEY = "stats:public:v1"
+_PUBLIC_STATS_TTL = 300  # seconds
+
+
 @router.get("/public", summary="Public aggregate statistics (no auth required)")
 async def get_public_stats(db: AsyncSession = Depends(get_db)):
     import json
     import uuid as _uuid
     from ontoexplorer.modules.search.indexer import _get_redis, _stats_cache_key, _type_key
+
+    _r = _get_redis()
+    _cached = await asyncio.to_thread(_r.get, _PUBLIC_STATS_CACHE_KEY)
+    if _cached:
+        return json.loads(_cached)
 
     # Latest ready version per ontology (same logic as list endpoint)
     subq = (
@@ -247,6 +259,10 @@ async def get_public_stats(db: AsyncSession = Depends(get_db)):
 
     result = await asyncio.to_thread(_compute_stats, version_ids)
     result["total_ontologies"] = total_ontologies
+    try:
+        await asyncio.to_thread(_r.set, _PUBLIC_STATS_CACHE_KEY, json.dumps(result), ex=_PUBLIC_STATS_TTL)
+    except Exception:
+        pass
     return result
 
 

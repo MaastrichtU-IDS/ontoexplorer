@@ -55,52 +55,60 @@ def _is_expression(node) -> bool:
 # ── Repository-wide languages ─────────────────────────────────────────────────
 
 # Repository-wide language inventory changes only when an ontology is (re)indexed;
-# the home page loads it on every visit. Cache it, and compute it with pipelined
-# Redis reads — the previous per-version round-trips took ~9s across ~1900 ontologies.
-_REPO_LANGS_CACHE_KEY = "repo:languages:v2"
+# the home page loads it on every visit. Cache it, and derive the version list from
+# Postgres (latest ready version per ontology) rather than SCANning the whole Redis
+# keyspace for meta keys — that scan was the ~9-11s cold cost at ~1900 ontologies.
+_REPO_LANGS_CACHE_KEY = "repo:languages:v3"
 _REPO_LANGS_TTL = 300  # seconds
 
 
 @router.get("/languages", summary="All languages present across indexed ontologies")
-async def get_repository_languages():
-    """Aggregate language tags from every indexed ontology version in Redis."""
+async def get_repository_languages(db: AsyncSession = Depends(get_db)):
+    """Aggregate language tags across the latest ready version of each ontology."""
     import asyncio
     import json as _json
 
-    def _aggregate() -> list[dict]:
-        from ontoexplorer.modules.search.indexer import _get_redis, _langs_key
+    from sqlalchemy import func
+
+    from ontoexplorer.modules.search.indexer import _get_redis
+    r = _get_redis()
+    cached = await asyncio.to_thread(r.get, _REPO_LANGS_CACHE_KEY)
+    if cached:
+        return _json.loads(cached)
+
+    # Latest ready version per ontology (same source as /stats/public) — a fast
+    # indexed query, instead of scanning Redis for every meta key.
+    subq = (
+        select(
+            OntologyVersion.ontology_id,
+            func.max(OntologyVersion.created_at).label("max_created"),
+        )
+        .where(OntologyVersion.status == "ready")
+        .group_by(OntologyVersion.ontology_id)
+        .subquery()
+    )
+    vr = await db.execute(
+        select(OntologyVersion.id).join(
+            subq,
+            (OntologyVersion.ontology_id == subq.c.ontology_id)
+            & (OntologyVersion.created_at == subq.c.max_created),
+        )
+    )
+    version_ids = list(vr.scalars().all())
+
+    def _aggregate(vids: list[str]) -> list[dict]:
+        from ontoexplorer.modules.search.indexer import _langs_key
         from ontoexplorer.modules.search.lang import canonical_lang
-        r = _get_redis()
-
-        cached = r.get(_REPO_LANGS_CACHE_KEY)
-        if cached:
-            return _json.loads(cached)
-
-        prefix = "search:meta:"
-        meta_keys = list(r.scan_iter(f"{prefix}*", count=5000))
-
-        # Keep only v2-schema versions — one pipelined batch instead of a full
-        # hgetall round-trip per key.
-        pipe = r.pipeline(transaction=False)
-        for k in meta_keys:
-            pipe.hget(k, "schema_version")
-        schema_versions = pipe.execute()
-        version_ids = [
-            k[len(prefix):] for k, sv in zip(meta_keys, schema_versions) if sv == "v2"
-        ]
-
-        # Fetch every version's language counts in a single pipelined batch.
-        pipe2 = r.pipeline(transaction=False)
-        for vid in version_ids:
-            pipe2.hgetall(_langs_key(vid))
-        lang_maps = pipe2.execute()
-
         counts: dict[str, int] = {}
-        for mapping in lang_maps:
-            for lang, count in (mapping or {}).items():
-                key = canonical_lang(lang)
-                counts[key] = counts.get(key, 0) + int(count)
-
+        if vids:
+            # One pipelined batch of hgetall — no per-version round-trips, no scan.
+            pipe = r.pipeline(transaction=False)
+            for vid in vids:
+                pipe.hgetall(_langs_key(vid))
+            for mapping in pipe.execute():
+                for lang, count in (mapping or {}).items():
+                    key = canonical_lang(lang)
+                    counts[key] = counts.get(key, 0) + int(count)
         result = sorted(
             [{"lang": k, "label_count": v} for k, v in counts.items()],
             key=lambda x: x["lang"],
@@ -111,7 +119,7 @@ async def get_repository_languages():
             pass
         return result
 
-    return await asyncio.to_thread(_aggregate)
+    return await asyncio.to_thread(_aggregate, version_ids)
 
 
 # ── Global search ─────────────────────────────────────────────────────────────
