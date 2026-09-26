@@ -240,7 +240,6 @@ async def pg_autocomplete_entities(
         JOIN ontologies o ON o.id = ei.ontology_id
         WHERE v.status NOT IN ('pending','failed','deprecated')
           AND ei.primary_label_norm LIKE :prefix
-          {type_filter_sql}
           {ontology_filter_sql}
           {version_filter_sql}
         -- No secondary sort key: it keeps this a pure index scan so LIMIT stops at
@@ -248,18 +247,21 @@ async def pg_autocomplete_entities(
         -- primary_label_norm group (up to ~1 row per ontology for a shared
         -- concept) before the LIMIT applies — thousands of duplicate rows +
         -- cold I/O = the multi-second prefix stage. Dedup/rank happens in Python.
+        -- The excluded-type filter is applied in Python below, not here: a
+        -- `type <> ALL(...)` predicate made the index scan walk far past :pool at
+        -- scale (search, which lacks it, stayed fast).
         ORDER BY ei.primary_label_norm COLLATE "C"
         LIMIT :pool
     """)
     params: dict = {"norm": norm, "prefix": norm + "%", "pool": _prefix_pool_size(limit)}
-    if excluded_types:
-        params["excluded"] = list(excluded_types)
     if ontology_ids:
         params["ontology_ids"] = ontology_ids
     if version_id:
         params["version_id"] = version_id
     _m = time.perf_counter()
     _rows = (await db.execute(prefix_sql, params)).all()
+    if excluded_types:
+        _rows = [r for r in _rows if r.type not in excluded_types]
     if (_el := round((time.perf_counter() - _m) * 1000)) > 800:
         _log.warning("ac_stage_slow", stage="prefix", norm=norm, ms=_el, rows=len(_rows))
     ranked = _rank_prefix_rows(_rows, norm, limit)
