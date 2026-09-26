@@ -229,8 +229,9 @@ export default function QuerySidebar({ yasguiRef }: Props) {
             </div>
           </div>
 
-          {/* List */}
-          <div style={{ flex: 1, overflowY: 'auto' }}>
+          {/* List — tabIndex so keyboard users can scroll it; the rows are
+              onClick divs, not natively focusable (scrollable-region-focusable, #192). */}
+          <div tabIndex={0} role="group" aria-label="Saved queries" style={{ flex: 1, overflowY: 'auto' }}>
             {filteredQueries.length === 0 && (
               <div style={{ padding: '10px', color: 'var(--text-dim)', fontSize: '0.65rem', textAlign: 'center' }}>
                 {search ? 'No matches' : 'No saved queries yet'}
@@ -286,7 +287,7 @@ export default function QuerySidebar({ yasguiRef }: Props) {
       )}
 
       {view === 'list' && tab === 'starters' && (
-        <div style={{ flex: 1, overflowY: 'auto' }}>
+        <div tabIndex={0} role="group" aria-label="Starter queries" style={{ flex: 1, overflowY: 'auto' }}>
           {startersByCategory.length === 0 && (
             <div style={{ padding: '10px', color: 'var(--text-dim)', fontSize: '0.65rem', textAlign: 'center' }}>
               No starters available
