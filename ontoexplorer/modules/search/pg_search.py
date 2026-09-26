@@ -124,7 +124,12 @@ async def pg_entity_search(
         WHERE v.status NOT IN ('pending','failed','deprecated')
           AND ei.primary_label_norm LIKE :prefix
           {type_filter_sql}
-        ORDER BY ei.primary_label_norm COLLATE "C", ei.iri
+        -- No secondary sort key: it keeps this a pure index scan so LIMIT stops at
+        -- :pool rows. With a tiebreaker, Postgres must buffer each full
+        -- primary_label_norm group (up to ~1 row per ontology for a shared
+        -- concept) before the LIMIT applies — thousands of duplicate rows +
+        -- cold I/O = the multi-second prefix stage. Dedup/rank happens in Python.
+        ORDER BY ei.primary_label_norm COLLATE "C"
         LIMIT :pool
     """)
     params: dict = {"norm": norm, "prefix": norm + "%", "pool": _prefix_pool_size(limit)}
@@ -238,7 +243,12 @@ async def pg_autocomplete_entities(
           {type_filter_sql}
           {ontology_filter_sql}
           {version_filter_sql}
-        ORDER BY ei.primary_label_norm COLLATE "C", ei.iri
+        -- No secondary sort key: it keeps this a pure index scan so LIMIT stops at
+        -- :pool rows. With a tiebreaker, Postgres must buffer each full
+        -- primary_label_norm group (up to ~1 row per ontology for a shared
+        -- concept) before the LIMIT applies — thousands of duplicate rows +
+        -- cold I/O = the multi-second prefix stage. Dedup/rank happens in Python.
+        ORDER BY ei.primary_label_norm COLLATE "C"
         LIMIT :pool
     """)
     params: dict = {"norm": norm, "prefix": norm + "%", "pool": _prefix_pool_size(limit)}
