@@ -156,7 +156,9 @@ function StatCard({ label, value, subtitle, to }: { label: string; value: number
         {label}
       </div>
       {subtitle && (
-        <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 3, opacity: 0.7 }}>
+        // No opacity: --text-dim already de-emphasises; dimming further dropped
+        // this below 4.5:1 contrast (#192).
+        <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 3 }}>
           {subtitle}
         </div>
       )}

@@ -132,6 +132,26 @@
 .cm-s-default .cm-atom {
   color: #e5c07b !important;
 }
+
+/* Light-theme syntax colours. The hard-coded token colour above and YASQE's
+   built-in defaults (#ff5500 strings, #008855 variables, amber vars) are tuned
+   for the dark editor and fall well below WCAG AA on the light editor surface —
+   the amber vars measured 1.65:1 (#192). Re-map the affected tokens to
+   AA-compliant hues under the light themes; dark themes keep the values above. */
+:root[data-theme="arctic"] .cm-s-default .cm-atom,
+:root[data-theme="light"] .cm-s-default .cm-atom {
+  color: #8a5a0d !important;
+}
+:root[data-theme="arctic"] .cm-s-default .cm-string,
+:root[data-theme="arctic"] .cm-s-default .cm-string-2,
+:root[data-theme="light"] .cm-s-default .cm-string,
+:root[data-theme="light"] .cm-s-default .cm-string-2 {
+  color: #b34700 !important;
+}
+:root[data-theme="arctic"] .cm-s-default .cm-variable-3,
+:root[data-theme="light"] .cm-s-default .cm-variable-3 {
+  color: #00704a !important;
+}
 /* Match-highlight (caused the white background on PREFIX and other tokens) */
 .yasqe .cm-matchhighlight {
   background-color: rgba(103, 232, 249, 0.12) !important;

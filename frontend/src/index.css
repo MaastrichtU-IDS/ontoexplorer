@@ -164,11 +164,15 @@
 
   --text: #1a2a3a;
   --text-bright: #0d1a28;
-  /* WCAG AA: dim/muted/accent raised to >=4.5:1 on this theme's light surfaces
-     (arctic is the default theme, so this is what most visitors see). */
+  /* WCAG AA: dim/muted/accent/status/categorical colours all held at >=4.5:1 on
+     this theme's light surfaces (arctic is the default theme, so this is what
+     most visitors see). The dim text and the categorical/status colours below
+     were measured against the real backgrounds they render on — including the
+     ~0.10 tinted chip fills and the #eef4fa hover surface, the tightest cases —
+     and darkened until each clears 4.5:1 there (#191/#192). */
   --text-muted: #546d85;
-  --text-dim: #587390;
-  --gray: #587390;
+  --text-dim: #4d6a86;
+  --gray: #4d6a86;
 
   --accent: #1c6fb8;
   --on-accent: #ffffff;
@@ -177,22 +181,22 @@
 
   --overlay: rgba(10, 40, 80, 0.05);
 
-  --green: #1f9d57;
-  --green-bright: #1f9d57;
-  --red: #c93b3b;
+  --green: #16773f;
+  --green-bright: #16773f;
+  --red: #bd3838;
   --red-soft: #d05a5a;
-  --orange: #b5791f;
+  --orange: #8f5f10;
   --blue: #1c6fb8;
-  --yellow: #b5791f;
+  --yellow: #8f5f10;
   --purple: #7e57c2;
-  --error: #c93b3b;
+  --error: #bd3838;
 
-  --od-red: #c93b3b;
+  --od-red: #bd3838;
   --od-blue: #1e6fb0;
-  --od-purple: #7e57c2;
-  --od-yellow: #b5791f;
-  --od-green: #1f9d57;
-  --od-cyan: #0e8a9e;
+  --od-purple: #7048b8;
+  --od-yellow: #8f5f10;
+  --od-green: #16773f;
+  --od-cyan: #0a7486;
 }
 
 /* -------- Nord (dark, arctic muted) -------- */

@@ -283,11 +283,13 @@ const EXPRESSIVITY_OPTIONS: ExprOption[] = [
   { kind: 'tier',    value: 'rdf',        label: 'RDF' },
 ]
 
+// Badge fills carry white text, so each is dark enough for white to clear 4.5:1
+// (#192): the original brand-ish hues were too light (white ~3.4–4.2:1).
 const TIER_BADGE: Record<string, { label: string; color: string }> = {
-  rdf: { label: 'RDF', color: '#8a8f98' },
-  rdfs: { label: 'RDFS', color: '#2f9e6f' },
-  'rdfs-plus': { label: 'RDFS-Plus', color: '#3b82c4' },
-  owl: { label: 'OWL', color: '#8b5cf6' },
+  rdf: { label: 'RDF', color: '#5f6b7a' },
+  rdfs: { label: 'RDFS', color: '#1f7d55' },
+  'rdfs-plus': { label: 'RDFS-Plus', color: '#2f6ca8' },
+  owl: { label: 'OWL', color: '#7c3aed' },
 }
 
 function TierChip({ tier }: { tier?: string | null }) {
@@ -459,8 +461,9 @@ export default function Ontologies() {
                   ? (c ? c.bg : 'var(--accent)')
                   : (c ? c.bg : 'var(--bg-secondary)'),
                 color: c ? c.color : (active ? 'var(--on-accent)' : 'var(--text-dim)'),
+                // Inactive weight (not opacity) signals state — text opacity
+                // would drop the categorical colours below 4.5:1 contrast (#192).
                 fontWeight: active ? 700 : 500,
-                opacity: active || !c ? 1 : 0.65,
               }}
             >
               {g.label}
@@ -535,15 +538,17 @@ export default function Ontologies() {
                   title={`${endonym(lang)} — ${label_count.toLocaleString()} labels`}
                   style={{
                     fontSize: 11, padding: '2px 8px', borderRadius: 20, cursor: 'pointer',
-                    border: '1px solid rgba(86,182,194,0.35)',
-                    background: 'rgba(86,182,194,0.10)',
+                    // Active/inactive is shown via background + weight, not text
+                    // opacity: dimming the text dropped it below the 4.5:1 contrast
+                    // minimum (#192). od-cyan is AA-compliant on both tint fills.
+                    border: `1px solid rgba(10,116,134,${active ? 0.6 : 0.3})`,
+                    background: active ? 'rgba(10,116,134,0.16)' : 'rgba(10,116,134,0.07)',
                     color: 'var(--od-cyan)',
                     fontWeight: active ? 700 : 600,
-                    opacity: active ? 1 : 0.65,
                   }}
                 >
                   {lang || '—'}
-                  <span style={{ opacity: 0.6, marginLeft: 4, fontWeight: 500 }}>{fmtCount(label_count)}</span>
+                  <span style={{ marginLeft: 4, fontWeight: 500 }}>{fmtCount(label_count)}</span>
                 </button>
               )
             })}
