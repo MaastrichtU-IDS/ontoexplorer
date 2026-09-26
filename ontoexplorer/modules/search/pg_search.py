@@ -12,12 +12,17 @@ while keeping the common path fast.
 """
 from __future__ import annotations
 
+import time
+
+import structlog
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.modules.search.indexer import normalise_label
+
+_log = structlog.get_logger("ontoexplorer.autocomplete")
 
 # Fetch up to this many rows per stage so the global Python-side dedup has enough
 # variety even after collapsing duplicates across ontologies.
@@ -243,8 +248,11 @@ async def pg_autocomplete_entities(
         params["ontology_ids"] = ontology_ids
     if version_id:
         params["version_id"] = version_id
-    result = await db.execute(prefix_sql, params)
-    ranked = _rank_prefix_rows(result.all(), norm, limit)
+    _m = time.perf_counter()
+    _rows = (await db.execute(prefix_sql, params)).all()
+    if (_el := round((time.perf_counter() - _m) * 1000)) > 800:
+        _log.warning("ac_stage_slow", stage="prefix", norm=norm, ms=_el, rows=len(_rows))
+    ranked = _rank_prefix_rows(_rows, norm, limit)
 
     def _ac_row(row: Any) -> dict:
         return {
@@ -300,9 +308,12 @@ async def pg_autocomplete_entities(
         params2["ontology_ids"] = ontology_ids
     if version_id:
         params2["version_id"] = version_id
-    result = await db.execute(tsv_sql, params2)
+    _m = time.perf_counter()
+    _tsv_rows = (await db.execute(tsv_sql, params2)).all()
+    if (_el := round((time.perf_counter() - _m) * 1000)) > 800:
+        _log.warning("ac_stage_slow", stage="tsv", norm=norm, ms=_el, rows=len(_tsv_rows))
 
-    for row in result.all():
+    for row in _tsv_rows:
         if row.iri in seen_iris:
             continue
         seen_iris.add(row.iri)
@@ -362,7 +373,11 @@ async def pg_autocomplete_entities(
             params3["ontology_ids"] = ontology_ids
         if version_id:
             params3["version_id"] = version_id
-        for row in (await db.execute(fuzzy_sql, params3)).all():
+        _m = time.perf_counter()
+        _fuzzy_rows = (await db.execute(fuzzy_sql, params3)).all()
+        if (_el := round((time.perf_counter() - _m) * 1000)) > 800:
+            _log.warning("ac_stage_slow", stage="fuzzy", norm=norm, ms=_el, rows=len(_fuzzy_rows))
+        for row in _fuzzy_rows:
             if row.iri in seen_iris:
                 continue
             seen_iris.add(row.iri)
