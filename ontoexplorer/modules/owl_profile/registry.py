@@ -1,12 +1,14 @@
-"""Re-exports from the pyowl2-profiles library.
+"""OWL 2 profile identifiers.
 
-The OWL 2 profile detector originally lived in this module and was extracted
-to the standalone pyowl2-profiles PyPI package (github.com/MaastrichtU-IDS/
-pyowl2-profiles). OntoExplorer now consumes it as a dependency; this file
-preserves the old import path so internal callers don't need to change.
+Profile detection now runs on the native horned-profile checker (see
+`detector.py`); this module just holds the profile-name constant that API
+routes validate against. `PROFILE_NAMES` keeps its historical order
+(EL, RL, QL, DL) so cached payloads and the UI are unchanged.
 """
-from pyowl2_profiles.registry import (  # noqa: F401
-    PROFILE_NAMES,
-    ProfileName,
-    ProfileViolation,
-)
+from __future__ import annotations
+
+from typing import Literal
+
+ProfileName = Literal["el", "rl", "ql", "dl"]
+
+PROFILE_NAMES: tuple[ProfileName, ...] = ("el", "rl", "ql", "dl")
