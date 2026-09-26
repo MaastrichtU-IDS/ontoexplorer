@@ -114,23 +114,34 @@ async def pg_entity_search(
     # LENGTH() forced a full sort + join of every `LIKE 'x%'` match before LIMIT,
     # which made common prefixes (`cell`) take seconds.
     prefix_sql = text(f"""
-        SELECT ei.iri, ei.primary_label, ei.short, ei.type,
-               ei.version_id, ei.ontology_id, ei.source,
-               ei.primary_label_norm,
+        SELECT p.iri, p.primary_label, p.short, p.type,
+               p.version_id, p.ontology_id, p.source,
+               p.primary_label_norm,
                COALESCE(o.shortname, '') AS ontology_shortname
-        FROM entity_index ei
-        JOIN versions v ON v.id = ei.version_id
-        JOIN ontologies o ON o.id = ei.ontology_id
+        FROM (
+            SELECT ei.iri, ei.primary_label, ei.short, ei.type,
+                   ei.version_id, ei.ontology_id, ei.source,
+                   ei.primary_label_norm
+            FROM entity_index ei
+            WHERE ei.primary_label_norm LIKE :prefix
+              {type_filter_sql}
+            -- Order + LIMIT on entity_index ALONE. The LIMIT is an optimization
+            -- fence, so the C-collation btree drives an ordered index scan that
+            -- STOPS at :pool rows (~:pool heap fetches). Joining versions/ontologies
+            -- up here instead lets the planner hash-join and materialise EVERY
+            -- `LIKE 'x%'` match — tens of thousands of rows for a common prefix
+            -- (cross-ontology duplication), each a cold heap read, then a top-N
+            -- sort over all of them. That was the ~23s prefix stage (#190): the
+            -- EXPLAIN showed 13k heap-fetched rows for `protein%` before the LIMIT.
+            ORDER BY ei.primary_label_norm COLLATE "C"
+            LIMIT :pool
+        ) p
+        JOIN versions v ON v.id = p.version_id
+        JOIN ontologies o ON o.id = p.ontology_id
+        -- Status excludes ~nothing (nearly all versions are active), so applying it
+        -- to the already-bounded pool rather than before the LIMIT drops a handful
+        -- of rows at most; Python re-ranks/dedups the survivors regardless.
         WHERE v.status NOT IN ('pending','failed','deprecated')
-          AND ei.primary_label_norm LIKE :prefix
-          {type_filter_sql}
-        -- No secondary sort key: it keeps this a pure index scan so LIMIT stops at
-        -- :pool rows. With a tiebreaker, Postgres must buffer each full
-        -- primary_label_norm group (up to ~1 row per ontology for a shared
-        -- concept) before the LIMIT applies — thousands of duplicate rows +
-        -- cold I/O = the multi-second prefix stage. Dedup/rank happens in Python.
-        ORDER BY ei.primary_label_norm COLLATE "C"
-        LIMIT :pool
     """)
     params: dict = {"norm": norm, "prefix": norm + "%", "pool": _prefix_pool_size(limit)}
     if types:
@@ -232,26 +243,30 @@ async def pg_autocomplete_entities(
     # pg_entity_search: an ORDER BY LENGTH() sorted the whole match set and made
     # common prefixes slow.
     prefix_sql = text(f"""
-        SELECT ei.iri, ei.primary_label, ei.short, ei.type,
-               ei.version_id, ei.ontology_id, ei.primary_label_norm,
+        SELECT p.iri, p.primary_label, p.short, p.type,
+               p.version_id, p.ontology_id, p.primary_label_norm,
                COALESCE(o.shortname, '') AS ontology_shortname
-        FROM entity_index ei
-        JOIN versions v ON v.id = ei.version_id
-        JOIN ontologies o ON o.id = ei.ontology_id
+        FROM (
+            SELECT ei.iri, ei.primary_label, ei.short, ei.type,
+                   ei.version_id, ei.ontology_id, ei.primary_label_norm
+            FROM entity_index ei
+            WHERE ei.primary_label_norm LIKE :prefix
+              {ontology_filter_sql}
+              {version_filter_sql}
+            -- Order + LIMIT on entity_index ALONE so the C-collation index scan
+            -- early-terminates at :pool rows. Joining versions/ontologies before
+            -- the LIMIT lets the planner hash-join and heap-materialise EVERY match
+            -- (tens of thousands for a common prefix, cross-ontology dups) then
+            -- top-N sort them — the ~23s prefix stage (#190). Same fix as
+            -- pg_entity_search. The excluded-type filter runs in Python below.
+            ORDER BY ei.primary_label_norm COLLATE "C"
+            LIMIT :pool
+        ) p
+        JOIN versions v ON v.id = p.version_id
+        JOIN ontologies o ON o.id = p.ontology_id
+        -- Status excludes ~nothing, so filtering the bounded pool here (rather than
+        -- before the LIMIT) costs a handful of dropped rows at most.
         WHERE v.status NOT IN ('pending','failed','deprecated')
-          AND ei.primary_label_norm LIKE :prefix
-          {ontology_filter_sql}
-          {version_filter_sql}
-        -- No secondary sort key: it keeps this a pure index scan so LIMIT stops at
-        -- :pool rows. With a tiebreaker, Postgres must buffer each full
-        -- primary_label_norm group (up to ~1 row per ontology for a shared
-        -- concept) before the LIMIT applies — thousands of duplicate rows +
-        -- cold I/O = the multi-second prefix stage. Dedup/rank happens in Python.
-        -- The excluded-type filter is applied in Python below, not here: a
-        -- `type <> ALL(...)` predicate made the index scan walk far past :pool at
-        -- scale (search, which lacks it, stayed fast).
-        ORDER BY ei.primary_label_norm COLLATE "C"
-        LIMIT :pool
     """)
     params: dict = {"norm": norm, "prefix": norm + "%", "pool": _prefix_pool_size(limit)}
     if ontology_ids:
