@@ -179,6 +179,33 @@ function StatCard({ label, value }: { label: string; value: number | string }) {
   )
 }
 
+// A neutral placeholder bar used by the loading skeletons below. The skeletons
+// exist to reserve the same vertical space the real content will occupy, so the
+// info tab doesn't reflow (and rack up CLS) when stats / metadata arrive after
+// first paint. See #191.
+function SkeletonBar({ w = '100%', h = 12, mt = 0 }: { w?: number | string; h?: number; mt?: number }) {
+  return (
+    <div aria-hidden style={{
+      width: w, height: h, marginTop: mt, borderRadius: 3,
+      background: 'var(--bg-hover)', opacity: 0.4,
+    }} />
+  )
+}
+
+// Same box as StatCard, with placeholder bars in place of the value/label. Keeps
+// the stats grid at its final height while the counts load.
+function StatCardSkeleton() {
+  return (
+    <div aria-hidden style={{
+      background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+      borderRadius: 'var(--radius)', padding: '10px 14px', flex: '1 1 100px', minWidth: 0,
+    }}>
+      <SkeletonBar w={40} h={18} />
+      <SkeletonBar w={70} h={11} mt={4} />
+    </div>
+  )
+}
+
 // ── Predicate label map ───────────────────────────────────────────────────────
 
 const PRED_LABELS: Record<string, string> = {
@@ -381,7 +408,19 @@ function OntologyDocMeta({ ontologyId, versionId, lang }: { ontologyId: string; 
     })
 
   if (isLoading) {
-    return <div style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading metadata…</div>
+    // Reserve roughly the height of a typical metadata table (~7 rows) so the
+    // real table doesn't push the Repository Metadata section down when it
+    // arrives — the single largest CLS source on ontology pages (#191).
+    return (
+      <div aria-hidden aria-busy="true">
+        {Array.from({ length: 7 }).map((_, i) => (
+          <div key={i} style={{ display: 'flex', gap: 20, padding: '5px 0' }}>
+            <SkeletonBar w={110} h={14} />
+            <SkeletonBar w={`${40 + ((i * 17) % 45)}%`} h={14} />
+          </div>
+        ))}
+      </div>
+    )
   }
 
   if (entries.length === 0) {
@@ -461,7 +500,11 @@ function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid }: {
         Statistics
       </h3>
       {statsLoading ? (
-        <div style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>Loading stats…</div>
+        // Placeholder grid at the final height (6 cards) so arriving counts
+        // don't grow the section and shove the metadata below it (#191).
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 28 }}>
+          {Array.from({ length: 6 }).map((_, i) => <StatCardSkeleton key={i} />)}
+        </div>
       ) : stats ? (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 28 }}>
           <StatCard label="Axioms" value={stats.triple_count} />
@@ -477,11 +520,6 @@ function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid }: {
           )}
         </div>
       ) : null}
-
-      {/* ── Document metadata ── */}
-      <div style={{ marginBottom: 28 }}>
-        <OntologyDocMeta ontologyId={version.ontology_id} versionId={version.id} lang={lang} />
-      </div>
 
       {/* ── Repository metadata ── */}
       <h3 style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
@@ -537,6 +575,20 @@ function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid }: {
           )}
         </tbody>
       </table>
+
+      {/* ── Document metadata ──
+          Placed last, and after the synchronous Statistics + Repository Metadata
+          sections, because it loads asynchronously and its height varies widely
+          per ontology (a handful of predicates to a dozen+). Rendering it above
+          stable content made its late arrival shove everything below it down —
+          the dominant CLS source on ontology pages (#191). Last, its growth only
+          nudges the footer. */}
+      <h3 style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
+        Document Metadata
+      </h3>
+      <div style={{ marginBottom: 28 }}>
+        <OntologyDocMeta ontologyId={version.ontology_id} versionId={version.id} lang={lang} />
+      </div>
     </div>
   )
 }
