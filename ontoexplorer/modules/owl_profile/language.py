@@ -1,6 +1,6 @@
 """Language / expressivity tier detection: RDF · RDFS · RDFS-Plus · OWL.
 
-The OWL 2 profile detector (pyowl2_profiles) only answers "which of EL/RL/QL/DL
+The OWL 2 profile checker (horned-profile) only answers "which of EL/RL/QL/DL
 is this in?". RDFS is a *strict subset* of all four, so a plain RDFS vocabulary
 is reported as OWL 2 DL — or, when its untyped / ``rdfs:Class`` style breaks DL's
 typing discipline, as OWL Full — and is never identified as what it actually is.

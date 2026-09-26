@@ -1,0 +1,205 @@
+# Merged production compose — combines base services with prod overrides.
+#
+# Usage:
+#   IMAGE_TAG=0.2.0 docker compose -f docker-compose.prod-merged.yml pull
+#   IMAGE_TAG=0.2.0 docker compose -f docker-compose.prod-merged.yml up -d
+#
+# Requirements on target host:
+#   - docker + docker compose v2
+#   - nginx-proxy + acme-companion running on the host docker network
+#   - a populated .env (copy from .env.example, set ENVIRONMENT=production,
+#     a real JWT_SECRET_KEY, real OAuth client IDs, AUTH_BYPASS=false, etc.)
+#   - FRONTEND_HOST=ontoexplorer.example.com
+#   - MINIO_HOST=minio.ontoexplorer.example.com
+#   - no source tree, no Python toolchain, no Node.
+#   - ./data/ pre-created and owned by the running user:
+#       mkdir -p data/{oxigraph,fastembed,minio,postgres,redis}
+#
+# All persistent data lives under ./data/ — back up or snapshot that directory.
+# IMAGE_TAG defaults to `latest` if unset — pin to an exact release in prod.
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # One-shot migration runner — exits 0 when schema is up to date
+  # ---------------------------------------------------------------------------
+
+  migrate:
+    build: .
+    restart: "no"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ontoexplorer:ontoexplorer@postgres:5432/ontoexplorer
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Application services — pre-built images from GHCR, no source bind-mounts
+  # ---------------------------------------------------------------------------
+
+  api:
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      OXIGRAPH_READ_ONLY: "true"
+      FASTEMBED_CACHE_PATH: /root/.cache/fastembed
+      ELK_SERVICE_URL: http://elk-service:8001
+      ELK_SERVICE_TIMEOUT: "3600"
+      AUTH_BYPASS: "${AUTH_BYPASS}"
+      DATABASE_URL: postgresql+asyncpg://ontoexplorer:ontoexplorer@postgres:5432/ontoexplorer
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      MINIO_PUBLIC_ENDPOINT: "${MINIO_HOST}"
+      MINIO_PUBLIC_SECURE: "true"
+      HTTP_PROXY: "http://proxy.unimaas.nl:3128"
+      HTTPS_PROXY: "http://proxy.unimaas.nl:3128"
+      http_proxy: "http://proxy.unimaas.nl:3128"
+      https_proxy: "http://proxy.unimaas.nl:3128"
+      NO_PROXY: "127.0.0.1,localhost,137.120.0.0/16,postgres,redis,minio,fuseki,elk-service,qlever"
+      no_proxy: "127.0.0.1,localhost,137.120.0.0/16,postgres,redis,minio,fuseki,elk-service,qlever"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+      fuseki:
+        condition: service_started
+      elk-service:
+        condition: service_started
+    volumes:
+      - ./data/oxigraph:/data/oxigraph
+      - ./data/fastembed:/root/.cache/fastembed
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      FASTEMBED_CACHE_PATH: /root/.cache/fastembed
+      OMP_NUM_THREADS: "2"
+      ONNXRUNTIME_NUM_THREADS: "2"
+      ELK_SERVICE_URL: http://elk-service:8001
+      DATABASE_URL: postgresql+asyncpg://ontoexplorer:ontoexplorer@postgres:5432/ontoexplorer
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      MINIO_PUBLIC_ENDPOINT: "${MINIO_HOST}"
+      MINIO_PUBLIC_SECURE: "true"
+      HTTP_PROXY: "http://proxy.unimaas.nl:3128"
+      HTTPS_PROXY: "http://proxy.unimaas.nl:3128"
+      http_proxy: "http://proxy.unimaas.nl:3128"
+      https_proxy: "http://proxy.unimaas.nl:3128"
+      NO_PROXY: "127.0.0.1,localhost,137.120.0.0/16,postgres,redis,minio,fuseki,elk-service,qlever"
+      no_proxy: "127.0.0.1,localhost,137.120.0.0/16,postgres,redis,minio,fuseki,elk-service,qlever"
+    mem_limit: 3g
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+    volumes:
+      - ./data/oxigraph:/data/oxigraph
+      - ./data/fastembed:/root/.cache/fastembed
+
+  beat:
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://ontoexplorer:ontoexplorer@postgres:5432/ontoexplorer
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./data/oxigraph:/data/oxigraph
+
+  elk-service:
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379/2
+      CLASSIFICATION_TTL_SECONDS: "2592000"
+      JUSTIFICATION_TTL_SECONDS: "604800"
+      JUSTIFICATION_TIME_LIMIT_SECONDS: "300"
+    mem_limit: 6g
+    depends_on:
+      - redis
+
+  # ── Frontend — nginx serves SPA and proxies /api/ /auth/ /ols/ to api ─────
+  frontend:
+    restart: unless-stopped
+    environment:
+      VIRTUAL_HOST: "${FRONTEND_HOST}"
+      LETSENCRYPT_HOST: "${FRONTEND_HOST}"
+      VIRTUAL_PORT: "80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Infrastructure services — internal only, no proxy exposure
+  # ---------------------------------------------------------------------------
+
+  minio:
+    image: minio/minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    volumes:
+      - ./data/minio:/data
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_SERVER_URL: "https://${MINIO_HOST}"
+
+  fuseki:
+    image: stain/jena-fuseki
+    restart: unless-stopped
+    user: root
+    environment:
+      ADMIN_PASSWORD: admin
+      JVM_ARGS: "-Xmx1g"
+    command: /jena-fuseki/fuseki-server --update --mem /fuseki
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ontoexplorer
+      POSTGRES_USER: ontoexplorer
+      POSTGRES_PASSWORD: ontoexplorer
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ontoexplorer -d ontoexplorer"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    command: redis-server --appendonly yes --appendfsync everysec
+    volumes:
+      - ./data/redis:/data
+

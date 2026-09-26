@@ -16,7 +16,7 @@ dependencies = [
     "asyncpg",
     "alembic",
     "pydantic-settings>=2.0",
-    "py_horned_owl",
+    "py_horned_owl>=2.0.0",
     "rdflib",
     "pyoxigraph",
     "minio",
@@ -34,7 +34,6 @@ dependencies = [
     "anthropic>=0.97",
     "bioregistry>=0.11",
     "jinja2",
-    "pyowl2-profiles>=0.1.0",
 ]
 
 [dependency-groups]

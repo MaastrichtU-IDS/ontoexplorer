@@ -1048,6 +1048,53 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         except Exception as exc:
             log.warning("entity_index_populate_failed", version_id=version_id, error=str(exc))
 
+        # OWL 2 profile classification (EL/QL/RL/DL) via the native horned-profile
+        # checker over the stored ontology file. Runs here — not in build_index —
+        # for the async DB + object-store access, and best-effort so a parse
+        # failure never blocks the version reaching "ready". No class-count gate:
+        # horned-profile is fast at every size (#149).
+        try:
+            import json as _json
+            import time as _pt
+            from sqlalchemy import select as _sel
+            from ontoexplorer.clients.minio import download_bytes as _dl
+            from ontoexplorer.clients.oxigraph import get_store as _gstore, graph_iri as _giri
+            from ontoexplorer.config import get_settings as _gs
+            from ontoexplorer.models.db import OntologyVersion as _OVp
+            from ontoexplorer.modules.owl_profile.cache import owl_profile_cache_key
+            from ontoexplorer.modules.owl_profile.detector import detect_profiles
+            from ontoexplorer.modules.owl_profile.language import detect_language
+            from ontoexplorer.modules.search.indexer import _get_redis, _SEARCH_TTL
+
+            async def _fetch_key_fmt():
+                async with make_celery_db_session()() as db:
+                    return (
+                        await db.execute(
+                            _sel(_OVp.minio_key, _OVp.format).where(_OVp.id == version_id)
+                        )
+                    ).first()
+
+            _row = asyncio.run(_fetch_key_fmt())
+            if _row and _row.minio_key:
+                _t0 = _pt.monotonic()
+                _content = _dl(_gs().minio_ontologies_bucket, _row.minio_key)
+                _payload = detect_profiles(_content, _row.format)
+                # Coarser language/expressivity tier (RDF/RDFS/RDFS-Plus/OWL) from a
+                # few cheap ASKs against the store, alongside the profile result.
+                _payload["language"] = detect_language(
+                    _gstore(), graph_iri=_giri(ontology_id, version_id)
+                )
+                _get_redis().setex(
+                    owl_profile_cache_key(version_id), _SEARCH_TTL, _json.dumps(_payload)
+                )
+                log.info(
+                    "owl_profile_populated", version_id=version_id,
+                    duration_s=round(_pt.monotonic() - _t0, 2),
+                    dl=_payload.get("dl", {}).get("in_profile"),
+                )
+        except Exception as exc:
+            log.warning("owl_profile_populate_failed", version_id=version_id, error=str(exc))
+
         from sqlalchemy import update as _sa_update
         from ontoexplorer.models.db import OntologyVersion as _OV
 
