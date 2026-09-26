@@ -242,7 +242,7 @@ export default function QuerySidebar({ yasguiRef }: Props) {
                 onClick={() => loadQuery(q)}
                 style={{
                   padding: '5px 10px',
-                  borderBottom: '1px solid rgba(51,65,85,0.4)',
+                  borderBottom: '1px solid var(--border)',
                   cursor: 'pointer',
                   background: activeId === q.id ? 'rgba(34,197,94,0.08)' : undefined,
                   borderLeft: activeId === q.id ? '2px solid var(--accent)' : '2px solid transparent',
@@ -293,8 +293,8 @@ export default function QuerySidebar({ yasguiRef }: Props) {
             </div>
           )}
           {startersByCategory.map(([category, items]) => (
-            <div key={category} style={{ borderBottom: '1px solid rgba(51,65,85,0.4)' }}>
-              <div style={{ padding: '4px 10px', color: 'var(--text-dim)', fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.05em', background: 'rgba(51,65,85,0.2)' }}>
+            <div key={category} style={{ borderBottom: '1px solid var(--border)' }}>
+              <div style={{ padding: '4px 10px', color: 'var(--text-muted)', fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.05em', background: 'var(--bg-tertiary)' }}>
                 {category}
               </div>
               {items.map(s => (
