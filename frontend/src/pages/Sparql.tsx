@@ -340,7 +340,9 @@ export default function Sparql() {
       <div style={{ flex: 1, display: 'flex', flexDirection: isMobile ? 'column' : 'row', overflow: isMobile ? 'auto' : 'hidden', minHeight: 0 }}>
         <QuerySidebar yasguiRef={yasguiRef} />
         <div ref={resultsWrapperRef} style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-          <div ref={containerRef} data-testid="yasgui-container" style={{
+          {/* tabIndex so this scroll wrapper (which hosts the YASGUI widget) is
+              keyboard-scrollable — scrollable-region-focusable, #192. */}
+          <div ref={containerRef} data-testid="yasgui-container" tabIndex={0} aria-label="SPARQL editor and results" style={{
             height: '100%', overflowY: 'auto',
           }} />
           {diffRenderable && diffResult && (
