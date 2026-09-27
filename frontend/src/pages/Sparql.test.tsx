@@ -423,8 +423,22 @@ it('intercepts IRI clicks inside DiffQueryView and navigates in-app', async () =
   await waitFor(() => expect(queryHandlers.length).toBeGreaterThan(0))
   queryHandlers[0]({ abort: vi.fn() }, { endpoint: '/api/v1/sparql/content' })
 
-  const anchor = await screen.findByText('https://w3id.org/ontostart/pizza/Margherita')
-  fireEvent.click(anchor)
+  // Locate the IRI link by its href, not its text: the cell renders the IRI with
+  // labelEnricher child spans, so the visible text is split across elements and
+  // findByText('<full-iri>') flakily fails ("text broken up by multiple
+  // elements"). The result also arrives via an async fetch, so allow extra time
+  // for it to render under CI load.
+  let anchor: HTMLAnchorElement | null = null
+  await waitFor(
+    () => {
+      anchor = document.querySelector<HTMLAnchorElement>(
+        'a[href="https://w3id.org/ontostart/pizza/Margherita"]'
+      )
+      expect(anchor).not.toBeNull()
+    },
+    { timeout: 5000 },
+  )
+  fireEvent.click(anchor!)
   await waitFor(() => {
     expect(navigateMock).toHaveBeenCalledWith(
       '/ontologies/pizza?term=https%3A%2F%2Fw3id.org%2Fontostart%2Fpizza%2FMargherita'
