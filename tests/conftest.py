@@ -12,6 +12,40 @@ from ontoexplorer.models.db import ApiKey, User
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 
+class _FakeVec:
+    """A stand-in embedding vector with the .tolist() the embedder callers expect."""
+
+    def tolist(self) -> list[float]:
+        return [0.0] * 768
+
+
+class _FakeEmbedder:
+    def query_embed(self, texts):
+        return iter([_FakeVec() for _ in texts])
+
+    def passage_embed(self, texts, batch_size: int = 128):
+        return [_FakeVec() for _ in texts]
+
+
+@pytest.fixture(autouse=True)
+def _stub_embedder(request, monkeypatch):
+    """Keep the real fastembed/ONNX model out of the test lane.
+
+    Building the app under TestClient fires the startup warmup thread, and any
+    semantic-search call hits embed_query — both load a ~500 MB fastembed model
+    whose native ONNX runtime aborts at interpreter shutdown (a flaky SIGABRT /
+    "I/O operation on closed file" that intermittently reds the backend CI job).
+    Patch the single choke point, get_embedder(); embed_query/embed_texts both go
+    through it, so every path (warmup thread included) gets the fake. Tests marked
+    `slow` — the ones that deliberately exercise the real embedder, and which CI
+    excludes — opt out.
+    """
+    if request.node.get_closest_marker("slow"):
+        return
+    import ontoexplorer.modules.search.embedder as _emb
+    monkeypatch.setattr(_emb, "get_embedder", lambda: _FakeEmbedder())
+
+
 @pytest.fixture(scope="session")
 def anyio_backend():
     return "asyncio"
