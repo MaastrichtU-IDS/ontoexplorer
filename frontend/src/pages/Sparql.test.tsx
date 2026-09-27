@@ -436,7 +436,7 @@ it('intercepts IRI clicks inside DiffQueryView and navigates in-app', async () =
       )
       expect(anchor).not.toBeNull()
     },
-    { timeout: 5000 },
+    { timeout: 15000 },
   )
   fireEvent.click(anchor!)
   await waitFor(() => {
@@ -444,7 +444,10 @@ it('intercepts IRI clicks inside DiffQueryView and navigates in-app', async () =
       '/ontologies/pizza?term=https%3A%2F%2Fw3id.org%2Fontostart%2Fpizza%2FMargherita'
     )
   })
-})
+// This test dynamically imports the whole Sparql page and renders it, then waits
+// on an async fetch → result render. On a slow CI runner that exceeded vitest's
+// default 5s test timeout (seen at ~5010ms); give it a generous 20s budget.
+}, 20000)
 
 it('fetches and applies labels when the labels toggle is enabled', async () => {
   vi.resetModules()
