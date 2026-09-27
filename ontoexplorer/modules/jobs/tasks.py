@@ -999,11 +999,28 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         from ontoexplorer.database import make_celery_db_session
         from ontoexplorer.modules.profile.detector import load_profile
 
-        async def _fetch_profile():
+        # Derive ontology_id from the version when the caller omitted it. Passing
+        # ontology_id="" makes populate_entity_index insert rows with an empty
+        # ontology_id → an entity_index FK violation that is only caught and logged
+        # as a WARNING (entity_index_populate_failed), so the task looks fine but
+        # writes 0 search rows. reason_ontology derives it from the version; do the
+        # same here so callers can't trip that silent-failure trap.
+        async def _fetch_profile_and_oid():
             async with make_celery_db_session()() as db:
-                return await load_profile(db, version_id)
+                prof = await load_profile(db, version_id)
+                oid = ontology_id
+                if not oid:
+                    from sqlalchemy import select as _sel
+                    from ontoexplorer.models.db import OntologyVersion as _OV
+                    _row = (
+                        await db.execute(_sel(_OV.ontology_id).where(_OV.id == version_id))
+                    ).first()
+                    oid = _row.ontology_id if _row else ""
+                return prof, oid
 
-        profile = asyncio.run(_fetch_profile())
+        profile, ontology_id = asyncio.run(_fetch_profile_and_oid())
+        if not ontology_id:
+            log.warning("index_ontology_missing_ontology_id", version_id=version_id)
         from ontoexplorer.modules.search.indexer import build_index
         stats = build_index(version_id, ontology_id, profile=profile)
 
