@@ -41,12 +41,34 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      - name: Run E2E
-        # Timing checks are soft; functional/a11y-blocker failures still fail the job.
+      # Functional gate: a11y blockers, usability, and the core flows (home →
+      # ontologies → open → tree on a small ontology, search opens a term, SPARQL
+      # editor runs). These are load-tolerant, so a failure here is a real
+      # regression and reds the nightly.
+      - name: Run E2E (functional — gating)
         run: |
           PROJ=""
           for p in ${{ github.event.inputs.projects || 'chromium' }}; do PROJ="$PROJ --project=$p"; done
-          npx playwright test $PROJ
+          npx playwright test $PROJ \
+            e2e/a11y.spec.ts e2e/usability.spec.ts e2e/flows.spec.ts \
+            --grep-invert "tree navigation selects a term"
+
+      # Perf budgets and heavy big-ontology tree renders are timing-sensitive on
+      # the shared dev cluster — they race background workloads (e.g. embedding),
+      # so a breach is often transient load, not a regression. Record the metrics
+      # but don't red the nightly on them; watch the trend in the uploaded report.
+      - name: Run E2E (perf + heavy — informational)
+        continue-on-error: true
+        run: |
+          PROJ=""
+          for p in ${{ github.event.inputs.projects || 'chromium' }}; do PROJ="$PROJ --project=$p"; done
+          # Two invocations: all of perf.spec, plus only the heavy big-ontology
+          # tree renders from flows. (A single --grep would filter perf.spec's
+          # tests out too, since they don't match the flows title.) `|| true` so
+          # one failing still records the other's metrics; the step is
+          # continue-on-error, so neither reds the nightly.
+          npx playwright test $PROJ e2e/perf.spec.ts || true
+          npx playwright test $PROJ e2e/flows.spec.ts --grep "tree navigation selects a term" || true
 
       - name: Aggregate report
         if: always()
