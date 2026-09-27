@@ -126,9 +126,21 @@ async def populate_entity_index(
     # None means "hierarchy not extracted", in which case no root is claimed.
     non_roots = non_roots if non_roots is not None else set()
 
+    # Fetch entity hashes in pipelined chunks rather than one hgetall round-trip
+    # per entity — that per-entity round-trip is an N+1 that dominates this mirror
+    # step on large ontologies (uberon ~25k, mondo ~58k entities). #185
+    def _iter_entities():
+        iris = list(_iter_version_iris(version_id))
+        chunk_size = 1000
+        for start in range(0, len(iris), chunk_size):
+            chunk = iris[start:start + chunk_size]
+            pipe = r.pipeline(transaction=False)
+            for iri in chunk:
+                pipe.hgetall(_iri_key(version_id, iri))
+            yield from zip(chunk, pipe.execute())
+
     rows: list[dict] = []
-    for iri in _iter_version_iris(version_id):
-        entity = r.hgetall(_iri_key(version_id, iri))
+    for iri, entity in _iter_entities():
         if not entity:
             continue
 
