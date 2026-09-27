@@ -1021,8 +1021,14 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         profile, ontology_id = asyncio.run(_fetch_profile_and_oid())
         if not ontology_id:
             log.warning("index_ontology_missing_ontology_id", version_id=version_id)
+        import time as _phase_t
         from ontoexplorer.modules.search.indexer import build_index
+        _bt = _phase_t.monotonic()
         stats = build_index(version_id, ontology_id, profile=profile)
+        # Per-phase timing so a slow re-index shows where it goes (build_index vs
+        # entity_index vs hierarchy vs owl-profile) without guessing (#185).
+        log.info("build_index_done", version_id=version_id,
+                 duration_s=round(_phase_t.monotonic() - _bt, 2))
 
         # Mirror the asserted hierarchy so the navigation tree is served from
         # SQL rather than re-deriving roots from the whole graph on every cache
@@ -1060,8 +1066,10 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         # /search path. Best-effort: keyword search falls back to Redis if this fails.
         try:
             from ontoexplorer.modules.search.pg_indexer import populate_entity_index_sync
+            _et = _phase_t.monotonic()
             pg_rows = populate_entity_index_sync(version_id, ontology_id, _non_roots)
-            log.info("entity_index_populated", version_id=version_id, rows=pg_rows)
+            log.info("entity_index_populated", version_id=version_id, rows=pg_rows,
+                     duration_s=round(_phase_t.monotonic() - _et, 2))
         except Exception as exc:
             log.warning("entity_index_populate_failed", version_id=version_id, error=str(exc))
 
