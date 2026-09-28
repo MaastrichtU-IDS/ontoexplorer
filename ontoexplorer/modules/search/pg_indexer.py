@@ -12,8 +12,9 @@ import logging
 import re
 from typing import Iterable
 
-from sqlalchemy import text
+from sqlalchemy import insert, text
 
+from ontoexplorer.models.db import EntityIndex
 from ontoexplorer.modules.search.lang import canonical_lang
 from ontoexplorer.modules.search.indexer import (
     _get_redis,
@@ -184,7 +185,7 @@ async def populate_entity_index(
             "deprecated": iri in deprecated,
             "is_root": iri not in non_roots,
             "is_individual": iri in individuals,
-            "labels": json.dumps(labels_by_lang),
+            "labels": labels_by_lang,
             "primary_lang": primary_lang,
         })
 
@@ -195,21 +196,13 @@ async def populate_entity_index(
     )
 
     if rows:
-        # executemany via SQLAlchemy 2.x async API
-        await session.execute(
-            text("""
-                INSERT INTO entity_index
-                    (version_id, iri, ontology_id, type,
-                     primary_label, primary_label_norm, short, source, search_text,
-                     deprecated, is_root, is_individual, labels, primary_lang)
-                VALUES
-                    (:version_id, :iri, :ontology_id, :type,
-                     :primary_label, :primary_label_norm, :short, :source, :search_text,
-                     :deprecated, :is_root, :is_individual,
-                     CAST(:labels AS jsonb), :primary_lang)
-            """),
-            rows,
-        )
+        # Core insert() (not text()) so SQLAlchemy 2.x insertmanyvalues batches the
+        # rows into a few multi-row INSERTs. A text() executemany round-trips
+        # per-row, which is network-bound: ~0.9s locally but ~49s on dev for an 8k
+        # ontology (worker→postgres RTT × rows) — the dominant entity_index cost
+        # (#185). Batching cuts it to a handful of round-trips. `labels` is passed
+        # as a dict; the JSON/JSONB column handles serialization (SQLite + PG).
+        await session.execute(insert(EntityIndex), rows)
 
     await session.commit()
     logger.info("entity_index populated", extra={"version_id": version_id, "rows": len(rows)})
