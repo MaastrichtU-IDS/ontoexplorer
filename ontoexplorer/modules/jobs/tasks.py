@@ -1323,9 +1323,18 @@ def poll_for_updates() -> None:
     asyncio.run(_run())
 
 
-@celery_app.task(name="ontoexplorer.embed_ontology")
-def embed_ontology(version_id: str, ontology_id: str = "") -> dict:
+@celery_app.task(name="ontoexplorer.embed_ontology", bind=True)
+def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
     """Compute pgvector embeddings for all indexed entities in a version."""
+    # Guard: embed_ontology must run on the `embed` queue (worker-embed), never the
+    # `index` queue. A legacy pre-queue-split embed once got stuck redelivering on
+    # `index` under acks_late and starved ALL indexing (worker-index is
+    # concurrency-1). If we're ever delivered off the embed queue, skip + ack
+    # immediately so a stray embed can't monopolize the index worker. #185
+    _rk = (getattr(self.request, "delivery_info", None) or {}).get("routing_key")
+    if _rk and _rk != "embed":
+        log.warning("embed_ontology_wrong_queue", version_id=version_id, routing_key=_rk)
+        return {"status": "skip", "reason": "wrong_queue", "version_id": version_id}
     log.info("embed_ontology_start", version_id=version_id)
     try:
         import uuid as _uuid_mod
@@ -1339,6 +1348,18 @@ def embed_ontology(version_id: str, ontology_id: str = "") -> dict:
 
         r = _get_redis()
         named_graph = graph_iri(ontology_id, version_id)
+
+        # Guard: cap attempts per version. A giant embed that OOMs mid-run
+        # redelivers under acks_late and restarts from 0 — an infinite loop that
+        # ties up worker-embed (or worse, the index worker). Count deliveries and
+        # give up after a few so a persistently-failing embed stops looping; the
+        # counter is cleared on success below and self-expires after 24h. #185
+        _attempt_key = f"embed:attempts:{version_id}"
+        _attempts = r.incr(_attempt_key)
+        r.expire(_attempt_key, 86400)
+        if _attempts > 3:
+            log.warning("embed_ontology_gave_up", version_id=version_id, attempts=_attempts)
+            return {"status": "gave_up", "attempts": _attempts, "version_id": version_id}
 
         all_entities: dict[str, str] = {}
         for etype in ["class", "object_property", "data_property", "annotation_property", "individual"]:
@@ -1442,6 +1463,7 @@ def embed_ontology(version_id: str, ontology_id: str = "") -> dict:
                     raise
 
         asyncio.run(_embed_and_store())
+        r.delete(_attempt_key)  # completed cleanly — reset the attempt counter
         log.info("embed_ontology_done", version_id=version_id, total=total)
         return {"status": "done", "version_id": version_id, "total": total}
     except Exception as exc:

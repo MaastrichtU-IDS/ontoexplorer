@@ -13,10 +13,15 @@ def test_embed_ontology_skips_empty_index(monkeypatch):
 
     mock_redis = MagicMock()
     mock_redis.smembers.return_value = set()
+    mock_redis.incr.return_value = 1  # attempt-cap guard reads an int
     monkeypatch.setattr(
         "ontoexplorer.modules.search.indexer._get_redis",
         lambda: mock_redis,
     )
 
-    result = embed_ontology("test-version-id", ontology_id="test-ontology-id")
+    # embed_ontology is now bind=True, so invoke via .apply() (which binds `self`
+    # and provides a request context) rather than calling it directly.
+    result = embed_ontology.apply(
+        args=("test-version-id",), kwargs={"ontology_id": "test-ontology-id"}
+    ).get()
     assert result["status"] == "skip"
