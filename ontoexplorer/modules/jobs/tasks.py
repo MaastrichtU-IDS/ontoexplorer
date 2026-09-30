@@ -1438,20 +1438,39 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                     for i in range(0, total, BATCH):
                         batch = records[i : i + BATCH]
                         embeddings = embed_texts([rec[2] for rec in batch])
-                        for (iri, etype, _, h), emb in zip(batch, embeddings):
-                            stmt = pg_insert(TermEmbedding).values(
-                                id=str(_uuid_mod.uuid4()),
-                                version_id=version_id,
-                                entity_iri=iri,
-                                entity_type=etype,
-                                text_hash=h,
-                                embedding=emb,
-                            ).on_conflict_do_update(
-                                index_elements=["version_id", "entity_iri"],
-                                set_={"entity_type": etype, "text_hash": h, "embedding": emb},
-                                where=(TermEmbedding.text_hash != h),
-                            )
-                            await db.execute(stmt)
+                        # One multi-row upsert per batch, not a per-row execute
+                        # loop. The per-row form issued BATCH single-row INSERTs,
+                        # each an HNSW index-maintenance write with its own client
+                        # round-trip; that sustained IO starved concurrent
+                        # entity_index writes on the shared store (~1s → 48–75s).
+                        # A single statement collapses the round-trips and WAL/IO
+                        # churn. entity_iri is unique within a batch (all_entities
+                        # is keyed by iri), so no row conflicts with itself. #185
+                        rows = [
+                            {
+                                "id": str(_uuid_mod.uuid4()),
+                                "version_id": version_id,
+                                "entity_iri": iri,
+                                "entity_type": etype,
+                                "text_hash": h,
+                                "embedding": emb,
+                            }
+                            for (iri, etype, _, h), emb in zip(batch, embeddings)
+                        ]
+                        ins = pg_insert(TermEmbedding).values(rows)
+                        # excluded.* = the row proposed for insert, so each conflict
+                        # updates from its own new values (a literal set_ can't span
+                        # a multi-row insert).
+                        stmt = ins.on_conflict_do_update(
+                            index_elements=["version_id", "entity_iri"],
+                            set_={
+                                "entity_type": ins.excluded.entity_type,
+                                "text_hash": ins.excluded.text_hash,
+                                "embedding": ins.excluded.embedding,
+                            },
+                            where=(TermEmbedding.text_hash != ins.excluded.text_hash),
+                        )
+                        await db.execute(stmt)
                         await db.commit()
                         done = min(i + BATCH, total)
                         if done % 1000 < BATCH or done == total:
