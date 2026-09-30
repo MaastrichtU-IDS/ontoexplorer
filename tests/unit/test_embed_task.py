@@ -84,3 +84,6 @@ def test_embed_ontology_batches_upserts(monkeypatch):
     assert result["total"] == N
     # 300 rows / 256 per batch = 2 batches -> 2 execute() calls, NOT 300 (per-row).
     assert len(execute_calls) == 2
+    # Each batch write is wrapped in the pg-write mutex (#185 serialization).
+    assert mock_redis.lock.called
+    assert mock_redis.lock.call_args[0][0] == "ontoexplorer:pg_write_serialize"

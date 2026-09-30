@@ -95,6 +95,48 @@ celery_app.conf.update(
 )
 
 
+# Cross-worker mutex serializing the two Postgres write-heavy sections that run on
+# separate workers against the one (Longhorn-backed) database: index_ontology's
+# entity_index mirror and embed_ontology's term_embeddings upserts. Measured on
+# dev (#185): the same 11.8k-row entity_index write took 38s alone but 94-117s
+# while embed was streaming pgvector writes concurrently — a 2.5-3x penalty from
+# overlapping index-maintenance IO (both backends IO|DataFileRead-bound), not a
+# lock and not buffer size. Holding this while each side writes keeps them from
+# overlapping. embed takes it per-BATCH (short holds) so a short index write can
+# interleave between batches instead of waiting behind the whole embed.
+_PG_WRITE_LOCK = "ontoexplorer:pg_write_serialize"
+
+
+from contextlib import contextmanager
+
+
+@contextmanager
+def _pg_write_lock(ttl: int, wait: int, *, label: str = ""):
+    """Acquire the pg-write mutex, fail-open. A Redis error or a wait-timeout logs
+    and proceeds UNLOCKED rather than failing the task — correctness of the write
+    never depends on the lock, only its contention behaviour does."""
+    from ontoexplorer.modules.search.indexer import _get_redis
+
+    lock = None
+    acquired = False
+    try:
+        lock = _get_redis().lock(_PG_WRITE_LOCK, timeout=ttl, blocking_timeout=wait)
+        acquired = bool(lock.acquire(blocking=True))
+        if not acquired:
+            log.warning("pg_write_lock_timeout", label=label, wait_s=wait)
+    except Exception as exc:  # redis down / misconfigured — never block the task
+        log.warning("pg_write_lock_error", label=label, error=str(exc))
+        lock, acquired = None, False
+    try:
+        yield
+    finally:
+        if lock is not None and acquired:
+            try:
+                lock.release()
+            except Exception:
+                pass
+
+
 @celery_app.task(name="ontoexplorer.beat_heartbeat")
 def beat_heartbeat() -> None:
     """Write the current UTC timestamp to Redis so the admin health check can detect a dead beat."""
@@ -1067,7 +1109,11 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         try:
             from ontoexplorer.modules.search.pg_indexer import populate_entity_index_sync
             _et = _phase_t.monotonic()
-            pg_rows = populate_entity_index_sync(version_id, ontology_id, _non_roots)
+            # Serialize against concurrent embed writes (#185). Held across the whole
+            # write (a single DELETE+bulk-insert txn, ~38-120s); ttl comfortably
+            # exceeds that, and a stuck lock fails open after `wait`.
+            with _pg_write_lock(ttl=600, wait=600, label="entity_index"):
+                pg_rows = populate_entity_index_sync(version_id, ontology_id, _non_roots)
             log.info("entity_index_populated", version_id=version_id, rows=pg_rows,
                      duration_s=round(_phase_t.monotonic() - _et, 2))
         except Exception as exc:
@@ -1470,8 +1516,13 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                             },
                             where=(TermEmbedding.text_hash != ins.excluded.text_hash),
                         )
-                        await db.execute(stmt)
-                        await db.commit()
+                        # Serialize the DB write (not the CPU embed_texts above)
+                        # against a concurrent entity_index write (#185). Per-batch
+                        # hold (short) so an index write interleaves between batches.
+                        # Sync lock inside this single-coroutine asyncio.run is fine.
+                        with _pg_write_lock(ttl=120, wait=600, label="embed_batch"):
+                            await db.execute(stmt)
+                            await db.commit()
                         done = min(i + BATCH, total)
                         if done % 1000 < BATCH or done == total:
                             log.info("embed_ontology_progress", version_id=version_id,
