@@ -81,6 +81,13 @@ celery_app.conf.update(
             "task": "ontoexplorer.beat_heartbeat",
             "schedule": 60.0,
         },
+        # Keep the home-page public-stats cache warm off the request path. The
+        # cold recompute is several seconds (SUNIONSTORE over ~1900 sets); refresh
+        # it well within its TTL so no home-page visit ever pays for it.
+        "refresh-public-stats-4min": {
+            "task": "ontoexplorer.refresh_public_stats",
+            "schedule": 240.0,
+        },
         # Flush Redis view/download counters into usage_daily (absolute upsert).
         "rollup-usage-15min": {
             "task": "ontoexplorer.rollup_usage",
@@ -144,6 +151,27 @@ def beat_heartbeat() -> None:
     import redis as redis_sync
     r = redis_sync.from_url(get_settings().redis_url, decode_responses=True)
     r.set("beat:heartbeat", datetime.now(UTC).isoformat(), ex=300)
+
+
+@celery_app.task(name="ontoexplorer.refresh_public_stats")
+def refresh_public_stats() -> dict:
+    """Recompute the home-page public-stats cache off the request path.
+
+    The cold recompute (5x SUNIONSTORE over ~1900 per-version sets to de-dup
+    millions of IRIs) is several seconds; it used to land on the first home-page
+    visit after each cache expiry. Running it here on a beat keeps the cache warm
+    so /stats/public is always a fast cache read.
+    """
+    import asyncio
+
+    from ontoexplorer.database import make_celery_db_session
+    from ontoexplorer.modules.stats.public_stats import refresh_public_stats_cache
+
+    async def _run() -> dict:
+        async with make_celery_db_session()() as db:
+            return await refresh_public_stats_cache(db)
+
+    return asyncio.run(_run())
 
 
 @celery_app.task(name="ontoexplorer.rollup_usage")
