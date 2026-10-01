@@ -1401,7 +1401,23 @@ async def list_terms(
             _cache_key = root_cache_key(version_id, entity_type, limit, hide_obsolete, lang)
             _cached = _r.get(_cache_key)
             if _cached:
-                return _json.loads(_cached)
+                _resp = _json.loads(_cached)
+                # The root cache is also pre-warmed at index time (warm_root_cache*),
+                # which did not carry the per-term source — so served verbatim, root
+                # classes (e.g. SULO's object/process) showed no source chip. Re-attach
+                # it here so a cache hit matches the computed path and existing stale
+                # caches self-heal without a re-index. #source-tags
+                try:
+                    from ontoexplorer.modules.search.indexer import _iri_key
+                    _terms = _resp.get("terms", [])
+                    _pipe = _r.pipeline(transaction=False)
+                    for _t in _terms:
+                        _pipe.hget(_iri_key(version_id, _t["iri"]), "source")
+                    for _t, _src in zip(_terms, _pipe.execute()):
+                        _t["source"] = _src or ""
+                except Exception:
+                    pass
+                return _resp
         except Exception:
             pass
 

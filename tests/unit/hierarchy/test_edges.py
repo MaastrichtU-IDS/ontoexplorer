@@ -357,7 +357,7 @@ async def test_sql_warm_writes_the_same_payload_as_the_sparql_warm(db_session):
     assert set(payload) == {"terms", "offset", "limit", "parent"}
     assert payload["parent"] == "root" and payload["offset"] == 0
     assert [t["label"] for t in payload["terms"]] == ["Alpha"]
-    assert set(payload["terms"][0]) == {"iri", "label", "lang", "has_children"}
+    assert set(payload["terms"][0]) == {"iri", "label", "lang", "has_children", "source"}
     assert r.get(root_cache_key(v, "class", 50, True, None)) is None
     assert 0 < r.ttl(root_cache_key(v, "class", 200, True, None)) <= ROOT_CACHE_TTL
 

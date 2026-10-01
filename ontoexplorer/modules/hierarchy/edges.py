@@ -215,7 +215,12 @@ def _rows_to_terms(rows, lang: str | None) -> list[dict]:
     for r in rows:
         label, tag = resolve_label(r.labels, r.primary_label, r.primary_lang, lang)
         terms.append({"iri": r.iri, "label": label, "lang": tag,
-                      "has_children": bool(r.has_children)})
+                      "has_children": bool(r.has_children),
+                      # Source chip (reuse/import origin). Previously omitted from
+                      # every SELECT here, so the inferred tree showed no source
+                      # tags at all. entity_index.source is NULL for host-native
+                      # terms -> "". #<source-tags>
+                      "source": (r.source or "")})
     terms.sort(key=lambda t: ((t["label"] or t["iri"]).lower(), t["iri"]))
     return terms
 
@@ -241,7 +246,7 @@ async def fetch_roots(
     obsolete_sql = "AND e.deprecated = false" if hide_obsolete else ""
 
     sql = text(f"""
-        SELECT e.iri, e.primary_label, e.primary_lang, e.labels,
+        SELECT e.iri, e.primary_label, e.primary_lang, e.labels, e.source,
                EXISTS (
                    SELECT 1 FROM hierarchy_edge c
                    WHERE c.version_id = e.version_id
@@ -292,7 +297,7 @@ async def fetch_children(
     # an ORDER BY expression that is not in the select list, which sqlite allows
     # — so a DISTINCT here fails only in production.
     sql = text(f"""
-        SELECT e.iri, e.primary_label, e.primary_lang, e.labels,
+        SELECT e.iri, e.primary_label, e.primary_lang, e.labels, e.source,
                EXISTS (
                    SELECT 1 FROM hierarchy_edge c
                    WHERE c.version_id = h.version_id
@@ -485,7 +490,7 @@ async def fetch_inferred_children(
     """Direct inferred children of `parent`, each flagged as expandable."""
     obsolete_sql = "AND e.deprecated = false" if hide_obsolete else ""
     rows = (await db.execute(text(f"""
-        SELECT e.iri, e.primary_label, e.primary_lang, e.labels,
+        SELECT e.iri, e.primary_label, e.primary_lang, e.labels, e.source,
                EXISTS (
                    SELECT 1 FROM hierarchy_edge c
                    WHERE c.version_id = h.version_id AND c.kind = h.kind
@@ -516,7 +521,7 @@ async def fetch_inferred_roots(
     """
     obsolete_sql = "AND e.deprecated = false" if hide_obsolete else ""
     rows = (await db.execute(text(f"""
-        SELECT e.iri, e.primary_label, e.primary_lang, e.labels,
+        SELECT e.iri, e.primary_label, e.primary_lang, e.labels, e.source,
                EXISTS (
                    SELECT 1 FROM hierarchy_edge c
                    WHERE c.version_id = r.version_id AND c.kind = :kind
@@ -542,7 +547,7 @@ async def fetch_inferred_roots(
         )).scalar()
         if unsat is not None:
             roots.insert(0, {"iri": _OWL_NOTHING, "label": "Nothing",
-                             "lang": None, "has_children": True})
+                             "lang": None, "has_children": True, "source": ""})
     return roots
 
 
@@ -584,7 +589,7 @@ async def fetch_individuals(
     """
     obsolete_sql = "AND deprecated = false" if hide_obsolete else ""
     rows = (await db.execute(text(f"""
-        SELECT iri, primary_label, primary_lang, labels,
+        SELECT iri, primary_label, primary_lang, labels, source,
                false AS has_children
         FROM entity_index
         WHERE version_id = :v
