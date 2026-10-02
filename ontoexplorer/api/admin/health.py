@@ -158,6 +158,17 @@ async def _check_entity_index(db: AsyncSession) -> tuple[str, dict]:
         return f"error: {exc}", {"total_rows": 0, "drift": []}
 
 
+@router.get("/ontologies/coverage", summary="Pipeline-stage coverage across ontologies")
+async def ontologies_coverage(
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-stage done/missing counts + a per-ontology stage map (latest version
+    each), powering the admin status cards and their 'missing X' filter."""
+    from ontoexplorer.modules.pipeline.status import coverage
+    return await coverage(db)
+
+
 @router.get("/overview", summary="Admin system overview")
 async def admin_overview(
     _: User = Depends(_require_admin),

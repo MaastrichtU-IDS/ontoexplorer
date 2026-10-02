@@ -146,6 +146,9 @@ class OntologyVersion(Base):
     source_url: Mapped[str | None] = mapped_column(String, nullable=True)
     triple_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Set by index_ontology when the version flips to "ready". The other pipeline
+    # times derive from existing tables; only the index time had no SQL home.
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     ontology: Mapped[Ontology] = relationship(
         back_populates="versions", foreign_keys="OntologyVersion.ontology_id")

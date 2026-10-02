@@ -1198,11 +1198,12 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         from ontoexplorer.models.db import OntologyVersion as _OV
 
         async def _mark_ready():
+            from datetime import datetime as _dt, timezone as _tz
             async with make_celery_db_session()() as db:
                 await db.execute(
                     _sa_update(_OV)
                     .where(_OV.id == version_id, _OV.status != "deprecated")
-                    .values(status="ready")
+                    .values(status="ready", indexed_at=_dt.now(_tz.utc))
                 )
                 await db.commit()
 
