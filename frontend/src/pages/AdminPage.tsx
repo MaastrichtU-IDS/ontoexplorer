@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useAdminOverview } from '../hooks/useAdminOverview'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { api } from '../lib/api'
+import type { PipelineStage } from '../lib/api'
 import { JobsTable } from '../components/admin/JobsTable'
 import { OntologyTable } from '../components/admin/OntologyTable'
 import { WorkersPanel } from '../components/admin/WorkersPanel'
@@ -26,6 +28,9 @@ export default function AdminPage() {
   const navigate = useNavigate()
   const { user, isLoading: authLoading } = useAuth()
   const { data, isLoading, dataUpdatedAt, refetch } = useAdminOverview()
+  const { data: coverage } = useQuery({ queryKey: ['admin-coverage'], queryFn: () => api.admin.coverage() })
+  // Clicking a status card filters the table to the ontologies MISSING that stage.
+  const [stageFilter, setStageFilter] = useState<PipelineStage | null>(null)
   const isMobile = useIsMobile()
   const [searchParams, setSearchParams] = useSearchParams()
   const tabParam = searchParams.get('tab')
@@ -159,6 +164,17 @@ export default function AdminPage() {
     versionMap[o.version_id] = ontologyDisplayName(o)
   }
 
+  // Ontology ids missing each stage (from the coverage endpoint), for the cards
+  // and the table filter.
+  const missingByStage: Partial<Record<PipelineStage, Set<string>>> = {}
+  if (coverage) {
+    for (const st of coverage.stages) {
+      missingByStage[st] = new Set(coverage.ontologies.filter(o => !o.stages[st]).map(o => o.ontology_id))
+    }
+  }
+  const missingSet = stageFilter ? missingByStage[stageFilter] : undefined
+  const ontologyRows = missingSet ? data!.ontologies.filter(o => missingSet.has(o.id)) : data!.ontologies
+
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '0.75rem 0.5rem' : '1.5rem 2rem' }}>
 
@@ -263,7 +279,9 @@ export default function AdminPage() {
       {tab === 'ontology' && (
         <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-            <SectionLabel style={{ margin: 0 }}>Ontology Pipeline ({data!.ontologies.length})</SectionLabel>
+            <SectionLabel style={{ margin: 0 }}>
+              Ontology Pipeline ({ontologyRows.length}{stageFilter ? ` missing ${stageFilter}` : ''})
+            </SectionLabel>
             <div style={{ flex: 1 }} />
             <button
               onClick={handleReindexAll}
@@ -281,8 +299,42 @@ export default function AdminPage() {
               {reindexAllState === 'queued' ? '↑ queuing…' : reindexAllState === 'error' ? '✕ retry re-index all' : '↺ Re-index all'}
             </button>
           </div>
+          {coverage && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+              {coverage.stages.map(st => {
+                const c = coverage.counts[st]
+                const active = stageFilter === st
+                return (
+                  <button
+                    key={st}
+                    onClick={() => setStageFilter(active ? null : st)}
+                    title={`Filter to ontologies missing ${st}`}
+                    style={{
+                      textAlign: 'left', cursor: 'pointer', borderRadius: 6, padding: '6px 12px', minWidth: 116,
+                      background: active ? 'var(--bg-secondary)' : 'none',
+                      border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                    }}
+                  >
+                    <div style={{ fontSize: 10, textTransform: 'capitalize', letterSpacing: 0.5, color: 'var(--text-dim)' }}>{st}</div>
+                    <div style={{ fontSize: 13 }}>
+                      <span style={{ color: 'var(--green)' }}>{c.done} ✓</span>
+                      {c.missing > 0 && <span style={{ color: 'var(--text-dim)' }}> · {c.missing} missing</span>}
+                    </div>
+                  </button>
+                )
+              })}
+              {stageFilter && (
+                <button
+                  onClick={() => setStageFilter(null)}
+                  style={{ fontSize: 11, color: 'var(--text-dim)', background: 'none', border: 'none', cursor: 'pointer' }}
+                >
+                  clear filter ✕
+                </button>
+              )}
+            </div>
+          )}
           <OntologyTable
-            rows={data!.ontologies}
+            rows={ontologyRows}
             updateStates={updateStates}
             onUpdate={handleUpdate}
             reindexStates={reindexStates}

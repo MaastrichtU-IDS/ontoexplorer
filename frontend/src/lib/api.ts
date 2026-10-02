@@ -261,6 +261,8 @@ export interface OntologyVersion {
    *  capabilities — e.g. whether it supports `justify`. */
   reasoner?: string | null
   reasoner_profile_id?: string | null
+  /** Pipeline-stage status + timestamps (version detail only). */
+  pipeline?: PipelineStatus
 }
 
 export interface Term {
@@ -1008,6 +1010,20 @@ export interface AdminOverview {
   jobs: AdminJobEntry[]
 }
 
+export type PipelineStage = 'ingested' | 'indexed' | 'profiled' | 'reasoned' | 'embedded'
+/** Per-stage status for one version (ontology-page repository metadata). */
+export type PipelineStatus = Record<PipelineStage, { done: boolean; at: string | null }>
+export interface AdminCoverage {
+  stages: PipelineStage[]
+  counts: Record<PipelineStage, { done: number; missing: number }>
+  ontologies: {
+    ontology_id: string
+    shortname: string | null
+    version_id: string
+    stages: Record<PipelineStage, boolean>
+  }[]
+}
+
 export interface AdminVersionEntry {
   version_id: string
   version_iri: string | null
@@ -1591,6 +1607,10 @@ export const api = {
 
   admin: {
     overview: () => request<AdminOverview>('/admin/overview'),
+
+    // Pipeline-stage coverage: per-stage done/missing counts + per-ontology
+    // stage map (latest version each) for the admin status cards + filter.
+    coverage: () => request<AdminCoverage>('/admin/ontologies/coverage'),
 
     // Reasoner profiles (admin CRUD; delete = soft-archive).
     reasonerProfiles: () => request<{ profiles: ReasonerProfile[] }>('/admin/reasoner-profiles'),

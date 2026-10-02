@@ -959,6 +959,9 @@ async def list_versions(ontology_id: str, db: AsyncSession = Depends(get_db)):
 async def get_version(ontology_id: str, version_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     version = await _get_version_or_404(db, ontology_id, version_id)
     data = _version_dict(version)
+    # Pipeline-stage status + timestamps for the repository-metadata block.
+    from ontoexplorer.modules.pipeline.status import version_pipeline
+    data["pipeline"] = await version_pipeline(db, version_id)
     return _negotiate_response(request, data)
 
 

@@ -555,6 +555,19 @@ function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid }: {
             </MetaRow>
           )}
           <MetaRow label="Ingested">{new Date(version.created_at).toLocaleString()}</MetaRow>
+          {version.pipeline && (['indexed', 'profiled', 'reasoned', 'embedded'] as const).map(stage => {
+            const s = version.pipeline![stage]
+            const label = stage.charAt(0).toUpperCase() + stage.slice(1)
+            return (
+              <MetaRow key={stage} label={label}>
+                {s.done
+                  ? (s.at
+                      ? new Date(s.at).toLocaleString()
+                      : <span style={{ color: 'var(--text-dim)' }}>✓ done (time not recorded)</span>)
+                  : <span style={{ color: 'var(--text-dim)' }}>— not done</span>}
+              </MetaRow>
+            )
+          })}
           {ownerDisplayName && (
             <MetaRow label="Added by">
               {ownerOrcid ? (
