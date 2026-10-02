@@ -37,8 +37,6 @@ async def test_admin_overview_returns_shape(client, user_and_key, monkeypatch):
         patch("ontoexplorer.api.admin.health._check_minio", new=AsyncMock(return_value="ok")),
         patch("ontoexplorer.api.admin.health._check_elk", new=AsyncMock(return_value="ok")),
         patch("ontoexplorer.api.admin.health._celery_queue_depth", return_value=0),
-        patch("ontoexplorer.api.admin.health._search_redis",
-              return_value=MagicMock(pipeline=lambda **kw: MagicMock(exists=lambda k: None, execute=lambda: []))),
         patch("ontoexplorer.api.admin.health._elk_redis",
               return_value=MagicMock(scan_iter=lambda **kw: iter([]), exists=lambda k: False)),
     ):
@@ -559,8 +557,6 @@ async def test_admin_overview_lists_version_less_failed_ingestion(
         patch("ontoexplorer.api.admin.health._check_minio", new=AsyncMock(return_value="ok")),
         patch("ontoexplorer.api.admin.health._check_elk", new=AsyncMock(return_value="ok")),
         patch("ontoexplorer.api.admin.health._celery_queue_depth", return_value=0),
-        patch("ontoexplorer.api.admin.health._search_redis",
-              return_value=MagicMock(pipeline=lambda **kw: MagicMock(exists=lambda k: None, execute=lambda: []))),
         patch("ontoexplorer.api.admin.health._elk_redis",
               return_value=MagicMock(scan_iter=lambda **kw: iter([]), exists=lambda k: False)),
     ):
