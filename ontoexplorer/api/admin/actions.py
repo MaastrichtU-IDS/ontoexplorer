@@ -10,6 +10,7 @@ import hashlib
 
 import httpx
 from fastapi import APIRouter, Body, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -133,6 +134,102 @@ async def admin_queue_ingest(
         groups=list(ont.groups or []),
     )
     return {"status": "queued", "task_id": task.id, "method": "iri" if use_iri else "url"}
+
+
+class _BulkActionRequest(BaseModel):
+    action: str  # index | embed | reason | detect_profile | ingest
+    ontology_ids: list[str]
+
+
+_BULK_ACTIONS = {"index", "embed", "reason", "detect_profile", "ingest"}
+
+
+@router.post("/ontologies/bulk", summary="Queue a pipeline action for many ontologies")
+async def admin_bulk_action(
+    body: _BulkActionRequest,
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue one pipeline action (index/embed/reason/detect_profile/ingest) for each
+    ontology's latest non-deprecated version. Powers the admin table's bulk-action
+    bar. Latest versions resolved in one query; returns per-ontology outcomes."""
+    from sqlalchemy import bindparam, select, text
+
+    from ontoexplorer.models.db import Ontology
+    from ontoexplorer.modules.jobs.tasks import (
+        detect_profile,
+        embed_ontology,
+        index_ontology,
+        ingest_ontology,
+        reason_ontology,
+    )
+
+    action = body.action
+    if action not in _BULK_ACTIONS:
+        raise HTTPException(status_code=422, detail=f"Unknown action: {action}")
+    ids = list(dict.fromkeys(body.ontology_ids))  # dedup, keep order
+    if not ids:
+        return {"action": action, "queued": [], "skipped": [], "errors": {}}
+
+    # Latest non-deprecated version per ontology — one window-function pass.
+    rows = (await db.execute(
+        text("""
+            WITH ranked AS (
+                SELECT id, ontology_id, source_url,
+                       row_number() OVER (PARTITION BY ontology_id ORDER BY created_at DESC) AS rn
+                FROM versions WHERE status <> 'deprecated' AND ontology_id IN :ids
+            )
+            SELECT id, ontology_id, source_url FROM ranked WHERE rn = 1
+        """).bindparams(bindparam("ids", expanding=True)), {"ids": ids},
+    )).all()
+    latest = {str(r.ontology_id): (str(r.id), r.source_url) for r in rows}
+
+    onts = {}
+    if action == "ingest":
+        onts = {str(o.id): o for o in (await db.execute(
+            select(Ontology).where(Ontology.id.in_(ids)))).scalars().all()}
+
+    queued: list[str] = []
+    skipped: list[str] = []
+    errors: dict[str, str] = {}
+    for oid in ids:
+        info = latest.get(oid)
+        # index/embed/reason/detect_profile need a version; ingest can use the IRI.
+        if info is None and action != "ingest":
+            skipped.append(oid)
+            continue
+        vid = info[0] if info else None
+        try:
+            if action == "index":
+                index_ontology.delay(version_id=vid, ontology_id=oid)
+            elif action == "embed":
+                embed_ontology.delay(version_id=vid, ontology_id=oid)
+            elif action == "reason":
+                reason_ontology.delay(version_id=vid)
+            elif action == "detect_profile":
+                detect_profile.delay(version_id=vid, ontology_id=oid)
+            elif action == "ingest":
+                ont = onts.get(oid)
+                if ont is None:
+                    skipped.append(oid)
+                    continue
+                src = info[1] if info else None
+                use_iri = not src
+                if use_iri and not ont.iri:
+                    errors[oid] = "no source_url or iri"
+                    continue
+                fetch = src or ont.iri
+                ingest_ontology.delay(
+                    iri=fetch if use_iri else None,
+                    url=fetch if not use_iri else None,
+                    raw_bytes_hex=None, filename=None, content_type=None,
+                    owner_id=ont.owner_id, groups=list(ont.groups or []),
+                )
+            queued.append(oid)
+        except Exception as exc:  # one bad enqueue must not drop the rest
+            errors[oid] = str(exc)[:200]
+
+    return {"action": action, "queued": queued, "skipped": skipped, "errors": errors}
 
 
 @router.post("/ontologies/{ontology_id}/index", summary="Queue search re-index for one ontology")

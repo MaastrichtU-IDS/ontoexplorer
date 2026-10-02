@@ -23,6 +23,12 @@ type SortCol = 'ontology' | 'triples' | 'ingestion' | 'indexed' | 'embeddings' |
 
 export interface OntologyTableProps {
   rows: AdminOntologyEntry[]
+  /** Selected ontology ids (for the bulk-action bar), lifted to the parent. */
+  selected: Set<string>
+  onToggleRow: (ontologyId: string) => void
+  /** Select/deselect a set of ids at once (the header checkbox passes the
+   *  currently-filtered ids, so "select all" respects search + the status filter). */
+  onSetSelection: (ontologyIds: string[], selected: boolean) => void
   updateStates: Record<string, UpdateState>
   onUpdate: (id: string) => void
   reindexStates: Record<string, UpdateState>
@@ -48,6 +54,7 @@ export interface OntologyTableProps {
 
 export function OntologyTable({
   rows,
+  selected, onToggleRow, onSetSelection,
   updateStates, onUpdate,
   reindexStates, onReindex,
   embedStates, onEmbed,
@@ -93,6 +100,13 @@ export function OntologyTable({
       (r.shortname ?? '').toLowerCase().includes(q)
     )
   })
+
+  // Select-all operates over the full filtered set (every row matching the
+  // search + the parent's status filter), not just the current page.
+  const filteredIds = filtered.map(r => r.id)
+  const selectedInFiltered = filteredIds.filter(id => selected.has(id)).length
+  const allSelected = filteredIds.length > 0 && selectedInFiltered === filteredIds.length
+  const someSelected = selectedInFiltered > 0 && !allSelected
 
   const sorted = [...filtered].sort((a, b) => {
     let cmp = 0
@@ -147,6 +161,17 @@ export function OntologyTable({
         <table style={{ width: '100%', minWidth: 900, borderCollapse: 'collapse', fontSize: 12 }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+              <th style={{ width: 28, textAlign: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  ref={el => { if (el) el.indeterminate = someSelected }}
+                  disabled={filteredIds.length === 0}
+                  onChange={() => onSetSelection(filteredIds, !allSelected)}
+                  title={allSelected ? 'Clear selection' : `Select all ${filteredIds.length} filtered`}
+                  style={{ cursor: filteredIds.length === 0 ? 'default' : 'pointer' }}
+                />
+              </th>
               <th style={{ width: 28 }} />
               <SortTh col="ontology"   label="Ontology"    align="left" />
               <SortTh col="triples"    label="Triples" />
@@ -169,7 +194,16 @@ export function OntologyTable({
               const ingestMethod = row.source_url ? 'url' : 'iri'
               return (
                 <React.Fragment key={row.version_id}>
-                <tr style={{ borderBottom: '1px solid var(--overlay)' }}>
+                <tr style={{ borderBottom: '1px solid var(--overlay)', background: selected.has(row.id) ? 'rgba(88,166,255,0.08)' : undefined }}>
+                  <td style={{ padding: '6px 4px 6px 10px', textAlign: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(row.id)}
+                      onChange={() => onToggleRow(row.id)}
+                      title="Select for bulk action"
+                      style={{ cursor: 'pointer' }}
+                    />
+                  </td>
                   {row.version_count > 1 ? (
                     <td style={{ padding: '6px 4px 6px 10px', textAlign: 'center', cursor: 'pointer', color: 'var(--text-dim)' }}
                         onClick={() => toggleExpanded(row.id)}>
@@ -283,7 +317,7 @@ export function OntologyTable({
                   <VersionsSubRows
                     ontologyId={row.id}
                     slug={row.shortname ?? slugFromIri(row.iri)}
-                    colSpan={10}
+                    colSpan={11}
                     latestVersionId={row.version_id}
                     currentVersionId={row.current_version_id}
                     pairDiffStates={pairDiffStates}
@@ -304,7 +338,7 @@ export function OntologyTable({
             })}
             {paged.length === 0 && (
               <tr>
-                <td colSpan={10} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
+                <td colSpan={11} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-dim)' }}>
                   {search ? 'No matching ontologies' : 'No ontologies'}
                 </td>
               </tr>
@@ -439,6 +473,7 @@ function VersionsSubRows({
       {defaultRow}
       {others.map(v => (
         <tr key={v.version_id} style={{ background: 'var(--overlay)' }}>
+          <td />
           <td />
           <td style={{ padding: '6px 10px', color: 'var(--text-muted)', fontSize: 11 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
