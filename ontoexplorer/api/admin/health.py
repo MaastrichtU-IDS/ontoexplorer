@@ -198,21 +198,30 @@ async def admin_overview(
     entity_index_status, entity_index_stats = entity_index_result
     queue_depth = await asyncio.to_thread(_celery_queue_depth)
 
+    # Latest version + version_count per ontology in ONE window-function pass.
+    # The previous form ran a correlated subquery per ontology (latest id) plus a
+    # COUNT(*) subquery per ontology — ~1,900x each, ~2s on the dev catalogue. The
+    # window pass is a single scan (~0.1s). (latest_versions_for below still
+    # applies the pin-aware override; this only seeds the created_at-latest.)
     rows = (await db.execute(
         text("""
+            WITH ranked AS (
+                SELECT v.id, v.ontology_id, v.version_iri, v.triple_count, v.status,
+                       v.created_at, v.source_url, v.reasoner,
+                       row_number() OVER (PARTITION BY v.ontology_id ORDER BY v.created_at DESC) AS rn,
+                       count(*)     OVER (PARTITION BY v.ontology_id)                            AS version_count
+                FROM versions v
+            )
             SELECT o.id, o.iri, o.shortname, o.title AS ont_title,
                    o.current_version_id,
-                   v.id AS version_id, v.version_iri, v.triple_count,
-                   v.status AS ingestion_status,
-                   v.created_at AS version_created_at, v.source_url, v.reasoner,
+                   r.id AS version_id, r.version_iri, r.triple_count,
+                   r.status AS ingestion_status,
+                   r.created_at AS version_created_at, r.source_url, r.reasoner,
                    mp.resolved AS meta_resolved,
-                   (SELECT COUNT(*) FROM versions WHERE ontology_id = o.id) AS version_count
+                   r.version_count
             FROM ontologies o
-            JOIN versions v ON v.id = (
-                SELECT id FROM versions WHERE ontology_id = o.id
-                ORDER BY created_at DESC LIMIT 1
-            )
-            LEFT JOIN ontology_meta_profiles mp ON mp.version_id = v.id
+            JOIN ranked r ON r.ontology_id = o.id AND r.rn = 1
+            LEFT JOIN ontology_meta_profiles mp ON mp.version_id = r.id
             ORDER BY o.shortname NULLS LAST, o.iri
         """)
     )).mappings().all()
