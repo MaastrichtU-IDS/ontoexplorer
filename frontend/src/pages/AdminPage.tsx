@@ -5,7 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useAdminOverview } from '../hooks/useAdminOverview'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { api } from '../lib/api'
-import type { PipelineStage } from '../lib/api'
+import type { PipelineStage, BulkAction, BulkActionResult } from '../lib/api'
 import { JobsTable } from '../components/admin/JobsTable'
 import { OntologyTable } from '../components/admin/OntologyTable'
 import { WorkersPanel } from '../components/admin/WorkersPanel'
@@ -23,6 +23,23 @@ const TAB_LABELS: Record<Tab, string> = {
   maintainers: 'Maintainer requests',
   reasoners: 'Reasoners',
 }
+
+// Bulk pipeline actions for the admin ontology table's selection bar.
+const BULK_ACTIONS: { action: BulkAction; label: string; icon: string; title: string }[] = [
+  { action: 'index',          label: 'Re-index',       icon: '↺', title: 'Rebuild the search index for each selected ontology' },
+  { action: 'embed',          label: 'Embed',          icon: '⬡', title: 'Generate vector embeddings for each selected ontology' },
+  { action: 'reason',         label: 'Reason',         icon: '✸', title: 'Run the reasoner for each selected ontology' },
+  { action: 'detect_profile', label: 'Detect profile', icon: '◇', title: 'Run OWL 2 profile detection for each selected ontology' },
+  { action: 'ingest',         label: 'Re-ingest',      icon: '↑', title: 'Re-fetch each selected ontology from source (may create new versions)' },
+]
+const BULK_LABELS: Record<BulkAction, string> = Object.fromEntries(
+  BULK_ACTIONS.map(b => [b.action, b.label])
+) as Record<BulkAction, string>
+// Re-ingest mutates the catalogue (re-fetches from source, can create new
+// versions), so it always confirms; the recompute-only actions confirm only in
+// bulk (> 50 selected).
+const DESTRUCTIVE_ACTIONS = new Set<BulkAction>(['ingest'])
+const BULK_CONFIRM_THRESHOLD = 50
 
 export default function AdminPage() {
   const navigate = useNavigate()
@@ -47,7 +64,14 @@ export default function AdminPage() {
   const [secondsAgo, setSecondsAgo] = useState(0)
   const [updateStates, setUpdateStates] = useState<Record<string, UpdateState>>({})
   const [reindexStates, setReindexStates] = useState<Record<string, UpdateState>>({})
-  const [reindexAllState, setReindexAllState] = useState<'idle' | 'queued' | 'error'>('idle')
+  // Bulk selection + action bar for the ontology table.
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkState, setBulkState] = useState<
+    { action: BulkAction; status: 'working' } |
+    { action: BulkAction; status: 'done'; result: BulkActionResult } |
+    { action: BulkAction; status: 'error' } |
+    null
+  >(null)
   const [embedStates, setEmbedStates] = useState<Record<string, UpdateState>>({})
   const [profileStates, setProfileStates] = useState<Record<string, UpdateState>>({})
   const [versionProfileStates, setVersionProfileStates] = useState<Record<string, UpdateState>>({})
@@ -88,10 +112,47 @@ export default function AdminPage() {
     catch { setVersionProfileStates(s => ({ ...s, [versionId]: 'error' })) }
   }
 
-  async function handleReindexAll() {
-    setReindexAllState('queued')
-    try { await api.admin.reindexAll() }
-    catch { setReindexAllState('error') }
+  function toggleRow(ontologyId: string) {
+    setSelected(s => {
+      const n = new Set(s)
+      if (n.has(ontologyId)) n.delete(ontologyId)
+      else n.add(ontologyId)
+      return n
+    })
+  }
+  function setSelection(ontologyIds: string[], on: boolean) {
+    setSelected(s => {
+      const n = new Set(s)
+      for (const id of ontologyIds) {
+        if (on) n.add(id)
+        else n.delete(id)
+      }
+      return n
+    })
+  }
+  function clearSelection() { setSelected(new Set()) }
+
+  async function handleBulk(action: BulkAction) {
+    // Act only on selected rows that are actually visible under the current
+    // stage filter, so a stale selection can't silently touch hidden rows.
+    const ids = ontologyRows.filter(o => selected.has(o.id)).map(o => o.id)
+    if (ids.length === 0) return
+    const destructive = DESTRUCTIVE_ACTIONS.has(action)
+    if (destructive || ids.length > BULK_CONFIRM_THRESHOLD) {
+      const noun = ids.length === 1 ? 'ontology' : 'ontologies'
+      const extra = destructive
+        ? '\n\nThis re-fetches each one from source and may create new versions.'
+        : ''
+      if (!confirm(`${BULK_LABELS[action]} ${ids.length} ${noun}?${extra}`)) return
+    }
+    setBulkState({ action, status: 'working' })
+    try {
+      const result = await api.admin.bulkAction(action, ids)
+      setBulkState({ action, status: 'done', result })
+      await refetch()
+    } catch {
+      setBulkState({ action, status: 'error' })
+    }
   }
 
   async function handleRecomputeAll(ontologyId: string) {
@@ -136,6 +197,10 @@ export default function AdminPage() {
     }
   }
 
+  // Changing the status filter changes which rows are visible; reset the
+  // selection so a bulk action never touches rows the admin can't see.
+  useEffect(() => { setSelected(new Set()) }, [stageFilter])
+
   // Redirect non-admins after auth resolves
   useEffect(() => {
     if (!authLoading && user && !user.is_admin) {
@@ -174,6 +239,8 @@ export default function AdminPage() {
   }
   const missingSet = stageFilter ? missingByStage[stageFilter] : undefined
   const ontologyRows = missingSet ? data!.ontologies.filter(o => missingSet.has(o.id)) : data!.ontologies
+  const selectedVisibleCount = ontologyRows.reduce((n, o) => n + (selected.has(o.id) ? 1 : 0), 0)
+  const bulkBusy = bulkState?.status === 'working'
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: isMobile ? '0.75rem 0.5rem' : '1.5rem 2rem' }}>
@@ -282,22 +349,6 @@ export default function AdminPage() {
             <SectionLabel style={{ margin: 0 }}>
               Ontology Pipeline ({ontologyRows.length}{stageFilter ? ` missing ${stageFilter}` : ''})
             </SectionLabel>
-            <div style={{ flex: 1 }} />
-            <button
-              onClick={handleReindexAll}
-              disabled={reindexAllState === 'queued'}
-              title="Queue index_ontology for every ingested version (rebuilds search index and deprecated-term filter)"
-              style={{
-                background: reindexAllState === 'error' ? 'rgba(248,81,73,0.1)' : 'none',
-                border: `1px solid ${reindexAllState === 'error' ? 'rgba(248,81,73,0.3)' : 'var(--border)'}`,
-                borderRadius: 4, cursor: reindexAllState === 'queued' ? 'default' : 'pointer',
-                color: reindexAllState === 'error' ? 'var(--red)' : reindexAllState === 'queued' ? 'var(--orange)' : 'var(--text-dim)',
-                fontSize: 11, padding: '4px 12px',
-                opacity: reindexAllState === 'queued' ? 0.7 : 1,
-              }}
-            >
-              {reindexAllState === 'queued' ? '↑ queuing…' : reindexAllState === 'error' ? '✕ retry re-index all' : '↺ Re-index all'}
-            </button>
           </div>
           {coverage && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
@@ -333,8 +384,69 @@ export default function AdminPage() {
               )}
             </div>
           )}
+          {selectedVisibleCount > 0 && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+              marginBottom: 12, padding: '8px 12px', borderRadius: 6,
+              background: 'var(--bg-secondary)', border: '1px solid var(--accent)',
+            }}>
+              <span style={{ fontSize: 12, color: 'var(--text)', fontWeight: 600 }}>
+                {selectedVisibleCount} selected
+              </span>
+              <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>— apply:</span>
+              {BULK_ACTIONS.map(b => (
+                <button
+                  key={b.action}
+                  onClick={() => handleBulk(b.action)}
+                  disabled={bulkBusy}
+                  title={b.title}
+                  style={{
+                    background: 'none',
+                    border: `1px solid ${DESTRUCTIVE_ACTIONS.has(b.action) ? 'rgba(248,81,73,0.4)' : 'var(--border)'}`,
+                    borderRadius: 4, cursor: bulkBusy ? 'default' : 'pointer',
+                    color: DESTRUCTIVE_ACTIONS.has(b.action) ? 'var(--red)' : 'var(--text)',
+                    fontSize: 11, padding: '4px 10px', opacity: bulkBusy ? 0.6 : 1,
+                  }}
+                >
+                  {b.icon} {b.label}
+                </button>
+              ))}
+              <div style={{ flex: 1 }} />
+              {bulkState?.status === 'working' && (
+                <span style={{ color: 'var(--orange)', fontSize: 11 }}>
+                  queuing {BULK_LABELS[bulkState.action]}…
+                </span>
+              )}
+              {bulkState?.status === 'done' && (() => {
+                const r = bulkState.result
+                const errCount = Object.keys(r.errors).length
+                return (
+                  <span style={{ color: errCount ? 'var(--orange)' : 'var(--green)', fontSize: 11 }}
+                        title={errCount ? Object.entries(r.errors).map(([id, e]) => `${id}: ${e}`).join('\n') : undefined}>
+                    ✓ {BULK_LABELS[r.action]}: {r.queued.length} queued
+                    {r.skipped.length ? ` · ${r.skipped.length} skipped` : ''}
+                    {errCount ? ` · ${errCount} failed` : ''}
+                  </span>
+                )
+              })()}
+              {bulkState?.status === 'error' && (
+                <span style={{ color: 'var(--red)', fontSize: 11 }}>
+                  ✕ {BULK_LABELS[bulkState.action]} failed
+                </span>
+              )}
+              <button
+                onClick={clearSelection}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)', fontSize: 11 }}
+              >
+                clear ✕
+              </button>
+            </div>
+          )}
           <OntologyTable
             rows={ontologyRows}
+            selected={selected}
+            onToggleRow={toggleRow}
+            onSetSelection={setSelection}
             updateStates={updateStates}
             onUpdate={handleUpdate}
             reindexStates={reindexStates}

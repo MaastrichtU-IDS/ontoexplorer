@@ -1024,6 +1024,14 @@ export interface AdminCoverage {
   }[]
 }
 
+export type BulkAction = 'index' | 'embed' | 'reason' | 'detect_profile' | 'ingest'
+export interface BulkActionResult {
+  action: BulkAction
+  queued: string[]
+  skipped: string[]
+  errors: Record<string, string>
+}
+
 export interface AdminVersionEntry {
   version_id: string
   version_iri: string | null
@@ -1675,11 +1683,12 @@ export const api = {
         `/admin/ontologies/${ontologyId}/detect-profile`,
         { method: 'POST' }
       ),
-    reindexAll: () =>
-      request<{ index_queued: number; meta_detection_queued: number; message: string }>(
-        `/admin/reindex`,
-        { method: 'POST' }
-      ),
+    // Queue one pipeline action for many ontologies at once (bulk-action bar).
+    bulkAction: (action: BulkAction, ontologyIds: string[]) =>
+      request<BulkActionResult>('/admin/ontologies/bulk', {
+        method: 'POST',
+        body: JSON.stringify({ action, ontology_ids: ontologyIds }),
+      }),
 
     clearJobs: () =>
       request<{ deleted: number }>(`/admin/jobs`, { method: 'DELETE' }),

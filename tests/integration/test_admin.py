@@ -573,3 +573,110 @@ async def test_admin_overview_lists_version_less_failed_ingestion(
     assert entry["version_id"] is None
     assert entry["ontology_shortname"] is None
     assert "size limit" in entry["error"]
+
+
+# ── Bulk pipeline actions (admin ontology table selection bar) ────────────────
+
+@pytest.mark.anyio
+async def test_admin_bulk_action_index_queues_latest_version_each(
+    client, user_and_key, monkeypatch, db_session
+):
+    """Bulk index queues index_ontology for each ontology's latest version."""
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
+    _, raw_key = user_and_key
+
+    ids = []
+    vids = {}
+    for n in range(2):
+        ont = Ontology(iri=f"http://example.org/bulk-idx-{n}.owl")
+        db_session.add(ont); await db_session.flush()
+        v = OntologyVersion(ontology_id=ont.id, minio_key="k",
+                            sha256=f"bix{n}", format="turtle", status="ready")
+        db_session.add(v); await db_session.flush()
+        ids.append(ont.id); vids[ont.id] = v.id
+    await db_session.commit()
+
+    with patch("ontoexplorer.modules.jobs.tasks.index_ontology.delay",
+               return_value=MagicMock(id="t")) as m:
+        resp = await client.post(
+            "/api/v1/admin/ontologies/bulk",
+            headers={"Authorization": f"Bearer {raw_key}"},
+            json={"action": "index", "ontology_ids": ids},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body["queued"]) == set(ids)
+    assert body["skipped"] == []
+    assert body["errors"] == {}
+    called = {c.kwargs["ontology_id"]: c.kwargs["version_id"] for c in m.call_args_list}
+    assert called == {oid: vids[oid] for oid in ids}
+
+
+@pytest.mark.anyio
+async def test_admin_bulk_action_skips_ontology_without_version(
+    client, user_and_key, monkeypatch, db_session
+):
+    """An ontology with no (non-deprecated) version is skipped, not errored."""
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
+    _, raw_key = user_and_key
+
+    with_v = Ontology(iri="http://example.org/bulk-has-v.owl")
+    without_v = Ontology(iri="http://example.org/bulk-no-v.owl")
+    db_session.add_all([with_v, without_v]); await db_session.flush()
+    v = OntologyVersion(ontology_id=with_v.id, minio_key="k",
+                        sha256="bhv1", format="turtle", status="ready")
+    db_session.add(v); await db_session.commit()
+
+    with patch("ontoexplorer.modules.jobs.tasks.embed_ontology.delay",
+               return_value=MagicMock(id="t")) as m:
+        resp = await client.post(
+            "/api/v1/admin/ontologies/bulk",
+            headers={"Authorization": f"Bearer {raw_key}"},
+            json={"action": "embed", "ontology_ids": [with_v.id, without_v.id]},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["queued"] == [with_v.id]
+    assert body["skipped"] == [without_v.id]
+    m.assert_called_once_with(version_id=v.id, ontology_id=with_v.id)
+
+
+@pytest.mark.anyio
+async def test_admin_bulk_action_unknown_action_422(client, user_and_key, monkeypatch):
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
+    _, raw_key = user_and_key
+    resp = await client.post(
+        "/api/v1/admin/ontologies/bulk",
+        headers={"Authorization": f"Bearer {raw_key}"},
+        json={"action": "nope", "ontology_ids": ["x"]},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_admin_bulk_action_requires_admin(client, user_and_key, monkeypatch):
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: False)
+    _, raw_key = user_and_key
+    resp = await client.post(
+        "/api/v1/admin/ontologies/bulk",
+        headers={"Authorization": f"Bearer {raw_key}"},
+        json={"action": "index", "ontology_ids": ["x"]},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_admin_bulk_action_empty_ids_noop(client, user_and_key, monkeypatch):
+    monkeypatch.setattr("ontoexplorer.api.admin._common.is_admin", lambda u: True)
+    _, raw_key = user_and_key
+    resp = await client.post(
+        "/api/v1/admin/ontologies/bulk",
+        headers={"Authorization": f"Bearer {raw_key}"},
+        json={"action": "index", "ontology_ids": []},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"action": "index", "queued": [], "skipped": [], "errors": {}}
