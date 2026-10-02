@@ -13,7 +13,7 @@ from ontoexplorer.config import get_settings
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import User
 
-from ._common import _elk_redis, _require_admin, _search_redis
+from ._common import _elk_redis, _require_admin
 
 router = APIRouter()
 
@@ -258,7 +258,20 @@ async def admin_overview(
         )).all()
         embed_counts = {str(r.version_id): int(r.cnt) for r in count_rows}
 
-    search_r = await asyncio.to_thread(_search_redis)
+    # Indexed / profiled flags from the SAME source as the coverage cards
+    # (entity_index / ontology_profiles rows) so the per-row flag and the "N
+    # missing" card agree. The old Redis `search:meta` flag only meant build_index
+    # RAN — it stayed true for versions it left empty (e.g. indexed before
+    # index_ontology derived its ontology_id), disagreeing with the card.
+    indexed_vids: set[str] = set()
+    profiled_vids: set[str] = set()
+    if version_ids:
+        indexed_vids = {str(r.version_id) for r in (await db.execute(
+            text("SELECT DISTINCT version_id FROM entity_index WHERE version_id IN :ids")
+            .bindparams(bindparam("ids", expanding=True)), {"ids": version_ids})).all()}
+        profiled_vids = {str(r.version_id) for r in (await db.execute(
+            text("SELECT DISTINCT version_id FROM ontology_profiles WHERE version_id IN :ids")
+            .bindparams(bindparam("ids", expanding=True)), {"ids": version_ids})).all()}
 
     # Batch the per-version lookups. Previously each ontology triggered its own
     # Redis exists/scan calls (via a freshly-created elk client) plus a Job query
@@ -278,8 +291,8 @@ async def admin_overview(
         )).all()
         running_vids = {str(r.version_id) for r in job_rows}
 
-    # (b) versions with a cached classification (any reasoner) -> "ready", and
-    # (c) the indexed / profile-computed flags — one elk SCAN + one search pipeline.
+    # (b) versions with a cached classification (any reasoner) -> "ready".
+    # (indexed / profiled now come from the DB above, matching the coverage cards.)
     def _batch_redis():
         classified: set[str] = set()
         try:
@@ -291,27 +304,14 @@ async def admin_overview(
                     classified.add(parts[1])
         except Exception:
             pass
-        idx: dict[str, bool] = {}
-        prof: dict[str, bool] = {}
-        try:
-            pipe = search_r.pipeline(transaction=False)
-            for vid in version_ids:
-                pipe.exists(f"search:meta:{vid}")
-                pipe.exists(f"owl_profile:{vid}")
-            flags = pipe.execute()
-            for i, vid in enumerate(version_ids):
-                idx[vid] = bool(flags[2 * i])
-                prof[vid] = bool(flags[2 * i + 1])
-        except Exception:
-            pass
-        return classified, idx, prof
+        return classified
 
-    classified_vids, indexed_map, profile_map = await asyncio.to_thread(_batch_redis)
+    classified_vids = await asyncio.to_thread(_batch_redis)
 
     def _onto_entry(row) -> dict:
         vid = str(row["version_id"])
-        indexed = indexed_map.get(vid, False)
-        profile_computed = profile_map.get(vid, False)
+        indexed = vid in indexed_vids
+        profile_computed = vid in profiled_vids
         reasoning = (
             "ready" if vid in classified_vids
             else "running" if vid in running_vids
