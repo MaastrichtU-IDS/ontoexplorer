@@ -316,10 +316,38 @@ def purge_version_artifacts(ontology_id: str, version_id: str, minio_key: str | 
         _step("minio_object", _drop_object)
 
     def _drop_redis():
-        from ontoexplorer.modules.search.indexer import _get_redis
+        # Delete this version's Redis keys by ENUMERATION, not a keyspace SCAN.
+        # scan_iter(match=f"*{version_id}*") is O(total keyspace) — ~5.8M keys, ~40s
+        # measured — because SCAN examines every key regardless of the match. The
+        # keys are all known builders, so construct them directly (O(entities)): the
+        # bulk per-entity `:iri:` hashes are enumerated from the type/individual sets
+        # (which hold the IRIs), plus owl:Thing and the handful of fixed keys. Keys
+        # carry a 30-day TTL, so a miss self-heals eventually — but NOTE: any NEW
+        # per-version Redis key builder MUST be added here to free it promptly.
+        from ontoexplorer.modules.search.indexer import (
+            _get_redis, _iri_key, _type_key, _prefix_key, _individuals_key,
+            _meta_key, _deprecated_key, _langs_key, _stats_cache_key,
+        )
+        _OWL_THING_IRI = "http://www.w3.org/2002/07/owl#Thing"
+        _TYPES = ("class", "object_property", "data_property", "annotation_property", "individual")
         r = _get_redis()
-        for key in r.scan_iter(match=f"*{version_id}*", count=5000):
-            r.delete(key)
+        iris: set[str] = {_OWL_THING_IRI}
+        for _t in _TYPES:
+            iris |= set(r.smembers(_type_key(version_id, _t)))
+        iris |= set(r.smembers(_individuals_key(version_id)))
+        keys = [_iri_key(version_id, _iri) for _iri in iris]
+        keys += [
+            _prefix_key(version_id), _individuals_key(version_id), _meta_key(version_id),
+            _deprecated_key(version_id), _langs_key(version_id), _stats_cache_key(version_id),
+            *(_type_key(version_id, _t) for _t in _TYPES),
+            f"embed:attempts:{version_id}",
+        ]
+        # UNLINK (non-blocking reclaim) in batches so one version-delete can't issue
+        # a single multi-hundred-thousand-arg command.
+        for _i in range(0, len(keys), 1000):
+            _batch = keys[_i:_i + 1000]
+            if _batch:
+                r.unlink(*_batch)
 
     _step("redis_index", _drop_redis)
 
