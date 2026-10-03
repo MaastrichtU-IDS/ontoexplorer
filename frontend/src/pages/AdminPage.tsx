@@ -305,7 +305,7 @@ export default function AdminPage() {
         <ServiceCard
           name="Entity Index"
           status={s.entity_index}
-          description={`Postgres entity_index — flat per-entity table powering /search backend=pg. ${s.entity_index_rows.toLocaleString()} rows across all ready versions. Drifts when Redis and Postgres entity counts diverge > 5% on any version.`}
+          description={`Postgres entity_index — flat per-entity table powering /search backend=pg. ~${s.entity_index_rows.toLocaleString()} rows (planner estimate) across all ready versions.`}
         />
         <ServiceCard
           name="Queue"

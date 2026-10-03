@@ -118,42 +118,27 @@ def _celery_queue_depth() -> int:
 async def _check_entity_index(db: AsyncSession) -> tuple[str, dict]:
     """Return (status, stats) for the Postgres entity_index.
 
-    Status is 'ok' when row count for ready versions matches the per-type sums in
-    Redis to within 5%, 'warn: drift' when they diverge, 'error: …' when the query
-    fails. Stats include the total row count and the version drift list.
+    Deliberately cheap: this runs on every /admin/overview, which the admin panel
+    polls every 10s. It reports an approximate row count from the planner
+    statistics (pg_class.reltuples, falling back to COUNT(*) before the first
+    ANALYZE) and does NOT reconcile per-version counts against Redis.
+
+    That reconciliation — a full GROUP BY scan of entity_index plus ~5 Redis
+    SCARDs per version — was ~10k serial round-trips (~8s on the dev catalogue)
+    and single-handedly dominated overview latency (12-18s). If per-version drift
+    detection is wanted again, run it in a periodic job and cache the result, then
+    read the cached value here. `drift` stays in the payload (always empty now) so
+    the response shape is unchanged.
     """
     try:
-        pg_row = (await db.execute(
-            text("SELECT COUNT(*) AS n FROM entity_index")
-        )).first()
-        pg_total = int(pg_row.n) if pg_row else 0
-
-        # Per-version row count in entity_index, only for ready non-deprecated versions
-        per_version_rows = (await db.execute(
-            text("""
-                SELECT ei.version_id, COUNT(*) AS n
-                FROM entity_index ei
-                JOIN versions v ON v.id = ei.version_id
-                WHERE v.status NOT IN ('pending','failed','deprecated')
-                GROUP BY ei.version_id
-            """)
-        )).all()
-        pg_by_vid = {r.version_id: int(r.n) for r in per_version_rows}
-
-        # Compare against Redis per-version type-set sums (best-effort)
-        from ontoexplorer.modules.search.indexer import _get_redis, _type_key
-        r = _get_redis()
-        types = ("class", "object_property", "data_property", "annotation_property", "individual")
-        drift: list[dict] = []
-        for vid, pg_n in pg_by_vid.items():
-            redis_n = sum(r.scard(_type_key(vid, t)) for t in types)
-            if redis_n == 0:
-                continue  # Redis missing this version; not our problem here
-            if abs(redis_n - pg_n) / max(redis_n, 1) > 0.05:
-                drift.append({"version_id": vid, "redis": redis_n, "pg": pg_n})
-
-        status = "ok" if not drift else f"warn: {len(drift)} version(s) drift"
-        return status, {"total_rows": pg_total, "drift": drift[:10]}
+        row = (await db.execute(text(
+            "SELECT reltuples::bigint AS n FROM pg_class WHERE relname = 'entity_index'"
+        ))).first()
+        total = int(row.n) if row and row.n is not None else 0
+        if total < 0:  # reltuples is -1 until the first ANALYZE/VACUUM
+            total = int((await db.execute(
+                text("SELECT COUNT(*) AS n FROM entity_index"))).scalar() or 0)
+        return "ok", {"total_rows": total, "drift": []}
     except Exception as exc:
         return f"error: {exc}", {"total_rows": 0, "drift": []}
 
