@@ -145,6 +145,10 @@ class OntologyVersion(Base):
         ForeignKey("reasoner_profiles.id", ondelete="SET NULL"), nullable=True)
     source_url: Mapped[str | None] = mapped_column(String, nullable=True)
     triple_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Denormalised count of this version's term_embeddings rows, maintained by
+    # embed_ontology at completion. Lets /admin/overview read the per-version embed
+    # count from this row instead of a ~2s GROUP BY over all term_embeddings.
+    embed_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # Set by index_ontology when the version flips to "ready". The other pipeline
     # times derive from existing tables; only the index time had no SQL home.

@@ -1417,8 +1417,9 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _type_key
         from ontoexplorer.modules.search.embedder import build_entity_text, text_hash, embed_texts
         from ontoexplorer.database import make_celery_db_session
-        from ontoexplorer.models.db import TermEmbedding
+        from ontoexplorer.models.db import OntologyVersion, TermEmbedding
         from ontoexplorer.modules.jobs import tracker
+        from sqlalchemy import text as _sa_text, update as _sa_update
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
         r = _get_redis()
@@ -1556,6 +1557,20 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                         if done % 1000 < BATCH or done == total:
                             log.info("embed_ontology_progress", version_id=version_id,
                                      done=done, total=total)
+                    # Denormalise the final per-version embedding count onto the
+                    # version row. /admin/overview (polled every 10s) can then read
+                    # it from its existing version query instead of a ~2s GROUP BY
+                    # over the whole term_embeddings table on every refresh.
+                    final_n = (await db.execute(
+                        _sa_text("SELECT count(*) FROM term_embeddings WHERE version_id = :v"),
+                        {"v": version_id},
+                    )).scalar() or 0
+                    await db.execute(
+                        _sa_update(OntologyVersion)
+                        .where(OntologyVersion.id == version_id)
+                        .values(embed_count=int(final_n))
+                    )
+                    await db.commit()
                     await tracker.mark_done(db, job.id)
                 except Exception as exc:
                     await tracker.mark_failed(db, job.id, str(exc))
