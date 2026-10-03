@@ -97,14 +97,39 @@ def _check_beat() -> str:
         return f"error: {exc}"
 
 
+_WORKERS_CACHE_KEY = "admin:health:workers"
+_WORKERS_CACHE_TTL = 15  # seconds; overview polls every 10s from each api replica
+
+
 def _check_workers() -> str:
-    """Return 'ok' when at least one worker responds to celery ping; 'error: …' otherwise."""
+    """Return 'ok' when at least one worker responds to celery ping; 'error: …' otherwise.
+
+    Cached in Redis with a short TTL. celery control.ping() blocks for the FULL
+    timeout to gather pongs, so an uncached check was ~2s — the single largest term
+    in /admin/overview latency, paid on every 10s poll by each api replica (and
+    needless chatter on the control channel). Worker liveness does not need
+    sub-15s freshness, so a shared cached value is plenty.
+    """
+    r = None
+    try:
+        r = redis_sync.from_url(get_settings().redis_url, decode_responses=True)
+        cached = r.get(_WORKERS_CACHE_KEY)
+        if cached is not None:
+            return cached
+    except Exception:
+        r = None
     try:
         from ontoexplorer.modules.jobs.tasks import celery_app
-        pongs = celery_app.control.ping(timeout=2.0) or []
-        return "ok" if pongs else "error: no workers"
+        pongs = celery_app.control.ping(timeout=1.0) or []
+        status = "ok" if pongs else "error: no workers"
     except Exception as exc:
-        return f"error: {exc}"
+        status = f"error: {exc}"
+    if r is not None:
+        try:
+            r.set(_WORKERS_CACHE_KEY, status, ex=_WORKERS_CACHE_TTL)
+        except Exception:
+            pass
+    return status
 
 
 def _celery_queue_depth() -> int:
