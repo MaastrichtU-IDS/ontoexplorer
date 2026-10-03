@@ -63,6 +63,9 @@ def test_embed_ontology_batches_upserts(monkeypatch):
 
         async def execute(self, stmt, *a, **k):
             execute_calls.append(stmt)
+            res = MagicMock()
+            res.scalar.return_value = 0  # for the post-loop embed_count COUNT(*)
+            return res
 
         async def commit(self):
             pass
@@ -82,8 +85,11 @@ def test_embed_ontology_batches_upserts(monkeypatch):
 
     assert result["status"] == "done"
     assert result["total"] == N
-    # 300 rows / 256 per batch = 2 batches -> 2 execute() calls, NOT 300 (per-row).
-    assert len(execute_calls) == 2
+    # 300 rows / 256 per batch = 2 batches -> 2 upsert execute() calls, NOT 300
+    # (per-row). Filter to Inserts so the post-loop embed_count COUNT(*)/UPDATE
+    # (a TextClause + an Update) don't count toward the batch total.
+    inserts = [s for s in execute_calls if type(s).__name__ == "Insert"]
+    assert len(inserts) == 2
     # Each batch write is wrapped in the pg-write mutex (#185 serialization).
     assert mock_redis.lock.called
     assert mock_redis.lock.call_args[0][0] == "ontoexplorer:pg_write_serialize"
