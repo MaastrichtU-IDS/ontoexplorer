@@ -192,7 +192,7 @@ async def admin_overview(
         text("""
             WITH ranked AS (
                 SELECT v.id, v.ontology_id, v.version_iri, v.triple_count, v.status,
-                       v.created_at, v.source_url, v.reasoner,
+                       v.created_at, v.source_url, v.reasoner, v.embed_count,
                        row_number() OVER (PARTITION BY v.ontology_id ORDER BY v.created_at DESC) AS rn,
                        count(*)     OVER (PARTITION BY v.ontology_id)                            AS version_count
                 FROM versions v
@@ -203,7 +203,7 @@ async def admin_overview(
                    r.status AS ingestion_status,
                    r.created_at AS version_created_at, r.source_url, r.reasoner,
                    mp.resolved AS meta_resolved,
-                   r.version_count
+                   r.version_count, r.embed_count
             FROM ontologies o
             JOIN ranked r ON r.ontology_id = o.id AND r.rn = 1
             LEFT JOIN ontology_meta_profiles mp ON mp.version_id = r.id
@@ -226,22 +226,12 @@ async def admin_overview(
             r["ingestion_status"] = d.status
             r["reasoner"] = d.reasoner
             r["version_created_at"] = d.created_at
+            r["embed_count"] = d.embed_count
 
     version_ids = [str(r["version_id"]) for r in rows]
-    embed_counts: dict[str, int] = {}
-    if version_ids:
-        # Expanding IN rather than Postgres' `= ANY(:ids)` so the same
-        # statement runs under any driver. version_ids is non-empty here.
-        count_rows = (await db.execute(
-            text("""
-                SELECT version_id, COUNT(*) AS cnt
-                FROM term_embeddings
-                WHERE version_id IN :ids
-                GROUP BY version_id
-            """).bindparams(bindparam("ids", expanding=True)),
-            {"ids": version_ids},
-        )).all()
-        embed_counts = {str(r.version_id): int(r.cnt) for r in count_rows}
+    # embed_count is denormalised onto the version row (maintained by
+    # embed_ontology) and read straight from the window query above — previously a
+    # ~2s GROUP BY over all term_embeddings on every 10s overview refresh.
 
     # Indexed / profiled flags from the SAME source as the coverage cards
     # (entity_index / ontology_profiles rows) so the per-row flag and the "N
@@ -319,7 +309,7 @@ async def admin_overview(
             "ingestion_status": row["ingestion_status"],
             "indexed": indexed,
             "profile_computed": profile_computed,
-            "embed_count": embed_counts.get(vid, 0),
+            "embed_count": int(row["embed_count"] or 0),
             "reasoning_status": reasoning,
             "reasoner": row.get("reasoner"),
             "version_created_at": created.isoformat() if created else None,
