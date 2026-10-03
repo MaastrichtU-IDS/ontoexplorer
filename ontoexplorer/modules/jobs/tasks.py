@@ -1216,16 +1216,18 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
             invalidate_latest_ready_versions_cache()
         except Exception:
             pass
-        # Drop the shared cross-process /search, /autocomplete, /terms response
-        # caches so newly-indexed entities show up immediately rather than waiting on TTL.
-        try:
-            from ontoexplorer.modules.search.indexer import _get_redis
-            _r = _get_redis()
-            for _pattern in ("search:result:*", "search:autocomplete:*", "search:term:*"):
-                for _k in _r.scan_iter(_pattern, count=5000):
-                    _r.delete(_k)
-        except Exception:
-            pass
+        # The shared /search, /autocomplete, /terms response caches are short-TTL
+        # (60s, see global_search._SEARCH_CACHE_TTL) and self-expire, so newly-indexed
+        # entities surface within ~60s. We deliberately DO NOT flush them here:
+        # the previous approach SCANned the three `search:*` patterns, which sweeps
+        # the ENTIRE Redis keyspace (~5.8M keys — mostly the legacy `search:entities:*`
+        # sets) on every index. That is O(keyspace), not O(ontology): ~30s per task
+        # measured, flat regardless of ontology size (~35s/ontology total, ~18h for a
+        # full re-index on the concurrency-1 index worker). A full `--scan` sweep of
+        # one pattern alone is ~41s and matches 0 keys. 60s of post-reindex cache
+        # staleness is a fine trade for ~5x faster indexing. If immediate invalidation
+        # is ever required, use an O(1) cache-epoch counter (INCR here, fold into the
+        # cache keys) — never a keyspace scan.
         # Precompute the navigation tree's root level. Root detection compares
         # the whole entity set against the whole child set, which on a
         # DRON-sized ontology (~800k classes) takes ~13 s — the indexing worker
