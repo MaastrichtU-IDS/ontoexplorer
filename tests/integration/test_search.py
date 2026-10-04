@@ -198,6 +198,46 @@ async def test_search_expression_and_with_shared_subclass(client, user_and_key):
 
 
 @pytest.mark.anyio
+async def test_search_expression_source_from_entity_index(client, user_and_key, db_session):
+    """Expression results carry `source` from entity_index, not Redis (#242 Stage 1).
+
+    SHARED is deliberately NOT seeded into the Redis `:iri:` hash — under the old
+    per-result hget the source would be "". With the entity_index row present it
+    resolves to that row's source.
+    """
+    from ontoexplorer.models.db import EntityIndex
+    _, raw_key = user_and_key
+    auth = {"Authorization": f"Bearer {raw_key}"}
+    _seed_redis("fake-vid")
+    db_session.add(EntityIndex(
+        version_id="fake-vid", iri="http://ex.org/SHARED", ontology_id="fake-oid",
+        type="class", primary_label="shared", primary_label_norm="shared",
+        short="SHARED", source="GO", search_text="shared",
+    ))
+    await db_session.commit()
+    cls = _classification(subclasses={
+        "http://ex.org/CD": ["http://ex.org/AP", "http://ex.org/SHARED"],
+        "http://ex.org/N":  ["http://ex.org/InnerN", "http://ex.org/SHARED"],
+        "http://ex.org/AP": [],
+        "http://ex.org/InnerN": [],
+        "http://ex.org/SHARED": [],
+    })
+
+    with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
+         patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
+         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
+         patch(_SEARCH_PATCHES["classification"], new=AsyncMock(return_value=cls)):
+        resp = await client.get(
+            "/api/v1/ontologies/fake-oid/fake-vid/search",
+            params={"q": "'cell death' and 'nucleus'", "mode": "expression"},
+            headers=auth,
+        )
+    assert resp.status_code == 200
+    shared = next(r for r in resp.json()["results"] if r["iri"] == "http://ex.org/SHARED")
+    assert shared["source"] == "GO"
+
+
+@pytest.mark.anyio
 async def test_search_expression_or_union(client, user_and_key):
     """'cell death' or 'nucleus' → union of subclasses (plus both classes themselves)."""
     _, raw_key = user_and_key

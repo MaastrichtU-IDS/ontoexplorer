@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ontoexplorer.api.ontologies import _get_version_or_404
 from ontoexplorer.clients.reasoning import ReasoningNotReadyError
 from ontoexplorer.database import get_db
-from ontoexplorer.models.db import Ontology, User
+from ontoexplorer.models.db import EntityIndex, Ontology, User
 from ontoexplorer.modules.auth.dependencies import get_current_user
 from ontoexplorer.modules.search.evaluator import (
     AmbiguousLabelError,
@@ -131,8 +131,20 @@ async def search(
         )
 
     trimmed = search_results[:limit]
-    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
-    _r = _get_redis()
+    # Source per result comes from entity_index (#242 Stage 1): one batched SQL
+    # lookup rather than a Redis hget per IRI (an N+1 against the per-entity hash).
+    # entity_index.source is populated at index time independent of the synonyms/
+    # definitions backfill, so this read moves off Redis now. Missing IRI -> "".
+    iris = [r.iri for r in trimmed]
+    sources: dict[str, str] = {}
+    if iris:
+        rows = (await db.execute(
+            select(EntityIndex.iri, EntityIndex.source).where(
+                EntityIndex.version_id == version_id,
+                EntityIndex.iri.in_(iris),
+            )
+        )).all()
+        sources = {iri: (src or "") for iri, src in rows}
     # MOS class expressions always evaluate to classes (the evaluator only
     # produces named classes from `and`/`or`/`some`/`only`/etc). Tag them so
     # the UI can render a CLASS badge and the chip filter on the homepage
@@ -144,7 +156,7 @@ async def search(
             {
                 "iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type,
                 "type": "class",
-                "source": (_r.hget(_iri_key(version_id, r.iri), "source") or ""),
+                "source": sources.get(r.iri, ""),
                 "lang": r.lang,
                 "cross_language": r.cross_language,
             }
