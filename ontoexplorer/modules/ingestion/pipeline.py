@@ -316,12 +316,14 @@ async def _ensure_ontology(db: AsyncSession, ontology_iri: str, request: Ingesti
     in the system (no later PATCH required).
     """
     from ontoexplorer.modules.ingestion.shortname import (
+        find_ontology_by_canonical_iri,
         infer_shortname_from_iri,
         unique_shortname,
     )
 
-    result = await db.execute(select(Ontology).where(Ontology.iri == ontology_iri))
-    existing = result.scalar_one_or_none()
+    # Match on canonical identity, not the exact string, so a file-at-namespace-root
+    # or trailing-`#` variant lands on the existing row instead of a new one (#250).
+    existing = await find_ontology_by_canonical_iri(db, ontology_iri)
     if existing:
         return existing.id
 
@@ -356,9 +358,13 @@ async def _reconcile_ontology_iri(
 
     Replaces the previous handler that silently kept the wrong IRI on conflict.
     """
-    existing = (await db.execute(
-        select(Ontology).where(Ontology.iri == canonical_iri)
-    )).scalar_one_or_none()
+    from ontoexplorer.modules.ingestion.shortname import find_ontology_by_canonical_iri
+
+    # Canonical-identity match (not exact string): a version that declares a
+    # file-at-namespace-root or trailing-`#` IRI merges into the clean row (#250).
+    existing = await find_ontology_by_canonical_iri(
+        db, canonical_iri, exclude_id=bogus_ontology_id
+    )
 
     if existing is None:
         # IRI changes → re-derive shortname from canonical IRI, BUT only when

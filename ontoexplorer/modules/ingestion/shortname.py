@@ -23,6 +23,42 @@ _VALID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$")
 # File extensions stripped from the end of an IRI's last segment.
 _EXTS = ("owl", "ttl", "rdf", "obo", "json", "xml", "nt", "rdfs", "n3", "jsonld")
 
+# Same extension set, for the canonicalisation regex below.
+_EXT_ALT = "ttl|owl|rdf|xml|n3|nt|rdfs|jsonld|json|obo|ofn|omn"
+# A file whose stem equals its parent path segment, e.g. `…/sulo/sulo.ttl`.
+# Captures the base up to (but excluding) that redundant `/<stem>.<ext>`.
+_FILE_AT_NS_ROOT = re.compile(
+    rf"^(?P<base>.*/(?P<seg>[^/]+))/(?P=seg)\.(?:{_EXT_ALT})$", re.IGNORECASE
+)
+
+
+def canonicalize_ontology_iri(iri: str) -> str:
+    """Normalise an ontology IRI to a stable identity key for dedup (#250).
+
+    Two real-world patterns split one vocabulary into several catalogue rows
+    because the served file's self-declared ``owl:Ontology`` IRI varies:
+
+    * trailing fragment/slash — ``…/22-rdf-syntax-ns`` vs ``…/22-rdf-syntax-ns#``
+    * a file sitting at its own namespace root — ``https://w3id.org/sulo/`` vs
+      ``https://w3id.org/sulo/sulo.ttl`` (SULO 0.2.0 declared the file URL)
+
+    Both collapse to the same key here. The file strip is deliberately narrow:
+    only when the file *stem equals the parent segment* (``…/sulo/sulo.ttl``),
+    so shared registry roots like ``…/obo/caro.owl`` are left untouched (``caro``
+    != ``obo``). The result is an identity key, not a display IRI — callers keep
+    the declared IRI for display and use this only to match duplicates.
+    """
+    if not iri:
+        return iri
+    s = iri.strip()
+    # A file at its own namespace root → drop the redundant `/<stem>.<ext>`.
+    m = _FILE_AT_NS_ROOT.match(s)
+    if m:
+        s = m.group("base")
+    # Trailing fragment marker / path separators don't change identity.
+    s = re.sub(r"[#/]+$", "", s)
+    return s
+
 
 def infer_shortname_from_iri(iri: str) -> str | None:
     """Best-effort shortname inference from an ontology IRI.
@@ -55,6 +91,37 @@ def infer_shortname_from_iri(iri: str) -> str | None:
     if not _VALID_RE.match(cleaned):
         return None
     return cleaned
+
+
+async def find_ontology_by_canonical_iri(
+    db: AsyncSession, iri: str, *, exclude_id: str | None = None
+):
+    """Return an existing Ontology whose IRI is the *same vocabulary* as ``iri``.
+
+    Dedup key is :func:`canonicalize_ontology_iri`, so a file-at-namespace-root or
+    a trailing-``#`` variant matches the clean namespace row even though the stored
+    IRIs differ (#250). Tries the exact IRI first (indexed), then the small set of
+    rows sharing the canonical prefix. Stored IRIs are never rewritten here.
+    """
+    exact = (await db.execute(
+        select(Ontology).where(Ontology.iri == iri)
+    )).scalar_one_or_none()
+    if exact and exact.id != exclude_id:
+        return exact
+
+    canon = canonicalize_ontology_iri(iri)
+    if not canon:
+        return None
+    # Candidates share the canonical prefix (canon, canon#, canon/, canon/<file>).
+    # Bounded by the prefix, then confirmed by recomputing the key both sides.
+    like = canon.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    rows = (await db.execute(
+        select(Ontology).where(Ontology.iri.like(like, escape="\\"))
+    )).scalars().all()
+    for row in rows:
+        if row.id != exclude_id and canonicalize_ontology_iri(row.iri) == canon:
+            return row
+    return None
 
 
 async def unique_shortname(
