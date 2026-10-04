@@ -411,6 +411,14 @@ class EntityIndex(Base):
     labels: Mapped[dict] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
     primary_lang: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Synonyms + definitions, mirrored from the Redis entity hash so readers (OLS
+    # API, term detail) can source them from Postgres instead of Redis — the first
+    # step of consolidating the per-entity Redis working set into entity_index (#242).
+    # Lists of objects, same JSON/JSONB-by-dialect treatment as `labels`.
+    synonyms: Mapped[list] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list, server_default="[]")
+    definitions: Mapped[list] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list, server_default="[]")
     # search_tsv is a generated column; SQLAlchemy reads it but never writes it.
 
 
