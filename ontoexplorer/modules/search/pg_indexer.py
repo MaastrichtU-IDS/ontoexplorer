@@ -172,6 +172,17 @@ async def populate_entity_index(
         primary_label_norm = normalise_label(split_compound_labels(primary_label))
         search_text = _build_search_text(entity)
 
+        # Mirror synonyms + definitions from the Redis hash into entity_index (#242
+        # Stage 0). Stored as JSON lists; malformed/missing -> [].
+        try:
+            synonyms = json.loads(entity.get("synonyms") or "[]")
+        except ValueError:
+            synonyms = []
+        try:
+            definitions = json.loads(entity.get("definitions") or "[]")
+        except ValueError:
+            definitions = []
+
         rows.append({
             "version_id": version_id,
             "iri": iri,
@@ -187,6 +198,8 @@ async def populate_entity_index(
             "is_individual": iri in individuals,
             "labels": labels_by_lang,
             "primary_lang": primary_lang,
+            "synonyms": synonyms,
+            "definitions": definitions,
         })
 
     # Clear any prior rows for this version, then bulk insert.
