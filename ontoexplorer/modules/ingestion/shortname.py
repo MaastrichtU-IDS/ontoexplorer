@@ -93,6 +93,25 @@ def infer_shortname_from_iri(iri: str) -> str | None:
     return cleaned
 
 
+def select_identity_iri(subject_iri: str | None, preferred_ns: str | None) -> str | None:
+    """Choose the ontology's identity/dedup IRI (#250 Layer 2).
+
+    Prefer the vocabulary's declared canonical namespace (``vann:preferredNamespaceUri``)
+    — it's stable across versions and is the content-negotiation base — but only when
+    the ``owl:Ontology`` subject lives *within* that namespace. That maps a version-file
+    subject (``…/sulo/sulo-0.2.0.ttl``) to ``…/sulo/`` while refusing to adopt a namespace
+    an ontology declares that is unrelated to itself (which would cause a false merge).
+    Falls back to the subject IRI.
+    """
+    if not preferred_ns:
+        return subject_iri
+    cn = canonicalize_ontology_iri(preferred_ns)
+    cs = canonicalize_ontology_iri(subject_iri or "")
+    if subject_iri is None or cs == cn or cs.startswith((cn + "/", cn + "#")):
+        return preferred_ns
+    return subject_iri
+
+
 async def find_ontology_by_canonical_iri(
     db: AsyncSession, iri: str, *, exclude_id: str | None = None
 ):

@@ -217,10 +217,19 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     # writes, so this normally agrees with provisional_iri. The SPARQL re-check
     # runs against the persisted store (which now also contains import closure
     # triples) and catches the rare case where the eager parse missed.
-    canonical_iri = _extract_ontology_iri_sparql(ontology_id, version_id)
-    if canonical_iri and canonical_iri != provisional_iri:
+    from ontoexplorer.modules.ingestion.shortname import select_identity_iri
+
+    # The owl:Ontology *subject* — used for metadata/version extraction below.
+    subject_iri = _extract_ontology_iri_sparql(ontology_id, version_id)
+    # Prefer the declared canonical namespace (vann:preferredNamespaceUri) as the
+    # IDENTITY key when the subject lives within it — stable across versions, the
+    # conneg base (#250 Layer 2). Falls back to the subject.
+    preferred_ns = _extract_preferred_namespace_uri(ontology_id, version_id)
+    identity_iri = select_identity_iri(subject_iri, preferred_ns) or provisional_iri
+
+    if identity_iri and identity_iri != provisional_iri:
         reconciled_id = await _reconcile_ontology_iri(
-            db, bogus_ontology_id=ontology_id, canonical_iri=canonical_iri, version_id=version_id
+            db, bogus_ontology_id=ontology_id, canonical_iri=identity_iri, version_id=version_id
         )
         # Merged into a pre-existing row → not a fresh ontology; don't rename it.
         if reconciled_id != ontology_id:
@@ -229,14 +238,18 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
 
     # ── Refine the shortname + title from the ontology's own metadata (#249) ──────
     # Only for freshly-created ontologies, so an established (possibly linked)
-    # shortname is never changed by a re-ingest. Best-effort.
+    # shortname is never changed by a re-ingest. Best-effort. Uses the subject IRI
+    # (the owl:Ontology node that carries title/prefix), not the identity key.
     if ontology_created:
         await _refine_ontology_naming(
-            db, ontology_id, canonical_iri or provisional_iri, version_id
+            db, ontology_id, subject_iri or provisional_iri, version_id
         )
 
     # ── Persist version record ────────────────────────────────────────────────
-    effective_iri = canonical_iri or provisional_iri
+    # Metadata + version-IRI extraction key off the owl:Ontology subject; only the
+    # catalogue identity (ontologies.iri, dedup) uses the preferred namespace.
+    canonical_iri = subject_iri
+    effective_iri = subject_iri or provisional_iri
     version_iri = (
         _extract_version_iri(graph, ontology_iri=effective_iri) if graph is not None
         else _extract_version_iri_sparql(ontology_id, version_id, ontology_iri=effective_iri)
@@ -667,6 +680,35 @@ def _extract_ontology_iri_sparql(ontology_id: str, version_id: str) -> str | Non
     for row in results:
         val = str(row["iri"])
         if val.startswith("http"):
+            return val
+    return None
+
+
+def _extract_preferred_namespace_uri(ontology_id: str, version_id: str) -> str | None:
+    """The vocabulary's declared canonical namespace (`vann:preferredNamespaceUri`).
+
+    This is the stable identity across versions — SULO 0.2.0 and 0.2.14 both declare
+    `https://w3id.org/sulo/` even though their owl:Ontology *subject* IRIs differ
+    (a file URL vs the clean namespace). It's also exactly the base IRI that serves
+    the latest version via content-negotiation, so it's a better identity key than
+    the served file's self-declaration (#250 Layer 2). Returned as a plain string
+    (ontologies declare it as either an IRI or a string literal); only accepted when
+    it looks like an http(s) URL.
+    """
+    from ontoexplorer.clients.oxigraph import sparql_query, graph_iri
+    g = graph_iri(ontology_id, version_id)
+    try:
+        results = sparql_query(f"""
+            SELECT ?v FROM <{g}> WHERE {{
+                ?ont a <http://www.w3.org/2002/07/owl#Ontology> .
+                ?ont <http://purl.org/vocab/vann/preferredNamespaceUri> ?v .
+            }} LIMIT 1
+        """)
+    except Exception:
+        return None
+    for row in results:
+        val = (row["v"].value if hasattr(row["v"], "value") else str(row["v"])).strip()
+        if val.startswith(("http://", "https://")):
             return val
     return None
 

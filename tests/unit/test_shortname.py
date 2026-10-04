@@ -8,6 +8,7 @@ from ontoexplorer.modules.ingestion.shortname import (
     derive_shortname,
     find_ontology_by_canonical_iri,
     infer_shortname_from_iri,
+    select_identity_iri,
     slugify_name,
     unique_shortname,
 )
@@ -95,6 +96,50 @@ def test_derive_falls_back_to_iri_tail():
 def test_derive_skips_invalid_prefix_uses_next():
     # A one-char prefix fails the validator → fall through to title.
     assert derive_shortname("http://ex.org/x", prefix="x", title="Gene Ontology") == "gene-ontology"
+
+
+# ── select_identity_iri (#250 Layer 2) ──────────────────────────────────────────
+
+def test_identity_prefers_namespace_for_version_file_subject():
+    # owl:Ontology subject is the version file; namespace is the stable identity.
+    assert select_identity_iri(
+        "https://w3id.org/sulo/sulo-0.2.0.ttl", "https://w3id.org/sulo/"
+    ) == "https://w3id.org/sulo/"
+
+
+def test_identity_prefers_namespace_for_file_at_root_subject():
+    assert select_identity_iri(
+        "https://w3id.org/sulo/sulo.ttl", "https://w3id.org/sulo/"
+    ) == "https://w3id.org/sulo/"
+
+
+def test_identity_prefers_namespace_fragment_variant():
+    # subject without '#', namespace with '#': same vocabulary.
+    assert select_identity_iri(
+        "http://purl.org/goodrelations/v1", "http://purl.org/goodrelations/v1#"
+    ) == "http://purl.org/goodrelations/v1#"
+
+
+def test_identity_refuses_unrelated_namespace():
+    # An ontology declaring a namespace unrelated to its subject → keep the subject.
+    assert select_identity_iri(
+        "http://example.org/myonto", "http://schema.org/"
+    ) == "http://example.org/myonto"
+
+
+def test_identity_refuses_sibling_prefix_namespace():
+    # 'foobar' must not be treated as living within 'foo' (boundary-aware).
+    assert select_identity_iri(
+        "http://ex.org/foobar", "http://ex.org/foo"
+    ) == "http://ex.org/foobar"
+
+
+def test_identity_falls_back_to_subject_when_no_namespace():
+    assert select_identity_iri("http://ex.org/onto", None) == "http://ex.org/onto"
+
+
+def test_identity_uses_namespace_when_no_subject():
+    assert select_identity_iri(None, "http://ex.org/ns/") == "http://ex.org/ns/"
 
 
 # ── canonicalize_ontology_iri (#250) ───────────────────────────────────────────
