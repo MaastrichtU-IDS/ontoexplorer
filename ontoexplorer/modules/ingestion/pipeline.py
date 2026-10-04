@@ -156,7 +156,7 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
         or request.url
         or f"urn:uuid:{uuid.uuid4()}"
     )
-    ontology_id = await _ensure_ontology(db, provisional_iri, request)
+    ontology_id, ontology_created = await _ensure_ontology(db, provisional_iri, request)
     version_id = str(uuid.uuid4())
     minio_key = store_ontology(ontology_id, version_id, sha256, fmt.value, source.data)
 
@@ -219,8 +219,20 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     # triples) and catches the rare case where the eager parse missed.
     canonical_iri = _extract_ontology_iri_sparql(ontology_id, version_id)
     if canonical_iri and canonical_iri != provisional_iri:
-        ontology_id = await _reconcile_ontology_iri(
+        reconciled_id = await _reconcile_ontology_iri(
             db, bogus_ontology_id=ontology_id, canonical_iri=canonical_iri, version_id=version_id
+        )
+        # Merged into a pre-existing row → not a fresh ontology; don't rename it.
+        if reconciled_id != ontology_id:
+            ontology_created = False
+        ontology_id = reconciled_id
+
+    # ── Refine the shortname + title from the ontology's own metadata (#249) ──────
+    # Only for freshly-created ontologies, so an established (possibly linked)
+    # shortname is never changed by a re-ingest. Best-effort.
+    if ontology_created:
+        await _refine_ontology_naming(
+            db, ontology_id, canonical_iri or provisional_iri, version_id
         )
 
     # ── Persist version record ────────────────────────────────────────────────
@@ -308,12 +320,14 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     )
 
 
-async def _ensure_ontology(db: AsyncSession, ontology_iri: str, request: IngestionRequest) -> str:
+async def _ensure_ontology(
+    db: AsyncSession, ontology_iri: str, request: IngestionRequest
+) -> tuple[str, bool]:
     """Get or create the Ontology record for the given IRI.
 
-    For freshly-created rows, derive a unique shortname from the IRI so the
-    ontology has a canonical user-facing identifier from the moment it lands
-    in the system (no later PATCH required).
+    Returns ``(ontology_id, created)``. For freshly-created rows, derive a unique
+    shortname from the IRI so the ontology has a canonical user-facing identifier
+    from the moment it lands (refined from metadata post-load — see #249).
     """
     from ontoexplorer.modules.ingestion.shortname import (
         find_ontology_by_canonical_iri,
@@ -325,7 +339,7 @@ async def _ensure_ontology(db: AsyncSession, ontology_iri: str, request: Ingesti
     # or trailing-`#` variant lands on the existing row instead of a new one (#250).
     existing = await find_ontology_by_canonical_iri(db, ontology_iri)
     if existing:
-        return existing.id
+        return existing.id, False
 
     candidate = infer_shortname_from_iri(ontology_iri)
     shortname = await unique_shortname(db, candidate) if candidate else None
@@ -338,7 +352,56 @@ async def _ensure_ontology(db: AsyncSession, ontology_iri: str, request: Ingesti
     )
     db.add(ontology)
     await db.flush()
-    return ontology.id
+    return ontology.id, True
+
+
+async def _refine_ontology_naming(
+    db: AsyncSession, ontology_id: str, ontology_iri: str, version_id: str
+) -> None:
+    """Upgrade a freshly-created ontology's shortname + title from its own metadata.
+
+    The pre-load shortname is derived from the IRI tail, which collides badly for
+    generic tails (`/v1`, `/vocab`). Once the content is loaded we can prefer the
+    vocabulary's declared `vann:preferredNamespacePrefix`, then its title (#249).
+    Best-effort: any failure leaves the IRI-derived name in place.
+    """
+    from ontoexplorer.modules.ingestion.shortname import (
+        derive_shortname,
+        infer_shortname_from_iri,
+        unique_shortname,
+    )
+    from ontoexplorer.modules.metadata.dcat import extract_ontology_annotations
+
+    try:
+        ann = await asyncio.to_thread(
+            extract_ontology_annotations, ontology_id, version_id, ontology_iri
+        )
+        title = ann.get("title")
+        desired = derive_shortname(
+            ontology_iri, prefix=ann.get("preferred_prefix"), title=title
+        )
+        row = (await db.execute(
+            select(Ontology).where(Ontology.id == ontology_id)
+        )).scalar_one_or_none()
+        if row is None:
+            return
+        values: dict = {}
+        # Replace the IRI-derived name only when metadata yields something better
+        # (i.e. `desired` came from the prefix/title, not the IRI fallback).
+        iri_default = infer_shortname_from_iri(ontology_iri)
+        if desired and desired != iri_default and desired != row.shortname:
+            values["shortname"] = await unique_shortname(
+                db, desired, exclude_id=ontology_id
+            )
+        if title and not row.title:
+            values["title"] = title
+        if values:
+            await db.execute(
+                update(Ontology).where(Ontology.id == ontology_id).values(**values)
+            )
+            log.info("ontology_naming_refined", ontology_id=ontology_id, **values)
+    except Exception as exc:  # naming is a nicety, never fail ingest for it
+        log.warning("ontology_naming_refine_failed", ontology_id=ontology_id, error=str(exc))
 
 
 async def _reconcile_ontology_iri(

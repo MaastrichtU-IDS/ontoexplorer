@@ -124,6 +124,40 @@ async def find_ontology_by_canonical_iri(
     return None
 
 
+def slugify_name(text: str) -> str | None:
+    """Slugify free text (a title/label) into a validator-compliant shortname.
+
+    Lowercases, replaces runs of invalid characters with a single hyphen, trims,
+    and truncates to the 64-char limit at a hyphen boundary. Returns None if no
+    compliant slug results.
+    """
+    if not text:
+        return None
+    cleaned = re.sub(r"[^a-z0-9_-]+", "-", text.strip().lower())
+    cleaned = re.sub(r"-{2,}", "-", cleaned).strip("-_")
+    if len(cleaned) > 64:
+        cleaned = cleaned[:64].rstrip("-_")
+    if len(cleaned) < 2 or len(cleaned) > 64 or not _VALID_RE.match(cleaned):
+        return None
+    return cleaned
+
+
+def derive_shortname(
+    iri: str, *, prefix: str | None = None, title: str | None = None
+) -> str | None:
+    """Best shortname from ontology metadata, falling back to the IRI (#249).
+
+    Order: ``vann:preferredNamespacePrefix`` (the vocabulary's own declared short
+    name) → a slug of ``dcterms:title``/``rdfs:label`` → the IRI tail. Each candidate
+    must pass the shortname validator; the first that does wins. Returns None only
+    when nothing compliant can be produced.
+    """
+    for candidate in (slugify_name(prefix or ""), slugify_name(title or "")):
+        if candidate:
+            return candidate
+    return infer_shortname_from_iri(iri)
+
+
 async def unique_shortname(
     db: AsyncSession,
     candidate: str,

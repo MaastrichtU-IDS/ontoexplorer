@@ -35,6 +35,8 @@ _DESC_PREDS = [
 ]
 _LICENSE_PREDS = ["http://purl.org/dc/terms/license", "http://purl.org/dc/elements/1.1/rights"]
 _CREATOR_PREDS = ["http://purl.org/dc/terms/creator", "http://purl.org/dc/elements/1.1/creator"]
+# The vocabulary's own declared short prefix — the best source for a shortname (#249).
+_PREFIX_PREDS = ["http://purl.org/vocab/vann/preferredNamespacePrefix"]
 
 
 def extract_ontology_annotations(ontology_id: str, version_id: str, ontology_iri: str) -> dict:
@@ -60,11 +62,13 @@ def extract_ontology_annotations(ontology_id: str, version_id: str, ontology_iri
     title = _query(_TITLE_PREDS, 1)
     desc = _query(_DESC_PREDS, 1)
     lic = _query(_LICENSE_PREDS, 1)
+    prefix = _query(_PREFIX_PREDS, 1)
     return {
         "title": title[0] if title else None,
         "description": desc[0] if desc else None,
         "license": lic[0] if lic else None,
         "creators": _query(_CREATOR_PREDS, 20),
+        "preferred_prefix": prefix[0] if prefix else None,
     }
 
 

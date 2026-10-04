@@ -5,8 +5,10 @@ import pytest
 
 from ontoexplorer.modules.ingestion.shortname import (
     canonicalize_ontology_iri,
+    derive_shortname,
     find_ontology_by_canonical_iri,
     infer_shortname_from_iri,
+    slugify_name,
     unique_shortname,
 )
 
@@ -54,6 +56,45 @@ def test_infer_strips_leading_trailing_hyphens():
 
 def test_infer_handles_dcterms_style():
     assert infer_shortname_from_iri("http://purl.org/dc/terms/") == "terms"
+
+
+# ── derive_shortname / slugify_name (#249) ──────────────────────────────────────
+
+def test_slugify_basic():
+    assert slugify_name("Product Supply Network Vocabulary") == "product-supply-network-vocabulary"
+
+
+def test_slugify_collapses_and_trims():
+    assert slugify_name("  Healthcare metadata / DICOM ontology ") == "healthcare-metadata-dicom-ontology"
+
+
+def test_slugify_rejects_too_short():
+    assert slugify_name("A") is None
+
+
+def test_slugify_truncates_to_64():
+    out = slugify_name("word " * 40)
+    assert out is not None and len(out) <= 64
+
+
+def test_derive_prefers_prefix():
+    # healthcarevocab: IRI tail is the useless "v1"; prefix is "dicom".
+    assert derive_shortname("http://purl.org/healthcarevocab/v1", prefix="dicom",
+                            title="Healthcare metadata / DICOM ontology") == "dicom"
+
+
+def test_derive_falls_back_to_title_slug():
+    assert derive_shortname("http://purl.org/healthcarevocab/v1", prefix=None,
+                            title="Product Supply Network Vocabulary") == "product-supply-network-vocabulary"
+
+
+def test_derive_falls_back_to_iri_tail():
+    assert derive_shortname("http://purl.obolibrary.org/obo/go.owl", prefix=None, title=None) == "go"
+
+
+def test_derive_skips_invalid_prefix_uses_next():
+    # A one-char prefix fails the validator → fall through to title.
+    assert derive_shortname("http://ex.org/x", prefix="x", title="Gene Ontology") == "gene-ontology"
 
 
 # ── canonicalize_ontology_iri (#250) ───────────────────────────────────────────
