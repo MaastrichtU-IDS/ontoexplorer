@@ -93,6 +93,33 @@ def infer_shortname_from_iri(iri: str) -> str | None:
     return cleaned
 
 
+# Instrumentation for #250 Layer 3: a version-like segment (v1.2, 0.2.0, 1_0) or an
+# embedded date (2025-07-11) in the identity IRI, signalling a version-specific subject.
+_VERSION_SEG = re.compile(r"(?:^|[/#._-])v?\d+(?:[._-]\d+)+", re.IGNORECASE)
+_DATE_SEG = re.compile(r"\d{4}[-/]\d{2}[-/]\d{2}")
+
+
+def identity_instability_reason(iri: str) -> str:
+    """Classify why an identity IRI looks version/file-specific, or "" if it looks stable.
+
+    Used only for instrumentation (#250 Layer 3): these are the ontologies a content-
+    negotiation resolver would target — a file extension that survived canonicalisation,
+    an embedded date, or a version-number segment. Not a decision input; it over-counts
+    slightly on purpose so the Layer-3 population is not under-estimated.
+    """
+    if not iri:
+        return ""
+    c = canonicalize_ontology_iri(iri)
+    last = re.split(r"[/#]", c)[-1] if c else ""
+    if "." in last and last.rsplit(".", 1)[1].lower() in _EXTS:
+        return "file"
+    if _DATE_SEG.search(c):
+        return "date"
+    if _VERSION_SEG.search(c):
+        return "version"
+    return ""
+
+
 def select_identity_iri(subject_iri: str | None, preferred_ns: str | None) -> str | None:
     """Choose the ontology's identity/dedup IRI (#250 Layer 2).
 

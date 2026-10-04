@@ -7,6 +7,7 @@ from ontoexplorer.modules.ingestion.shortname import (
     canonicalize_ontology_iri,
     derive_shortname,
     find_ontology_by_canonical_iri,
+    identity_instability_reason,
     infer_shortname_from_iri,
     select_identity_iri,
     slugify_name,
@@ -96,6 +97,35 @@ def test_derive_falls_back_to_iri_tail():
 def test_derive_skips_invalid_prefix_uses_next():
     # A one-char prefix fails the validator → fall through to title.
     assert derive_shortname("http://ex.org/x", prefix="x", title="Gene Ontology") == "gene-ontology"
+
+
+# ── identity_instability_reason (#250 Layer 3 instrumentation) ───────────────────
+
+def test_instability_clean_namespace_is_stable():
+    assert identity_instability_reason("https://w3id.org/sulo/") == ""
+    assert identity_instability_reason("http://purl.org/goodrelations/v1#") == ""
+
+
+def test_instability_file_extension():
+    # A file subject that canonicalisation can't collapse (stem != parent).
+    assert identity_instability_reason("https://w3id.org/sulo/sulo-0.2.0.ttl") == "file"
+
+
+def test_instability_date_segment():
+    assert identity_instability_reason("https://lov.example/vocab/2025-07-11") == "date"
+
+
+def test_instability_version_segment():
+    assert identity_instability_reason("http://ex.org/onto/v1.2.3") == "version"
+
+
+def test_instability_file_at_ns_root_is_stable():
+    # Canonicalisation collapses this, so it's NOT an L3 candidate.
+    assert identity_instability_reason("https://w3id.org/sulo/sulo.ttl") == ""
+
+
+def test_instability_empty():
+    assert identity_instability_reason("") == ""
 
 
 # ── select_identity_iri (#250 Layer 2) ──────────────────────────────────────────

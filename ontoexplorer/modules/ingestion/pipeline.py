@@ -217,7 +217,10 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     # writes, so this normally agrees with provisional_iri. The SPARQL re-check
     # runs against the persisted store (which now also contains import closure
     # triples) and catches the rare case where the eager parse missed.
-    from ontoexplorer.modules.ingestion.shortname import select_identity_iri
+    from ontoexplorer.modules.ingestion.shortname import (
+        identity_instability_reason,
+        select_identity_iri,
+    )
 
     # The owl:Ontology *subject* — used for metadata/version extraction below.
     subject_iri = _extract_ontology_iri_sparql(ontology_id, version_id)
@@ -226,6 +229,23 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     # conneg base (#250 Layer 2). Falls back to the subject.
     preferred_ns = _extract_preferred_namespace_uri(ontology_id, version_id)
     identity_iri = select_identity_iri(subject_iri, preferred_ns) or provisional_iri
+
+    # Instrument the Layer-3 candidate set: Layer 2 produced no clean namespace and
+    # the identity still looks version/file-specific. Counts how often an active conneg
+    # resolver (#250 Layer 3) would be needed, so we can decide to build it with data.
+    if identity_iri != preferred_ns:
+        _reason = identity_instability_reason(identity_iri)
+        if _reason:
+            metrics.ontology_identity_unstable_total.labels(reason=_reason).inc()
+            log.info(
+                "ontology_identity_unstable",
+                ontology_id=ontology_id,
+                identity_iri=identity_iri,
+                subject_iri=subject_iri,
+                had_preferred_ns=bool(preferred_ns),
+                reason=_reason,
+                source_url=source.final_url or request.url or request.iri,
+            )
 
     if identity_iri and identity_iri != provisional_iri:
         reconciled_id = await _reconcile_ontology_iri(
