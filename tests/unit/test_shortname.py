@@ -4,7 +4,13 @@ from __future__ import annotations
 import pytest
 
 from ontoexplorer.modules.ingestion.shortname import (
+    canonicalize_ontology_iri,
+    derive_shortname,
+    find_ontology_by_canonical_iri,
+    identity_instability_reason,
     infer_shortname_from_iri,
+    select_identity_iri,
+    slugify_name,
     unique_shortname,
 )
 
@@ -52,6 +58,202 @@ def test_infer_strips_leading_trailing_hyphens():
 
 def test_infer_handles_dcterms_style():
     assert infer_shortname_from_iri("http://purl.org/dc/terms/") == "terms"
+
+
+# ── derive_shortname / slugify_name (#249) ──────────────────────────────────────
+
+def test_slugify_basic():
+    assert slugify_name("Product Supply Network Vocabulary") == "product-supply-network-vocabulary"
+
+
+def test_slugify_collapses_and_trims():
+    assert slugify_name("  Healthcare metadata / DICOM ontology ") == "healthcare-metadata-dicom-ontology"
+
+
+def test_slugify_rejects_too_short():
+    assert slugify_name("A") is None
+
+
+def test_slugify_truncates_to_64():
+    out = slugify_name("word " * 40)
+    assert out is not None and len(out) <= 64
+
+
+def test_derive_prefers_prefix():
+    # healthcarevocab: IRI tail is the useless "v1"; prefix is "dicom".
+    assert derive_shortname("http://purl.org/healthcarevocab/v1", prefix="dicom",
+                            title="Healthcare metadata / DICOM ontology") == "dicom"
+
+
+def test_derive_falls_back_to_title_slug():
+    assert derive_shortname("http://purl.org/healthcarevocab/v1", prefix=None,
+                            title="Product Supply Network Vocabulary") == "product-supply-network-vocabulary"
+
+
+def test_derive_falls_back_to_iri_tail():
+    assert derive_shortname("http://purl.obolibrary.org/obo/go.owl", prefix=None, title=None) == "go"
+
+
+def test_derive_skips_invalid_prefix_uses_next():
+    # A one-char prefix fails the validator → fall through to title.
+    assert derive_shortname("http://ex.org/x", prefix="x", title="Gene Ontology") == "gene-ontology"
+
+
+# ── identity_instability_reason (#250 Layer 3 instrumentation) ───────────────────
+
+def test_instability_clean_namespace_is_stable():
+    assert identity_instability_reason("https://w3id.org/sulo/") == ""
+    assert identity_instability_reason("http://purl.org/goodrelations/v1#") == ""
+
+
+def test_instability_file_extension():
+    # A file subject that canonicalisation can't collapse (stem != parent).
+    assert identity_instability_reason("https://w3id.org/sulo/sulo-0.2.0.ttl") == "file"
+
+
+def test_instability_date_segment():
+    assert identity_instability_reason("https://lov.example/vocab/2025-07-11") == "date"
+
+
+def test_instability_version_segment():
+    assert identity_instability_reason("http://ex.org/onto/v1.2.3") == "version"
+
+
+def test_instability_file_at_ns_root_is_stable():
+    # Canonicalisation collapses this, so it's NOT an L3 candidate.
+    assert identity_instability_reason("https://w3id.org/sulo/sulo.ttl") == ""
+
+
+def test_instability_empty():
+    assert identity_instability_reason("") == ""
+
+
+# ── select_identity_iri (#250 Layer 2) ──────────────────────────────────────────
+
+def test_identity_prefers_namespace_for_version_file_subject():
+    # owl:Ontology subject is the version file; namespace is the stable identity.
+    assert select_identity_iri(
+        "https://w3id.org/sulo/sulo-0.2.0.ttl", "https://w3id.org/sulo/"
+    ) == "https://w3id.org/sulo/"
+
+
+def test_identity_prefers_namespace_for_file_at_root_subject():
+    assert select_identity_iri(
+        "https://w3id.org/sulo/sulo.ttl", "https://w3id.org/sulo/"
+    ) == "https://w3id.org/sulo/"
+
+
+def test_identity_prefers_namespace_fragment_variant():
+    # subject without '#', namespace with '#': same vocabulary.
+    assert select_identity_iri(
+        "http://purl.org/goodrelations/v1", "http://purl.org/goodrelations/v1#"
+    ) == "http://purl.org/goodrelations/v1#"
+
+
+def test_identity_refuses_unrelated_namespace():
+    # An ontology declaring a namespace unrelated to its subject → keep the subject.
+    assert select_identity_iri(
+        "http://example.org/myonto", "http://schema.org/"
+    ) == "http://example.org/myonto"
+
+
+def test_identity_refuses_sibling_prefix_namespace():
+    # 'foobar' must not be treated as living within 'foo' (boundary-aware).
+    assert select_identity_iri(
+        "http://ex.org/foobar", "http://ex.org/foo"
+    ) == "http://ex.org/foobar"
+
+
+def test_identity_falls_back_to_subject_when_no_namespace():
+    assert select_identity_iri("http://ex.org/onto", None) == "http://ex.org/onto"
+
+
+def test_identity_uses_namespace_when_no_subject():
+    assert select_identity_iri(None, "http://ex.org/ns/") == "http://ex.org/ns/"
+
+
+# ── canonicalize_ontology_iri (#250) ───────────────────────────────────────────
+
+def test_canon_strips_trailing_slash():
+    assert canonicalize_ontology_iri("https://w3id.org/sulo/") == "https://w3id.org/sulo"
+
+
+def test_canon_strips_trailing_fragment():
+    # 22-rdf-syntax-ns vs 22-rdf-syntax-ns# → same identity.
+    a = canonicalize_ontology_iri("http://www.w3.org/1999/02/22-rdf-syntax-ns#")
+    b = canonicalize_ontology_iri("http://www.w3.org/1999/02/22-rdf-syntax-ns")
+    assert a == b == "http://www.w3.org/1999/02/22-rdf-syntax-ns"
+
+
+def test_canon_file_at_namespace_root_collapses():
+    # SULO 0.2.0 declared the file URL as its owl:Ontology IRI.
+    assert canonicalize_ontology_iri("https://w3id.org/sulo/sulo.ttl") == "https://w3id.org/sulo"
+
+
+def test_canon_sulo_variants_converge():
+    assert (canonicalize_ontology_iri("https://w3id.org/sulo/sulo.ttl")
+            == canonicalize_ontology_iri("https://w3id.org/sulo/"))
+
+
+def test_canon_leaves_shared_registry_root_untouched():
+    # /obo/ hosts many distinct ontologies; stem (caro) != parent (obo) → no collapse.
+    assert (canonicalize_ontology_iri("http://purl.obolibrary.org/obo/caro.owl")
+            == "http://purl.obolibrary.org/obo/caro.owl")
+
+
+def test_canon_distinct_files_stay_distinct():
+    assert (canonicalize_ontology_iri("http://www.ontologydesignpatterns.org/cp/owl/situation.owl")
+            != canonicalize_ontology_iri("http://www.ontologydesignpatterns.org/cp/owl/sequence.owl"))
+
+
+def test_canon_empty_passthrough():
+    assert canonicalize_ontology_iri("") == ""
+
+
+# The test engine is session-scoped (committed rows persist across function-scoped
+# db_sessions), so each DB test below uses a unique IRI base to avoid cross-test
+# canonical collisions.
+
+@pytest.mark.anyio
+async def test_find_by_canonical_matches_file_at_ns_root(db_session):
+    from ontoexplorer.models.db import Ontology
+    row = Ontology(iri="https://canon.test/fileroot/", shortname="canon-fileroot")
+    db_session.add(row)
+    await db_session.commit()
+    # A later ingest declaring the file URL finds the existing clean row.
+    found = await find_ontology_by_canonical_iri(db_session, "https://canon.test/fileroot/fileroot.ttl")
+    assert found is not None and found.id == row.id
+
+
+@pytest.mark.anyio
+async def test_find_by_canonical_matches_fragment_variant(db_session):
+    from ontoexplorer.models.db import Ontology
+    row = Ontology(iri="https://canon.test/frag/ns", shortname="canon-frag")
+    db_session.add(row)
+    await db_session.commit()
+    found = await find_ontology_by_canonical_iri(db_session, "https://canon.test/frag/ns#")
+    assert found is not None and found.id == row.id
+
+
+@pytest.mark.anyio
+async def test_find_by_canonical_no_false_match_on_registry_root(db_session):
+    from ontoexplorer.models.db import Ontology
+    db_session.add(Ontology(iri="https://canon.test/reg/caro.owl", shortname="canon-caro"))
+    await db_session.commit()
+    # A different file under the same registry root must NOT match.
+    found = await find_ontology_by_canonical_iri(db_session, "https://canon.test/reg/ceph.owl")
+    assert found is None
+
+
+@pytest.mark.anyio
+async def test_find_by_canonical_excludes_self(db_session):
+    from ontoexplorer.models.db import Ontology
+    row = Ontology(iri="https://canon.test/selfonly/selfonly.ttl", shortname="canon-selfonly")
+    db_session.add(row)
+    await db_session.flush()
+    found = await find_ontology_by_canonical_iri(
+        db_session, "https://canon.test/selfonly/selfonly.ttl", exclude_id=row.id)
+    assert found is None
 
 
 @pytest.mark.anyio

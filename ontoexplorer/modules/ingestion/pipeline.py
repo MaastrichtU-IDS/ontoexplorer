@@ -156,7 +156,7 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
         or request.url
         or f"urn:uuid:{uuid.uuid4()}"
     )
-    ontology_id = await _ensure_ontology(db, provisional_iri, request)
+    ontology_id, ontology_created = await _ensure_ontology(db, provisional_iri, request)
     version_id = str(uuid.uuid4())
     minio_key = store_ontology(ontology_id, version_id, sha256, fmt.value, source.data)
 
@@ -217,14 +217,59 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     # writes, so this normally agrees with provisional_iri. The SPARQL re-check
     # runs against the persisted store (which now also contains import closure
     # triples) and catches the rare case where the eager parse missed.
-    canonical_iri = _extract_ontology_iri_sparql(ontology_id, version_id)
-    if canonical_iri and canonical_iri != provisional_iri:
-        ontology_id = await _reconcile_ontology_iri(
-            db, bogus_ontology_id=ontology_id, canonical_iri=canonical_iri, version_id=version_id
+    from ontoexplorer.modules.ingestion.shortname import (
+        identity_instability_reason,
+        select_identity_iri,
+    )
+
+    # The owl:Ontology *subject* — used for metadata/version extraction below.
+    subject_iri = _extract_ontology_iri_sparql(ontology_id, version_id)
+    # Prefer the declared canonical namespace (vann:preferredNamespaceUri) as the
+    # IDENTITY key when the subject lives within it — stable across versions, the
+    # conneg base (#250 Layer 2). Falls back to the subject.
+    preferred_ns = _extract_preferred_namespace_uri(ontology_id, version_id)
+    identity_iri = select_identity_iri(subject_iri, preferred_ns) or provisional_iri
+
+    # Instrument the Layer-3 candidate set: Layer 2 produced no clean namespace and
+    # the identity still looks version/file-specific. Counts how often an active conneg
+    # resolver (#250 Layer 3) would be needed, so we can decide to build it with data.
+    if identity_iri != preferred_ns:
+        _reason = identity_instability_reason(identity_iri)
+        if _reason:
+            metrics.ontology_identity_unstable_total.labels(reason=_reason).inc()
+            log.info(
+                "ontology_identity_unstable",
+                ontology_id=ontology_id,
+                identity_iri=identity_iri,
+                subject_iri=subject_iri,
+                had_preferred_ns=bool(preferred_ns),
+                reason=_reason,
+                source_url=source.final_url or request.url or request.iri,
+            )
+
+    if identity_iri and identity_iri != provisional_iri:
+        reconciled_id = await _reconcile_ontology_iri(
+            db, bogus_ontology_id=ontology_id, canonical_iri=identity_iri, version_id=version_id
+        )
+        # Merged into a pre-existing row → not a fresh ontology; don't rename it.
+        if reconciled_id != ontology_id:
+            ontology_created = False
+        ontology_id = reconciled_id
+
+    # ── Refine the shortname + title from the ontology's own metadata (#249) ──────
+    # Only for freshly-created ontologies, so an established (possibly linked)
+    # shortname is never changed by a re-ingest. Best-effort. Uses the subject IRI
+    # (the owl:Ontology node that carries title/prefix), not the identity key.
+    if ontology_created:
+        await _refine_ontology_naming(
+            db, ontology_id, subject_iri or provisional_iri, version_id
         )
 
     # ── Persist version record ────────────────────────────────────────────────
-    effective_iri = canonical_iri or provisional_iri
+    # Metadata + version-IRI extraction key off the owl:Ontology subject; only the
+    # catalogue identity (ontologies.iri, dedup) uses the preferred namespace.
+    canonical_iri = subject_iri
+    effective_iri = subject_iri or provisional_iri
     version_iri = (
         _extract_version_iri(graph, ontology_iri=effective_iri) if graph is not None
         else _extract_version_iri_sparql(ontology_id, version_id, ontology_iri=effective_iri)
@@ -308,22 +353,26 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     )
 
 
-async def _ensure_ontology(db: AsyncSession, ontology_iri: str, request: IngestionRequest) -> str:
+async def _ensure_ontology(
+    db: AsyncSession, ontology_iri: str, request: IngestionRequest
+) -> tuple[str, bool]:
     """Get or create the Ontology record for the given IRI.
 
-    For freshly-created rows, derive a unique shortname from the IRI so the
-    ontology has a canonical user-facing identifier from the moment it lands
-    in the system (no later PATCH required).
+    Returns ``(ontology_id, created)``. For freshly-created rows, derive a unique
+    shortname from the IRI so the ontology has a canonical user-facing identifier
+    from the moment it lands (refined from metadata post-load — see #249).
     """
     from ontoexplorer.modules.ingestion.shortname import (
+        find_ontology_by_canonical_iri,
         infer_shortname_from_iri,
         unique_shortname,
     )
 
-    result = await db.execute(select(Ontology).where(Ontology.iri == ontology_iri))
-    existing = result.scalar_one_or_none()
+    # Match on canonical identity, not the exact string, so a file-at-namespace-root
+    # or trailing-`#` variant lands on the existing row instead of a new one (#250).
+    existing = await find_ontology_by_canonical_iri(db, ontology_iri)
     if existing:
-        return existing.id
+        return existing.id, False
 
     candidate = infer_shortname_from_iri(ontology_iri)
     shortname = await unique_shortname(db, candidate) if candidate else None
@@ -336,7 +385,56 @@ async def _ensure_ontology(db: AsyncSession, ontology_iri: str, request: Ingesti
     )
     db.add(ontology)
     await db.flush()
-    return ontology.id
+    return ontology.id, True
+
+
+async def _refine_ontology_naming(
+    db: AsyncSession, ontology_id: str, ontology_iri: str, version_id: str
+) -> None:
+    """Upgrade a freshly-created ontology's shortname + title from its own metadata.
+
+    The pre-load shortname is derived from the IRI tail, which collides badly for
+    generic tails (`/v1`, `/vocab`). Once the content is loaded we can prefer the
+    vocabulary's declared `vann:preferredNamespacePrefix`, then its title (#249).
+    Best-effort: any failure leaves the IRI-derived name in place.
+    """
+    from ontoexplorer.modules.ingestion.shortname import (
+        derive_shortname,
+        infer_shortname_from_iri,
+        unique_shortname,
+    )
+    from ontoexplorer.modules.metadata.dcat import extract_ontology_annotations
+
+    try:
+        ann = await asyncio.to_thread(
+            extract_ontology_annotations, ontology_id, version_id, ontology_iri
+        )
+        title = ann.get("title")
+        desired = derive_shortname(
+            ontology_iri, prefix=ann.get("preferred_prefix"), title=title
+        )
+        row = (await db.execute(
+            select(Ontology).where(Ontology.id == ontology_id)
+        )).scalar_one_or_none()
+        if row is None:
+            return
+        values: dict = {}
+        # Replace the IRI-derived name only when metadata yields something better
+        # (i.e. `desired` came from the prefix/title, not the IRI fallback).
+        iri_default = infer_shortname_from_iri(ontology_iri)
+        if desired and desired != iri_default and desired != row.shortname:
+            values["shortname"] = await unique_shortname(
+                db, desired, exclude_id=ontology_id
+            )
+        if title and not row.title:
+            values["title"] = title
+        if values:
+            await db.execute(
+                update(Ontology).where(Ontology.id == ontology_id).values(**values)
+            )
+            log.info("ontology_naming_refined", ontology_id=ontology_id, **values)
+    except Exception as exc:  # naming is a nicety, never fail ingest for it
+        log.warning("ontology_naming_refine_failed", ontology_id=ontology_id, error=str(exc))
 
 
 async def _reconcile_ontology_iri(
@@ -356,9 +454,13 @@ async def _reconcile_ontology_iri(
 
     Replaces the previous handler that silently kept the wrong IRI on conflict.
     """
-    existing = (await db.execute(
-        select(Ontology).where(Ontology.iri == canonical_iri)
-    )).scalar_one_or_none()
+    from ontoexplorer.modules.ingestion.shortname import find_ontology_by_canonical_iri
+
+    # Canonical-identity match (not exact string): a version that declares a
+    # file-at-namespace-root or trailing-`#` IRI merges into the clean row (#250).
+    existing = await find_ontology_by_canonical_iri(
+        db, canonical_iri, exclude_id=bogus_ontology_id
+    )
 
     if existing is None:
         # IRI changes → re-derive shortname from canonical IRI, BUT only when
@@ -598,6 +700,35 @@ def _extract_ontology_iri_sparql(ontology_id: str, version_id: str) -> str | Non
     for row in results:
         val = str(row["iri"])
         if val.startswith("http"):
+            return val
+    return None
+
+
+def _extract_preferred_namespace_uri(ontology_id: str, version_id: str) -> str | None:
+    """The vocabulary's declared canonical namespace (`vann:preferredNamespaceUri`).
+
+    This is the stable identity across versions — SULO 0.2.0 and 0.2.14 both declare
+    `https://w3id.org/sulo/` even though their owl:Ontology *subject* IRIs differ
+    (a file URL vs the clean namespace). It's also exactly the base IRI that serves
+    the latest version via content-negotiation, so it's a better identity key than
+    the served file's self-declaration (#250 Layer 2). Returned as a plain string
+    (ontologies declare it as either an IRI or a string literal); only accepted when
+    it looks like an http(s) URL.
+    """
+    from ontoexplorer.clients.oxigraph import sparql_query, graph_iri
+    g = graph_iri(ontology_id, version_id)
+    try:
+        results = sparql_query(f"""
+            SELECT ?v FROM <{g}> WHERE {{
+                ?ont a <http://www.w3.org/2002/07/owl#Ontology> .
+                ?ont <http://purl.org/vocab/vann/preferredNamespaceUri> ?v .
+            }} LIMIT 1
+        """)
+    except Exception:
+        return None
+    for row in results:
+        val = (row["v"].value if hasattr(row["v"], "value") else str(row["v"])).strip()
+        if val.startswith(("http://", "https://")):
             return val
     return None
 

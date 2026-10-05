@@ -29,6 +29,16 @@ ingestion_errors_total = Counter(
     ["step"],
 )
 
+# Ontologies whose catalogue identity fell back to a version/file-specific subject
+# IRI with no usable vann:preferredNamespaceUri — i.e. the set that an active
+# content-negotiation resolver (#250 Layer 3) would target. Instrumentation to size
+# that population before deciding whether Layer 3 is worth the network complexity.
+ontology_identity_unstable_total = Counter(
+    "ontoexplorer_ontology_identity_unstable_total",
+    "Ingested ontologies whose identity IRI looks version/file-specific (Layer-3 candidates)",
+    ["reason"],
+)
+
 # ── Reasoning ─────────────────────────────────────────────────────────────────
 
 reasoning_jobs_total = Counter(
