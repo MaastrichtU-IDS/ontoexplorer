@@ -13,7 +13,7 @@ from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Ontology, OntologyVersion, User
 from ontoexplorer.modules.auth.dependencies import get_current_user
 from ontoexplorer.modules.search.evaluator import AmbiguousLabelError, evaluate
-from ontoexplorer.modules.search.indexer import entity_lookup, entity_lookup_multi, normalise_label
+from ontoexplorer.modules.search.indexer import entity_lookup_multi, normalise_label
 from ontoexplorer.modules.search.lang import resolve_lang
 from ontoexplorer.modules.search.mos_parser import ParseError, NamedClass, parse
 from ontoexplorer.modules.search.semantic import semantic_search
@@ -338,7 +338,10 @@ async def ontology_search(
                 effective_mode = "entity"
 
     if effective_mode == "entity":
-        results = await asyncio.to_thread(entity_lookup, version_id, q, None, limit)
+        # Postgres entity_index scoped to this version (#242 Stage 1): replaces the
+        # Redis prefix-zset + per-IRI hash lookup. Same tiered ranking as /search.
+        from ontoexplorer.modules.search.pg_search import pg_entity_search
+        results = await pg_entity_search(db, q, limit, version_id=version_id)
         sem_results: list[dict] = []
         if semantic and len(q) >= 3:
             sem_results = await semantic_search(q, db, [version_id], limit=10)
