@@ -54,10 +54,10 @@ def _redis_scard(key: str) -> int:
     return _get_redis().scard(key)
 
 
-async def _load_entity(version_id: str, iri: str) -> dict | None:
-    """Load entity hash from Redis; return None if missing."""
-    h = await asyncio.to_thread(_redis_hgetall, _iri_key(version_id, iri))
-    return h if h else None
+async def _load_entity(db, version_id: str, iri: str) -> dict | None:
+    """Load the entity payload from entity_index (#242 Stage 1 PR2); None if absent."""
+    from ontoexplorer.api.ols._entity_source import load_entity
+    return await load_entity(db, version_id, iri)
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +366,7 @@ async def list_terms_hal(
 
     # Single-IRI filter
     if iri:
-        entity = await _load_entity(vid, iri)
+        entity = await _load_entity(db, vid, iri)
         items = (
             [entity_to_v1_term(
                 entity, ontology,
@@ -381,7 +381,7 @@ async def list_terms_hal(
         all_iris = await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "class"))
         matched_items = []
         for candidate_iri in all_iris:
-            entity = await _load_entity(vid, candidate_iri)
+            entity = await _load_entity(db, vid, candidate_iri)
             if not entity:
                 continue
             if short_form and entity.get("short") != short_form:
@@ -661,7 +661,7 @@ async def get_term_hal(
     version = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
-    entity = await _load_entity(vid, iri)
+    entity = await _load_entity(db, vid, iri)
     if not entity:
         raise HTTPException(status_code=404, detail=f"Term {iri} not found in {ontology_id}")
 
@@ -690,7 +690,7 @@ async def find_terms_by_id_defining_ontology(
     versions = await latest_ready_versions(db)
     items: list[dict] = []
     for v in versions:
-        entity = await _load_entity(str(v.id), iri)
+        entity = await _load_entity(db, str(v.id), iri)
         if not entity:
             continue
         ontology = await get_ontology_or_404(db, str(v.ontology_id))
@@ -724,7 +724,7 @@ async def list_terms_global(
     versions = await latest_ready_versions(db)
     items: list[dict] = []
     for v in versions:
-        entity = await _load_entity(str(v.id), iri)
+        entity = await _load_entity(db, str(v.id), iri)
         if not entity:
             continue
         ontology = await get_ontology_or_404(db, str(v.ontology_id))
@@ -752,7 +752,7 @@ async def get_term_global(
     versions = await latest_ready_versions(db)
     items: list[dict] = []
     for v in versions:
-        entity = await _load_entity(str(v.id), iri)
+        entity = await _load_entity(db, str(v.id), iri)
         if not entity:
             continue
         ontology = await get_ontology_or_404(db, str(v.ontology_id))

@@ -58,11 +58,16 @@ async def v2_seed(db_session, sample_ontology, fake_redis):
         fake_redis.hset(_iri_key(vid, iri), mapping=mapping)
         fake_redis.sadd(_type_key(vid, etype), iri)
         fake_redis.zadd(_prefix_key(vid), {f"{normalise_label(label)}|en|{etype}|{iri}": 0})
+        from tests.integration.ols.conftest import _mk_entity_index
+        db_session.add(_mk_entity_index(vid, sample_ontology.id, iri, label,
+                                        type_=etype, is_individual=(etype == "individual"),
+                                        source=onto_id))
 
     _seed(class_iri, "MyClass",     "class")
     _seed(prop_iri,  "myProperty",  "object_property", {"parents": json.dumps([])})
     _seed(ind_iri,   "myIndividual","individual",
           {"types": json.dumps([class_iri])})
+    await db_session.commit()
 
     yield {
         "class_iri":  class_iri,
@@ -285,9 +290,11 @@ async def test_v2_stats(client: AsyncClient, sample_ontology, fake_redis, db_ses
     ver = (await db_session.execute(
         _sel(OntologyVersion).where(OntologyVersion.ontology_id == sample_ontology.id))).scalar_one()
     vid = str(ver.id)
-    # Baseline BEFORE seeding: the session-scoped sqlite engine accumulates rows
-    # across tests and /v2/stats sums all ready versions — assert the DELTA. (Fetch
-    # before adding to the session; the endpoint shares db_session and would autoflush.)
+    # /v2/stats sums all ready versions, and latest_ready_versions is in-process
+    # cached — invalidate so both reads see current DB, then assert the DELTA this
+    # test's rows add (the session-scoped sqlite engine accumulates across tests).
+    from ontoexplorer.modules.search.versions import invalidate_latest_ready_versions_cache
+    invalidate_latest_ready_versions_cache()
     before = (await client.get("/ols/api/v2/stats")).json()
     rows = [("c1", "class", False), ("c2", "class", False), ("c3", "class", False),
             ("p1", "object_property", False), ("p2", "data_property", False),
@@ -298,6 +305,7 @@ async def test_v2_stats(client: AsyncClient, sample_ontology, fake_redis, db_ses
             type=typ, primary_label=short, primary_label_norm=short, short=short,
             search_text=short, is_individual=is_ind))
     await db_session.commit()
+    invalidate_latest_ready_versions_cache()
 
     resp = await client.get("/ols/api/v2/stats")
     assert resp.status_code == 200

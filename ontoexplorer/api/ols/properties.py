@@ -63,9 +63,10 @@ def _redis_smembers_sorted(key: str) -> list[str]:
     return sorted(_get_redis().smembers(key))
 
 
-async def _load_entity(version_id: str, iri: str) -> dict | None:
-    h = await asyncio.to_thread(_redis_hgetall, _iri_key(version_id, iri))
-    return h if h else None
+async def _load_entity(db, version_id: str, iri: str) -> dict | None:
+    """Load the entity payload from entity_index (#242 Stage 1 PR2); None if absent."""
+    from ontoexplorer.api.ols._entity_source import load_entity
+    return await load_entity(db, version_id, iri)
 
 
 def _all_property_iris_sorted(vid: str) -> list[str]:
@@ -274,7 +275,7 @@ async def list_properties_hal(
 
     # Single-IRI filter
     if iri:
-        entity = await _load_entity(vid, iri)
+        entity = await _load_entity(db, vid, iri)
         items = (
             [entity_to_v1_term(
                 entity, ontology,
@@ -291,7 +292,7 @@ async def list_properties_hal(
         all_iris = await asyncio.to_thread(_all_property_iris_sorted, vid)
         matched_items = []
         for candidate_iri in all_iris:
-            entity = await _load_entity(vid, candidate_iri)
+            entity = await _load_entity(db, vid, candidate_iri)
             if not entity:
                 continue
             if entity.get("short") != short_form:
@@ -425,7 +426,7 @@ async def get_property_hal(
     version  = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
-    entity = await _load_entity(vid, iri)
+    entity = await _load_entity(db, vid, iri)
     if not entity:
         raise HTTPException(status_code=404, detail=f"Property {iri} not found in {ontology_id}")
 
@@ -451,7 +452,7 @@ async def find_properties_by_id_defining_ontology(
     versions = await latest_ready_versions(db)
     items: list[dict] = []
     for v in versions:
-        entity = await _load_entity(str(v.id), iri)
+        entity = await _load_entity(db, str(v.id), iri)
         if not entity:
             continue
         ontology = await get_ontology_or_404(db, str(v.ontology_id))
@@ -485,7 +486,7 @@ async def find_properties_by_id_defining_ontology_path(
     versions = await latest_ready_versions(db)
     items: list[dict] = []
     for v in versions:
-        entity = await _load_entity(str(v.id), iri)
+        entity = await _load_entity(db, str(v.id), iri)
         if not entity:
             continue
         ontology = await get_ontology_or_404(db, str(v.ontology_id))
@@ -518,7 +519,7 @@ async def list_properties_global(
     versions = await latest_ready_versions(db)
     items: list[dict] = []
     for v in versions:
-        entity = await _load_entity(str(v.id), iri)
+        entity = await _load_entity(db, str(v.id), iri)
         if not entity:
             continue
         ontology = await get_ontology_or_404(db, str(v.ontology_id))
@@ -548,7 +549,7 @@ async def get_property_global(
     versions = await latest_ready_versions(db)
     items: list[dict] = []
     for v in versions:
-        entity = await _load_entity(str(v.id), iri)
+        entity = await _load_entity(db, str(v.id), iri)
         if not entity:
             continue
         ontology = await get_ontology_or_404(db, str(v.ontology_id))
