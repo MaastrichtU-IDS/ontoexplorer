@@ -66,16 +66,6 @@ def _all_property_iris_sorted(vid: str) -> list[str]:
     return sorted(all_iris)
 
 
-def _total_property_count(vid: str) -> int:
-    """Total count = sum of SCARD for each property type (O(1) per type).
-
-    Still Redis-backed; used by the v2 property-list endpoints in classes_v2 that
-    have not yet moved to entity_index (the #242 v2-list slice).
-    """
-    r = _get_redis()
-    return sum(r.scard(_type_key(vid, pt)) for pt in _PROPERTY_TYPES)
-
-
 # ---------------------------------------------------------------------------
 # Asserted property-hierarchy helpers
 #

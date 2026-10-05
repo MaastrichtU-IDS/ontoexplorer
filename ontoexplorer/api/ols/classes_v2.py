@@ -28,13 +28,13 @@ from ontoexplorer.api.ols._common import (
     hal_page_params,
     page_to_offset,
 )
+from ontoexplorer.api.ols._entity_source import count_entities, list_entities
 from ontoexplorer.api.ols._envelope import v2_page
 from ontoexplorer.api.ols._iri import double_decode_iri
 from ontoexplorer.api.ols._shapes import entity_to_v2, entity_to_v2_class
 # TODO: factor hierarchy fetchers to _common.py if patterns crystallize
 from ontoexplorer.api.ols.terms import (  # noqa: F401
     _load_entity as _load_class_entity,
-    _redis_scard,
     _redis_smembers_sorted,
     _inferred_children_fetcher,
     _inferred_ancestors_fetcher,
@@ -46,7 +46,6 @@ from ontoexplorer.api.ols.terms import (  # noqa: F401
 from ontoexplorer.api.ols.properties import (  # noqa: F401
     _load_entity as _load_prop_entity,
     _all_property_iris_sorted,
-    _total_property_count,
     _prop_children_fetcher,
     _prop_ancestors_fetcher,
 )
@@ -64,11 +63,6 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 _PROPERTY_TYPES = ("object_property", "data_property", "annotation_property")
-
-
-def _load_page_sync(vid: str, iris_slice: list[str]) -> list[dict]:
-    r = _get_redis()
-    return [h for i in iris_slice if (h := r.hgetall(_iri_key(vid, i)))]
 
 
 def _fallback_entity(iri: str, etype: str = "class") -> dict:
@@ -431,11 +425,8 @@ async def v2_list_classes(
     version  = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
-    total = await asyncio.to_thread(_redis_scard, _type_key(vid, "class"))
-    all_iris = await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "class"))
-    page_iris = all_iris[offset:offset + size]
-
-    entities = await asyncio.to_thread(_load_page_sync, vid, page_iris)
+    total = await count_entities(db, vid, ["class"])
+    entities = await list_entities(db, vid, ["class"], limit=size, offset=offset)
     items = [entity_to_v2_class(e, ontology, request=request, lang=lang) for e in entities]
     return v2_page(items, request, total=total, page=page, size=size)
 
@@ -661,11 +652,9 @@ async def v2_list_properties(
     version  = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
-    total    = await asyncio.to_thread(_total_property_count, vid)
-    all_iris = await asyncio.to_thread(_all_property_iris_sorted, vid)
-    page_iris = all_iris[offset:offset + size]
-
-    entities = await asyncio.to_thread(_load_page_sync, vid, page_iris)
+    prop_types = list(_PROPERTY_TYPES)
+    total = await count_entities(db, vid, prop_types)
+    entities = await list_entities(db, vid, prop_types, limit=size, offset=offset)
     items = [entity_to_v2(e, ontology, request=request, lang=lang) for e in entities]
     return v2_page(items, request, total=total, page=page, size=size)
 
@@ -745,11 +734,8 @@ async def v2_list_individuals(
     version  = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
-    total    = await asyncio.to_thread(_redis_scard, _type_key(vid, "individual"))
-    all_iris = await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "individual"))
-    page_iris = all_iris[offset:offset + size]
-
-    entities = await asyncio.to_thread(_load_page_sync, vid, page_iris)
+    total = await count_entities(db, vid, ["individual"])
+    entities = await list_entities(db, vid, ["individual"], limit=size, offset=offset)
     items = [entity_to_v2(e, ontology, request=request, lang=lang) for e in entities]
     return v2_page(items, request, total=total, page=page, size=size)
 
