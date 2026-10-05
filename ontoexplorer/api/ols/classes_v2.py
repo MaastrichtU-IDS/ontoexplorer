@@ -238,7 +238,7 @@ async def v2_get_class_global(
     versions = await latest_ready_versions(db)
     items: list[dict] = []
     for v in versions:
-        entity = await _load_class_entity(str(v.id), iri)
+        entity = await _load_class_entity(db, str(v.id), iri)
         if not entity:
             continue
         ontology = await get_ontology_or_404(db, str(v.ontology_id))
@@ -271,7 +271,7 @@ async def v2_list_properties_global(
         total += len(all_iris)
         ontology = await get_ontology_or_404(db, str(v.ontology_id))
         for i in all_iris:
-            entity = await _load_prop_entity(vid, i)
+            entity = await _load_prop_entity(db, vid, i)
             if entity:
                 all_items.append(entity_to_v2(entity, ontology, request=request, lang=lang))
 
@@ -293,7 +293,7 @@ async def v2_get_property_global(
     versions = await latest_ready_versions(db)
     items: list[dict] = []
     for v in versions:
-        entity = await _load_prop_entity(str(v.id), iri)
+        entity = await _load_prop_entity(db, str(v.id), iri)
         if not entity:
             continue
         ontology = await get_ontology_or_404(db, str(v.ontology_id))
@@ -326,7 +326,7 @@ async def v2_list_individuals_global(
         total += len(all_iris)
         ontology = await get_ontology_or_404(db, str(v.ontology_id))
         for i in all_iris:
-            entity = await _load_ind_entity(vid, i)
+            entity = await _load_ind_entity(db, vid, i)
             if entity:
                 all_items.append(entity_to_v2(entity, ontology, request=request, lang=lang))
 
@@ -348,7 +348,7 @@ async def v2_get_individual_global(
     versions = await latest_ready_versions(db)
     items: list[dict] = []
     for v in versions:
-        entity = await _load_ind_entity(str(v.id), iri)
+        entity = await _load_ind_entity(db, str(v.id), iri)
         if not entity:
             continue
         ontology = await get_ontology_or_404(db, str(v.ontology_id))
@@ -384,19 +384,19 @@ async def v2_list_entities_global(
 
         if not type or type == "class":
             for i in await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "class")):
-                e = await _load_class_entity(vid, i)
+                e = await _load_class_entity(db, vid, i)
                 if e:
                     all_items.append(entity_to_v2(e, ontology, request=request, lang=lang))
 
         if not type or type == "property":
             for i in await asyncio.to_thread(_all_property_iris_sorted, vid):
-                e = await _load_prop_entity(vid, i)
+                e = await _load_prop_entity(db, vid, i)
                 if e:
                     all_items.append(entity_to_v2(e, ontology, request=request, lang=lang))
 
         if not type or type == "individual":
             for i in await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "individual")):
-                e = await _load_ind_entity(vid, i)
+                e = await _load_ind_entity(db, vid, i)
                 if e:
                     all_items.append(entity_to_v2(e, ontology, request=request, lang=lang))
 
@@ -637,7 +637,7 @@ async def v2_get_class(
     version  = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
-    entity = await _load_class_entity(vid, iri)
+    entity = await _load_class_entity(db, vid, iri)
     if not entity:
         raise HTTPException(status_code=404, detail=f"Class {iri} not found in {ontology_id}")
     return entity_to_v2_class(entity, ontology, request=request, lang=lang)
@@ -721,7 +721,7 @@ async def v2_get_property(
     version  = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
-    entity = await _load_prop_entity(vid, iri)
+    entity = await _load_prop_entity(db, vid, iri)
     if not entity:
         raise HTTPException(status_code=404, detail=f"Property {iri} not found in {ontology_id}")
     return entity_to_v2(entity, ontology, request=request, lang=lang)
@@ -771,7 +771,7 @@ async def v2_get_individual(
     version  = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
-    entity = await _load_ind_entity(vid, iri)
+    entity = await _load_ind_entity(db, vid, iri)
     if not entity:
         raise HTTPException(status_code=404, detail=f"Individual {iri} not found in {ontology_id}")
     return entity_to_v2(entity, ontology, request=request, lang=lang)
@@ -804,21 +804,21 @@ async def v2_list_entities(
     if not type or type == "class":
         all_iris = await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "class"))
         for i in all_iris:
-            e = await _load_class_entity(vid, i)
+            e = await _load_class_entity(db, vid, i)
             if e:
                 all_items.append(entity_to_v2(e, ontology, request=request, lang=lang))
 
     if not type or type == "property":
         all_iris = await asyncio.to_thread(_all_property_iris_sorted, vid)
         for i in all_iris:
-            e = await _load_prop_entity(vid, i)
+            e = await _load_prop_entity(db, vid, i)
             if e:
                 all_items.append(entity_to_v2(e, ontology, request=request, lang=lang))
 
     if not type or type == "individual":
         all_iris = await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "individual"))
         for i in all_iris:
-            e = await _load_ind_entity(vid, i)
+            e = await _load_ind_entity(db, vid, i)
             if e:
                 all_items.append(entity_to_v2(e, ontology, request=request, lang=lang))
 

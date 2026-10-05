@@ -31,7 +31,7 @@ from ontoexplorer.api.ols._envelope import hal_page
 from ontoexplorer.api.ols._iri import double_decode_iri
 from ontoexplorer.api.ols._shapes import entity_to_v1_term
 from ontoexplorer.database import get_db
-from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _type_key
+from ontoexplorer.modules.search.indexer import _get_redis, _type_key
 from ontoexplorer.modules.search.versions import latest_ready_versions
 
 router = APIRouter()
@@ -51,21 +51,10 @@ _OWL_EXCLUDED = {_OWL_TOP_OP, _OWL_TOP_DP}
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _redis_hgetall(key: str) -> dict:
-    return _get_redis().hgetall(key) or {}
-
-
-def _redis_scard(key: str) -> int:
-    return _get_redis().scard(key)
-
-
-def _redis_smembers_sorted(key: str) -> list[str]:
-    return sorted(_get_redis().smembers(key))
-
-
-async def _load_entity(version_id: str, iri: str) -> dict | None:
-    h = await asyncio.to_thread(_redis_hgetall, _iri_key(version_id, iri))
-    return h if h else None
+async def _load_entity(db, version_id: str, iri: str) -> dict | None:
+    """Load the entity payload from entity_index (#242 Stage 1 PR2); None if absent."""
+    from ontoexplorer.api.ols._entity_source import load_entity
+    return await load_entity(db, version_id, iri)
 
 
 def _all_property_iris_sorted(vid: str) -> list[str]:
@@ -78,7 +67,11 @@ def _all_property_iris_sorted(vid: str) -> list[str]:
 
 
 def _total_property_count(vid: str) -> int:
-    """Total count = sum of SCARD for each property type (O(1) per type)."""
+    """Total count = sum of SCARD for each property type (O(1) per type).
+
+    Still Redis-backed; used by the v2 property-list endpoints in classes_v2 that
+    have not yet moved to entity_index (the #242 v2-list slice).
+    """
     r = _get_redis()
     return sum(r.scard(_type_key(vid, pt)) for pt in _PROPERTY_TYPES)
 
@@ -215,11 +208,11 @@ async def _hal_hierarchy_page(
     offset   = page_to_offset(page, size)
     sliced   = all_iris[offset:offset + size]
 
-    def _load_many() -> list[tuple[str, dict]]:
-        r = _get_redis()
-        return [(i, r.hgetall(_iri_key(vid, i)) or {}) for i in sliced]
-
-    entities = await asyncio.to_thread(_load_many)
+    # Load payloads from entity_index (#242 PR2) with load_entities' Redis-hash
+    # fallback for not-yet-indexed IRIs; a property absent from both renders from
+    # a minimal synthesized entity.
+    from ontoexplorer.api.ols._entity_source import load_entities
+    entity_map = await load_entities(db, vid, sliced)
 
     def _fallback_entity(i: str) -> dict:
         fragment = i.rstrip("/")
@@ -238,7 +231,7 @@ async def _hal_hierarchy_page(
 
     items = [
         entity_to_v1_term(
-            (e if e else _fallback_entity(i)),
+            (entity_map.get(i) or _fallback_entity(i)),
             ontology,
             request=request,
             is_obsolete=False,
@@ -247,7 +240,7 @@ async def _hal_hierarchy_page(
             lang=lang,
             resource_kind="properties",
         )
-        for i, e in entities
+        for i in sliced
     ]
     return hal_page(items, request, total=len(all_iris), page=page, size=size,
                     embedded_key="properties")
@@ -274,7 +267,7 @@ async def list_properties_hal(
 
     # Single-IRI filter
     if iri:
-        entity = await _load_entity(vid, iri)
+        entity = await _load_entity(db, vid, iri)
         items = (
             [entity_to_v1_term(
                 entity, ontology,
@@ -291,7 +284,7 @@ async def list_properties_hal(
         all_iris = await asyncio.to_thread(_all_property_iris_sorted, vid)
         matched_items = []
         for candidate_iri in all_iris:
-            entity = await _load_entity(vid, candidate_iri)
+            entity = await _load_entity(db, vid, candidate_iri)
             if not entity:
                 continue
             if entity.get("short") != short_form:
@@ -306,22 +299,12 @@ async def list_properties_hal(
         return hal_page(matched_items, request, total=len(matched_items), page=0, size=size,
                         embedded_key="properties")
 
-    # Paged list of all property IRIs (union of three types)
+    # Paged list of all properties (union of three types) from entity_index (#242 PR2).
+    from ontoexplorer.api.ols._entity_source import count_entities, list_entities
+    prop_types = list(_PROPERTY_TYPES)
     offset = page_to_offset(page, size)
-    total = await asyncio.to_thread(_total_property_count, vid)
-    all_iris = await asyncio.to_thread(_all_property_iris_sorted, vid)
-    page_iris = all_iris[offset:offset + size]
-
-    def _load_page(iris_slice: list[str]) -> list[dict]:
-        r = _get_redis()
-        result = []
-        for i in iris_slice:
-            h = r.hgetall(_iri_key(vid, i))
-            if h:
-                result.append(h)
-        return result
-
-    entities = await asyncio.to_thread(_load_page, page_iris)
+    total = await count_entities(db, vid, prop_types)
+    entities = await list_entities(db, vid, prop_types, limit=size, offset=offset)
     items = [
         entity_to_v1_term(
             e, ontology,
@@ -425,7 +408,7 @@ async def get_property_hal(
     version  = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
-    entity = await _load_entity(vid, iri)
+    entity = await _load_entity(db, vid, iri)
     if not entity:
         raise HTTPException(status_code=404, detail=f"Property {iri} not found in {ontology_id}")
 
@@ -451,7 +434,7 @@ async def find_properties_by_id_defining_ontology(
     versions = await latest_ready_versions(db)
     items: list[dict] = []
     for v in versions:
-        entity = await _load_entity(str(v.id), iri)
+        entity = await _load_entity(db, str(v.id), iri)
         if not entity:
             continue
         ontology = await get_ontology_or_404(db, str(v.ontology_id))
@@ -485,7 +468,7 @@ async def find_properties_by_id_defining_ontology_path(
     versions = await latest_ready_versions(db)
     items: list[dict] = []
     for v in versions:
-        entity = await _load_entity(str(v.id), iri)
+        entity = await _load_entity(db, str(v.id), iri)
         if not entity:
             continue
         ontology = await get_ontology_or_404(db, str(v.ontology_id))
@@ -518,7 +501,7 @@ async def list_properties_global(
     versions = await latest_ready_versions(db)
     items: list[dict] = []
     for v in versions:
-        entity = await _load_entity(str(v.id), iri)
+        entity = await _load_entity(db, str(v.id), iri)
         if not entity:
             continue
         ontology = await get_ontology_or_404(db, str(v.ontology_id))
@@ -548,7 +531,7 @@ async def get_property_global(
     versions = await latest_ready_versions(db)
     items: list[dict] = []
     for v in versions:
-        entity = await _load_entity(str(v.id), iri)
+        entity = await _load_entity(db, str(v.id), iri)
         if not entity:
             continue
         ontology = await get_ontology_or_404(db, str(v.ontology_id))

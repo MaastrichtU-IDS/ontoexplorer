@@ -86,6 +86,37 @@ def _term_links(request: Request, ontology_id: str, iri: str) -> dict[str, dict[
     return _entity_links(request, ontology_id, iri, resource_kind="terms")
 
 
+def entity_index_to_legacy_dict(row: Any) -> dict:
+    """Adapt an `entity_index` row to the Redis-`:iri:`-hash-shaped dict the OLS
+    renderers consume (#242 Stage 1 PR 2).
+
+    Lets the entity payload be served from Postgres without touching the renderers:
+    the stored `labels` dict ``{lang: value}`` becomes the ``[{value, lang}]`` list
+    (JSON string) the hash held, and `synonyms`/`definitions` (already the same list
+    shape, mirrored at index time) are re-serialised to JSON strings. `label` is kept
+    as a back-compat alias of `primary_label`.
+
+    Note: `entity_index.labels` keeps one value per language (last-wins), so an entity
+    that had multiple labels in the same language in Redis collapses to one here — a
+    known, accepted lossiness of the mirror, not a shape difference.
+
+    Accepts an ORM row or any object exposing the same attributes.
+    """
+    labels = getattr(row, "labels", None) or {}
+    label_list = [{"value": v, "lang": lg} for lg, v in labels.items()]
+    return {
+        "iri": row.iri,
+        "primary_label": row.primary_label or "",
+        "label": row.primary_label or "",
+        "short": row.short or "",
+        "type": getattr(row, "type", "") or "",
+        "source": getattr(row, "source", "") or "",
+        "labels": json.dumps(label_list),
+        "synonyms": json.dumps(getattr(row, "synonyms", None) or []),
+        "definitions": json.dumps(getattr(row, "definitions", None) or []),
+    }
+
+
 def entity_to_v1_term(
     entity: dict,
     ontology: Any,

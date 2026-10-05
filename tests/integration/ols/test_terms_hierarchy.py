@@ -94,12 +94,19 @@ async def hierarchy_sample(db_session, fake_redis):
     _seed(c_iri,  "Child",       [p_iri])
 
     # The OLS hierarchy endpoints now read asserted edges from hierarchy_edge
-    # (#242 Stage 1); materialise them alongside the Redis seed.
+    # (#242 Stage 1 PR1) and render the payload from entity_index (PR2).
     from ontoexplorer.modules.hierarchy.edges import CLASS_KIND, replace_edges
+    from ontoexplorer.models.db import EntityIndex
     await replace_edges(db_session, vid, [
         (p_iri, gp_iri, CLASS_KIND),
         (c_iri, p_iri, CLASS_KIND),
     ])
+    for iri, label in [(gp_iri, "GrandParent"), (p_iri, "Parent"), (c_iri, "Child")]:
+        db_session.add(EntityIndex(
+            version_id=vid, iri=iri, ontology_id=ont.id, type="class",
+            primary_label=label, primary_label_norm=label.lower(),
+            short=iri.split("#")[-1], search_text=label, labels={"en": label}))
+    await db_session.commit()
 
     yield {
         "ontology":    ont,
@@ -319,9 +326,17 @@ async def test_hierarchy_paginated(client: AsyncClient, db_session, fake_redis):
         })
         fake_redis.sadd(_type_key(vid, "class"), c)
 
-    # Asserted children now come from hierarchy_edge (#242 Stage 1).
+    # Asserted children from hierarchy_edge (PR1) + payload from entity_index (PR2).
     from ontoexplorer.modules.hierarchy.edges import CLASS_KIND, replace_edges
+    from ontoexplorer.models.db import EntityIndex
     await replace_edges(db_session, vid, [(c, parent_iri, CLASS_KIND) for c in child_iris])
+    for iri in [parent_iri, *child_iris]:
+        lbl = iri.split("#")[1]
+        db_session.add(EntityIndex(
+            version_id=vid, iri=iri, ontology_id=ont.id, type="class",
+            primary_label=lbl, primary_label_norm=lbl.lower(), short=lbl,
+            search_text=lbl, labels={"en": lbl}))
+    await db_session.commit()
 
     resp = await client.get(
         f"/ols/api/ontologies/{ont.id}/terms/{_enc(parent_iri)}/children",

@@ -21,6 +21,18 @@ from ontoexplorer.modules.search.indexer import (
 )
 
 
+def _mk_entity_index(version_id, ontology_id, iri, label, type_="class",
+                     is_individual=False, source=None):
+    """Build an EntityIndex row mirroring a seeded Redis entity (#242 Stage 1 PR2:
+    OLS detail/payload now reads entity_index)."""
+    from ontoexplorer.models.db import EntityIndex
+    return EntityIndex(
+        version_id=version_id, iri=iri, ontology_id=ontology_id, type=type_,
+        primary_label=label, primary_label_norm=label.lower(),
+        short=iri.replace("#", "/").split("/")[-1], source=source,
+        search_text=label, is_individual=is_individual, labels={"en": label})
+
+
 @pytest.fixture()
 def fake_redis():
     """A FakeRedis instance shared across the OLS layer and the indexer.
@@ -138,6 +150,9 @@ async def sample_term(db_session, sample_ontology, fake_redis):
         }),
     )
 
+    db_session.add(_mk_entity_index(vid, ontology.id, iri, "Foo", source=ontology.shortname))
+    await db_session.commit()
+
     yield {"iri": iri, "ontology": ontology, "version_id": vid}
 
 
@@ -184,10 +199,13 @@ async def sample_property(db_session, sample_ontology, fake_redis):
             _prefix_key(vid),
             {f"{normalise_label(label)}|en|{prop_type}|{iri}": 0},
         )
+        db_session.add(_mk_entity_index(vid, ontology.id, iri, label,
+                                        type_=prop_type, source=ontology.shortname))
 
     _seed(obj_iri,  "hasRelation", "object_property")
     _seed(data_iri, "hasValue",    "data_property")
     _seed(ann_iri,  "hasComment",  "annotation_property")
+    await db_session.commit()
 
     yield {
         "obj_iri":    obj_iri,
@@ -258,6 +276,8 @@ async def property_hierarchy(db_session, fake_redis):
             },
         )
         fake_redis.sadd(_type_key(vid, "object_property"), iri)
+        db_session.add(_mk_entity_index(vid, ont.id, iri, label,
+                                        type_="object_property", source=ont.shortname))
 
     _seed(gp_iri,     "GrandProp",  [])
     _seed(parent_iri, "ParentProp", [gp_iri])
@@ -336,6 +356,12 @@ async def sample_individual(db_session, sample_ontology, fake_redis):
     )
     fake_redis.sadd(_type_key(vid, "class"), class_iri)
     fake_redis.zadd(_prefix_key(vid), {f"{normalise_label('Person')}|en|class|{class_iri}": 0})
+
+    # entity_index payload (#242 PR2): detail + /types class rendering read from PG.
+    db_session.add(_mk_entity_index(vid, ontology.id, ind_iri, "Alice",
+                                    type_="individual", is_individual=True, source=ontology.shortname))
+    db_session.add(_mk_entity_index(vid, ontology.id, class_iri, "Person", source=ontology.shortname))
+    await db_session.commit()
 
     yield {
         "ind_iri":    ind_iri,

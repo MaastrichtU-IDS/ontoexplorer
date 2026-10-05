@@ -32,7 +32,7 @@ from ontoexplorer.api.ols._envelope import hal_page
 from ontoexplorer.api.ols._iri import double_decode_iri
 from ontoexplorer.api.ols._shapes import entity_to_v1_term
 from ontoexplorer.database import get_db
-from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _type_key
+from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
 from ontoexplorer.modules.search.versions import latest_ready_versions
 
 router = APIRouter()
@@ -44,38 +44,25 @@ router = APIRouter()
 _OWL_NAMED_INDIVIDUAL = "http://www.w3.org/2002/07/owl#NamedIndividual"
 
 
-def _redis_hgetall(key: str) -> dict:
-    return _get_redis().hgetall(key) or {}
-
-
-def _redis_scard(key: str) -> int:
-    return _get_redis().scard(key)
-
-
-def _redis_smembers_sorted(key: str) -> list[str]:
-    return sorted(_get_redis().smembers(key))
-
-
-async def _load_entity(version_id: str, iri: str) -> dict | None:
-    h = await asyncio.to_thread(_redis_hgetall, _iri_key(version_id, iri))
-    return h if h else None
+async def _load_entity(db, version_id: str, iri: str) -> dict | None:
+    """Load the entity payload from entity_index (#242 Stage 1 PR2); None if absent."""
+    from ontoexplorer.api.ols._entity_source import load_entity
+    return await load_entity(db, version_id, iri)
 
 
 # ---------------------------------------------------------------------------
 # /types helper: resolve rdf:type classes for an individual
 # ---------------------------------------------------------------------------
 
-def _individual_types_sync(ontology_id: str, vid: str, iri: str, entity: dict) -> list[str]:
+def _individual_types_sync(ontology_id: str, vid: str, iri: str) -> list[str]:
     """Return the class IRIs that ``iri`` is rdf:type of.
 
     Primary path: read the ``types`` JSON field from the Redis entity hash.
-    This field is written by the test fixture; the production indexer does not
-    yet write it, so we fall through to SPARQL.
-
-    SPARQL fallback: query Oxigraph for ``?iri rdf:type ?cls`` in the named
-    graph, filtering out blank nodes and owl:NamedIndividual.
+    (`types` is a category-C field not yet mirrored into entity_index — #242 PR5 —
+    so it's read straight from Redis here, independent of the entity_index payload.)
+    SPARQL fallback: query Oxigraph for ``?iri rdf:type ?cls`` in the named graph.
     """
-    raw = entity.get("types")
+    raw = _get_redis().hget(_iri_key(vid, iri), "types")
     if raw:
         try:
             iris = json.loads(raw)
@@ -142,7 +129,7 @@ async def list_individuals_hal(
 
     # Single-IRI filter
     if iri:
-        entity = await _load_entity(vid, iri)
+        entity = await _load_entity(db, vid, iri)
         items = (
             [entity_to_v1_term(
                 entity, ontology,
@@ -154,22 +141,11 @@ async def list_individuals_hal(
         return hal_page(items, request, total=len(items), page=0, size=size,
                         embedded_key="individuals")
 
-    # Paged list of all individual IRIs
+    # Paged list of all individuals from entity_index (#242 PR2).
+    from ontoexplorer.api.ols._entity_source import count_entities, list_entities
     offset = page_to_offset(page, size)
-    total  = await asyncio.to_thread(_redis_scard, _type_key(vid, "individual"))
-    all_iris = await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "individual"))
-    page_iris = all_iris[offset:offset + size]
-
-    def _load_page(iris_slice: list[str]) -> list[dict]:
-        r = _get_redis()
-        result = []
-        for i in iris_slice:
-            h = r.hgetall(_iri_key(vid, i))
-            if h:
-                result.append(h)
-        return result
-
-    entities = await asyncio.to_thread(_load_page, page_iris)
+    total  = await count_entities(db, vid, ["individual"])
+    entities = await list_entities(db, vid, ["individual"], limit=size, offset=offset)
     items = [
         entity_to_v1_term(
             e, ontology,
@@ -203,32 +179,32 @@ async def individual_types(
     version  = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
-    entity = await _load_entity(vid, iri)
+    entity = await _load_entity(db, vid, iri)
     if not entity:
         raise HTTPException(status_code=404,
                             detail=f"Individual {iri} not found in {ontology_id}")
 
     type_iris = await asyncio.to_thread(
-        _individual_types_sync, ontology_id, vid, iri, entity
+        _individual_types_sync, ontology_id, vid, iri
     )
 
     offset  = page_to_offset(page, size)
     sliced  = type_iris[offset:offset + size]
 
-    def _load_classes() -> list[tuple[str, dict]]:
-        r = _get_redis()
-        return [(ci, r.hgetall(_iri_key(vid, ci)) or {}) for ci in sliced]
-
-    class_entities = await asyncio.to_thread(_load_classes)
+    # Load the class payloads from entity_index (#242 PR2), with the Redis-hash
+    # fallback that load_entities carries for not-yet-indexed IRIs; a class absent
+    # from both renders from a minimal synthesized entity.
+    from ontoexplorer.api.ols._entity_source import load_entities
+    class_map = await load_entities(db, vid, sliced)
 
     items = [
         entity_to_v1_term(
-            (e if e else _fallback_class_entity(ci)),
+            (class_map.get(ci) or _fallback_class_entity(ci)),
             ontology,
             request=request, is_obsolete=False, is_root=False, has_children=False,
             lang=lang, resource_kind="terms",
         )
-        for ci, e in class_entities
+        for ci in sliced
     ]
     return hal_page(items, request, total=len(type_iris), page=page, size=size,
                     embedded_key="terms")
@@ -252,7 +228,7 @@ async def get_individual_hal(
     version  = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
-    entity = await _load_entity(vid, iri)
+    entity = await _load_entity(db, vid, iri)
     if not entity:
         raise HTTPException(status_code=404,
                             detail=f"Individual {iri} not found in {ontology_id}")
@@ -279,7 +255,7 @@ async def list_individuals_global(
     versions = await latest_ready_versions(db)
     items: list[dict] = []
     for v in versions:
-        entity = await _load_entity(str(v.id), iri)
+        entity = await _load_entity(db, str(v.id), iri)
         if not entity:
             continue
         ontology = await get_ontology_or_404(db, str(v.ontology_id))
@@ -309,7 +285,7 @@ async def get_individual_global(
     versions = await latest_ready_versions(db)
     items: list[dict] = []
     for v in versions:
-        entity = await _load_entity(str(v.id), iri)
+        entity = await _load_entity(db, str(v.id), iri)
         if not entity:
             continue
         ontology = await get_ontology_or_404(db, str(v.ontology_id))
