@@ -114,6 +114,7 @@ def entity_index_to_legacy_dict(row: Any) -> dict:
         "labels": json.dumps(label_list),
         "synonyms": json.dumps(getattr(row, "synonyms", None) or []),
         "definitions": json.dumps(getattr(row, "definitions", None) or []),
+        "types": json.dumps(getattr(row, "types", None) or []),
     }
 
 

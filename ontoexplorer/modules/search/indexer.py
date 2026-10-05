@@ -538,6 +538,32 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
                 entities[iri] = "individual"
                 individual_count += 1
 
+    # Collect each individual's rdf:type classes (minus owl:NamedIndividual) so the
+    # OLS /types endpoint and the class→individuals filter can read them from
+    # entity_index instead of a per-request SPARQL query (#242 Stage 1 PR 5).
+    # Only gathered when individuals were indexed (same threshold gate).
+    types_by_iri: dict[str, list[str]] = {}
+    if individual_iris:
+        _OWL_NAMED_INDIVIDUAL = "http://www.w3.org/2002/07/owl#NamedIndividual"
+        types_q = f"""
+            PREFIX owl: <http://www.w3.org/2002/07/owl#>
+            PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+            SELECT ?ind ?cls WHERE {{
+                GRAPH <{named_graph}> {{
+                    ?ind a owl:NamedIndividual .
+                    ?ind rdf:type ?cls .
+                    FILTER(isIRI(?ind) && isIRI(?cls))
+                    FILTER(?cls != <{_OWL_NAMED_INDIVIDUAL}>)
+                }}
+            }}
+        """
+        for sol in sparql_query(types_q):
+            ind_iri = sol["ind"].value
+            cls_iri = sol["cls"].value
+            bucket = types_by_iri.setdefault(ind_iri, [])
+            if cls_iri not in bucket:
+                bucket.append(cls_iri)
+
     # Collect deprecated entities
     deprecated_iris: set[str] = set()
     for dep_prop in deprecated_props:
@@ -674,7 +700,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
             labels_list[0]["value"] if labels_list else humanize_local_name(short),
         )
 
-        pipe.hset(_iri_key(version_id, iri), mapping={
+        _hash = {
             "label":         primary_label,   # backward compat
             "primary_label": primary_label,
             "type":          entity_type,
@@ -684,7 +710,13 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
             "labels":        json.dumps(labels_list),
             "synonyms":      json.dumps(deduped_syns),
             "definitions":   json.dumps(defs_list),
-        })
+        }
+        # Only individuals carry rdf:type classes; skip the field otherwise so
+        # class/property hashes (the bulk of the working set) stay unchanged.
+        _types = types_by_iri.get(iri)
+        if _types:
+            _hash["types"] = json.dumps(_types)
+        pipe.hset(_iri_key(version_id, iri), mapping=_hash)
         pipe.expire(_iri_key(version_id, iri), _SEARCH_TTL)
         pipe.sadd(_type_key(version_id, entity_type), iri)
 

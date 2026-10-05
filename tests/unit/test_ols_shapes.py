@@ -20,18 +20,20 @@ def _request():
 
 def test_adapter_shapes_labels_synonyms_definitions():
     row = SimpleNamespace(
-        iri="http://x/Foo", primary_label="Foo", short="Foo", type="class", source="go",
-        labels={"en": "Foo", "": "Untagged"},
+        iri="http://x/Alice", primary_label="Alice", short="Alice", type="individual", source="go",
+        labels={"en": "Alice", "": "Untagged"},
         synonyms=[{"value": "F", "lang": "en"}],
         definitions=[{"value": "a foo", "lang": "en"}],
+        types=["http://x/Person", "http://x/Agent"],
     )
     d = entity_index_to_legacy_dict(row)
-    assert d["iri"] == "http://x/Foo"
-    assert d["label"] == d["primary_label"] == "Foo"     # back-compat alias
-    assert d["short"] == "Foo" and d["type"] == "class" and d["source"] == "go"
-    assert json.loads(d["labels"]) == [{"value": "Foo", "lang": "en"}, {"value": "Untagged", "lang": ""}]
+    assert d["iri"] == "http://x/Alice"
+    assert d["label"] == d["primary_label"] == "Alice"     # back-compat alias
+    assert d["short"] == "Alice" and d["type"] == "individual" and d["source"] == "go"
+    assert json.loads(d["labels"]) == [{"value": "Alice", "lang": "en"}, {"value": "Untagged", "lang": ""}]
     assert json.loads(d["synonyms"]) == [{"value": "F", "lang": "en"}]
     assert json.loads(d["definitions"]) == [{"value": "a foo", "lang": "en"}]
+    assert json.loads(d["types"]) == ["http://x/Person", "http://x/Agent"]
 
 
 def test_adapter_defaults_empty():
@@ -40,6 +42,8 @@ def test_adapter_defaults_empty():
     d = entity_index_to_legacy_dict(row)
     assert d["label"] == "" and d["short"] == "" and d["source"] == ""
     assert json.loads(d["labels"]) == [] and json.loads(d["synonyms"]) == []
+    # `types` absent on the row -> empty list (getattr default)
+    assert json.loads(d["types"]) == []
 
 
 def test_renderer_parity_entity_index_vs_redis_hash():

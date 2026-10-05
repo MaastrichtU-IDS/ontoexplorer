@@ -32,7 +32,6 @@ from ontoexplorer.api.ols._envelope import hal_page
 from ontoexplorer.api.ols._iri import double_decode_iri
 from ontoexplorer.api.ols._shapes import entity_to_v1_term
 from ontoexplorer.database import get_db
-from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
 from ontoexplorer.modules.search.versions import latest_ready_versions
 
 router = APIRouter()
@@ -54,18 +53,19 @@ async def _load_entity(db, version_id: str, iri: str) -> dict | None:
 # /types helper: resolve rdf:type classes for an individual
 # ---------------------------------------------------------------------------
 
-def _individual_types_sync(ontology_id: str, vid: str, iri: str) -> list[str]:
+def _individual_types_sync(ontology_id: str, vid: str, iri: str, entity: dict) -> list[str]:
     """Return the class IRIs that ``iri`` is rdf:type of.
 
-    Primary path: read the ``types`` JSON field from the Redis entity hash.
-    (`types` is a category-C field not yet mirrored into entity_index — #242 PR5 —
-    so it's read straight from Redis here, independent of the entity_index payload.)
-    SPARQL fallback: query Oxigraph for ``?iri rdf:type ?cls`` in the named graph.
+    Primary path: the ``types`` field on the entity payload, mirrored into
+    entity_index at index time (#242 PR5); the Redis-hash fallback that sources the
+    payload carries the same field during the transition. SPARQL fallback: query
+    Oxigraph for ``?iri rdf:type ?cls`` for versions indexed before PR5 (where the
+    field is absent/empty).
     """
-    raw = _get_redis().hget(_iri_key(vid, iri), "types")
+    raw = entity.get("types") if entity else None
     if raw:
         try:
-            iris = json.loads(raw)
+            iris = json.loads(raw) if isinstance(raw, str) else raw
             if isinstance(iris, list) and iris:
                 return [i for i in iris if i != _OWL_NAMED_INDIVIDUAL]
         except json.JSONDecodeError:
@@ -185,7 +185,7 @@ async def individual_types(
                             detail=f"Individual {iri} not found in {ontology_id}")
 
     type_iris = await asyncio.to_thread(
-        _individual_types_sync, ontology_id, vid, iri
+        _individual_types_sync, ontology_id, vid, iri, entity
     )
 
     offset  = page_to_offset(page, size)
