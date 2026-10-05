@@ -54,7 +54,7 @@ from ontoexplorer.api.ols.individuals import (  # noqa: F401
     _load_entity as _load_ind_entity,
 )
 from ontoexplorer.database import get_db
-from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _meta_key, _type_key
+from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _type_key
 from ontoexplorer.modules.search.versions import latest_ready_versions
 
 router = APIRouter()
@@ -130,20 +130,31 @@ async def _v2_hierarchy_page(
 
 @router.get("/api/v2/stats")
 async def v2_stats(db: AsyncSession = Depends(get_db)):
-    """Aggregate counts across all ready ontology versions."""
+    """Aggregate counts across the latest ready version of each ontology.
+
+    Counts come from entity_index (#242 Stage 1) rather than the per-version Redis
+    `meta` hash — one grouped SQL query instead of an hgetall per version.
+    """
+    from sqlalchemy import bindparam, text as _text
     versions = await latest_ready_versions(db)
-
-    def _get_all_metas() -> list[dict]:
-        r = _get_redis()
-        return [r.hgetall(_meta_key(str(v.id))) or {} for v in versions]
-
-    meta_blobs = await asyncio.to_thread(_get_all_metas)
-
+    vids = [str(v.id) for v in versions]
+    classes = properties = individuals = 0
+    if vids:
+        row = (await db.execute(_text("""
+            SELECT
+              SUM(CASE WHEN type = 'class' THEN 1 ELSE 0 END) AS classes,
+              SUM(CASE WHEN type IN ('object_property','data_property','annotation_property')
+                       THEN 1 ELSE 0 END) AS properties,
+              SUM(CASE WHEN is_individual THEN 1 ELSE 0 END) AS individuals
+            FROM entity_index
+            WHERE version_id IN :vids
+        """).bindparams(bindparam("vids", expanding=True)), {"vids": vids})).one()
+        classes, properties, individuals = (row[0] or 0, row[1] or 0, row[2] or 0)
     return {
         "numberOfOntologies":  len(versions),
-        "numberOfClasses":     sum(int(m.get("class_count", 0))      for m in meta_blobs),
-        "numberOfProperties":  sum(int(m.get("property_count", 0))   for m in meta_blobs),
-        "numberOfIndividuals": sum(int(m.get("individual_count", 0)) for m in meta_blobs),
+        "numberOfClasses":     int(classes),
+        "numberOfProperties":  int(properties),
+        "numberOfIndividuals": int(individuals),
     }
 
 
