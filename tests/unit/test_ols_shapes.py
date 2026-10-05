@@ -67,3 +67,36 @@ def test_renderer_parity_entity_index_vs_redis_hash():
     from_redis = entity_to_v1_term(redis_hash, onto, request=req,
                                    is_obsolete=False, is_root=False, has_children=True, lang="en")
     assert from_index == from_redis
+
+
+# ── _entity_source loader (#242 Stage 1 PR 2) ───────────────────────────────────
+import pytest
+
+
+@pytest.mark.anyio
+async def test_load_entity_and_batch_from_index(db_session):
+    import json as _json
+    from ontoexplorer.models.db import EntityIndex
+    from ontoexplorer.api.ols._entity_source import load_entity, load_entities
+    v = "v-payload"
+    db_session.add(EntityIndex(
+        version_id=v, iri="http://x/A", ontology_id="o1", type="class",
+        primary_label="Alpha", primary_label_norm="alpha", short="A", source="go",
+        search_text="alpha", labels={"en": "Alpha"},
+        synonyms=[{"value": "a", "lang": "en"}], definitions=[]))
+    db_session.add(EntityIndex(
+        version_id=v, iri="http://x/B", ontology_id="o1", type="object_property",
+        primary_label="beta", primary_label_norm="beta", short="B", search_text="beta"))
+    await db_session.commit()
+
+    one = await load_entity(db_session, v, "http://x/A")
+    assert one["label"] == "Alpha" and one["type"] == "class" and one["source"] == "go"
+    assert _json.loads(one["labels"]) == [{"value": "Alpha", "lang": "en"}]
+    assert _json.loads(one["synonyms"]) == [{"value": "a", "lang": "en"}]
+
+    assert await load_entity(db_session, v, "http://x/missing") is None
+
+    batch = await load_entities(db_session, v, ["http://x/A", "http://x/B", "http://x/missing"])
+    assert set(batch) == {"http://x/A", "http://x/B"}       # missing absent
+    assert batch["http://x/B"]["type"] == "object_property"
+    assert await load_entities(db_session, v, []) == {}

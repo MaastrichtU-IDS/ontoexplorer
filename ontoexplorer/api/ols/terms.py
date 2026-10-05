@@ -309,11 +309,10 @@ async def _hal_hierarchy_page(
     offset   = page_to_offset(page, size)
     sliced   = all_iris[offset:offset + size]
 
-    def _load_many() -> list[tuple[str, dict]]:
-        r = _get_redis()
-        return [(i, r.hgetall(_iri_key(vid, i)) or {}) for i in sliced]
-
-    entities = await asyncio.to_thread(_load_many)
+    # Render from entity_index, not the Redis :iri: hash (#242 Stage 1 PR 2).
+    from ontoexplorer.api.ols._entity_source import load_entities
+    ent_map = await load_entities(db, vid, sliced)
+    entities = [(i, ent_map.get(i) or {}) for i in sliced]
 
     def _fallback_entity(i: str) -> dict:
         fragment = i.rstrip("/")
