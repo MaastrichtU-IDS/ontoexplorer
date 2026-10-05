@@ -135,9 +135,9 @@ async def test_v2_class_children_returns_v2_page(client: AsyncClient, v2_seed):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_v2_class_hierarchical_children_asserted_only(client: AsyncClient, v2_seed, fake_redis):
-    """Seed a parent→child relationship via the 'parents' Redis field and check
-    that /hierarchicalChildren returns the child in a v2 page."""
+async def test_v2_class_hierarchical_children_asserted_only(client: AsyncClient, v2_seed, fake_redis, db_session):
+    """Seed a parent→child relationship via hierarchy_edge and check that
+    /hierarchicalChildren returns the child in a v2 page."""
     onto_id    = str(v2_seed["ontology"].id)
     parent_iri = v2_seed["class_iri"]
     vid        = v2_seed["version_id"]
@@ -160,6 +160,10 @@ async def test_v2_class_hierarchical_children_asserted_only(client: AsyncClient,
         },
     )
     fake_redis.sadd(_type_key(vid, "class"), child_iri)
+
+    # The OLS hierarchy endpoints now read asserted edges from hierarchy_edge (#242).
+    from ontoexplorer.modules.hierarchy.edges import CLASS_KIND, replace_edges
+    await replace_edges(db_session, vid, [(child_iri, parent_iri, CLASS_KIND)])
 
     from ontoexplorer.api.ols._iri import encode_iri_for_ols_path
     encoded = encode_iri_for_ols_path(parent_iri)

@@ -263,6 +263,14 @@ async def property_hierarchy(db_session, fake_redis):
     _seed(parent_iri, "ParentProp", [gp_iri])
     _seed(child_iri,  "ChildProp",  [parent_iri])
 
+    # The OLS hierarchy endpoints now read asserted edges from hierarchy_edge
+    # (#242 Stage 1), so materialise them alongside the Redis seed.
+    from ontoexplorer.modules.hierarchy.edges import PROPERTY_KIND, replace_edges
+    await replace_edges(db_session, vid, [
+        (parent_iri, gp_iri, PROPERTY_KIND),
+        (child_iri, parent_iri, PROPERTY_KIND),
+    ])
+
     yield {
         "ontology":   ont,
         "version_id": vid,

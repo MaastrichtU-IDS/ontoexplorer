@@ -41,7 +41,7 @@ from ontoexplorer.api.ols.terms import (  # noqa: F401
     _inferred_descendants_fetcher,
     _hierarchical_ancestors_fetcher,
     _hierarchical_descendants_fetcher,
-    _asserted_children_sync,
+    _asserted_children,
 )
 from ontoexplorer.api.ols.properties import (  # noqa: F401
     _load_entity as _load_prop_entity,
@@ -95,7 +95,7 @@ async def _v2_hierarchy_page(
     size: int,
     lang: str | None,
     db: AsyncSession,
-    fetcher: Callable[[str, str, str], Awaitable[list[str]]],
+    fetcher: Callable[..., Awaitable[list[str]]],
     entity_type: str = "class",
 ) -> dict:
     """Fetch related IRIs, page, load entities, wrap in v2_page."""
@@ -103,7 +103,7 @@ async def _v2_hierarchy_page(
     version  = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
-    all_iris = await fetcher(ontology_id, vid, iri)
+    all_iris = await fetcher(db, ontology_id, vid, iri, version.reasoner)
     offset   = page_to_offset(page, size)
     sliced   = all_iris[offset:offset + size]
 
@@ -495,8 +495,8 @@ async def v2_class_hierarchical_children(
     iri = double_decode_iri(iri_path)
     await get_latest_version_or_404(db, ontology_id)
 
-    async def _hierarchical_children_fetcher(ontology_id: str, vid: str, iri: str) -> list[str]:
-        return await asyncio.to_thread(_asserted_children_sync, ontology_id, vid, iri)
+    async def _hierarchical_children_fetcher(db, ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
+        return await _asserted_children(db, ontology_id, vid, iri)
 
     return await _v2_hierarchy_page(ontology_id, iri, request, page, size, lang, db,
                                     _hierarchical_children_fetcher)

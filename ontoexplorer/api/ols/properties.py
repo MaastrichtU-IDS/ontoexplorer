@@ -16,7 +16,6 @@ because ELK only classifies classes, not properties.
 """
 import asyncio
 import json
-from collections import deque
 from typing import Callable, Awaitable
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -115,46 +114,8 @@ def _sparql_property_parents(ontology_id: str, vid: str, iri: str) -> list[str]:
         return []
 
 
-def _asserted_prop_parents_sync(ontology_id: str, vid: str, iri: str) -> list[str]:
-    """Direct asserted property parents: Redis `parents` field first, SPARQL fallback."""
-    r = _get_redis()
-    raw = r.hget(_iri_key(vid, iri), "parents")
-    if raw:
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            pass
-    return _sparql_property_parents(ontology_id, vid, iri)
-
-
-def _asserted_prop_children_sync(ontology_id: str, vid: str, iri: str) -> list[str]:
-    """Direct asserted property children.
-
-    Scans all property IRIs across the three type sets and checks each entity's
-    `parents` field. Falls back to SPARQL if no entity has the field set.
-    """
-    r = _get_redis()
-    all_prop_iris = sorted(
-        set().union(*(r.smembers(_type_key(vid, pt)) for pt in _PROPERTY_TYPES))
-    )
-
-    found_any_parents_field = False
-    children: list[str] = []
-    for candidate in all_prop_iris:
-        raw = r.hget(_iri_key(vid, candidate), "parents")
-        if raw is not None:
-            found_any_parents_field = True
-            try:
-                parents = json.loads(raw)
-                if iri in parents:
-                    children.append(candidate)
-            except json.JSONDecodeError:
-                pass
-
-    if found_any_parents_field:
-        return children
-
-    # SPARQL fallback
+def _sparql_property_children(ontology_id: str, vid: str, iri: str) -> list[str]:
+    """SPARQL fallback for direct property children (`?child rdfs:subPropertyOf <iri>`)."""
     try:
         from ontoexplorer.clients.oxigraph import get_store, graph_iri
         store = get_store()
@@ -173,51 +134,62 @@ def _asserted_prop_children_sync(ontology_id: str, vid: str, iri: str) -> list[s
         return []
 
 
-def _asserted_prop_ancestors_sync(ontology_id: str, vid: str, iri: str) -> list[str]:
-    """BFS over asserted property parents until convergence."""
-    visited: set[str] = set()
-    result: list[str] = []
-    queue: deque[str] = deque(_asserted_prop_parents_sync(ontology_id, vid, iri))
-    while queue:
-        node = queue.popleft()
-        if node in visited or node in _OWL_EXCLUDED:
-            continue
-        visited.add(node)
-        result.append(node)
-        queue.extend(_asserted_prop_parents_sync(ontology_id, vid, node))
-    return result
+async def _asserted_prop_parents(db, ontology_id: str, vid: str, iri: str) -> list[str]:
+    """Direct asserted property parents from hierarchy_edge; SPARQL fallback (#242)."""
+    from ontoexplorer.modules.hierarchy.edges import (
+        PROPERTY_KIND, has_materialised_hierarchy, related_iris)
+    if await has_materialised_hierarchy(db, vid):
+        return await related_iris(db, vid, iri, PROPERTY_KIND, direction="up", transitive=False)
+    return await asyncio.to_thread(_sparql_property_parents, ontology_id, vid, iri)
 
 
-def _asserted_prop_descendants_sync(ontology_id: str, vid: str, iri: str) -> list[str]:
-    """BFS over asserted property children until convergence."""
-    visited: set[str] = set()
-    result: list[str] = []
-    queue: deque[str] = deque(_asserted_prop_children_sync(ontology_id, vid, iri))
-    while queue:
-        node = queue.popleft()
-        if node in visited:
-            continue
-        visited.add(node)
-        result.append(node)
-        queue.extend(_asserted_prop_children_sync(ontology_id, vid, node))
-    return result
+async def _asserted_prop_children(db, ontology_id: str, vid: str, iri: str) -> list[str]:
+    """Direct asserted property children from hierarchy_edge; SPARQL fallback.
+
+    Replaces an O(N) scan of all three property type sets.
+    """
+    from ontoexplorer.modules.hierarchy.edges import (
+        PROPERTY_KIND, has_materialised_hierarchy, related_iris)
+    if await has_materialised_hierarchy(db, vid):
+        return await related_iris(db, vid, iri, PROPERTY_KIND, direction="down", transitive=False)
+    return await asyncio.to_thread(_sparql_property_children, ontology_id, vid, iri)
 
 
-# Async wrappers for the asserted fetchers (all properties are asserted-only)
-async def _prop_parents_fetcher(ontology_id: str, vid: str, iri: str) -> list[str]:
-    return await asyncio.to_thread(_asserted_prop_parents_sync, ontology_id, vid, iri)
+async def _asserted_prop_ancestors(db, ontology_id: str, vid: str, iri: str) -> list[str]:
+    """Transitive asserted property parents from hierarchy_edge; SPARQL-BFS fallback."""
+    from ontoexplorer.api.ols.terms import _sparql_bfs
+    from ontoexplorer.modules.hierarchy.edges import (
+        PROPERTY_KIND, has_materialised_hierarchy, related_iris)
+    if await has_materialised_hierarchy(db, vid):
+        return await related_iris(db, vid, iri, PROPERTY_KIND, direction="up", transitive=True)
+    return await asyncio.to_thread(_sparql_bfs, ontology_id, vid, iri, _sparql_property_parents)
 
 
-async def _prop_children_fetcher(ontology_id: str, vid: str, iri: str) -> list[str]:
-    return await asyncio.to_thread(_asserted_prop_children_sync, ontology_id, vid, iri)
+async def _asserted_prop_descendants(db, ontology_id: str, vid: str, iri: str) -> list[str]:
+    """Transitive asserted property children from hierarchy_edge; SPARQL-BFS fallback."""
+    from ontoexplorer.api.ols.terms import _sparql_bfs
+    from ontoexplorer.modules.hierarchy.edges import (
+        PROPERTY_KIND, has_materialised_hierarchy, related_iris)
+    if await has_materialised_hierarchy(db, vid):
+        return await related_iris(db, vid, iri, PROPERTY_KIND, direction="down", transitive=True)
+    return await asyncio.to_thread(_sparql_bfs, ontology_id, vid, iri, _sparql_property_children)
 
 
-async def _prop_ancestors_fetcher(ontology_id: str, vid: str, iri: str) -> list[str]:
-    return await asyncio.to_thread(_asserted_prop_ancestors_sync, ontology_id, vid, iri)
+# Async fetchers (all properties are asserted-only); db-first to match _hal_hierarchy_page.
+async def _prop_parents_fetcher(db, ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
+    return await _asserted_prop_parents(db, ontology_id, vid, iri)
 
 
-async def _prop_descendants_fetcher(ontology_id: str, vid: str, iri: str) -> list[str]:
-    return await asyncio.to_thread(_asserted_prop_descendants_sync, ontology_id, vid, iri)
+async def _prop_children_fetcher(db, ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
+    return await _asserted_prop_children(db, ontology_id, vid, iri)
+
+
+async def _prop_ancestors_fetcher(db, ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
+    return await _asserted_prop_ancestors(db, ontology_id, vid, iri)
+
+
+async def _prop_descendants_fetcher(db, ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
+    return await _asserted_prop_descendants(db, ontology_id, vid, iri)
 
 
 # ---------------------------------------------------------------------------
@@ -232,14 +204,14 @@ async def _hal_hierarchy_page(
     size: int,
     lang: str | None,
     db: AsyncSession,
-    fetcher: Callable[[str, str, str], Awaitable[list[str]]],
+    fetcher: Callable[..., Awaitable[list[str]]],
 ) -> dict:
     """Fetch related property IRIs, page, and return HAL embedded under 'properties'."""
     ontology = await get_ontology_or_404(db, ontology_id)
     version  = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
-    all_iris = await fetcher(ontology_id, vid, iri)
+    all_iris = await fetcher(db, ontology_id, vid, iri, version.reasoner)
     offset   = page_to_offset(page, size)
     sliced   = all_iris[offset:offset + size]
 

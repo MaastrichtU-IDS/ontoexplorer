@@ -94,58 +94,14 @@ def _sparql_parents(ontology_id: str, vid: str, iri: str) -> list[str]:
         return []
 
 
-def _asserted_parents_sync(ontology_id: str, vid: str, iri: str) -> list[str]:
-    """Direct asserted parents: Redis `parents` field first, SPARQL fallback.
-
-    The indexer currently does not write a `parents` field, so SPARQL is the
-    production path. Test fixtures seed the Redis field to avoid needing
-    Oxigraph in tests.
-    """
-    r = _get_redis()
-    raw = r.hget(_iri_key(vid, iri), "parents")
-    if raw:
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            pass
-    return _sparql_parents(ontology_id, vid, iri)
-
-
-def _asserted_children_sync(ontology_id: str, vid: str, iri: str) -> list[str]:
-    """Direct asserted children of `iri`.
-
-    Primary path: scan the class type set and check each entity's `parents`
-    field. Fallback: SPARQL `?child rdfs:subClassOf <iri>`.
-    This is O(N) in the number of classes — acceptable for v1.
-    """
-    r = _get_redis()
-    all_iris = sorted(r.smembers(_type_key(vid, "class")))
-
-    # Quick check: do any entity hashes have the `parents` field set?
-    found_any_parents_field = False
-    children: list[str] = []
-    for candidate in all_iris:
-        raw = r.hget(_iri_key(vid, candidate), "parents")
-        if raw is not None:
-            found_any_parents_field = True
-            try:
-                parents = json.loads(raw)
-                if iri in parents:
-                    children.append(candidate)
-            except json.JSONDecodeError:
-                pass
-
-    if found_any_parents_field:
-        return children
-
-    # SPARQL fallback: no `parents` fields present in the index
+def _sparql_children(ontology_id: str, vid: str, iri: str) -> list[str]:
+    """SPARQL fallback for direct children (`?child rdfs:subClassOf <iri>`)."""
     try:
         from ontoexplorer.clients.oxigraph import get_store, graph_iri
         store = get_store()
         g = graph_iri(ontology_id, vid)
         q = f"""
             PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-            PREFIX owl:  <http://www.w3.org/2002/07/owl#>
             SELECT DISTINCT ?child WHERE {{
                 GRAPH <{g}> {{
                     ?child rdfs:subClassOf <{iri}> .
@@ -158,34 +114,97 @@ def _asserted_children_sync(ontology_id: str, vid: str, iri: str) -> list[str]:
         return []
 
 
-def _asserted_ancestors_sync(ontology_id: str, vid: str, iri: str) -> list[str]:
-    """BFS over asserted parents until convergence."""
+def _sparql_bfs(ontology_id: str, vid: str, iri: str, direct) -> list[str]:
+    """Transitive closure (fallback BFS) over a direct-relative SPARQL fn."""
     visited: set[str] = set()
     result: list[str] = []
-    queue: deque[str] = deque(_asserted_parents_sync(ontology_id, vid, iri))
+    queue: deque[str] = deque(direct(ontology_id, vid, iri))
     while queue:
         node = queue.popleft()
         if node in visited or node in _OWL_EXCLUDED:
             continue
         visited.add(node)
         result.append(node)
-        queue.extend(_asserted_parents_sync(ontology_id, vid, node))
+        queue.extend(direct(ontology_id, vid, node))
     return result
 
 
-def _asserted_descendants_sync(ontology_id: str, vid: str, iri: str) -> list[str]:
-    """BFS over asserted children until convergence."""
-    visited: set[str] = set()
-    result: list[str] = []
-    queue: deque[str] = deque(_asserted_children_sync(ontology_id, vid, iri))
-    while queue:
-        node = queue.popleft()
-        if node in visited:
-            continue
-        visited.add(node)
-        result.append(node)
-        queue.extend(_asserted_children_sync(ontology_id, vid, node))
-    return result
+async def _asserted_parents(db, ontology_id: str, vid: str, iri: str) -> list[str]:
+    """Direct asserted parents from hierarchy_edge; SPARQL fallback if not materialised.
+
+    The indexer never wrote a Redis `parents` field (every read missed → SPARQL),
+    so this drops the Redis read and uses the indexed edges instead (#242 Stage 1).
+    """
+    from ontoexplorer.modules.hierarchy.edges import (
+        CLASS_KIND, has_materialised_hierarchy, related_iris)
+    if await has_materialised_hierarchy(db, vid):
+        return await related_iris(db, vid, iri, CLASS_KIND, direction="up", transitive=False)
+    return await asyncio.to_thread(_sparql_parents, ontology_id, vid, iri)
+
+
+async def _asserted_children(db, ontology_id: str, vid: str, iri: str) -> list[str]:
+    """Direct asserted children from hierarchy_edge; SPARQL fallback.
+
+    Replaces an O(N) scan of the whole class set (smembers + per-entity hget) with
+    an indexed reverse-edge lookup.
+    """
+    from ontoexplorer.modules.hierarchy.edges import (
+        CLASS_KIND, has_materialised_hierarchy, related_iris)
+    if await has_materialised_hierarchy(db, vid):
+        return await related_iris(db, vid, iri, CLASS_KIND, direction="down", transitive=False)
+    return await asyncio.to_thread(_sparql_children, ontology_id, vid, iri)
+
+
+async def _asserted_ancestors(db, ontology_id: str, vid: str, iri: str) -> list[str]:
+    """Transitive asserted parents from hierarchy_edge; SPARQL-BFS fallback."""
+    from ontoexplorer.modules.hierarchy.edges import (
+        CLASS_KIND, has_materialised_hierarchy, related_iris)
+    if await has_materialised_hierarchy(db, vid):
+        return await related_iris(db, vid, iri, CLASS_KIND, direction="up", transitive=True)
+    return await asyncio.to_thread(_sparql_bfs, ontology_id, vid, iri, _sparql_parents)
+
+
+async def _asserted_descendants(db, ontology_id: str, vid: str, iri: str) -> list[str]:
+    """Transitive asserted children from hierarchy_edge; SPARQL-BFS fallback."""
+    from ontoexplorer.modules.hierarchy.edges import (
+        CLASS_KIND, has_materialised_hierarchy, related_iris)
+    if await has_materialised_hierarchy(db, vid):
+        return await related_iris(db, vid, iri, CLASS_KIND, direction="down", transitive=True)
+    return await asyncio.to_thread(_sparql_bfs, ontology_id, vid, iri, _sparql_children)
+
+
+# Sync Redis-first helpers retained ONLY for the widgets jstree/graph builders,
+# which are synchronous (run under asyncio.to_thread) and can't await the async
+# hierarchy_edge path. Their migration is a #242 Stage 1 follow-up. Behaviour is
+# unchanged from before: Redis `parents` (never written in prod) then SPARQL.
+def _asserted_parents_sync(ontology_id: str, vid: str, iri: str) -> list[str]:
+    r = _get_redis()
+    raw = r.hget(_iri_key(vid, iri), "parents")
+    if raw:
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+    return _sparql_parents(ontology_id, vid, iri)
+
+
+def _asserted_children_sync(ontology_id: str, vid: str, iri: str) -> list[str]:
+    r = _get_redis()
+    all_iris = sorted(r.smembers(_type_key(vid, "class")))
+    found_any = False
+    children: list[str] = []
+    for candidate in all_iris:
+        raw = r.hget(_iri_key(vid, candidate), "parents")
+        if raw is not None:
+            found_any = True
+            try:
+                if iri in json.loads(raw):
+                    children.append(candidate)
+            except json.JSONDecodeError:
+                pass
+    if found_any:
+        return children
+    return _sparql_children(ontology_id, vid, iri)
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +213,7 @@ def _asserted_descendants_sync(ontology_id: str, vid: str, iri: str) -> list[str
 # Fetcher signature: (ontology_id, vid, iri) -> list[str]
 # ---------------------------------------------------------------------------
 
-async def _inferred_parents_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
+async def _inferred_parents_fetcher(db, ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
     """Direct inferred parents via ELK `direct_superclasses`; fallback: asserted."""
     try:
         from ontoexplorer.clients.reasoning import get_classification
@@ -206,10 +225,10 @@ async def _inferred_parents_fetcher(ontology_id: str, vid: str, iri: str, reason
         # Fall through to asserted if empty (term may not be in the classification)
     except Exception:
         pass
-    return await asyncio.to_thread(_asserted_parents_sync, ontology_id, vid, iri)
+    return await _asserted_parents(db, ontology_id, vid, iri)
 
 
-async def _inferred_children_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
+async def _inferred_children_fetcher(db, ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
     """Direct inferred children via ELK `direct_subclasses`; fallback: asserted."""
     try:
         from ontoexplorer.clients.reasoning import get_classification
@@ -220,10 +239,10 @@ async def _inferred_children_fetcher(ontology_id: str, vid: str, iri: str, reaso
             return children
     except Exception:
         pass
-    return await asyncio.to_thread(_asserted_children_sync, ontology_id, vid, iri)
+    return await _asserted_children(db, ontology_id, vid, iri)
 
 
-async def _inferred_ancestors_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
+async def _inferred_ancestors_fetcher(db, ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
     """All inferred ancestors via ELK `superclasses`; fallback: asserted-BFS."""
     try:
         from ontoexplorer.clients.reasoning import get_classification
@@ -234,10 +253,10 @@ async def _inferred_ancestors_fetcher(ontology_id: str, vid: str, iri: str, reas
             return ancestors
     except Exception:
         pass
-    return await asyncio.to_thread(_asserted_ancestors_sync, ontology_id, vid, iri)
+    return await _asserted_ancestors(db, ontology_id, vid, iri)
 
 
-async def _inferred_descendants_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
+async def _inferred_descendants_fetcher(db, ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
     """All inferred descendants via ELK `subclasses`; fallback: asserted-BFS."""
     try:
         from ontoexplorer.clients.reasoning import get_classification
@@ -248,23 +267,23 @@ async def _inferred_descendants_fetcher(ontology_id: str, vid: str, iri: str, re
             return descendants
     except Exception:
         pass
-    return await asyncio.to_thread(_asserted_descendants_sync, ontology_id, vid, iri)
+    return await _asserted_descendants(db, ontology_id, vid, iri)
 
 
 # ---------------------------------------------------------------------------
 # Asserted-only fetchers (hierarchical* variants)
 # ---------------------------------------------------------------------------
 
-async def _hierarchical_parents_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
-    return await asyncio.to_thread(_asserted_parents_sync, ontology_id, vid, iri)
+async def _hierarchical_parents_fetcher(db, ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
+    return await _asserted_parents(db, ontology_id, vid, iri)
 
 
-async def _hierarchical_ancestors_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
-    return await asyncio.to_thread(_asserted_ancestors_sync, ontology_id, vid, iri)
+async def _hierarchical_ancestors_fetcher(db, ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
+    return await _asserted_ancestors(db, ontology_id, vid, iri)
 
 
-async def _hierarchical_descendants_fetcher(ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
-    return await asyncio.to_thread(_asserted_descendants_sync, ontology_id, vid, iri)
+async def _hierarchical_descendants_fetcher(db, ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
+    return await _asserted_descendants(db, ontology_id, vid, iri)
 
 
 # ---------------------------------------------------------------------------
@@ -279,14 +298,14 @@ async def _hal_hierarchy_page(
     size: int,
     lang: str | None,
     db: AsyncSession,
-    fetcher: Callable[[str, str, str, str], Awaitable[list[str]]],
+    fetcher: Callable[..., Awaitable[list[str]]],
 ) -> dict:
-    """Fetch related IRIs via `fetcher(ontology_id, vid, iri, reasoner)`, page them, and return HAL."""
+    """Fetch related IRIs via `fetcher(db, ontology_id, vid, iri, reasoner)`, page them, and return HAL."""
     ontology = await get_ontology_or_404(db, ontology_id)
     version  = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
-    all_iris = await fetcher(ontology_id, vid, iri, version.reasoner)
+    all_iris = await fetcher(db, ontology_id, vid, iri, version.reasoner)
     offset   = page_to_offset(page, size)
     sliced   = all_iris[offset:offset + size]
 

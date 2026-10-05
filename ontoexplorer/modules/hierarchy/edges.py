@@ -325,6 +325,186 @@ async def fetch_children(
     return _rows_to_terms(rows, lang)
 
 
+async def fetch_parents(
+    db: AsyncSession,
+    version_id: str,
+    child: str,
+    entity_type: str,
+    *,
+    hide_obsolete: bool,
+    limit: int,
+    offset: int,
+    lang: str | None = None,
+) -> list[dict]:
+    """Direct asserted parents of `child` — the reverse of `fetch_children`.
+
+    Replaces the OLS `_asserted_parents_sync` path (an `hget(..., "parents")` the
+    indexer never writes, so SPARQL in production) with an indexed edge lookup.
+    """
+    type_sql, params = _type_clause(entity_type)
+    obsolete_sql = "AND e.deprecated = false" if hide_obsolete else ""
+    sql = text(f"""
+        SELECT e.iri, e.primary_label, e.primary_lang, e.labels, e.source,
+               EXISTS (
+                   SELECT 1 FROM hierarchy_edge c
+                   WHERE c.version_id = h.version_id
+                     AND c.kind = h.kind
+                     AND c.parent = h.parent
+               ) AS has_children
+        FROM hierarchy_edge h
+        JOIN entity_index e
+          ON e.version_id = h.version_id AND e.iri = h.parent
+        WHERE h.version_id = :v
+          AND h.kind = :kind
+          AND h.child = :child
+          AND {type_sql}
+          {obsolete_sql}
+        ORDER BY lower(e.primary_label), e.iri
+        LIMIT :limit OFFSET :offset
+    """)
+    if entity_type == "property":
+        sql = sql.bindparams(bindparam("types", expanding=True))
+    rows = (await db.execute(sql, {
+        "v": version_id, "kind": _edge_kind(entity_type), "child": child,
+        "limit": limit, "offset": offset, **params,
+    })).all()
+    return _rows_to_terms(rows, lang)
+
+
+async def fetch_ancestors(
+    db: AsyncSession,
+    version_id: str,
+    start: str,
+    entity_type: str,
+    *,
+    hide_obsolete: bool,
+    limit: int,
+    offset: int,
+    lang: str | None = None,
+) -> list[dict]:
+    """Transitive asserted parents of `start` (a recursive walk up the edges).
+
+    `UNION` (not `UNION ALL`) dedups and terminates on a cyclic hierarchy. owl:Thing
+    is already absent from hierarchy_edge (dropped at extract time), so the root is
+    naturally excluded.
+    """
+    return await _fetch_transitive(
+        db, version_id, start, entity_type, direction="up",
+        hide_obsolete=hide_obsolete, limit=limit, offset=offset, lang=lang)
+
+
+async def fetch_descendants(
+    db: AsyncSession,
+    version_id: str,
+    start: str,
+    entity_type: str,
+    *,
+    hide_obsolete: bool,
+    limit: int,
+    offset: int,
+    lang: str | None = None,
+) -> list[dict]:
+    """Transitive asserted children of `start` (a recursive walk down the edges)."""
+    return await _fetch_transitive(
+        db, version_id, start, entity_type, direction="down",
+        hide_obsolete=hide_obsolete, limit=limit, offset=offset, lang=lang)
+
+
+async def _fetch_transitive(
+    db: AsyncSession,
+    version_id: str,
+    start: str,
+    entity_type: str,
+    *,
+    direction: str,      # "up" = ancestors, "down" = descendants
+    hide_obsolete: bool,
+    limit: int,
+    offset: int,
+    lang: str | None,
+) -> list[dict]:
+    type_sql, params = _type_clause(entity_type)
+    obsolete_sql = "AND e.deprecated = false" if hide_obsolete else ""
+    # "up": from child=start, collect parent, then walk child->parent.
+    # "down": from parent=start, collect child, then walk parent->child.
+    seed_match, step_join = (
+        ("h.child = :start", "h.child = w.iri") if direction == "up"
+        else ("h.parent = :start", "h.parent = w.iri")
+    )
+    collect = "h.parent" if direction == "up" else "h.child"
+    sql = text(f"""
+        WITH RECURSIVE walk(iri) AS (
+            SELECT {collect} FROM hierarchy_edge h
+              WHERE h.version_id = :v AND h.kind = :kind AND {seed_match}
+          UNION
+            SELECT {collect} FROM hierarchy_edge h
+              JOIN walk w ON {step_join}
+              WHERE h.version_id = :v AND h.kind = :kind
+        )
+        SELECT e.iri, e.primary_label, e.primary_lang, e.labels, e.source,
+               EXISTS (
+                   SELECT 1 FROM hierarchy_edge c
+                   WHERE c.version_id = :v AND c.kind = :kind AND c.parent = e.iri
+               ) AS has_children
+        FROM walk
+        JOIN entity_index e ON e.version_id = :v AND e.iri = walk.iri
+        WHERE {type_sql}
+          {obsolete_sql}
+        ORDER BY lower(e.primary_label), e.iri
+        LIMIT :limit OFFSET :offset
+    """)
+    if entity_type == "property":
+        sql = sql.bindparams(bindparam("types", expanding=True))
+    rows = (await db.execute(sql, {
+        "v": version_id, "kind": _edge_kind(entity_type), "start": start,
+        "limit": limit, "offset": offset, **params,
+    })).all()
+    return _rows_to_terms(rows, lang)
+
+
+async def related_iris(
+    db: AsyncSession,
+    version_id: str,
+    start: str,
+    kind: str,
+    *,
+    direction: str,       # "up" = parents/ancestors, "down" = children/descendants
+    transitive: bool,
+) -> list[str]:
+    """Raw asserted-relative IRIs from hierarchy_edge — no entity_index join, no
+    pagination — the drop-in for the OLS `_asserted_*` discovery that previously
+    read a never-written Redis `parents` field and fell back to SPARQL.
+
+    Not joined to entity_index on purpose: it mirrors the old graph-level SPARQL
+    result (every asserted neighbour), leaving type/obsolete rendering to the caller.
+    owl:Thing is already absent from hierarchy_edge. `UNION` dedups + terminates on
+    a cyclic hierarchy.
+    """
+    seed, step = (
+        ("h.child = :start", "h.child = w.iri") if direction == "up"
+        else ("h.parent = :start", "h.parent = w.iri")
+    )
+    collect = "h.parent" if direction == "up" else "h.child"
+    if transitive:
+        sql = text(f"""
+            WITH RECURSIVE walk(iri) AS (
+                SELECT {collect} FROM hierarchy_edge h
+                  WHERE h.version_id = :v AND h.kind = :k AND {seed}
+              UNION
+                SELECT {collect} FROM hierarchy_edge h
+                  JOIN walk w ON {step}
+                  WHERE h.version_id = :v AND h.kind = :k
+            )
+            SELECT iri FROM walk
+        """)
+    else:
+        sql = text(
+            f"SELECT DISTINCT {collect} AS iri FROM hierarchy_edge h "
+            f"WHERE h.version_id = :v AND h.kind = :k AND {seed}"
+        )
+    rows = (await db.execute(sql, {"v": version_id, "k": kind, "start": start})).all()
+    return [r.iri for r in rows]
+
+
 async def warm_root_cache_sql(
     db: AsyncSession, redis, version_id: str, *, limit: int = 200
 ) -> int:

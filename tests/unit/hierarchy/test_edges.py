@@ -21,7 +21,11 @@ from ontoexplorer.modules.hierarchy.edges import (
     INFERRED_KIND,
     PROPERTY_KIND,
     extract_edges,
+    fetch_ancestors,
     fetch_children,
+    fetch_descendants,
+    fetch_parents,
+    related_iris,
     fetch_roots,
     has_materialised_hierarchy,
     replace_edges,
@@ -521,3 +525,103 @@ async def test_punned_entities_are_listed_as_individuals_and_as_classes(db_sessi
                                 limit=50, offset=0)
     assert [i["iri"] for i in inds] == ["http://x/Unit"]
     assert [c["iri"] for c in classes] == ["http://x/Unit"]
+
+
+# ── fetch_parents / fetch_ancestors / fetch_descendants (#242 Stage 1) ──────────
+
+def _iris(terms):
+    return sorted(t["iri"] for t in terms)
+
+
+async def _seed_chain(db, v):
+    # A <- B <- C <- D  (edges are child -> parent)
+    ents = [{"iri": f"http://x/{n}", "label": n} for n in ("A", "B", "C", "D")]
+    edges = [("http://x/B", "http://x/A", CLASS_KIND),
+             ("http://x/C", "http://x/B", CLASS_KIND),
+             ("http://x/D", "http://x/C", CLASS_KIND)]
+    await _seed_version(db, v, ents, edges)
+
+
+@pytest.mark.anyio
+async def test_fetch_parents_direct_only(db_session):
+    await _seed_chain(db_session, "v-par")
+    parents = await fetch_parents(db_session, "v-par", "http://x/C", "class",
+                                  hide_obsolete=True, limit=50, offset=0)
+    assert _iris(parents) == ["http://x/B"]  # direct only, not B's parent A
+
+
+@pytest.mark.anyio
+async def test_fetch_ancestors_transitive(db_session):
+    await _seed_chain(db_session, "v-anc")
+    anc = await fetch_ancestors(db_session, "v-anc", "http://x/D", "class",
+                                hide_obsolete=True, limit=50, offset=0)
+    assert _iris(anc) == ["http://x/A", "http://x/B", "http://x/C"]
+
+
+@pytest.mark.anyio
+async def test_fetch_descendants_transitive(db_session):
+    await _seed_chain(db_session, "v-desc")
+    desc = await fetch_descendants(db_session, "v-desc", "http://x/A", "class",
+                                   hide_obsolete=True, limit=50, offset=0)
+    assert _iris(desc) == ["http://x/B", "http://x/C", "http://x/D"]
+
+
+@pytest.mark.anyio
+async def test_fetch_ancestors_terminates_on_cycle(db_session):
+    # A malformed cyclic hierarchy must not loop forever (UNION dedups).
+    ents = [{"iri": "http://x/X", "label": "X"}, {"iri": "http://x/Y", "label": "Y"}]
+    edges = [("http://x/X", "http://x/Y", CLASS_KIND),
+             ("http://x/Y", "http://x/X", CLASS_KIND)]
+    await _seed_version(db_session, "v-cyc", ents, edges)
+    anc = await fetch_ancestors(db_session, "v-cyc", "http://x/X", "class",
+                                hide_obsolete=True, limit=50, offset=0)
+    assert _iris(anc) == ["http://x/X", "http://x/Y"]  # bounded, no hang
+
+
+@pytest.mark.anyio
+async def test_fetch_parents_respects_kind(db_session):
+    # A property edge must not surface when asking for class parents, and vice versa.
+    ents = [{"iri": "http://x/pc", "label": "ChildProp", "type": "object_property"},
+            {"iri": "http://x/pp", "label": "ParentProp", "type": "object_property"}]
+    edges = [("http://x/pc", "http://x/pp", PROPERTY_KIND)]
+    await _seed_version(db_session, "v-kind", ents, edges)
+    as_class = await fetch_parents(db_session, "v-kind", "http://x/pc", "class",
+                                   hide_obsolete=True, limit=50, offset=0)
+    as_prop = await fetch_parents(db_session, "v-kind", "http://x/pc", "property",
+                                  hide_obsolete=True, limit=50, offset=0)
+    assert as_class == [] and _iris(as_prop) == ["http://x/pp"]
+
+
+@pytest.mark.anyio
+async def test_fetch_descendants_hides_obsolete(db_session):
+    ents = [{"iri": "http://x/A", "label": "A"},
+            {"iri": "http://x/live", "label": "Live"},
+            {"iri": "http://x/dead", "label": "Dead", "deprecated": True}]
+    edges = [("http://x/live", "http://x/A", CLASS_KIND),
+             ("http://x/dead", "http://x/A", CLASS_KIND)]
+    await _seed_version(db_session, "v-obs", ents, edges)
+    kept = await fetch_descendants(db_session, "v-obs", "http://x/A", "class",
+                                   hide_obsolete=True, limit=50, offset=0)
+    assert _iris(kept) == ["http://x/live"]
+
+
+@pytest.mark.anyio
+async def test_related_iris_direct_and_transitive(db_session):
+    await _seed_chain(db_session, "v-rel")
+    up1 = await related_iris(db_session, "v-rel", "http://x/C", CLASS_KIND, direction="up", transitive=False)
+    assert sorted(up1) == ["http://x/B"]
+    up_all = await related_iris(db_session, "v-rel", "http://x/D", CLASS_KIND, direction="up", transitive=True)
+    assert sorted(up_all) == ["http://x/A", "http://x/B", "http://x/C"]
+    down1 = await related_iris(db_session, "v-rel", "http://x/A", CLASS_KIND, direction="down", transitive=False)
+    assert sorted(down1) == ["http://x/B"]
+    down_all = await related_iris(db_session, "v-rel", "http://x/A", CLASS_KIND, direction="down", transitive=True)
+    assert sorted(down_all) == ["http://x/B", "http://x/C", "http://x/D"]
+
+
+@pytest.mark.anyio
+async def test_related_iris_cycle_terminates(db_session):
+    ents = [{"iri": "http://x/X", "label": "X"}, {"iri": "http://x/Y", "label": "Y"}]
+    edges = [("http://x/X", "http://x/Y", CLASS_KIND), ("http://x/Y", "http://x/X", CLASS_KIND)]
+    await _seed_version(db_session, "v-rel-cyc", ents, edges)
+    up = await related_iris(db_session, "v-rel-cyc", "http://x/X", CLASS_KIND, direction="up", transitive=True)
+    assert sorted(up) == ["http://x/X", "http://x/Y"]
