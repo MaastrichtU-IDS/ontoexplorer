@@ -307,22 +307,12 @@ async def list_properties_hal(
         return hal_page(matched_items, request, total=len(matched_items), page=0, size=size,
                         embedded_key="properties")
 
-    # Paged list of all property IRIs (union of three types)
+    # Paged list of all properties (union of three types) from entity_index (#242 PR2).
+    from ontoexplorer.api.ols._entity_source import count_entities, list_entities
+    _PROP_TYPES = ["object_property", "data_property", "annotation_property"]
     offset = page_to_offset(page, size)
-    total = await asyncio.to_thread(_total_property_count, vid)
-    all_iris = await asyncio.to_thread(_all_property_iris_sorted, vid)
-    page_iris = all_iris[offset:offset + size]
-
-    def _load_page(iris_slice: list[str]) -> list[dict]:
-        r = _get_redis()
-        result = []
-        for i in iris_slice:
-            h = r.hgetall(_iri_key(vid, i))
-            if h:
-                result.append(h)
-        return result
-
-    entities = await asyncio.to_thread(_load_page, page_iris)
+    total = await count_entities(db, vid, _PROP_TYPES)
+    entities = await list_entities(db, vid, _PROP_TYPES, limit=size, offset=offset)
     items = [
         entity_to_v1_term(
             e, ontology,

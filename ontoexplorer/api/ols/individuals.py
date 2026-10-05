@@ -32,7 +32,7 @@ from ontoexplorer.api.ols._envelope import hal_page
 from ontoexplorer.api.ols._iri import double_decode_iri
 from ontoexplorer.api.ols._shapes import entity_to_v1_term
 from ontoexplorer.database import get_db
-from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _type_key
+from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
 from ontoexplorer.modules.search.versions import latest_ready_versions
 
 router = APIRouter()
@@ -153,22 +153,11 @@ async def list_individuals_hal(
         return hal_page(items, request, total=len(items), page=0, size=size,
                         embedded_key="individuals")
 
-    # Paged list of all individual IRIs
+    # Paged list of all individuals from entity_index (#242 PR2).
+    from ontoexplorer.api.ols._entity_source import count_entities, list_entities
     offset = page_to_offset(page, size)
-    total  = await asyncio.to_thread(_redis_scard, _type_key(vid, "individual"))
-    all_iris = await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "individual"))
-    page_iris = all_iris[offset:offset + size]
-
-    def _load_page(iris_slice: list[str]) -> list[dict]:
-        r = _get_redis()
-        result = []
-        for i in iris_slice:
-            h = r.hgetall(_iri_key(vid, i))
-            if h:
-                result.append(h)
-        return result
-
-    entities = await asyncio.to_thread(_load_page, page_iris)
+    total  = await count_entities(db, vid, ["individual"])
+    entities = await list_entities(db, vid, ["individual"], limit=size, offset=offset)
     items = [
         entity_to_v1_term(
             e, ontology,
