@@ -24,9 +24,9 @@ from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
 
 # Re-use asserted hierarchy fetchers from terms.py (already tested there).
 from ontoexplorer.api.ols.terms import (
-    _asserted_children_sync,
-    _asserted_parents_sync,
     _OWL_EXCLUDED,
+    _sparql_children,
+    _sparql_parents,
 )
 
 router = APIRouter()
@@ -55,7 +55,7 @@ def _entity_label(vid: str, iri: str) -> str:
 
 def _has_children_sync(ontology_id: str, vid: str, iri: str) -> bool:
     """Return True when the given IRI has at least one asserted child."""
-    return bool(_asserted_children_sync(ontology_id, vid, iri))
+    return bool(_sparql_children(ontology_id, vid, iri))
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ def _build_jstree(
     while queue:
         node = queue.popleft()
         parents = [
-            p for p in _asserted_parents_sync(ontology_id, vid, node)
+            p for p in _sparql_parents(ontology_id, vid, node)
             if p not in _OWL_EXCLUDED
         ]
         parents_map[node] = parents
@@ -144,7 +144,7 @@ def _build_jstree(
             ancestor_parents = parents_map.get(ancestor, [])
             for ap in ancestor_parents:
                 # ap's children = siblings of ancestor
-                siblings = _asserted_children_sync(ontology_id, vid, ap)
+                siblings = _sparql_children(ontology_id, vid, ap)
                 for sibling in siblings:
                     if sibling in _OWL_EXCLUDED:
                         continue
@@ -152,7 +152,7 @@ def _build_jstree(
                         continue
                     # Siblings are collapsed (not on focus path)
                     sibling_parents = [
-                        p for p in _asserted_parents_sync(ontology_id, vid, sibling)
+                        p for p in _sparql_parents(ontology_id, vid, sibling)
                         if p not in _OWL_EXCLUDED
                     ]
                     sibling_parent_id = sibling_parents[0] if sibling_parents else "#"
@@ -237,7 +237,7 @@ def _build_graph(
 
     # Parents
     parents = [
-        p for p in _asserted_parents_sync(ontology_id, vid, focus_iri)
+        p for p in _sparql_parents(ontology_id, vid, focus_iri)
         if p not in _OWL_EXCLUDED
     ]
     for p in parents:
@@ -246,7 +246,7 @@ def _build_graph(
 
     # Children
     children = [
-        c for c in _asserted_children_sync(ontology_id, vid, focus_iri)
+        c for c in _sparql_children(ontology_id, vid, focus_iri)
         if c not in _OWL_EXCLUDED
     ]
     for c in children:
