@@ -173,6 +173,40 @@ async def _asserted_descendants(db, ontology_id: str, vid: str, iri: str) -> lis
     return await asyncio.to_thread(_sparql_bfs, ontology_id, vid, iri, _sparql_children)
 
 
+# Sync Redis-first helpers retained ONLY for the widgets jstree/graph builders,
+# which are synchronous (run under asyncio.to_thread) and can't await the async
+# hierarchy_edge path. Their migration is a #242 Stage 1 follow-up. Behaviour is
+# unchanged from before: Redis `parents` (never written in prod) then SPARQL.
+def _asserted_parents_sync(ontology_id: str, vid: str, iri: str) -> list[str]:
+    r = _get_redis()
+    raw = r.hget(_iri_key(vid, iri), "parents")
+    if raw:
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+    return _sparql_parents(ontology_id, vid, iri)
+
+
+def _asserted_children_sync(ontology_id: str, vid: str, iri: str) -> list[str]:
+    r = _get_redis()
+    all_iris = sorted(r.smembers(_type_key(vid, "class")))
+    found_any = False
+    children: list[str] = []
+    for candidate in all_iris:
+        raw = r.hget(_iri_key(vid, candidate), "parents")
+        if raw is not None:
+            found_any = True
+            try:
+                if iri in json.loads(raw):
+                    children.append(candidate)
+            except json.JSONDecodeError:
+                pass
+    if found_any:
+        return children
+    return _sparql_children(ontology_id, vid, iri)
+
+
 # ---------------------------------------------------------------------------
 # Inferred-hierarchy fetchers  (fall back to asserted on any error)
 #

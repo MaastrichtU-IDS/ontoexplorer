@@ -93,6 +93,14 @@ async def hierarchy_sample(db_session, fake_redis):
     _seed(p_iri,  "Parent",      [gp_iri])
     _seed(c_iri,  "Child",       [p_iri])
 
+    # The OLS hierarchy endpoints now read asserted edges from hierarchy_edge
+    # (#242 Stage 1); materialise them alongside the Redis seed.
+    from ontoexplorer.modules.hierarchy.edges import CLASS_KIND, replace_edges
+    await replace_edges(db_session, vid, [
+        (p_iri, gp_iri, CLASS_KIND),
+        (c_iri, p_iri, CLASS_KIND),
+    ])
+
     yield {
         "ontology":    ont,
         "version_id":  vid,
@@ -310,6 +318,10 @@ async def test_hierarchy_paginated(client: AsyncClient, db_session, fake_redis):
             "parents": json.dumps([parent_iri]),
         })
         fake_redis.sadd(_type_key(vid, "class"), c)
+
+    # Asserted children now come from hierarchy_edge (#242 Stage 1).
+    from ontoexplorer.modules.hierarchy.edges import CLASS_KIND, replace_edges
+    await replace_edges(db_session, vid, [(c, parent_iri, CLASS_KIND) for c in child_iris])
 
     resp = await client.get(
         f"/ols/api/ontologies/{ont.id}/terms/{_enc(parent_iri)}/children",
