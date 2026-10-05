@@ -90,11 +90,14 @@ async def pg_entity_search(
     q: str,
     limit: int,
     types: list[str] | None = None,
+    version_id: str | None = None,
 ) -> list[dict]:
-    """Cross-ontology entity search via Postgres `entity_index`.
+    """Entity search via Postgres `entity_index`.
 
-    Deduplicates by IRI (first-seen-wins across ontologies). Result list is already
-    globally tier-ranked: exact label match first, then prefix, then word-suffix.
+    Cross-ontology by default; pass `version_id` to scope to a single version (the
+    OLS per-ontology search, #242 Stage 1 — replaces the Redis prefix-zset lookup).
+    Deduplicates by IRI (first-seen-wins). Result list is already tier-ranked: exact
+    label match first, then prefix, then word-suffix.
 
     `types`, if given, restricts to those entity_index.type values
     (e.g. ['class', 'object_property']). None or empty = no type filter.
@@ -106,6 +109,7 @@ async def pg_entity_search(
         return []
 
     type_filter_sql = "AND ei.type = ANY(:types)" if types else ""
+    vid_filter_sql = "AND ei.version_id = :vid" if version_id else ""
 
     # Stage 1: prefix-on-primary-label. Fetch a bounded pool in the
     # text_pattern_ops btree's own (C-collation) order — an index range scan that
@@ -125,6 +129,7 @@ async def pg_entity_search(
             FROM entity_index ei
             WHERE ei.primary_label_norm LIKE :prefix
               {type_filter_sql}
+              {vid_filter_sql}
             -- Order + LIMIT on entity_index ALONE. The LIMIT is an optimization
             -- fence, so the C-collation btree drives an ordered index scan that
             -- STOPS at :pool rows (~:pool heap fetches). Joining versions/ontologies
@@ -146,6 +151,8 @@ async def pg_entity_search(
     params: dict = {"norm": norm, "prefix": norm + "%", "pool": _prefix_pool_size(limit)}
     if types:
         params["types"] = list(types)
+    if version_id:
+        params["vid"] = version_id
     result = await db.execute(prefix_sql, params)
     ranked = _rank_prefix_rows(result.all(), norm, limit)
 
@@ -173,6 +180,7 @@ async def pg_entity_search(
                 WHERE ei.search_tsv @@ to_tsquery('simple', :tsq)
                   AND ei.primary_label_norm NOT LIKE :prefix
                   {type_filter_sql}
+                  {vid_filter_sql}
                 LIMIT :pool
             ) c
             JOIN versions v ON v.id = c.version_id
@@ -185,6 +193,8 @@ async def pg_entity_search(
                          "over": limit * _OVERSAMPLE, "pool": _prefix_pool_size(limit)}
         if types:
             params2["types"] = list(types)
+        if version_id:
+            params2["vid"] = version_id
         result = await db.execute(tsv_sql, params2)
         for row in result.all():
             if row.iri in seen_iris:
