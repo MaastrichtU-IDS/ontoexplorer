@@ -44,18 +44,6 @@ router = APIRouter()
 _OWL_NAMED_INDIVIDUAL = "http://www.w3.org/2002/07/owl#NamedIndividual"
 
 
-def _redis_hgetall(key: str) -> dict:
-    return _get_redis().hgetall(key) or {}
-
-
-def _redis_scard(key: str) -> int:
-    return _get_redis().scard(key)
-
-
-def _redis_smembers_sorted(key: str) -> list[str]:
-    return sorted(_get_redis().smembers(key))
-
-
 async def _load_entity(db, version_id: str, iri: str) -> dict | None:
     """Load the entity payload from entity_index (#242 Stage 1 PR2); None if absent."""
     from ontoexplorer.api.ols._entity_source import load_entity
@@ -66,7 +54,7 @@ async def _load_entity(db, version_id: str, iri: str) -> dict | None:
 # /types helper: resolve rdf:type classes for an individual
 # ---------------------------------------------------------------------------
 
-def _individual_types_sync(ontology_id: str, vid: str, iri: str, entity: dict) -> list[str]:
+def _individual_types_sync(ontology_id: str, vid: str, iri: str) -> list[str]:
     """Return the class IRIs that ``iri`` is rdf:type of.
 
     Primary path: read the ``types`` JSON field from the Redis entity hash.
@@ -197,26 +185,26 @@ async def individual_types(
                             detail=f"Individual {iri} not found in {ontology_id}")
 
     type_iris = await asyncio.to_thread(
-        _individual_types_sync, ontology_id, vid, iri, entity
+        _individual_types_sync, ontology_id, vid, iri
     )
 
     offset  = page_to_offset(page, size)
     sliced  = type_iris[offset:offset + size]
 
-    def _load_classes() -> list[tuple[str, dict]]:
-        r = _get_redis()
-        return [(ci, r.hgetall(_iri_key(vid, ci)) or {}) for ci in sliced]
-
-    class_entities = await asyncio.to_thread(_load_classes)
+    # Load the class payloads from entity_index (#242 PR2), with the Redis-hash
+    # fallback that load_entities carries for not-yet-indexed IRIs; a class absent
+    # from both renders from a minimal synthesized entity.
+    from ontoexplorer.api.ols._entity_source import load_entities
+    class_map = await load_entities(db, vid, sliced)
 
     items = [
         entity_to_v1_term(
-            (e if e else _fallback_class_entity(ci)),
+            (class_map.get(ci) or _fallback_class_entity(ci)),
             ontology,
             request=request, is_obsolete=False, is_root=False, has_children=False,
             lang=lang, resource_kind="terms",
         )
-        for ci, e in class_entities
+        for ci in sliced
     ]
     return hal_page(items, request, total=len(type_iris), page=page, size=size,
                     embedded_key="terms")
