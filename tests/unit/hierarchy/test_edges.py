@@ -25,6 +25,7 @@ from ontoexplorer.modules.hierarchy.edges import (
     fetch_children,
     fetch_descendants,
     fetch_parents,
+    related_iris,
     fetch_roots,
     has_materialised_hierarchy,
     replace_edges,
@@ -602,3 +603,25 @@ async def test_fetch_descendants_hides_obsolete(db_session):
     kept = await fetch_descendants(db_session, "v-obs", "http://x/A", "class",
                                    hide_obsolete=True, limit=50, offset=0)
     assert _iris(kept) == ["http://x/live"]
+
+
+@pytest.mark.anyio
+async def test_related_iris_direct_and_transitive(db_session):
+    await _seed_chain(db_session, "v-rel")
+    up1 = await related_iris(db_session, "v-rel", "http://x/C", CLASS_KIND, direction="up", transitive=False)
+    assert sorted(up1) == ["http://x/B"]
+    up_all = await related_iris(db_session, "v-rel", "http://x/D", CLASS_KIND, direction="up", transitive=True)
+    assert sorted(up_all) == ["http://x/A", "http://x/B", "http://x/C"]
+    down1 = await related_iris(db_session, "v-rel", "http://x/A", CLASS_KIND, direction="down", transitive=False)
+    assert sorted(down1) == ["http://x/B"]
+    down_all = await related_iris(db_session, "v-rel", "http://x/A", CLASS_KIND, direction="down", transitive=True)
+    assert sorted(down_all) == ["http://x/B", "http://x/C", "http://x/D"]
+
+
+@pytest.mark.anyio
+async def test_related_iris_cycle_terminates(db_session):
+    ents = [{"iri": "http://x/X", "label": "X"}, {"iri": "http://x/Y", "label": "Y"}]
+    edges = [("http://x/X", "http://x/Y", CLASS_KIND), ("http://x/Y", "http://x/X", CLASS_KIND)]
+    await _seed_version(db_session, "v-rel-cyc", ents, edges)
+    up = await related_iris(db_session, "v-rel-cyc", "http://x/X", CLASS_KIND, direction="up", transitive=True)
+    assert sorted(up) == ["http://x/X", "http://x/Y"]

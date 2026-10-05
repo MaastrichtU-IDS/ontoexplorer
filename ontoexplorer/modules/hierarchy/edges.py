@@ -461,6 +461,50 @@ async def _fetch_transitive(
     return _rows_to_terms(rows, lang)
 
 
+async def related_iris(
+    db: AsyncSession,
+    version_id: str,
+    start: str,
+    kind: str,
+    *,
+    direction: str,       # "up" = parents/ancestors, "down" = children/descendants
+    transitive: bool,
+) -> list[str]:
+    """Raw asserted-relative IRIs from hierarchy_edge — no entity_index join, no
+    pagination — the drop-in for the OLS `_asserted_*` discovery that previously
+    read a never-written Redis `parents` field and fell back to SPARQL.
+
+    Not joined to entity_index on purpose: it mirrors the old graph-level SPARQL
+    result (every asserted neighbour), leaving type/obsolete rendering to the caller.
+    owl:Thing is already absent from hierarchy_edge. `UNION` dedups + terminates on
+    a cyclic hierarchy.
+    """
+    seed, step = (
+        ("h.child = :start", "h.child = w.iri") if direction == "up"
+        else ("h.parent = :start", "h.parent = w.iri")
+    )
+    collect = "h.parent" if direction == "up" else "h.child"
+    if transitive:
+        sql = text(f"""
+            WITH RECURSIVE walk(iri) AS (
+                SELECT {collect} FROM hierarchy_edge h
+                  WHERE h.version_id = :v AND h.kind = :k AND {seed}
+              UNION
+                SELECT {collect} FROM hierarchy_edge h
+                  JOIN walk w ON {step}
+                  WHERE h.version_id = :v AND h.kind = :k
+            )
+            SELECT iri FROM walk
+        """)
+    else:
+        sql = text(
+            f"SELECT DISTINCT {collect} AS iri FROM hierarchy_edge h "
+            f"WHERE h.version_id = :v AND h.kind = :k AND {seed}"
+        )
+    rows = (await db.execute(sql, {"v": version_id, "k": kind, "start": start})).all()
+    return [r.iri for r in rows]
+
+
 async def warm_root_cache_sql(
     db: AsyncSession, redis, version_id: str, *, limit: int = 200
 ) -> int:
