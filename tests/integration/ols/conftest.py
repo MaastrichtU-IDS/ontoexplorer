@@ -22,15 +22,17 @@ from ontoexplorer.modules.search.indexer import (
 
 
 def _mk_entity_index(version_id, ontology_id, iri, label, type_="class",
-                     is_individual=False, source=None):
+                     is_individual=False, source=None, types=None):
     """Build an EntityIndex row mirroring a seeded Redis entity (#242 Stage 1 PR2:
-    OLS detail/payload now reads entity_index)."""
+    OLS detail/payload now reads entity_index). `types` = rdf:type class IRIs for
+    an individual (#242 PR5)."""
     from ontoexplorer.models.db import EntityIndex
     return EntityIndex(
         version_id=version_id, iri=iri, ontology_id=ontology_id, type=type_,
         primary_label=label, primary_label_norm=label.lower(),
         short=iri.replace("#", "/").split("/")[-1], source=source,
-        search_text=label, is_individual=is_individual, labels={"en": label})
+        search_text=label, is_individual=is_individual, labels={"en": label},
+        types=types or [])
 
 
 @pytest.fixture()
@@ -49,7 +51,6 @@ def fake_redis():
         patch("ontoexplorer.api.ols.ontologies._get_redis", return_value=r),
         patch("ontoexplorer.api.ols.terms._get_redis", return_value=r),
         patch("ontoexplorer.api.ols.properties._get_redis", return_value=r),
-        patch("ontoexplorer.api.ols.individuals._get_redis", return_value=r),
         patch("ontoexplorer.api.ols.classes_v2._get_redis", return_value=r),
         patch("ontoexplorer.api.ols.widgets._get_redis", return_value=r),
     ):
@@ -359,7 +360,8 @@ async def sample_individual(db_session, sample_ontology, fake_redis):
 
     # entity_index payload (#242 PR2): detail + /types class rendering read from PG.
     db_session.add(_mk_entity_index(vid, ontology.id, ind_iri, "Alice",
-                                    type_="individual", is_individual=True, source=ontology.shortname))
+                                    type_="individual", is_individual=True, source=ontology.shortname,
+                                    types=[class_iri]))
     db_session.add(_mk_entity_index(vid, ontology.id, class_iri, "Person", source=ontology.shortname))
     await db_session.commit()
 

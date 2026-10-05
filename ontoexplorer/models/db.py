@@ -419,6 +419,12 @@ class EntityIndex(Base):
         JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list, server_default="[]")
     definitions: Mapped[list] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list, server_default="[]")
+    # rdf:type class IRIs for an individual (minus owl:NamedIndividual), mirrored
+    # from the Redis entity hash so the OLS `/types` endpoint and the
+    # class→individuals filter can source them from Postgres instead of a
+    # per-request SPARQL query (#242 Stage 1 PR 5). Empty list for non-individuals.
+    types: Mapped[list] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list, server_default="[]")
     # search_tsv is a generated column; SQLAlchemy reads it but never writes it.
 
 

@@ -182,6 +182,12 @@ async def populate_entity_index(
             definitions = json.loads(entity.get("definitions") or "[]")
         except ValueError:
             definitions = []
+        # rdf:type classes for an individual, mirrored from the Redis hash (#242
+        # Stage 1 PR 5). Only individuals carry it; everything else -> [].
+        try:
+            types = json.loads(entity.get("types") or "[]")
+        except ValueError:
+            types = []
 
         rows.append({
             "version_id": version_id,
@@ -200,6 +206,7 @@ async def populate_entity_index(
             "primary_lang": primary_lang,
             "synonyms": synonyms,
             "definitions": definitions,
+            "types": types,
         })
 
     # Clear any prior rows for this version, then bulk insert.
