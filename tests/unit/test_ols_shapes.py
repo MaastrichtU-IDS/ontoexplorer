@@ -100,3 +100,23 @@ async def test_load_entity_and_batch_from_index(db_session):
     assert set(batch) == {"http://x/A", "http://x/B"}       # missing absent
     assert batch["http://x/B"]["type"] == "object_property"
     assert await load_entities(db_session, v, []) == {}
+
+
+@pytest.mark.anyio
+async def test_list_and_count_entities(db_session):
+    from ontoexplorer.models.db import EntityIndex
+    from ontoexplorer.api.ols._entity_source import list_entities, count_entities
+    v = "v-list"
+    for short, typ in [("C3", "class"), ("C1", "class"), ("C2", "class"), ("P1", "object_property")]:
+        db_session.add(EntityIndex(
+            version_id=v, iri=f"http://x/{short}", ontology_id="o1", type=typ,
+            primary_label=short, primary_label_norm=short.lower(), short=short, search_text=short))
+    await db_session.commit()
+
+    assert await count_entities(db_session, v, ["class"]) == 3
+    assert await count_entities(db_session, v, ["object_property"]) == 1
+    page = await list_entities(db_session, v, ["class"], limit=2, offset=0)
+    assert [p["iri"] for p in page] == ["http://x/C1", "http://x/C2"]   # IRI-ordered
+    page2 = await list_entities(db_session, v, ["class"], limit=2, offset=2)
+    assert [p["iri"] for p in page2] == ["http://x/C3"]
+    assert page[0]["label"] == "C1" and page[0]["type"] == "class"     # legacy shape

@@ -24,6 +24,33 @@ async def load_entity(db: AsyncSession, version_id: str, iri: str) -> dict | Non
     return entity_index_to_legacy_dict(row) if row is not None else None
 
 
+async def count_entities(db: AsyncSession, version_id: str, types: list[str]) -> int:
+    """Count entity_index rows of the given type(s) for a version (replaces `scard`)."""
+    from sqlalchemy import func
+    return int((await db.execute(
+        select(func.count()).select_from(EntityIndex).where(
+            EntityIndex.version_id == version_id, EntityIndex.type.in_(types)
+        )
+    )).scalar() or 0)
+
+
+async def list_entities(
+    db: AsyncSession, version_id: str, types: list[str], *, limit: int, offset: int
+) -> list[dict]:
+    """A page of entities of the given type(s), IRI-ordered, as legacy dicts.
+
+    Replaces the `sorted(smembers(type_set))` + slice + per-IRI `hgetall` dance with
+    one query (enumerate + load together). IRI order matches the old sorted-set paging.
+    """
+    rows = (await db.execute(
+        select(EntityIndex)
+        .where(EntityIndex.version_id == version_id, EntityIndex.type.in_(types))
+        .order_by(EntityIndex.iri)
+        .limit(limit).offset(offset)
+    )).scalars().all()
+    return [entity_index_to_legacy_dict(r) for r in rows]
+
+
 async def load_entities(db: AsyncSession, version_id: str, iris) -> dict[str, dict]:
     """Batch-load {iri: legacy_dict} for `iris` in one query. Missing IRIs are absent."""
     iris = list(iris)

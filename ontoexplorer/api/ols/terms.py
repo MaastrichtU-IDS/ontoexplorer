@@ -398,22 +398,11 @@ async def list_terms_hal(
             )
         return hal_page(matched_items, request, total=len(matched_items), page=0, size=size, embedded_key="terms")
 
-    # Paged list of all class IRIs
+    # Paged list of all classes — enumerate + load from entity_index (#242 PR2).
+    from ontoexplorer.api.ols._entity_source import count_entities, list_entities
     offset = page_to_offset(page, size)
-    total = await asyncio.to_thread(_redis_scard, _type_key(vid, "class"))
-    iris = await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "class"))
-    page_iris = iris[offset:offset + size]
-
-    def _load_page(iris_slice: list[str]) -> list[dict]:
-        r = _get_redis()
-        result = []
-        for i in iris_slice:
-            h = r.hgetall(_iri_key(vid, i))
-            if h:
-                result.append(h)
-        return result
-
-    entities = await asyncio.to_thread(_load_page, page_iris)
+    total = await count_entities(db, vid, ["class"])
+    entities = await list_entities(db, vid, ["class"], limit=size, offset=offset)
     items = [
         entity_to_v1_term(
             e, ontology,
