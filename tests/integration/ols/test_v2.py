@@ -278,18 +278,30 @@ async def test_v2_entities_union(client: AsyncClient, v2_seed):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_v2_stats(client: AsyncClient, sample_ontology, fake_redis):
-    """Stats aggregates class_count + property_count + individual_count from all versions."""
+async def test_v2_stats(client: AsyncClient, sample_ontology, fake_redis, db_session):
+    """Stats counts come from entity_index per type (#242 Stage 1), not the Redis meta hash."""
+    from sqlalchemy import select as _sel
+    from ontoexplorer.models.db import EntityIndex, OntologyVersion
+    ver = (await db_session.execute(
+        _sel(OntologyVersion).where(OntologyVersion.ontology_id == sample_ontology.id))).scalar_one()
+    vid = str(ver.id)
+    rows = [("c1", "class", False), ("c2", "class", False), ("c3", "class", False),
+            ("p1", "object_property", False), ("p2", "data_property", False),
+            ("i1", "class", True)]  # punned: typed class but is_individual
+    for short, typ, is_ind in rows:
+        db_session.add(EntityIndex(
+            version_id=vid, iri=f"http://ex/{short}", ontology_id=sample_ontology.id,
+            type=typ, primary_label=short, primary_label_norm=short, short=short,
+            search_text=short, is_individual=is_ind))
+    await db_session.commit()
+
     resp = await client.get("/ols/api/v2/stats")
     assert resp.status_code == 200
     body = resp.json()
-    assert "numberOfOntologies" in body
-    assert "numberOfClasses"    in body
-    assert "numberOfProperties" in body
-    assert "numberOfIndividuals" in body
-    # sample_ontology fixture seeds class_count=100, property_count=5, individual_count=0
     assert body["numberOfOntologies"] >= 1
-    assert body["numberOfClasses"]    >= 100
+    assert body["numberOfClasses"]     == 4   # c1,c2,c3 + the punned i1 (type='class')
+    assert body["numberOfProperties"]  == 2
+    assert body["numberOfIndividuals"] == 1   # i1 (is_individual)
 
 
 # ---------------------------------------------------------------------------
