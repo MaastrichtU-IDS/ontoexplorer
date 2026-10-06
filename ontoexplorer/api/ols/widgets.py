@@ -18,9 +18,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.api.ols._common import get_latest_version_or_404, get_ontology_or_404
+from ontoexplorer.api.ols._entity_source import label_for, version_label_map
 from ontoexplorer.api.ols._iri import double_decode_iri
 from ontoexplorer.database import get_db
-from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
 
 # Re-use asserted hierarchy fetchers from terms.py (already tested there).
 from ontoexplorer.api.ols.terms import (
@@ -38,21 +38,6 @@ router = APIRouter()
 _RDFS_SUBCLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
 
 
-def _label_from_iri(iri: str) -> str:
-    """Derive a human-readable label from an IRI by taking the local name."""
-    fragment = iri.rstrip("/")
-    if "#" in fragment:
-        return fragment.split("#")[-1]
-    return fragment.rsplit("/", 1)[-1]
-
-
-def _entity_label(vid: str, iri: str) -> str:
-    """Load primary_label from Redis; fall back to IRI-derived label."""
-    r = _get_redis()
-    val = r.hget(_iri_key(vid, iri), "primary_label")
-    return val if val else _label_from_iri(iri)
-
-
 def _has_children_sync(ontology_id: str, vid: str, iri: str) -> bool:
     """Return True when the given IRI has at least one asserted child."""
     return bool(_asserted_children_sync(ontology_id, vid, iri))
@@ -68,6 +53,7 @@ def _build_jstree(
     vid: str,
     focus_iri: str,
     include_siblings: bool,
+    lmap: dict,
 ) -> list[dict]:
     """Build jstree node list.
 
@@ -115,7 +101,7 @@ def _build_jstree(
         return {
             "id": iri,
             "parent": parent_id,
-            "text": _entity_label(vid, iri),
+            "text": label_for(lmap, iri),
             "iri": iri,
             "children": _has_children_sync(ontology_id, vid, iri),
             "state": {"opened": opened},
@@ -186,6 +172,7 @@ async def term_jstree(
     version = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
+    lmap = await version_label_map(db, vid)
     nodes = await asyncio.to_thread(
         _build_jstree,
         str(ontology.id),
@@ -193,6 +180,7 @@ async def term_jstree(
         vid,
         iri,
         siblings,
+        lmap,
     )
     return nodes
 
@@ -205,6 +193,7 @@ def _build_graph(
     ontology_id: str,
     vid: str,
     focus_iri: str,
+    lmap: dict,
 ) -> dict:
     """Build 1-hop neighbourhood graph centred on focus_iri.
 
@@ -220,7 +209,7 @@ def _build_graph(
         return {
             "id": iri,
             "iri": iri,
-            "label": _entity_label(vid, iri),
+            "label": label_for(lmap, iri),
             "type": "class",
         }
 
@@ -279,10 +268,12 @@ async def term_graph(
     version = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
+    lmap = await version_label_map(db, vid)
     graph = await asyncio.to_thread(
         _build_graph,
         str(ontology.id),
         vid,
         iri,
+        lmap,
     )
     return graph
