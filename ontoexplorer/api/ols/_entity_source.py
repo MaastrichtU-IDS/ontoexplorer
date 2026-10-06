@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.api.ols._shapes import entity_index_to_legacy_dict
@@ -91,12 +91,42 @@ async def load_entity(db: AsyncSession, version_id: str, iri: str) -> dict | Non
 
 async def count_entities(db: AsyncSession, version_id: str, types: list[str]) -> int:
     """Count entity_index rows of the given type(s) for a version (replaces `scard`)."""
-    from sqlalchemy import func
     return int((await db.execute(
         select(func.count()).select_from(EntityIndex).where(
             EntityIndex.version_id == version_id, EntityIndex.type.in_(types)
         )
     )).scalar() or 0)
+
+
+async def individuals_of_class(
+    db: AsyncSession, version_id: str, class_iri: str, *, limit: int, offset: int
+) -> tuple[int, list[dict]]:
+    """Individuals of `version_id` whose rdf:type includes `class_iri`, IRI-ordered
+    and paged. Returns `(total, page_of_legacy_dicts)`.
+
+    Reads `entity_index.types` (#242 Stage 1 PR 5). Returns 0 for versions indexed
+    before the types backfill (column still `[]`) — callers keep a SPARQL fallback.
+    """
+    base = select(EntityIndex).where(
+        EntityIndex.version_id == version_id, EntityIndex.is_individual.is_(True)
+    )
+    bind = db.get_bind()
+    if bind is not None and bind.dialect.name == "postgresql":
+        # JSONB containment: types @> '["<class_iri>"]' — an index range scan over
+        # the version's individuals, filtered by the planner, not an app-side N+1.
+        matched = base.where(EntityIndex.types.contains([class_iri]))
+        total = int((await db.execute(
+            select(func.count()).select_from(matched.subquery())
+        )).scalar() or 0)
+        rows = (await db.execute(
+            matched.order_by(EntityIndex.iri.collate("C")).limit(limit).offset(offset)
+        )).scalars().all()
+        return total, [entity_index_to_legacy_dict(r) for r in rows]
+    # sqlite (tests): JSONB @> is unavailable; the per-version individual set is small.
+    rows = (await db.execute(base.order_by(EntityIndex.iri))).scalars().all()
+    matched_rows = [r for r in rows if class_iri in (r.types or [])]
+    page = matched_rows[offset:offset + limit]
+    return len(matched_rows), [entity_index_to_legacy_dict(r) for r in page]
 
 
 async def list_entities(
