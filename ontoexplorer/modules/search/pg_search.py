@@ -91,13 +91,15 @@ async def pg_entity_search(
     limit: int,
     types: list[str] | None = None,
     version_id: str | None = None,
+    ontology_ids: list[str] | None = None,
 ) -> list[dict]:
     """Entity search via Postgres `entity_index`.
 
     Cross-ontology by default; pass `version_id` to scope to a single version (the
-    OLS per-ontology search, #242 Stage 1 — replaces the Redis prefix-zset lookup).
-    Deduplicates by IRI (first-seen-wins). Result list is already tier-ranked: exact
-    label match first, then prefix, then word-suffix.
+    OLS per-ontology search, #242 Stage 1 — replaces the Redis prefix-zset lookup),
+    or `ontology_ids` to restrict to a set of ontologies (the OLS `?ontology=` CSV
+    filter, #242 Stage 2). Deduplicates by IRI (first-seen-wins). Result list is
+    already tier-ranked: exact label match first, then prefix, then word-suffix.
 
     `types`, if given, restricts to those entity_index.type values
     (e.g. ['class', 'object_property']). None or empty = no type filter.
@@ -107,9 +109,12 @@ async def pg_entity_search(
     norm = normalise_label(split_compound_labels(q))
     if not norm:
         return []
+    if ontology_ids is not None and not ontology_ids:
+        return []  # explicit empty ontology filter -> no matches
 
     type_filter_sql = "AND ei.type = ANY(:types)" if types else ""
     vid_filter_sql = "AND ei.version_id = :vid" if version_id else ""
+    ontology_filter_sql = "AND ei.ontology_id = ANY(:ontology_ids)" if ontology_ids else ""
 
     # Stage 1: prefix-on-primary-label. Fetch a bounded pool in the
     # text_pattern_ops btree's own (C-collation) order — an index range scan that
@@ -130,6 +135,7 @@ async def pg_entity_search(
             WHERE ei.primary_label_norm LIKE :prefix
               {type_filter_sql}
               {vid_filter_sql}
+              {ontology_filter_sql}
             -- Order + LIMIT on entity_index ALONE. The LIMIT is an optimization
             -- fence, so the C-collation btree drives an ordered index scan that
             -- STOPS at :pool rows (~:pool heap fetches). Joining versions/ontologies
@@ -153,6 +159,8 @@ async def pg_entity_search(
         params["types"] = list(types)
     if version_id:
         params["vid"] = version_id
+    if ontology_ids:
+        params["ontology_ids"] = list(ontology_ids)
     result = await db.execute(prefix_sql, params)
     ranked = _rank_prefix_rows(result.all(), norm, limit)
 
@@ -181,6 +189,7 @@ async def pg_entity_search(
                   AND ei.primary_label_norm NOT LIKE :prefix
                   {type_filter_sql}
                   {vid_filter_sql}
+                  {ontology_filter_sql}
                 LIMIT :pool
             ) c
             JOIN versions v ON v.id = c.version_id
@@ -195,6 +204,8 @@ async def pg_entity_search(
             params2["types"] = list(types)
         if version_id:
             params2["vid"] = version_id
+        if ontology_ids:
+            params2["ontology_ids"] = list(ontology_ids)
         result = await db.execute(tsv_sql, params2)
         for row in result.all():
             if row.iri in seen_iris:
