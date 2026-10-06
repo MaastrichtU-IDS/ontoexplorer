@@ -95,30 +95,30 @@ async def get_repository_languages(db: AsyncSession = Depends(get_db)):
     )
     version_ids = list(vr.scalars().all())
 
-    def _aggregate(vids: list[str]) -> list[dict]:
-        from ontoexplorer.modules.search.indexer import _langs_key
-        from ontoexplorer.modules.search.lang import canonical_lang
-        counts: dict[str, int] = {}
-        if vids:
-            # One pipelined batch of hgetall — no per-version round-trips, no scan.
-            pipe = r.pipeline(transaction=False)
-            for vid in vids:
-                pipe.hgetall(_langs_key(vid))
-            for mapping in pipe.execute():
-                for lang, count in (mapping or {}).items():
-                    key = canonical_lang(lang)
-                    counts[key] = counts.get(key, 0) + int(count)
-        result = sorted(
-            [{"lang": k, "label_count": v} for k, v in counts.items()],
-            key=lambda x: x["lang"],
-        )
-        try:
-            r.set(_REPO_LANGS_CACHE_KEY, _json.dumps(result), ex=_REPO_LANGS_TTL)
-        except Exception:
-            pass
-        return result
-
-    return await asyncio.to_thread(_aggregate, version_ids)
+    # Aggregate language tags from entity_index across the latest-ready versions
+    # (#242 Stage 2 — was a pipelined hgetall over the Redis `:langs` hashes). One
+    # grouped query over the labels JSONB.
+    from ontoexplorer.modules.search.lang import canonical_lang
+    from sqlalchemy import bindparam, text as _text
+    counts: dict[str, int] = {}
+    if version_ids:
+        sql = _text(
+            "SELECT k AS lang, count(*) AS n "
+            "FROM entity_index, jsonb_object_keys(labels) AS k "
+            "WHERE version_id IN :vids GROUP BY k"
+        ).bindparams(bindparam("vids", expanding=True))
+        for lang, n in (await db.execute(sql, {"vids": version_ids})).all():
+            key = canonical_lang(lang)
+            counts[key] = counts.get(key, 0) + int(n)
+    result = sorted(
+        [{"lang": k, "label_count": v} for k, v in counts.items()],
+        key=lambda x: x["lang"],
+    )
+    try:
+        await asyncio.to_thread(r.set, _REPO_LANGS_CACHE_KEY, _json.dumps(result), ex=_REPO_LANGS_TTL)
+    except Exception:
+        pass
+    return result
 
 
 # ── Global search ─────────────────────────────────────────────────────────────

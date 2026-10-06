@@ -147,6 +147,36 @@ async def list_entities(
     return [entity_index_to_legacy_dict(r) for r in rows]
 
 
+async def version_lang_counts(db: AsyncSession, version_id: str) -> dict[str, int]:
+    """`{lang: count}` of entities carrying a label in each language, from
+    entity_index.labels (#242 Stage 2 — replaces the Redis `:langs` hash).
+
+    Counts distinct-language-per-entity: entity_index.labels keeps one label per
+    language (last-wins), so an entity labelled twice in `en` counts once — the same
+    accepted lossiness as the rest of the entity_index mirror. Keys are raw language
+    subtags (""/"en"/"en-GB"); callers collapse to canonical form.
+    """
+    bind = db.get_bind()
+    if bind is not None and bind.dialect.name == "postgresql":
+        from sqlalchemy import text as _text
+        rows = (await db.execute(_text(
+            "SELECT k AS lang, count(*) AS n "
+            "FROM entity_index, jsonb_object_keys(labels) AS k "
+            "WHERE version_id = :vid GROUP BY k"
+        ), {"vid": version_id})).all()
+        return {lang: int(n) for lang, n in rows}
+    # sqlite (tests): labels is a JSON object; tally language keys in Python.
+    label_dicts = (await db.execute(
+        select(EntityIndex.labels).where(EntityIndex.version_id == version_id)
+    )).scalars().all()
+    out: dict[str, int] = {}
+    for labels in label_dicts:
+        if isinstance(labels, dict):
+            for lang in labels:
+                out[lang] = out.get(lang, 0) + 1
+    return out
+
+
 def _local_name(iri: str) -> str:
     """Human-readable fallback label: the IRI's local name."""
     fragment = iri.rstrip("/")
