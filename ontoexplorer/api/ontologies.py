@@ -1408,16 +1408,13 @@ async def list_terms(
                 # The root cache is also pre-warmed at index time (warm_root_cache*),
                 # which did not carry the per-term source — so served verbatim, root
                 # classes (e.g. SULO's object/process) showed no source chip. Re-attach
-                # it here so a cache hit matches the computed path and existing stale
-                # caches self-heal without a re-index. #source-tags
+                # it from entity_index (#242 Stage 2) so a cache hit matches the computed
+                # path and existing stale caches self-heal without a re-index. #source-tags
                 try:
-                    from ontoexplorer.modules.search.indexer import _iri_key
-                    _terms = _resp.get("terms", [])
-                    _pipe = _r.pipeline(transaction=False)
-                    for _t in _terms:
-                        _pipe.hget(_iri_key(version_id, _t["iri"]), "source")
-                    for _t, _src in zip(_terms, _pipe.execute()):
-                        _t["source"] = _src or ""
+                    from ontoexplorer.api.ols._entity_source import source_for, version_label_map
+                    _lmap = await version_label_map(db, version_id)
+                    for _t in _resp.get("terms", []):
+                        _t["source"] = source_for(_lmap, _t["iri"])
                 except Exception:
                     pass
                 return _resp
@@ -1718,15 +1715,12 @@ async def list_terms(
         for t in terms:
             t["has_children"] = t["iri"] in has_children_iris
 
-    # Augment terms with source (imported-from) using a Redis pipeline batch read
+    # Augment terms with source (imported-from) from entity_index (#242 Stage 2).
     try:
-        from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
-        _r = _get_redis()
-        _pipe = _r.pipeline(transaction=False)
+        from ontoexplorer.api.ols._entity_source import source_for, version_label_map
+        _lmap = await version_label_map(db, version_id)
         for t in terms:
-            _pipe.hget(_iri_key(version_id, t["iri"]), "source")
-        for t, src in zip(terms, _pipe.execute()):
-            t["source"] = src or ""
+            t["source"] = source_for(_lmap, t["iri"])
     except Exception:
         for t in terms:
             t.setdefault("source", "")
@@ -3243,7 +3237,6 @@ async def inferred_children(
     import json as _json
     version = await _get_version_or_404(db, ontology_id, version_id)
     from ontoexplorer.clients.reasoning import get_classification
-    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _deprecated_key, _type_key
 
     # Served from the edges reasoning materialised, when they exist. Deriving
     # this per request cost 16 s for the root and ~2 s per expansion on DRON,
@@ -3269,8 +3262,16 @@ async def inferred_children(
     except Exception:
         return {"terms": [], "reasoning_available": False}
 
-    r = _get_redis()
-    deprecated_iris: set[str] = r.smembers(_deprecated_key(version_id)) if hide_obsolete else set()
+    # Prefetch the version's entities from entity_index (#242 Stage 2) so the
+    # threaded _compute() resolves the class set, deprecated set, and labels
+    # without Redis. One query; the inferred-tree root needs them all anyway.
+    from ontoexplorer.models.db import EntityIndex as _EI
+    from ontoexplorer.api.ols._shapes import entity_index_to_legacy_dict as _adapt_ei
+    _ei_rows = (await db.execute(select(_EI).where(_EI.version_id == version_id))).scalars().all()
+    _class_iris = {row.iri for row in _ei_rows if row.type == "class"}
+    deprecated_iris: set[str] = (
+        {row.iri for row in _ei_rows if row.deprecated} if hide_obsolete else set())
+    _detail_map = {row.iri: _adapt_ei(row) for row in _ei_rows}
 
     def _compute() -> dict:
         elk_direct: dict[str, list[str]] = classification.get("direct_superclasses", {})
@@ -3312,7 +3313,7 @@ async def inferred_children(
         # in every named class from the index so such classes still appear as
         # inferred roots (they have no inferred parent). owl:Thing/deprecated
         # subtractions below then apply uniformly.
-        all_classes |= set(r.smembers(_type_key(version_id, "class")))
+        all_classes |= _class_iris
         all_classes -= {_OWL_THING}
         if hide_obsolete:
             all_classes -= deprecated_iris
@@ -3338,11 +3339,8 @@ async def inferred_children(
         else:
             child_iris = sorted(children_of.get(cls, []))
 
-        # Batch all Redis label lookups into a single pipeline round-trip.
-        pipe = r.pipeline(transaction=False)
-        for iri in child_iris:
-            pipe.hgetall(_iri_key(version_id, iri))
-        details_list = pipe.execute()
+        # Labels come from the entity_index prefetch above (#242 Stage 2).
+        details_list = [_detail_map.get(iri, {}) for iri in child_iris]
 
         def _label_and_lang(detail: dict) -> tuple[str, str | None]:
             if detail:
