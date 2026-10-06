@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.api.ols._shapes import entity_index_to_legacy_dict
@@ -145,6 +145,36 @@ async def list_entities(
         .limit(limit).offset(offset)
     )).scalars().all()
     return [entity_index_to_legacy_dict(r) for r in rows]
+
+
+async def page_entities_global(
+    db: AsyncSession, version_ids: list[str], types: list[str], *,
+    limit: int, offset: int, search: str | None = None,
+) -> tuple[int, list[tuple[dict, str]]]:
+    """A cross-version page of entities across `version_ids` (the latest-ready set),
+    of the given type(s), paged in SQL instead of enumerating every version into
+    memory and slicing (#242 Stage 1).
+
+    Ordered by IRI (byte order — see `_iri_order`) then version_id for a stable page.
+    `search`, when given, matches primary_label or iri case-insensitively. Returns
+    `(total, [(legacy_dict, ontology_id)])` so the caller can resolve each row's
+    ontology for rendering.
+    """
+    if not version_ids:
+        return 0, []
+    conds = [EntityIndex.version_id.in_(version_ids), EntityIndex.type.in_(types)]
+    if search:
+        like = f"%{search}%"
+        conds.append(or_(EntityIndex.primary_label.ilike(like), EntityIndex.iri.ilike(like)))
+    total = int((await db.execute(
+        select(func.count()).select_from(EntityIndex).where(*conds)
+    )).scalar() or 0)
+    rows = (await db.execute(
+        select(EntityIndex).where(*conds)
+        .order_by(_iri_order(db), EntityIndex.version_id)
+        .limit(limit).offset(offset)
+    )).scalars().all()
+    return total, [(entity_index_to_legacy_dict(r), r.ontology_id) for r in rows]
 
 
 async def load_entities(db: AsyncSession, version_id: str, iris) -> dict[str, dict]:
