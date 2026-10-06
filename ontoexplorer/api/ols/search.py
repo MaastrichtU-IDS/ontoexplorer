@@ -16,7 +16,6 @@ no effect on results in this implementation.
 """
 from __future__ import annotations
 
-import asyncio
 import time
 from typing import Any
 
@@ -50,16 +49,32 @@ def _ols_type(internal_type: str) -> str:
     return internal_type or "class"
 
 
-def _internal_type_for_filter(ols_type: str) -> str | None:
-    """Convert the OLS ``type=`` query param to the entity_lookup entity_type arg.
+_ALL_ENTITY_TYPES = (
+    "class", "object_property", "data_property", "annotation_property", "individual",
+)
 
-    ``entity_lookup`` accepts ``None`` (any), ``"class"``, ``"individual"``,
-    or ``"property"`` (which it expands to the three property sub-types).
-    ``"ontology"`` is silently ignored (returns None).
+
+def _entity_index_types(ols_type: str | None) -> list[str] | None:
+    """Map the OLS ``type=`` query param to entity_index.type values (inclusion).
+
+    class→[class], individual→[individual], property→the three property sub-types.
+    ``ontology``/unknown/None → None (no filter).
     """
-    if ols_type in ("class", "individual", "property"):
-        return ols_type
-    return None  # "ontology" or unknown → no filter
+    if ols_type == "class":
+        return ["class"]
+    if ols_type == "individual":
+        return ["individual"]
+    if ols_type == "property":
+        return ["object_property", "data_property", "annotation_property"]
+    return None
+
+
+def _excluded_types(ols_type: str | None) -> frozenset[str] | None:
+    """The complement of `_entity_index_types`, for pg_autocomplete's exclusion filter."""
+    inc = _entity_index_types(ols_type)
+    if not inc:
+        return None
+    return frozenset(t for t in _ALL_ENTITY_TYPES if t not in inc)
 
 
 def _build_doc(r: dict, ont_id: str) -> dict[str, Any]:
@@ -146,41 +161,41 @@ async def search(
     Accepted-but-ignored in v1:
       slim, fieldList, queryFields, childrenOf, allChildrenOf
     """
-    from ontoexplorer.modules.search.indexer import entity_lookup
+    from ontoexplorer.modules.search.pg_search import pg_entity_search
 
     t0 = time.time()
 
-    versions = await latest_ready_versions(db)
+    # Resolve the optional ?ontology= CSV to the latest-ready ontology_ids to scope.
+    ontology_ids: list[str] | None = None
     if ontology:
         wanted = {o.strip() for o in ontology.split(",")}
-        versions = [v for v in versions if str(v.ontology_id) in wanted]
+        versions = await latest_ready_versions(db)
+        ontology_ids = [str(v.ontology_id) for v in versions if str(v.ontology_id) in wanted]
+        if not ontology_ids:
+            qtime = int((time.time() - t0) * 1000)
+            return solr_envelope([], total=0, start=start, rows=rows,
+                                 q_params=dict(request.query_params), qtime_ms=qtime)
 
-    # Push type filter into entity_lookup to avoid fetching unwanted docs.
-    lookup_type = _internal_type_for_filter(type) if type else None
-
-    # Over-fetch to allow for client-side dedup + local filter + pagination
+    # One cross-version SQL query over entity_index (#242 Stage 2 — replaces the
+    # per-version Redis entity_lookup fan-out). Over-fetch for local filter + paging.
     fetch_limit = rows + start + 50
-
-    nested = await asyncio.gather(*[
-        asyncio.to_thread(entity_lookup, str(v.id), q, lookup_type, fetch_limit)
-        for v in versions
-    ])
+    results = await pg_entity_search(
+        db, q, fetch_limit, types=_entity_index_types(type), ontology_ids=ontology_ids,
+    )
 
     seen_iris: set[str] = set()
     docs: list[dict] = []
-
-    for v, results in zip(versions, nested):
-        ont_id = str(v.ontology_id)
-        for r in results:
-            iri = r.get("iri", "")
-            # local filter: only include entities whose source is this ontology
-            if local and r.get("source") and r["source"] != ont_id:
-                continue
-            # dedup by IRI across versions when groupField=iri
-            if groupField == "iri" and iri in seen_iris:
-                continue
-            seen_iris.add(iri)
-            docs.append(_build_doc(r, ont_id))
+    for r in results:
+        ont_id = str(r.get("ontology_id") or "")
+        # local filter: only include entities whose source is this ontology
+        if local and r.get("source") and r["source"] != ont_id:
+            continue
+        iri = r.get("iri", "")
+        # pg_entity_search already dedups by IRI; groupField kept for API parity.
+        if groupField == "iri" and iri in seen_iris:
+            continue
+        seen_iris.add(iri)
+        docs.append(_build_doc(r, ont_id))
 
     qtime = int((time.time() - t0) * 1000)
     sliced = docs[start: start + rows]
@@ -230,56 +245,52 @@ async def select(
 
     Accepted-but-ignored in v1: slim, fieldList, queryFields, childrenOf, allChildrenOf
     """
-    from ontoexplorer.modules.search.autocomplete import get_completions
+    from ontoexplorer.modules.search.pg_search import pg_autocomplete_entities
 
     t0 = time.time()
 
-    versions = await latest_ready_versions(db)
+    ontology_ids: list[str] | None = None
     if ontology:
         wanted = {o.strip() for o in ontology.split(",")}
-        versions = [v for v in versions if str(v.ontology_id) in wanted]
+        versions = await latest_ready_versions(db)
+        ontology_ids = [str(v.ontology_id) for v in versions if str(v.ontology_id) in wanted]
+        if not ontology_ids:
+            qtime = int((time.time() - t0) * 1000)
+            return solr_envelope([], total=0, start=start, rows=rows,
+                                 q_params=dict(request.query_params), qtime_ms=qtime)
 
-    lookup_type = _internal_type_for_filter(type) if type else None
+    # Postgres entity_index autocomplete (#242 Stage 2 — replaces the per-version
+    # Redis prefix-zset completions). Type filter via the exclusion complement.
     fetch_limit = rows + start + 20
-
-    nested = await asyncio.gather(*[
-        asyncio.to_thread(
-            get_completions, q, len(q), str(v.id), fetch_limit, lang
-        )
-        for v in versions
-    ])
+    completions = await pg_autocomplete_entities(
+        db, q, fetch_limit,
+        excluded_types=_excluded_types(type),
+        ontology_ids=ontology_ids,
+    )
 
     seen_iris: set[str] = set()
     docs: list[dict] = []
-
-    for v, completions in zip(versions, nested):
-        ont_id = str(v.ontology_id)
-        for c in completions:
-            # Filter by type if requested
-            if lookup_type and c.type != lookup_type and not (
-                lookup_type == "property"
-                and c.type in ("object_property", "data_property", "annotation_property")
-            ):
-                continue
-            iri = c.iri  # may be None for keyword completions
-            if groupField == "iri" and iri and iri in seen_iris:
-                continue
-            if iri:
-                seen_iris.add(iri)
-            short = c.short or ""
-            docs.append({
-                "id": iri,
-                "iri": iri,
-                "label": c.text,
-                "short_form": short,
-                "obo_id": derive_obo_id(short) if short else None,
-                "ontology_name": ont_id,
-                "ontology_prefix": ont_id.upper(),
-                "type": _ols_type(c.type),
-                "is_defining_ontology": True,
-                "description": [],
-                "synonyms": [],
-            })
+    for c in completions:
+        iri = c.get("iri")
+        if groupField == "iri" and iri and iri in seen_iris:
+            continue
+        if iri:
+            seen_iris.add(iri)
+        short = c.get("short") or ""
+        ont_id = str(c.get("ontology_id") or "")
+        docs.append({
+            "id": iri,
+            "iri": iri,
+            "label": c.get("label", ""),
+            "short_form": short,
+            "obo_id": derive_obo_id(short) if short else None,
+            "ontology_name": ont_id,
+            "ontology_prefix": ont_id.upper(),
+            "type": _ols_type(c.get("type", "")),
+            "is_defining_ontology": True,
+            "description": [],
+            "synonyms": [],
+        })
 
     qtime = int((time.time() - t0) * 1000)
     sliced = docs[start: start + rows]
@@ -312,35 +323,34 @@ async def suggest(
     ``{"autosuggest": "<label>"}``.  Designed for fast type-ahead widgets that
     do not need full entity metadata.
     """
-    from ontoexplorer.modules.search.autocomplete import get_completions
+    from ontoexplorer.modules.search.pg_search import pg_autocomplete_entities
 
     t0 = time.time()
 
-    versions = await latest_ready_versions(db)
+    ontology_ids: list[str] | None = None
     if ontology:
         wanted = {o.strip() for o in ontology.split(",")}
-        versions = [v for v in versions if str(v.ontology_id) in wanted]
+        versions = await latest_ready_versions(db)
+        ontology_ids = [str(v.ontology_id) for v in versions if str(v.ontology_id) in wanted]
+        if not ontology_ids:
+            qtime = int((time.time() - t0) * 1000)
+            return solr_envelope([], total=0, start=0, rows=rows,
+                                 q_params=dict(request.query_params), qtime_ms=qtime)
 
-    nested = await asyncio.gather(*[
-        asyncio.to_thread(get_completions, q, len(q), str(v.id), rows, lang)
-        for v in versions
-    ])
+    # Over-fetch so cross-ontology label dedup still fills `rows` (#242 Stage 2).
+    completions = await pg_autocomplete_entities(
+        db, q, rows + 20, ontology_ids=ontology_ids,
+    )
 
     # Collect unique labels in insertion order
     seen_labels: set[str] = set()
     docs: list[dict] = []
-    for completions in nested:
-        for c in completions:
-            if c.iri is None:
-                # keyword/cardinality — skip for suggest
-                continue
-            label = c.text
-            if label in seen_labels:
-                continue
-            seen_labels.add(label)
-            docs.append({"autosuggest": label})
-            if len(docs) >= rows:
-                break
+    for c in completions:
+        label = c.get("label")
+        if not label or label in seen_labels:
+            continue
+        seen_labels.add(label)
+        docs.append({"autosuggest": label})
         if len(docs) >= rows:
             break
 

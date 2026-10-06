@@ -20,6 +20,7 @@ from ontoexplorer.modules.search.indexer import (
     _type_key,
     normalise_label,
 )
+from tests.integration.ols.conftest import _mk_entity_index
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +147,9 @@ async def test_search_group_field_iri_dedups(
     )
     fake_redis.sadd(_type_key(vid2, "class"), iri)
     fake_redis.zadd(_prefix_key(vid2), {f"{normalise_label('Foo')}|en|class|{iri}": 0})
+    # entity_index row for v2 (search is served from Postgres — #242 Stage 2)
+    db_session.add(_mk_entity_index(vid2, ontology.id, iri, "Foo", source=ontology.shortname))
+    await db_session.commit()
 
     # Without dedup: might see the IRI twice (from two versions of the SAME ontology)
     # Note: latest_ready_versions only returns ONE version per ontology (the most recent),
@@ -209,6 +213,9 @@ async def test_search_paginates(client: AsyncClient, db_session, fake_redis):
             _prefix_key(vid),
             {f"{normalise_label(label)}|en|class|{iri}": 0},
         )
+        # entity_index row (search is served from Postgres — #242 Stage 2)
+        db_session.add(_mk_entity_index(vid, ont.id, iri, label, source=str(ont.id)))
+    await db_session.commit()
 
     resp = await client.get(
         f"/ols/api/search?q=alpha&ontology={ont.id}&rows=2&start=2"
@@ -286,6 +293,11 @@ async def test_search_local_filter(client: AsyncClient, db_session, fake_redis):
         _prefix_key(vid),
         {f"{normalise_label('ImportedTerm')}|en|class|{imported_iri}": 0},
     )
+    # entity_index rows (search is served from Postgres — #242 Stage 2). Sources
+    # mirror the Redis seed: local entity sourced to this ontology, imported to another.
+    db_session.add(_mk_entity_index(vid, ont.id, local_iri, "LocalTerm", source=str(ont.id)))
+    db_session.add(_mk_entity_index(vid, ont.id, imported_iri, "ImportedTerm", source="externalonto"))
+    await db_session.commit()
 
     # Without local filter: LocalTerm appears (search by its label prefix)
     resp_local_term = await client.get(f"/ols/api/search?q=Local&ontology={ont.id}")
