@@ -2095,7 +2095,7 @@ async def get_term(
     import asyncio
     import json as _json_cache
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
-    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
+    from ontoexplorer.modules.search.indexer import _get_redis
 
     version = await _get_version_or_404(db, ontology_id, version_id)
 
@@ -2216,9 +2216,11 @@ async def get_term(
                          if v.startswith("http://") or v.startswith("https://") or v.startswith("urn:")]
 
 
-    # Resolve labels from Redis index — bulk-pipelined to avoid one round-trip
-    # per IRI (the dominant cost on the cold path for terms with many relationships).
-    r = _get_redis()
+    # Labels + import-sources come from entity_index (#242 Stage 2). The relation
+    # IRIs are bulk-prefetched from Postgres just below (one query); these sync
+    # helpers read that cache, and IRIs discovered late (e.g. blank-node class
+    # expressions inside `_build_class_expr`) fall back to the IRI local name
+    # rather than a per-IRI Redis HGETALL.
     _label_cache: dict[str, str] = {}
     # Map IRI → import-source short-name (e.g. 'bfo', 'iao'). Empty/missing
     # means the IRI is native to this ontology — frontend renders no chip.
@@ -2229,28 +2231,16 @@ async def get_term(
         return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
 
     def _resolve_labels(iris) -> None:
-        """Bulk-prefetch labels for any IRIs not already in the cache (one round-trip)."""
-        missing = [i for i in dict.fromkeys(iris) if i and i not in _label_cache]
-        if not missing:
-            return
-        pipe = r.pipeline(transaction=False)
-        for i in missing:
-            pipe.hgetall(_iri_key(version_id, i))
-        for i, detail in zip(missing, pipe.execute()):
-            _label_cache[i] = (detail or {}).get("label") or _fallback(i)
-            if detail and detail.get("source"):
-                _source_cache[i] = detail["source"]
+        for i in dict.fromkeys(iris):
+            if i and i not in _label_cache:
+                _label_cache[i] = _fallback(i)
 
     def _label(iri: str) -> str:
         cached = _label_cache.get(iri)
         if cached is not None:
             return cached
-        # Fallback for IRIs discovered late (e.g. inside recursive _build_class_expr).
-        detail = r.hgetall(_iri_key(version_id, iri))
-        label = (detail or {}).get("label") or _fallback(iri)
+        label = _fallback(iri)
         _label_cache[iri] = label
-        if detail and detail.get("source"):
-            _source_cache[iri] = detail["source"]
         return label
 
     def _term_list(iris: list[str]) -> list[dict]:
@@ -2277,7 +2267,7 @@ async def get_term(
     _sub_a_cut = asserted_sub_total > TERM_RELATION_LIMIT
     asserted_sub_iris = asserted_sub_iris[:TERM_RELATION_LIMIT]
 
-    _pre_iris: list[str] = []
+    _pre_iris: list[str] = [term_iri]  # include the term itself so its source is cached
     _pre_iris.extend(asserted_sub_iris)
     _pre_iris.extend(inferred_sub_iris)
     # (both already capped above — see _sub_total / _sub_i_total)
@@ -2577,8 +2567,8 @@ async def get_term(
     # inferred-walk sections already behave.
     class_usage: list[dict] = []
 
-    term_detail = r.hgetall(_iri_key(version_id, term_iri))
-    source = term_detail.get("source", "") if term_detail else ""
+    # Term's import-source from the entity_index prefetch above (#242 Stage 2).
+    source = _source_cache.get(term_iri, "")
 
     _RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
     top_label = (properties.get(_RDFS_LABEL) or [None])[0] or _label(term_iri)
@@ -2791,37 +2781,19 @@ async def get_term_usage_page(
         raise HTTPException(status_code=400, detail="Malformed term IRI")
     import asyncio
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
-    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
+    from ontoexplorer.api.ols._entity_source import label_for, version_label_map
 
     await _get_version_or_404(db, ontology_id, version_id)
     store = get_store()
     g_iri = graph_iri(ontology_id, version_id)
-    r = _get_redis()
 
-    _label_cache: dict[str, str] = {}
-
-    def _fallback(iri: str) -> str:
-        fragment = iri.rstrip("/")
-        return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
-
-    def _resolve_labels(iris) -> None:
-        missing = [i for i in dict.fromkeys(iris) if i and i not in _label_cache]
-        if not missing:
-            return
-        pipe = r.pipeline(transaction=False)
-        for i in missing:
-            pipe.hgetall(_iri_key(version_id, i))
-        for i, detail in zip(missing, pipe.execute()):
-            _label_cache[i] = (detail or {}).get("label") or _fallback(i)
+    # Labels for this version are prefetched from entity_index (#242 Stage 2) so the
+    # threaded SPARQL usage walkers can resolve filler/class labels synchronously
+    # without a per-IRI Redis lookup.
+    _lmap = await version_label_map(db, version_id)
 
     def _label(iri: str) -> str:
-        cached = _label_cache.get(iri)
-        if cached is not None:
-            return cached
-        detail = r.hgetall(_iri_key(version_id, iri))
-        label = (detail or {}).get("label") or _fallback(iri)
-        _label_cache[iri] = label
-        return label
+        return label_for(_lmap, iri)
 
     # Determine kind via the term's rdf:type. Cheap: one SPARQL ASK.
     def _is_property(s) -> bool:
@@ -2949,7 +2921,7 @@ async def get_term_expanded(
     import asyncio
     import json as _json_cache
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
-    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
+    from ontoexplorer.modules.search.indexer import _get_redis
 
     version = await _get_version_or_404(db, ontology_id, version_id)
 
@@ -2961,33 +2933,17 @@ async def get_term_expanded(
 
     store = get_store()
     g_iri = graph_iri(ontology_id, version_id)
-    r = _get_redis()
 
-    # Reconstruct the label cache locally (handler-scoped, same as /terms/{iri}).
-    _label_cache: dict[str, str] = {}
-
-    def _fallback(iri: str) -> str:
-        fragment = iri.rstrip("/")
-        return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
+    # Labels prefetched from entity_index (#242 Stage 2); _resolve_labels is a no-op
+    # now (the whole version is already loaded) kept for call-site compatibility.
+    from ontoexplorer.api.ols._entity_source import label_for, version_label_map
+    _lmap = await version_label_map(db, version_id)
 
     def _resolve_labels(iris) -> None:
-        missing = [i for i in dict.fromkeys(iris) if i and i not in _label_cache]
-        if not missing:
-            return
-        pipe = r.pipeline(transaction=False)
-        for i in missing:
-            pipe.hgetall(_iri_key(version_id, i))
-        for i, detail in zip(missing, pipe.execute()):
-            _label_cache[i] = (detail or {}).get("label") or _fallback(i)
+        return None
 
     def _label(iri: str) -> str:
-        cached = _label_cache.get(iri)
-        if cached is not None:
-            return cached
-        detail = r.hgetall(_iri_key(version_id, iri))
-        label = (detail or {}).get("label") or _fallback(iri)
-        _label_cache[iri] = label
-        return label
+        return label_for(_lmap, iri)
 
     # Resolve ancestors via ELK (cached). Skip ELK for properties — empty result.
     rdf_types_q = f"""
@@ -3442,7 +3398,7 @@ async def term_ancestors(
 
     if mode == "inferred":
         from ontoexplorer.clients.reasoning import get_classification
-        from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
+        from ontoexplorer.api.ols._entity_source import label_for, version_label_map
 
         try:
             classification = await get_classification(version_id, reasoner=version.reasoner)
@@ -3472,14 +3428,10 @@ async def term_ancestors(
             ancestors.append(p)
             queue.extend(_direct_parents(p))
 
-        r = _get_redis()
+        _lmap = await version_label_map(db, version_id)
 
         def _label(i: str) -> str:
-            detail = r.hgetall(_iri_key(version_id, i))
-            if detail and detail.get("label"):
-                return detail["label"]
-            fragment = i.rstrip("/")
-            return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
+            return label_for(_lmap, i)
 
         return {
             "ancestors": [{"iri": a, "label": _label(a)} for a in ancestors],
@@ -3568,18 +3520,14 @@ async def get_justification(
 ):
     import asyncio
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
-    from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
+    from ontoexplorer.api.ols._entity_source import label_for, version_label_map
 
     version = await _get_version_or_404(db, ontology_id, version_id)
 
-    r = _get_redis()
+    _lmap = await version_label_map(db, version_id)
 
     def _label(iri: str) -> str:
-        detail = r.hgetall(_iri_key(version_id, iri))
-        if detail and detail.get("label"):
-            return detail["label"]
-        fragment = iri.rstrip("/")
-        return fragment.split("#")[-1] if "#" in fragment else fragment.split("/")[-1]
+        return label_for(_lmap, iri)
 
     import re as _re
     _JUST_IRI_RE = _re.compile(r"https?://[^\s()<>\"']+")
