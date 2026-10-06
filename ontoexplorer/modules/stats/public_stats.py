@@ -16,12 +16,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import uuid as _uuid
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ontoexplorer.models.db import Ontology, OntologyVersion
+from ontoexplorer.models.db import EntityIndex, Ontology, OntologyVersion
 
 PUBLIC_STATS_CACHE_KEY = "stats:public:v1"
 # TTL is a safety net only: the beat task refreshes every few minutes, well
@@ -41,16 +40,18 @@ def _empty() -> dict:
     }
 
 
-def _compute_from_redis(vids: list[str]) -> dict:
-    """Sum per-version totals and union per-version type sets for unique counts.
-    Pure Redis; runs in a worker thread (several seconds for the full catalogue)."""
-    from ontoexplorer.modules.search.indexer import _get_redis, _stats_cache_key, _type_key
+def _totals_from_cache(vids: list[str]) -> dict:
+    """Sum per-version totals (class/property/axiom/individual counts) from the
+    per-version stats cache. Pure Redis; runs in a worker thread.
+
+    (The per-version counts + triple_count still live in the stats cache written at
+    index time; the UNIQUE cross-catalogue counts moved to entity_index — see
+    `_unique_counts` — in #242 Stage 2, so this no longer touches the type sets.)"""
+    from ontoexplorer.modules.search.indexer import _get_redis, _stats_cache_key
 
     if not vids:
-        return _empty()
-
+        return {}
     r = _get_redis()
-
     values = r.mget([_stats_cache_key(vid) for vid in vids])
     classes = obj_props = data_props = ann_props = axioms = individuals = 0
     for raw in values:
@@ -67,32 +68,38 @@ def _compute_from_redis(vids: list[str]) -> dict:
         except (ValueError, TypeError, json.JSONDecodeError):
             pass
 
-    def _unique(entity_type: str) -> int:
-        keys = [_type_key(vid, entity_type) for vid in vids]
-        tmp = f"stats:unique:tmp:{_uuid.uuid4().hex}"
-        try:
-            r.sunionstore(tmp, *keys)
-            return r.scard(tmp)
-        except Exception:
-            return 0
-        finally:
-            try:
-                r.delete(tmp)
-            except Exception:
-                pass
-
     return {
-        "total_classes":                classes,
-        "unique_classes":               _unique("class"),
-        "total_object_properties":      obj_props,
-        "unique_object_properties":     _unique("object_property"),
-        "total_data_properties":        data_props,
-        "unique_data_properties":       _unique("data_property"),
-        "total_annotation_properties":  ann_props,
-        "unique_annotation_properties": _unique("annotation_property"),
-        "total_axioms":                 axioms,
-        "total_individuals":            individuals,
-        "unique_individuals":           _unique("individual"),
+        "total_classes":               classes,
+        "total_object_properties":     obj_props,
+        "total_data_properties":       data_props,
+        "total_annotation_properties": ann_props,
+        "total_axioms":                axioms,
+        "total_individuals":           individuals,
+    }
+
+
+async def _unique_counts(db: AsyncSession, version_ids: list[str]) -> dict:
+    """Distinct-IRI counts per entity type across the latest-ready versions, from
+    entity_index (#242 Stage 2 — replaces the 5× SUNIONSTORE over the Redis type
+    sets). One grouped query."""
+    empty = {
+        "unique_classes": 0, "unique_object_properties": 0, "unique_data_properties": 0,
+        "unique_annotation_properties": 0, "unique_individuals": 0,
+    }
+    if not version_ids:
+        return empty
+    rows = (await db.execute(
+        select(EntityIndex.type, func.count(func.distinct(EntityIndex.iri)))
+        .where(EntityIndex.version_id.in_(version_ids))
+        .group_by(EntityIndex.type)
+    )).all()
+    by_type = {t: int(c) for t, c in rows}
+    return {
+        "unique_classes":               by_type.get("class", 0),
+        "unique_object_properties":     by_type.get("object_property", 0),
+        "unique_data_properties":       by_type.get("data_property", 0),
+        "unique_annotation_properties": by_type.get("annotation_property", 0),
+        "unique_individuals":           by_type.get("individual", 0),
     }
 
 
@@ -120,8 +127,9 @@ async def compute_public_stats(db: AsyncSession) -> dict:
 
     total_ontologies = await db.scalar(select(func.count(Ontology.id)))
 
-    result = await asyncio.to_thread(_compute_from_redis, version_ids)
-    result["total_ontologies"] = total_ontologies
+    totals = await asyncio.to_thread(_totals_from_cache, version_ids)
+    uniques = await _unique_counts(db, version_ids)
+    result = {**_empty(), **totals, **uniques, "total_ontologies": total_ontologies}
     return result
 
 
