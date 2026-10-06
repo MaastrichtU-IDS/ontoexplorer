@@ -521,6 +521,19 @@ function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid }: {
         </div>
       ) : null}
 
+      {/* ── Document metadata ──
+          Shown above Repository Metadata (per request). It still loads
+          asynchronously and its height varies per ontology, but Repository
+          Metadata now sits below it and is synchronous + stable, so Document
+          Metadata's late arrival only nudges that last block rather than shoving
+          content above it down (#191). */}
+      <h3 style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
+        Document Metadata
+      </h3>
+      <div style={{ marginBottom: 28 }}>
+        <OntologyDocMeta ontologyId={version.ontology_id} versionId={version.id} lang={lang} />
+      </div>
+
       {/* ── Repository metadata ── */}
       <h3 style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
         Repository Metadata
@@ -588,20 +601,6 @@ function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid }: {
           )}
         </tbody>
       </table>
-
-      {/* ── Document metadata ──
-          Placed last, and after the synchronous Statistics + Repository Metadata
-          sections, because it loads asynchronously and its height varies widely
-          per ontology (a handful of predicates to a dozen+). Rendering it above
-          stable content made its late arrival shove everything below it down —
-          the dominant CLS source on ontology pages (#191). Last, its growth only
-          nudges the footer. */}
-      <h3 style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
-        Document Metadata
-      </h3>
-      <div style={{ marginBottom: 28 }}>
-        <OntologyDocMeta ontologyId={version.ontology_id} versionId={version.id} lang={lang} />
-      </div>
     </div>
   )
 }
