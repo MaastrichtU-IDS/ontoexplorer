@@ -37,24 +37,29 @@ async def _ontology_shape(
     *,
     v2: bool,
 ) -> dict:
-    """Resolve the latest version, fetch Redis meta counts + langs, and build an OLS shape."""
-    from ontoexplorer.modules.search.indexer import _langs_key
+    """Resolve the latest version, build search-index counts + langs from
+    entity_index (#242 Stage 2 — was the Redis meta/langs hashes), and build an
+    OLS shape."""
+    from ontoexplorer.api.ols._entity_source import count_entities, version_lang_counts
 
     version = await get_latest_version_or_404(db, o.id)
+    vid = str(version.id)
 
-    def _read_redis() -> tuple[dict, list[str]]:
-        r = _get_redis()
-        meta = r.hgetall(_meta_key(str(version.id)))
-        langs_counts = r.hgetall(_langs_key(str(version.id)))
-        # Drop empty-string key (entries without a lang tag) and sort by descending
-        # frequency so the first item is the dominant language.
-        langs = [k for k, _ in sorted(
-            ((k, int(v)) for k, v in langs_counts.items() if k),
-            key=lambda kv: -kv[1],
-        )]
-        return meta, langs
+    meta: dict = {
+        "class_count":      await count_entities(db, vid, ["class"]),
+        "property_count":   await count_entities(
+            db, vid, ["object_property", "data_property", "annotation_property"]),
+        "individual_count": await count_entities(db, vid, ["individual"]),
+    }
+    if version.indexed_at is not None:
+        meta["indexed_at"] = (
+            version.indexed_at.isoformat()
+            if hasattr(version.indexed_at, "isoformat") else str(version.indexed_at))
 
-    meta, langs = await asyncio.to_thread(_read_redis)
+    # Languages present, dominant first (drop the empty/untagged key).
+    _lang_counts = await version_lang_counts(db, vid)
+    langs = [k for k, _ in sorted(
+        ((k, v) for k, v in _lang_counts.items() if k), key=lambda kv: -kv[1])]
 
     if not v2:
         return ontology_to_v1(o, version, meta, request=request, languages=langs)

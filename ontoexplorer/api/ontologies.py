@@ -741,7 +741,7 @@ async def list_ontologies(
     langs_by_vid: dict[str, list[dict]] = {}
     tier_by_vid: dict[str, str] = {}
     try:
-        from ontoexplorer.modules.search.indexer import _get_redis, _stats_cache_key, _langs_key
+        from ontoexplorer.modules.search.indexer import _get_redis, _stats_cache_key
         from ontoexplorer.modules.owl_profile.cache import owl_profile_cache_key
         r = _get_redis()
         pipe = r.pipeline(transaction=False)
@@ -761,17 +761,14 @@ async def list_ontologies(
                 _tier = (_json.loads(raw).get("language") or {}).get("tier")
                 if _tier:
                     tier_by_vid[vid] = _tier
-        # Batch-load language counts for indexed versions
+        # Language counts per version from entity_index (#242 Stage 2 — was a
+        # pipelined hgetall over the Redis `:langs` hashes).
         from ontoexplorer.modules.search.lang import canonical_lang
-        pipe2 = r.pipeline(transaction=False)
+        from ontoexplorer.api.ols._entity_source import version_lang_counts
         for vid in vid_list:
-            pipe2.hgetall(_langs_key(vid))
-        langs_raws = pipe2.execute()
-        for vid, mapping in zip(vid_list, langs_raws):
-            if not mapping:
-                continue
+            raw = await version_lang_counts(db, vid)
             counts: dict[str, int] = {}
-            for lang, cnt in mapping.items():
+            for lang, cnt in raw.items():
                 key = canonical_lang(lang)
                 if not key:  # skip empty-string untagged entries
                     continue
@@ -1076,7 +1073,7 @@ async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = De
 
     await _get_version_or_404(db, ontology_id, version_id)
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
-    from ontoexplorer.modules.search.indexer import _meta_key, _get_redis, _stats_cache_key, _SEARCH_TTL
+    from ontoexplorer.modules.search.indexer import _get_redis, _stats_cache_key, _SEARCH_TTL
 
     # ── Redis cache read-through ──────────────────────────────────────────────
     try:
@@ -1139,15 +1136,23 @@ async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = De
         """),
     )
 
+    # Search-index counts from entity_index + indexed_at from the version row
+    # (#242 Stage 2 — was the Redis search:meta hash; schema_version was an internal
+    # indexer flag, dropped). The full pipeline timestamps are in `pipeline` below.
+    from ontoexplorer.api.ols._entity_source import count_entities
     index_meta: dict = {}
     try:
-        raw = r.hgetall(_meta_key(version_id))
-        if raw:
-            # Convert string values to int where possible (schema v2 stores as strings)
-            index_meta = {
-                k: (int(v) if v.isdigit() else v)
-                for k, v in raw.items()
-            }
+        _indexed_at = await db.scalar(
+            select(OntologyVersion.indexed_at).where(OntologyVersion.id == version_id))
+        index_meta = {
+            "class_count":      await count_entities(db, version_id, ["class"]),
+            "property_count":   await count_entities(
+                db, version_id, ["object_property", "data_property", "annotation_property"]),
+            "individual_count": await count_entities(db, version_id, ["individual"]),
+        }
+        if _indexed_at is not None:
+            index_meta["indexed_at"] = (
+                _indexed_at.isoformat() if hasattr(_indexed_at, "isoformat") else str(_indexed_at))
     except Exception:
         pass
 
@@ -1177,27 +1182,22 @@ async def get_languages(
     version_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    import asyncio
     await _get_version_or_404(db, ontology_id, version_id)
 
-    def _read_langs():
-        from ontoexplorer.modules.search.indexer import _get_redis, _langs_key, _meta_key
-        from ontoexplorer.modules.search.lang import canonical_lang
-        r = _get_redis()
-        meta = r.hgetall(_meta_key(version_id))
-        if meta.get("schema_version") != "v2":
-            return []
-        raw = r.hgetall(_langs_key(version_id))
-        merged: dict[str, int] = {}
-        for lang, cnt in raw.items():
-            key = canonical_lang(lang)
-            merged[key] = merged.get(key, 0) + int(cnt)
-        return sorted(
-            ({"lang": k, "label_count": v} for k, v in merged.items()),
-            key=lambda x: x["lang"],
-        )
-
-    return await asyncio.to_thread(_read_langs)
+    # Language label counts from entity_index (#242 Stage 2 — was the Redis `:langs`
+    # hash; the schema_version=="v2" gate is now implicit — an unindexed version has
+    # no entity_index rows and yields no languages).
+    from ontoexplorer.api.ols._entity_source import version_lang_counts
+    from ontoexplorer.modules.search.lang import canonical_lang
+    raw = await version_lang_counts(db, version_id)
+    merged: dict[str, int] = {}
+    for lang, cnt in raw.items():
+        key = canonical_lang(lang)
+        merged[key] = merged.get(key, 0) + int(cnt)
+    return sorted(
+        ({"lang": k, "label_count": v} for k, v in merged.items()),
+        key=lambda x: x["lang"],
+    )
 
 
 # ── Ontology document metadata ────────────────────────────────────────────────
