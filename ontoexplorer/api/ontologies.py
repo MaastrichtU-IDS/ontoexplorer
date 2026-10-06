@@ -949,7 +949,17 @@ async def list_versions(ontology_id: str, db: AsyncSession = Depends(get_db)):
         .order_by(OntologyVersion.created_at.desc())
     )
     versions = result.scalars().all()
-    return {"versions": [_version_dict(v) for v in versions]}
+    # Attach per-version pipeline-stage status (ingested/indexed/profiled/reasoned/
+    # embedded + timestamps) so the ontology info page's Repository Metadata panel
+    # shows them — the frontend renders `version.pipeline`, which only the
+    # single-version endpoint carried before.
+    from ontoexplorer.modules.pipeline.status import version_pipeline
+    out = []
+    for v in versions:
+        d = _version_dict(v)
+        d["pipeline"] = await version_pipeline(db, str(v.id))
+        out.append(d)
+    return {"versions": out}
 
 
 @router.get("/{ontology_id}/{version_id}", summary="Specific version metadata")
