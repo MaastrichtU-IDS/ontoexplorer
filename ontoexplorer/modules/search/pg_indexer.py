@@ -100,37 +100,58 @@ def _build_search_text(entity: dict) -> str:
 async def populate_entity_index(
     session, version_id: str, ontology_id: str,
     non_roots: set[str] | None = None,
+    *,
+    entities_in: dict | None = None,
+    deprecated_in: set | None = None,
+    individuals_in: set | None = None,
 ) -> int:
-    """Mirror Redis entity records for *version_id* into the `entity_index` table.
+    """Populate the `entity_index` table for *version_id*.
 
     Deletes existing rows for the version first, then bulk-inserts. Returns the number
     of rows written. Safe to re-run; uses a single transaction.
+
+    Source of the per-entity records: the in-memory producer output when
+    `entities_in`/`deprecated_in`/`individuals_in` are passed (#242 Workstream B —
+    build_index hands over the exact hash dicts + sets it just built), else the Redis
+    `:iri:` hashes + sets (the original mirror path). Either way the derivation below
+    is identical, so the rows are identical.
     """
-    r = _get_redis()
-    # Deprecation is already computed during indexing and kept as a Redis set;
-    # mirroring it here lets the SQL-backed navigation tree honour
-    # hide_obsolete without a second lookup.
     from ontoexplorer.modules.search.indexer import _deprecated_key, _individuals_key
-    deprecated = {
-        m.decode() if isinstance(m, bytes) else m
-        for m in r.smembers(_deprecated_key(version_id))
-    }
-    # Independent of `type`: a punned Class/NamedIndividual is typed 'class'
-    # but still belongs in the individuals listing.
-    individuals = {
-        m.decode() if isinstance(m, bytes) else m
-        for m in r.smembers(_individuals_key(version_id))
-    }
+
+    if deprecated_in is not None:
+        deprecated = deprecated_in
+    else:
+        # Deprecation is computed during indexing and kept as a Redis set; mirroring
+        # it lets the SQL-backed navigation tree honour hide_obsolete.
+        r = _get_redis()
+        deprecated = {
+            m.decode() if isinstance(m, bytes) else m
+            for m in r.smembers(_deprecated_key(version_id))
+        }
+    if individuals_in is not None:
+        individuals = individuals_in
+    else:
+        # Independent of `type`: a punned Class/NamedIndividual is typed 'class'
+        # but still belongs in the individuals listing.
+        r = _get_redis()
+        individuals = {
+            m.decode() if isinstance(m, bytes) else m
+            for m in r.smembers(_individuals_key(version_id))
+        }
 
     # Entities that appear as a child in either hierarchy. Anything else is a
     # root; storing that here avoids an anti-join the planner handles badly.
     # None means "hierarchy not extracted", in which case no root is claimed.
     non_roots = non_roots if non_roots is not None else set()
 
-    # Fetch entity hashes in pipelined chunks rather than one hgetall round-trip
-    # per entity — that per-entity round-trip is an N+1 that dominates this mirror
-    # step on large ontologies (uberon ~25k, mondo ~58k entities). #185
     def _iter_entities():
+        if entities_in is not None:
+            yield from entities_in.items()
+            return
+        # Fetch entity hashes in pipelined chunks rather than one hgetall round-trip
+        # per entity — that per-entity round-trip is an N+1 that dominates this mirror
+        # step on large ontologies (uberon ~25k, mondo ~58k entities). #185
+        r = _get_redis()
         iris = list(_iter_version_iris(version_id))
         chunk_size = 1000
         for start in range(0, len(iris), chunk_size):
@@ -230,7 +251,11 @@ async def populate_entity_index(
 
 
 def populate_entity_index_sync(
-    version_id: str, ontology_id: str, non_roots: set[str] | None = None
+    version_id: str, ontology_id: str, non_roots: set[str] | None = None,
+    *,
+    entities_in: dict | None = None,
+    deprecated_in: set | None = None,
+    individuals_in: set | None = None,
 ) -> int:
     """Synchronous wrapper for use inside Celery tasks."""
     import asyncio
@@ -239,6 +264,9 @@ def populate_entity_index_sync(
 
     async def _run() -> int:
         async with make_celery_db_session()() as session:
-            return await populate_entity_index(session, version_id, ontology_id, non_roots)
+            return await populate_entity_index(
+                session, version_id, ontology_id, non_roots,
+                entities_in=entities_in, deprecated_in=deprecated_in,
+                individuals_in=individuals_in)
 
     return asyncio.run(_run())
