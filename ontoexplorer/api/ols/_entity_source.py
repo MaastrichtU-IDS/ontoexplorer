@@ -147,6 +147,24 @@ async def list_entities(
     return [entity_index_to_legacy_dict(r) for r in rows]
 
 
+async def load_entity_global(
+    db: AsyncSession, version_ids: list[str], iri: str,
+) -> list[tuple[dict, str]]:
+    """All rows for `iri` across `version_ids` (the latest-ready set), in ONE query
+    instead of a per-version `load_entity` fan-out. Returns `[(legacy_dict,
+    ontology_id)]`, version_id-ordered. entity_index only (no Redis fallback — a
+    cross-version lookup of a Redis-only built-in like owl:Thing is not meaningful).
+    """
+    if not version_ids:
+        return []
+    rows = (await db.execute(
+        select(EntityIndex)
+        .where(EntityIndex.iri == iri, EntityIndex.version_id.in_(version_ids))
+        .order_by(EntityIndex.version_id)
+    )).scalars().all()
+    return [(entity_index_to_legacy_dict(r), r.ontology_id) for r in rows]
+
+
 async def page_entities_global(
     db: AsyncSession, version_ids: list[str], types: list[str], *,
     limit: int, offset: int, search: str | None = None,

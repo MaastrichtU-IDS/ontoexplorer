@@ -27,8 +27,9 @@ from ontoexplorer.api.ols._common import (
     get_ontology_or_404,
     hal_page_params,
     page_to_offset,
+    collect_global,
+    load_ontologies,
 )
-from sqlalchemy import select
 
 from ontoexplorer.api.ols._entity_source import (
     count_entities, list_entities, page_entities_global)
@@ -121,16 +122,6 @@ async def _v2_hierarchy_page(
 # Shared global-list helper: page cross-version from entity_index
 # ---------------------------------------------------------------------------
 
-async def _load_ontologies(db: AsyncSession, ontology_ids) -> dict:
-    """Resolve {id: Ontology} for a page's distinct ontology_ids in one query."""
-    ids = list(ontology_ids)
-    if not ids:
-        return {}
-    from ontoexplorer.models.db import Ontology
-    rows = (await db.execute(select(Ontology).where(Ontology.id.in_(ids)))).scalars().all()
-    return {str(o.id): o for o in rows}
-
-
 async def _v2_global_list(
     db: AsyncSession, request: Request, page: int, size: int, *,
     types: list[str], renderer, lang: str | None, search: str | None = None,
@@ -142,7 +133,7 @@ async def _v2_global_list(
     versions = await latest_ready_versions(db)
     vids = [str(v.id) for v in versions]
     total, rows = await page_entities_global(db, vids, types, limit=size, offset=offset, search=search)
-    ontos = await _load_ontologies(db, {oid for _, oid in rows})
+    ontos = await load_ontologies(db, {oid for _, oid in rows})
     items = [renderer(e, ontos[oid], request=request, lang=lang)
              for e, oid in rows if oid in ontos]
     return v2_page(items, request, total=total, page=page, size=size)
@@ -235,14 +226,8 @@ async def v2_get_class_global(
 ):
     """Global class detail — returns a v2_page over all ontologies containing this IRI."""
     iri = double_decode_iri(iri_path)
-    versions = await latest_ready_versions(db)
-    items: list[dict] = []
-    for v in versions:
-        entity = await _load_class_entity(db, str(v.id), iri)
-        if not entity:
-            continue
-        ontology = await get_ontology_or_404(db, str(v.ontology_id))
-        items.append(entity_to_v2_class(entity, ontology, request=request, lang=lang))
+    items = await collect_global(
+        db, iri, lambda e, o: entity_to_v2_class(e, o, request=request, lang=lang))
     if not items:
         raise HTTPException(status_code=404, detail=f"Class {iri} not found in any ontology")
     return v2_page(items, request, total=len(items), page=0, size=20)
@@ -276,14 +261,8 @@ async def v2_get_property_global(
     db: AsyncSession = Depends(get_db),
 ):
     iri = double_decode_iri(iri_path)
-    versions = await latest_ready_versions(db)
-    items: list[dict] = []
-    for v in versions:
-        entity = await _load_prop_entity(db, str(v.id), iri)
-        if not entity:
-            continue
-        ontology = await get_ontology_or_404(db, str(v.ontology_id))
-        items.append(entity_to_v2(entity, ontology, request=request, lang=lang))
+    items = await collect_global(
+        db, iri, lambda e, o: entity_to_v2(e, o, request=request, lang=lang))
     if not items:
         raise HTTPException(status_code=404, detail=f"Property {iri} not found in any ontology")
     return v2_page(items, request, total=len(items), page=0, size=20)
@@ -317,14 +296,8 @@ async def v2_get_individual_global(
     db: AsyncSession = Depends(get_db),
 ):
     iri = double_decode_iri(iri_path)
-    versions = await latest_ready_versions(db)
-    items: list[dict] = []
-    for v in versions:
-        entity = await _load_ind_entity(db, str(v.id), iri)
-        if not entity:
-            continue
-        ontology = await get_ontology_or_404(db, str(v.ontology_id))
-        items.append(entity_to_v2(entity, ontology, request=request, lang=lang))
+    items = await collect_global(
+        db, iri, lambda e, o: entity_to_v2(e, o, request=request, lang=lang))
     if not items:
         raise HTTPException(status_code=404, detail=f"Individual {iri} not found in any ontology")
     return v2_page(items, request, total=len(items), page=0, size=20)
