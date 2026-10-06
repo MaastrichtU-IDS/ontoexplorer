@@ -428,8 +428,9 @@ async def _mod_search(q: str, db: AsyncSession, content_only: bool = False, meta
         versions_data = rows.all()
         for ver_id, ont_id in versions_data:
             try:
-                from ontoexplorer.modules.search.indexer import entity_lookup
-                hits = await asyncio.to_thread(entity_lookup, ver_id, q, None, 5)
+                from ontoexplorer.modules.search.pg_search import pg_entity_search
+                # Postgres entity_index (#242 Stage 2 — replaces the Redis entity_lookup).
+                hits = await pg_entity_search(db, q, 5, version_id=str(ver_id))
                 for hit in hits:
                     results.append({
                         "iri": hit.get("iri", ""),

@@ -1,5 +1,4 @@
 """MOS Search API — GET /search and GET /autocomplete per ontology version."""
-import asyncio
 
 import httpx
 from fastapi import APIRouter, Depends, Query
@@ -17,7 +16,6 @@ from ontoexplorer.modules.search.evaluator import (
     RelationRequiresNamedClassError,
     evaluate_relation,
 )
-from ontoexplorer.modules.search.indexer import entity_lookup
 from ontoexplorer.modules.search.lang import resolve_lang
 from ontoexplorer.modules.search.mos_parser import ParseError, parse, NamedClass
 from ontoexplorer.modules.search.semantic import semantic_search
@@ -81,7 +79,9 @@ async def search(
                 effective_mode = "entity"
 
     if effective_mode == "entity":
-        results = await asyncio.to_thread(entity_lookup, version_id, q, None, limit)
+        from ontoexplorer.modules.search.pg_search import pg_entity_search
+        # Postgres entity_index search (#242 Stage 2 — replaces the Redis entity_lookup).
+        results = await pg_entity_search(db, q, limit, version_id=version_id)
         sem_results: list[dict] = []
         if semantic and len(q) >= 3:
             sem_results = await semantic_search(q, db, [version_id], limit=10)

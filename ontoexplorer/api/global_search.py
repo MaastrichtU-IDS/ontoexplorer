@@ -13,7 +13,6 @@ from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Ontology, OntologyVersion, User
 from ontoexplorer.modules.auth.dependencies import get_current_user
 from ontoexplorer.modules.search.evaluator import AmbiguousLabelError, evaluate
-from ontoexplorer.modules.search.indexer import entity_lookup_multi, normalise_label
 from ontoexplorer.modules.search.lang import resolve_lang
 from ontoexplorer.modules.search.mos_parser import ParseError, NamedClass, parse
 from ontoexplorer.modules.search.semantic import semantic_search
@@ -179,67 +178,34 @@ async def global_search(
     merged: list[dict] = []
 
     if effective_mode == "entity":
-        if backend == "pg":
-            # Postgres-backed path: one SQL query over entity_index, no fan-out.
-            from ontoexplorer.modules.search.pg_search import pg_entity_search, rrf_merge
-            kw_results = await pg_entity_search(
-                db, q, limit * 2 if semantic else limit, types=types or None
-            )
+        # Postgres-backed path: one SQL query over entity_index, no fan-out. The
+        # legacy Redis fan-out (entity_lookup_multi) was retired in #242 Stage 2;
+        # `backend` is accepted for API compatibility but always resolves to pg.
+        from ontoexplorer.modules.search.pg_search import pg_entity_search, rrf_merge
+        kw_results = await pg_entity_search(
+            db, q, limit * 2 if semantic else limit, types=types or None
+        )
 
-            if semantic and len(q) >= 3:
-                version_id_strs = [str(v.id) for v in versions]
-                sem_results = await semantic_search(q, db, version_id_strs, limit=limit * 2)
-                # semantic_search doesn't know about entity_index types, so apply
-                # the type filter post-hoc — otherwise unfiltered semantic hits
-                # leak past the user's chip selection during RRF fusion.
-                if types:
-                    sem_results = [r for r in sem_results if r.get("type") in types]
-                # Hybrid mode: RRF-fuse keyword + semantic, return a single ranked list.
-                merged = rrf_merge(kw_results, sem_results, limit)
-                payload = {
-                    "mode": "entity", "query": q, "results": merged,
-                    "count": len(merged), "truncated": len(merged) >= limit,
-                    "semantic_results": [],  # already fused into `results`
-                    "fusion": "rrf",
-                }
-                await asyncio.to_thread(_r.set, cache_key, _json.dumps(payload), _SEARCH_CACHE_TTL)
-                return payload
-            else:
-                merged = kw_results[:limit]
-        else:
-            # Redis-backed path: cross-version multi-pipeline.
-            # Fetch more candidates per version than the final limit so that exact
-            # matches in any ontology are not discarded before global re-ranking.
-            per_version = max(limit, 20)
-
-            version_ids = [str(v.id) for v in versions]
-            ont_by_vid = {str(v.id): str(v.ontology_id) for v in versions}
-            per_vid = await asyncio.to_thread(entity_lookup_multi, version_ids, q, None, per_version)
-
-            for vid in version_ids:
-                for row in per_vid.get(vid, []):
-                    row["version_id"] = vid
-                    row["ontology_id"] = ont_by_vid[vid]
-                    row.setdefault("type", "")
-                    if row["iri"] not in seen_iris:
-                        seen_iris.add(row["iri"])
-                        merged.append(row)
-
-            # Re-rank globally: exact label match → prefix → word-suffix, then alpha.
-            norm_q = normalise_label(q)
-
-            def _global_rank(row: dict) -> tuple:
-                lbl = normalise_label(row.get("label", ""))
-                if lbl == norm_q:
-                    return (0, lbl)
-                if lbl.startswith(norm_q):
-                    return (1, lbl)
-                return (2, lbl)
-
-            merged.sort(key=_global_rank)
+        if semantic and len(q) >= 3:
+            version_id_strs = [str(v.id) for v in versions]
+            sem_results = await semantic_search(q, db, version_id_strs, limit=limit * 2)
+            # semantic_search doesn't know about entity_index types, so apply
+            # the type filter post-hoc — otherwise unfiltered semantic hits
+            # leak past the user's chip selection during RRF fusion.
             if types:
-                merged = [r for r in merged if r.get("type") in types]
-            merged = merged[:limit]
+                sem_results = [r for r in sem_results if r.get("type") in types]
+            # Hybrid mode: RRF-fuse keyword + semantic, return a single ranked list.
+            merged = rrf_merge(kw_results, sem_results, limit)
+            payload = {
+                "mode": "entity", "query": q, "results": merged,
+                "count": len(merged), "truncated": len(merged) >= limit,
+                "semantic_results": [],  # already fused into `results`
+                "fusion": "rrf",
+            }
+            await asyncio.to_thread(_r.set, cache_key, _json.dumps(payload), _SEARCH_CACHE_TTL)
+            return payload
+        else:
+            merged = kw_results[:limit]
 
         sem_results: list[dict] = []
         if semantic and len(q) >= 3:
