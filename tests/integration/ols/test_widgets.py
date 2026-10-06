@@ -16,6 +16,7 @@ from httpx import AsyncClient
 from ontoexplorer.api.ols._iri import encode_iri_for_ols_path
 from ontoexplorer.models.db import Ontology, OntologyVersion
 from ontoexplorer.modules.search.indexer import _iri_key, _meta_key, _type_key
+from tests.integration.ols.conftest import _mk_entity_index
 
 
 # ---------------------------------------------------------------------------
@@ -92,11 +93,14 @@ async def widget_hierarchy(db_session, fake_redis):
             },
         )
         fake_redis.sadd(_type_key(vid, "class"), iri)
+        # entity_index row — widget labels are served from Postgres (#242 Stage 2 A3)
+        db_session.add(_mk_entity_index(vid, ont.id, iri, label, source=str(ont.id)))
 
     _seed(gp_iri,      "GrandParent", [])
     _seed(parent_iri,  "Parent",      [gp_iri])
     _seed(child_iri,   "Child",       [parent_iri])
     _seed(sibling_iri, "Sibling",     [gp_iri])
+    await db_session.commit()
 
     yield {
         "ontology":    ont,
@@ -164,6 +168,9 @@ async def isolated_entity(db_session, fake_redis):
         },
     )
     fake_redis.sadd(_type_key(vid, "class"), iri)
+    # entity_index row — widget labels are served from Postgres (#242 Stage 2 A3)
+    db_session.add(_mk_entity_index(vid, ont.id, iri, "Alone", source=str(ont.id)))
+    await db_session.commit()
 
     yield {
         "ontology":   ont,

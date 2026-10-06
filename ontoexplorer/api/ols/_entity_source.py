@@ -147,6 +147,42 @@ async def list_entities(
     return [entity_index_to_legacy_dict(r) for r in rows]
 
 
+def _local_name(iri: str) -> str:
+    """Human-readable fallback label: the IRI's local name."""
+    fragment = iri.rstrip("/")
+    return fragment.split("#")[-1] if "#" in fragment else fragment.rsplit("/", 1)[-1]
+
+
+async def version_label_map(db: AsyncSession, version_id: str) -> dict[str, tuple[str, str]]:
+    """`{iri: (label, source)}` for every entity in a version, in one query.
+
+    For the `api/ontologies.py` + widgets tree/graph/usage builders, which resolve
+    labels lazily inside sync/threaded walkers and so used cheap Redis point-lookups
+    (#242 Stage 2). Prefetching the whole version's labels into a dict gives those
+    sync helpers an in-memory lookup off entity_index instead — one query per request
+    rather than an hget per IRI. `source` is "" when absent. IRIs not in entity_index
+    (e.g. unindexed external imports) are simply absent; callers fall back to the
+    local name via `label_for`.
+    """
+    rows = (await db.execute(
+        select(EntityIndex.iri, EntityIndex.primary_label, EntityIndex.source)
+        .where(EntityIndex.version_id == version_id)
+    )).all()
+    return {iri: (plabel or _local_name(iri), src or "") for iri, plabel, src in rows}
+
+
+def label_for(lmap: dict[str, tuple[str, str]], iri: str) -> str:
+    """Label for `iri` from a `version_label_map`, or the IRI local name if absent."""
+    hit = lmap.get(iri)
+    return hit[0] if hit else _local_name(iri)
+
+
+def source_for(lmap: dict[str, tuple[str, str]], iri: str) -> str:
+    """Import-source short-name for `iri` from a `version_label_map`, else ""."""
+    hit = lmap.get(iri)
+    return hit[1] if hit else ""
+
+
 async def load_entity_global(
     db: AsyncSession, version_ids: list[str], iri: str,
 ) -> list[tuple[dict, str]]:
