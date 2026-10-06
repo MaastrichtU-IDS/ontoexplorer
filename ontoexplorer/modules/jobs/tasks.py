@@ -923,7 +923,6 @@ async def _reason_and_persist(db, version, version_id: str, ontology_id: str, jo
             replace_edges,
             replace_inferred_roots,
         )
-        from ontoexplorer.modules.search.indexer import _get_redis, _type_key
 
         _t0 = _t.monotonic()
         _c = await get_classification(version_id, reasoner=version.reasoner)
@@ -944,17 +943,22 @@ async def _reason_and_persist(db, version, version_id: str, ontology_id: str, jo
         # the inferred tree -- e.g. SKOS lost skos:Concept and
         # skos:ConceptScheme, keeping only skos:Collection.
         #
-        # Redis stays in the union: it is authoritative once built, and covers
-        # anything indexing derives that a plain type assertion does not.
-        # Classes actually declared in this ontology (owl:Class / rdfs:Class) —
-        # exactly the entity_index node set. These are the only navigable tree
-        # nodes; external classes the ontology merely references as inferred
-        # superclasses must not become inferred roots (they render as nothing
-        # and orphan their native subtree — see issue #180).
-        _declared = _named_classes_in_store(str(version.ontology_id), version_id) | {
-            m.decode() if isinstance(m, bytes) else m
-            for m in _get_redis().smembers(_type_key(version_id, "class"))
+        # entity_index stays in the union: it is authoritative once indexing has
+        # run, and covers anything indexing derives that a plain type assertion
+        # does not (#242 Stage 2 — was the Redis type:class set). Classes actually
+        # declared in this ontology (owl:Class / rdfs:Class) — exactly the
+        # entity_index node set. These are the only navigable tree nodes; external
+        # classes the ontology merely references as inferred superclasses must not
+        # become inferred roots (they render as nothing and orphan their native
+        # subtree — see issue #180).
+        from sqlalchemy import select as _select
+        from ontoexplorer.models.db import EntityIndex as _EI
+        _ei_classes = {
+            row[0] for row in (await db.execute(
+                _select(_EI.iri).where(_EI.version_id == version_id, _EI.type == "class")
+            )).all()
         }
+        _declared = _named_classes_in_store(str(version.ontology_id), version_id) | _ei_classes
         _all |= _declared
         _edges, _roots = reduce_direct_inferred(
             _c.get("direct_superclasses", {}), _c.get("superclasses", {}),
