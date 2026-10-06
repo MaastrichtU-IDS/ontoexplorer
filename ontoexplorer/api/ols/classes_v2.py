@@ -28,14 +28,16 @@ from ontoexplorer.api.ols._common import (
     hal_page_params,
     page_to_offset,
 )
-from ontoexplorer.api.ols._entity_source import count_entities, list_entities
+from sqlalchemy import select
+
+from ontoexplorer.api.ols._entity_source import (
+    count_entities, list_entities, page_entities_global)
 from ontoexplorer.api.ols._envelope import v2_page
 from ontoexplorer.api.ols._iri import double_decode_iri
 from ontoexplorer.api.ols._shapes import entity_to_v2, entity_to_v2_class
 # TODO: factor hierarchy fetchers to _common.py if patterns crystallize
 from ontoexplorer.api.ols.terms import (  # noqa: F401
     _load_entity as _load_class_entity,
-    _redis_smembers_sorted,
     _inferred_children_fetcher,
     _inferred_ancestors_fetcher,
     _inferred_descendants_fetcher,
@@ -45,7 +47,6 @@ from ontoexplorer.api.ols.terms import (  # noqa: F401
 )
 from ontoexplorer.api.ols.properties import (  # noqa: F401
     _load_entity as _load_prop_entity,
-    _all_property_iris_sorted,
     _prop_children_fetcher,
     _prop_ancestors_fetcher,
 )
@@ -53,7 +54,6 @@ from ontoexplorer.api.ols.individuals import (  # noqa: F401
     _load_entity as _load_ind_entity,
 )
 from ontoexplorer.database import get_db
-from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _type_key
 from ontoexplorer.modules.search.versions import latest_ready_versions
 
 router = APIRouter()
@@ -101,21 +101,51 @@ async def _v2_hierarchy_page(
     offset   = page_to_offset(page, size)
     sliced   = all_iris[offset:offset + size]
 
-    def _load_many() -> list[tuple[str, dict]]:
-        r = _get_redis()
-        return [(i, r.hgetall(_iri_key(vid, i)) or {}) for i in sliced]
-
-    entities = await asyncio.to_thread(_load_many)
+    # Load payloads from entity_index (#242) with load_entities' Redis-hash fallback;
+    # an IRI absent from both renders from a minimal synthesized entity.
+    from ontoexplorer.api.ols._entity_source import load_entities
+    entity_map = await load_entities(db, vid, sliced)
     items = [
         entity_to_v2(
-            e if e else _fallback_entity(i, entity_type),
+            entity_map.get(i) or _fallback_entity(i, entity_type),
             ontology,
             request=request,
             lang=lang,
         )
-        for i, e in entities
+        for i in sliced
     ]
     return v2_page(items, request, total=len(all_iris), page=page, size=size)
+
+
+# ---------------------------------------------------------------------------
+# Shared global-list helper: page cross-version from entity_index
+# ---------------------------------------------------------------------------
+
+async def _load_ontologies(db: AsyncSession, ontology_ids) -> dict:
+    """Resolve {id: Ontology} for a page's distinct ontology_ids in one query."""
+    ids = list(ontology_ids)
+    if not ids:
+        return {}
+    from ontoexplorer.models.db import Ontology
+    rows = (await db.execute(select(Ontology).where(Ontology.id.in_(ids)))).scalars().all()
+    return {str(o.id): o for o in rows}
+
+
+async def _v2_global_list(
+    db: AsyncSession, request: Request, page: int, size: int, *,
+    types: list[str], renderer, lang: str | None, search: str | None = None,
+) -> dict:
+    """Paged global list across the latest-ready version of every ontology, served
+    from entity_index in one SQL page (replaces the per-version enumerate-all-then-
+    slice that loaded the whole catalogue into memory)."""
+    offset = page_to_offset(page, size)
+    versions = await latest_ready_versions(db)
+    vids = [str(v.id) for v in versions]
+    total, rows = await page_entities_global(db, vids, types, limit=size, offset=offset, search=search)
+    ontos = await _load_ontologies(db, {oid for _, oid in rows})
+    items = [renderer(e, ontos[oid], request=request, lang=lang)
+             for e, oid in rows if oid in ontos]
+    return v2_page(items, request, total=total, page=page, size=size)
 
 
 # ---------------------------------------------------------------------------
@@ -184,34 +214,10 @@ async def v2_list_classes_global(
     lang: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Global paged class list, optional substring label filter."""
+    """Global paged class list, optional substring label/iri filter."""
     page, size = page_size
-    offset = page_to_offset(page, size)
-    versions = await latest_ready_versions(db)
-
-    items: list[dict] = []
-    total = 0
-    for v in versions:
-        vid = str(v.id)
-        all_iris = await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "class"))
-        if search:
-            s_lower = search.lower()
-            all_iris = [i for i in all_iris if s_lower in i.lower()]
-        total += len(all_iris)
-        if len(items) < offset + size:
-            for i in all_iris:
-                entity = await asyncio.to_thread(
-                    lambda _i=i: _get_redis().hgetall(_iri_key(vid, _i)) or {}
-                )
-                if not entity:
-                    continue
-                if search and search.lower() not in entity.get("primary_label", "").lower():
-                    continue
-                ontology = await get_ontology_or_404(db, str(v.ontology_id))
-                items.append(entity_to_v2_class(entity, ontology, request=request, lang=lang))
-
-    page_items = items[offset:offset + size]
-    return v2_page(page_items, request, total=total, page=page, size=size)
+    return await _v2_global_list(db, request, page, size, types=["class"],
+                                 renderer=entity_to_v2_class, lang=lang, search=search)
 
 
 # ---------------------------------------------------------------------------
@@ -254,22 +260,8 @@ async def v2_list_properties_global(
     db: AsyncSession = Depends(get_db),
 ):
     page, size = page_size
-    offset = page_to_offset(page, size)
-    versions = await latest_ready_versions(db)
-
-    all_items: list[dict] = []
-    total = 0
-    for v in versions:
-        vid = str(v.id)
-        all_iris = await asyncio.to_thread(_all_property_iris_sorted, vid)
-        total += len(all_iris)
-        ontology = await get_ontology_or_404(db, str(v.ontology_id))
-        for i in all_iris:
-            entity = await _load_prop_entity(db, vid, i)
-            if entity:
-                all_items.append(entity_to_v2(entity, ontology, request=request, lang=lang))
-
-    return v2_page(all_items[offset:offset + size], request, total=total, page=page, size=size)
+    return await _v2_global_list(db, request, page, size, types=list(_PROPERTY_TYPES),
+                                 renderer=entity_to_v2, lang=lang)
 
 
 # ---------------------------------------------------------------------------
@@ -309,22 +301,8 @@ async def v2_list_individuals_global(
     db: AsyncSession = Depends(get_db),
 ):
     page, size = page_size
-    offset = page_to_offset(page, size)
-    versions = await latest_ready_versions(db)
-
-    all_items: list[dict] = []
-    total = 0
-    for v in versions:
-        vid = str(v.id)
-        all_iris = await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "individual"))
-        total += len(all_iris)
-        ontology = await get_ontology_or_404(db, str(v.ontology_id))
-        for i in all_iris:
-            entity = await _load_ind_entity(db, vid, i)
-            if entity:
-                all_items.append(entity_to_v2(entity, ontology, request=request, lang=lang))
-
-    return v2_page(all_items[offset:offset + size], request, total=total, page=page, size=size)
+    return await _v2_global_list(db, request, page, size, types=["individual"],
+                                 renderer=entity_to_v2, lang=lang)
 
 
 # ---------------------------------------------------------------------------
@@ -368,39 +346,16 @@ async def v2_list_entities_global(
 ):
     """Union of classes + properties + individuals across all ontologies."""
     page, size = page_size
-    offset = page_to_offset(page, size)
-    versions = await latest_ready_versions(db)
-
-    all_items: list[dict] = []
-    for v in versions:
-        vid = str(v.id)
-        ontology = await get_ontology_or_404(db, str(v.ontology_id))
-
-        if not type or type == "class":
-            for i in await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "class")):
-                e = await _load_class_entity(db, vid, i)
-                if e:
-                    all_items.append(entity_to_v2(e, ontology, request=request, lang=lang))
-
-        if not type or type == "property":
-            for i in await asyncio.to_thread(_all_property_iris_sorted, vid):
-                e = await _load_prop_entity(db, vid, i)
-                if e:
-                    all_items.append(entity_to_v2(e, ontology, request=request, lang=lang))
-
-        if not type or type == "individual":
-            for i in await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "individual")):
-                e = await _load_ind_entity(db, vid, i)
-                if e:
-                    all_items.append(entity_to_v2(e, ontology, request=request, lang=lang))
-
-    # Optional label search filter
-    if search:
-        s_lower = search.lower()
-        all_items = [it for it in all_items if s_lower in it.get("label", "").lower()]
-
-    total = len(all_items)
-    return v2_page(all_items[offset:offset + size], request, total=total, page=page, size=size)
+    if type == "class":
+        types = ["class"]
+    elif type == "property":
+        types = list(_PROPERTY_TYPES)
+    elif type == "individual":
+        types = ["individual"]
+    else:
+        types = ["class", *_PROPERTY_TYPES, "individual"]
+    return await _v2_global_list(db, request, page, size, types=types,
+                                 renderer=entity_to_v2, lang=lang, search=search)
 
 
 # ===========================================================================
@@ -769,31 +724,18 @@ async def v2_list_entities(
     version  = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
-    all_items: list[dict] = []
+    if type == "class":
+        types = ["class"]
+    elif type == "property":
+        types = list(_PROPERTY_TYPES)
+    elif type == "individual":
+        types = ["individual"]
+    else:
+        types = ["class", *_PROPERTY_TYPES, "individual"]
 
-    if not type or type == "class":
-        all_iris = await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "class"))
-        for i in all_iris:
-            e = await _load_class_entity(db, vid, i)
-            if e:
-                all_items.append(entity_to_v2(e, ontology, request=request, lang=lang))
-
-    if not type or type == "property":
-        all_iris = await asyncio.to_thread(_all_property_iris_sorted, vid)
-        for i in all_iris:
-            e = await _load_prop_entity(db, vid, i)
-            if e:
-                all_items.append(entity_to_v2(e, ontology, request=request, lang=lang))
-
-    if not type or type == "individual":
-        all_iris = await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "individual"))
-        for i in all_iris:
-            e = await _load_ind_entity(db, vid, i)
-            if e:
-                all_items.append(entity_to_v2(e, ontology, request=request, lang=lang))
-
-    total = len(all_items)
-    return v2_page(all_items[offset:offset + size], request, total=total, page=page, size=size)
+    total, rows = await page_entities_global(db, [vid], types, limit=size, offset=offset)
+    items = [entity_to_v2(e, ontology, request=request, lang=lang) for e, _oid in rows]
+    return v2_page(items, request, total=total, page=page, size=size)
 
 
 # ---------------------------------------------------------------------------
