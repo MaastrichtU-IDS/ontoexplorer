@@ -124,3 +124,33 @@ async def test_list_and_count_entities(db_session):
     page2 = await list_entities(db_session, v, ["class"], limit=2, offset=2)
     assert [p["iri"] for p in page2] == ["http://x/C3"]
     assert page[0]["label"] == "C1" and page[0]["type"] == "class"     # legacy shape
+
+
+@pytest.mark.anyio
+async def test_individuals_of_class(db_session):
+    from ontoexplorer.models.db import EntityIndex
+    from ontoexplorer.api.ols._entity_source import individuals_of_class
+    v, cls = "v-ioc", "http://x/Person"
+    # three individuals typed Person, one typed something else, plus a class row
+    for short, typ, is_ind, types in [
+        ("Alice", "individual", True, [cls]),
+        ("Bob", "individual", True, [cls, "http://x/Agent"]),
+        ("Carol", "individual", True, [cls]),
+        ("Dan", "individual", True, ["http://x/Robot"]),
+        ("Person", "class", False, []),
+    ]:
+        db_session.add(EntityIndex(
+            version_id=v, iri=f"http://x/{short}", ontology_id="o1", type=typ,
+            primary_label=short, primary_label_norm=short.lower(), short=short,
+            search_text=short, is_individual=is_ind, types=types))
+    await db_session.commit()
+
+    total, page = await individuals_of_class(db_session, v, cls, limit=10, offset=0)
+    assert total == 3                                                   # Alice, Bob, Carol
+    assert [p["iri"] for p in page] == ["http://x/Alice", "http://x/Bob", "http://x/Carol"]
+    # pagination
+    total2, page2 = await individuals_of_class(db_session, v, cls, limit=2, offset=2)
+    assert total2 == 3 and [p["iri"] for p in page2] == ["http://x/Carol"]
+    # a class nobody is typed as -> empty
+    total3, page3 = await individuals_of_class(db_session, v, "http://x/Nope", limit=10, offset=0)
+    assert total3 == 0 and page3 == []

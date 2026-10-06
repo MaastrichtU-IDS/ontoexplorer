@@ -59,9 +59,10 @@ async def v2_seed(db_session, sample_ontology, fake_redis):
         fake_redis.sadd(_type_key(vid, etype), iri)
         fake_redis.zadd(_prefix_key(vid), {f"{normalise_label(label)}|en|{etype}|{iri}": 0})
         from tests.integration.ols.conftest import _mk_entity_index
+        _types = json.loads(extra["types"]) if extra and "types" in extra else None
         db_session.add(_mk_entity_index(vid, sample_ontology.id, iri, label,
                                         type_=etype, is_individual=(etype == "individual"),
-                                        source=onto_id))
+                                        source=onto_id, types=_types))
 
     _seed(class_iri, "MyClass",     "class")
     _seed(prop_iri,  "myProperty",  "object_property", {"parents": json.dumps([])})

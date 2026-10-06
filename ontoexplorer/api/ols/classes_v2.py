@@ -552,61 +552,45 @@ async def v2_class_individuals(
     version  = await get_latest_version_or_404(db, ontology_id)
     vid = str(version.id)
 
-    all_ind_iris = await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "individual"))
-
-    def _filter_by_type() -> list[str]:
-        r = _get_redis()
-        result = []
-        for ind_i in all_ind_iris:
-            raw = r.hget(_iri_key(vid, ind_i), "types")
-            if raw:
-                try:
-                    types = json.loads(raw)
-                    if iri in types:
-                        result.append(ind_i)
-                except json.JSONDecodeError:
-                    pass
-        return result
-
-    typed_iris = await asyncio.to_thread(_filter_by_type)
-
-    # SPARQL fallback when no 'types' field is present
-    if not typed_iris:
-        try:
-            from ontoexplorer.clients.oxigraph import get_store, graph_iri
-            def _sparql_ind() -> list[str]:
-                store = get_store()
-                g = graph_iri(ontology_id, vid)
-                q = f"""
-                    PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-                    SELECT DISTINCT ?ind WHERE {{
-                        GRAPH <{g}> {{
-                            ?ind rdf:type <{iri}> .
-                            FILTER(isIRI(?ind))
-                        }}
-                    }}
-                """
-                return [row["ind"].value for row in store.query(q)]
-            typed_iris = await asyncio.to_thread(_sparql_ind)
-        except Exception:
-            pass
-
+    # Primary path: individuals whose entity_index.types contains this class (#242 PR5).
+    from ontoexplorer.api.ols._entity_source import individuals_of_class, load_entities
     offset = page_to_offset(page, size)
+    total, entities = await individuals_of_class(db, vid, iri, limit=size, offset=offset)
+    if total:
+        items = [entity_to_v2(e, ontology, request=request, lang=lang) for e in entities]
+        return v2_page(items, request, total=total, page=page, size=size)
+
+    # SPARQL fallback for versions indexed before the types column was populated.
+    def _sparql_ind() -> list[str]:
+        from ontoexplorer.clients.oxigraph import get_store, graph_iri
+        store = get_store()
+        g = graph_iri(ontology_id, vid)
+        q = f"""
+            PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+            SELECT DISTINCT ?ind WHERE {{
+                GRAPH <{g}> {{
+                    ?ind rdf:type <{iri}> .
+                    FILTER(isIRI(?ind))
+                }}
+            }}
+        """
+        return [row["ind"].value for row in store.query(q)]
+
+    try:
+        typed_iris = sorted(await asyncio.to_thread(_sparql_ind))
+    except Exception:
+        typed_iris = []
+
     sliced = typed_iris[offset:offset + size]
-
-    def _load_many() -> list[tuple[str, dict]]:
-        r = _get_redis()
-        return [(i, r.hgetall(_iri_key(vid, i)) or {}) for i in sliced]
-
-    entities = await asyncio.to_thread(_load_many)
+    entity_map = await load_entities(db, vid, sliced)
     items = [
         entity_to_v2(
-            e if e else _fallback_entity(i, "individual"),
+            entity_map.get(i) or _fallback_entity(i, "individual"),
             ontology,
             request=request,
             lang=lang,
         )
-        for i, e in entities
+        for i in sliced
     ]
     return v2_page(items, request, total=len(typed_iris), page=page, size=size)
 
