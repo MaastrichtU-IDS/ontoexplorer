@@ -27,12 +27,12 @@ from ontoexplorer.api.ols._common import (
     get_ontology_or_404,
     hal_page_params,
     page_to_offset,
+    collect_global,
 )
 from ontoexplorer.api.ols._envelope import hal_page
 from ontoexplorer.api.ols._iri import double_decode_iri
 from ontoexplorer.api.ols._shapes import entity_to_v1_term
 from ontoexplorer.database import get_db
-from ontoexplorer.modules.search.versions import latest_ready_versions
 
 router = APIRouter()
 
@@ -252,20 +252,12 @@ async def list_individuals_global(
     lang: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    versions = await latest_ready_versions(db)
-    items: list[dict] = []
-    for v in versions:
-        entity = await _load_entity(db, str(v.id), iri)
-        if not entity:
-            continue
-        ontology = await get_ontology_or_404(db, str(v.ontology_id))
-        items.append(
-            entity_to_v1_term(
-                entity, ontology,
-                request=request, is_obsolete=False, is_root=False, has_children=False,
-                lang=lang, resource_kind="individuals",
-            )
-        )
+    items = await collect_global(
+        db, iri,
+        lambda e, o: entity_to_v1_term(
+            e, o, request=request, is_obsolete=False, is_root=False,
+            has_children=False, lang=lang, resource_kind="individuals"),
+    )
     return hal_page(items, request, total=len(items), page=0, size=20,
                     embedded_key="individuals")
 
@@ -282,20 +274,12 @@ async def get_individual_global(
     db: AsyncSession = Depends(get_db),
 ):
     iri = double_decode_iri(iri_path)
-    versions = await latest_ready_versions(db)
-    items: list[dict] = []
-    for v in versions:
-        entity = await _load_entity(db, str(v.id), iri)
-        if not entity:
-            continue
-        ontology = await get_ontology_or_404(db, str(v.ontology_id))
-        items.append(
-            entity_to_v1_term(
-                entity, ontology,
-                request=request, is_obsolete=False, is_root=False, has_children=False,
-                lang=lang, resource_kind="individuals",
-            )
-        )
+    items = await collect_global(
+        db, iri,
+        lambda e, o: entity_to_v1_term(
+            e, o, request=request, is_obsolete=False, is_root=False,
+            has_children=False, lang=lang, resource_kind="individuals"),
+    )
     if not items:
         raise HTTPException(status_code=404,
                             detail=f"Individual {iri} not found in any ontology")

@@ -1,9 +1,49 @@
 """Shared dependencies for OLS-compat routes."""
+from typing import Callable
+
 from fastapi import HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from ontoexplorer.models.db import Ontology, OntologyVersion
-from ontoexplorer.modules.search.versions import latest_ready_version
+from ontoexplorer.modules.search.versions import latest_ready_version, latest_ready_versions
+
+
+async def load_ontologies(db: AsyncSession, ontology_ids) -> dict[str, Ontology]:
+    """Resolve {str(id): Ontology} for a set of ontology_ids in one query."""
+    ids = list(ontology_ids)
+    if not ids:
+        return {}
+    rows = (await db.execute(select(Ontology).where(Ontology.id.in_(ids)))).scalars().all()
+    return {str(o.id): o for o in rows}
+
+
+async def collect_global(
+    db: AsyncSession, iri: str, render: Callable[[dict, Ontology], dict], *,
+    defining_only: bool = False,
+) -> list[dict]:
+    """Collect `iri` across every latest-ready version in ONE cross-version query
+    (not a per-version `load_entity` fan-out) and render each hit.
+
+    `render(entity, ontology) -> dict` binds the caller's renderer + request/lang.
+    `defining_only` keeps only rows whose `source` is the ontology itself (the
+    findByIdAndIsDefiningOntology semantics).
+    """
+    from ontoexplorer.api.ols._entity_source import load_entity_global
+    versions = await latest_ready_versions(db)
+    vids = [str(v.id) for v in versions]
+    rows = await load_entity_global(db, vids, iri)
+    ontos = await load_ontologies(db, {oid for _, oid in rows})
+    items: list[dict] = []
+    for entity, oid in rows:
+        onto = ontos.get(oid)
+        if onto is None:
+            continue
+        if defining_only:
+            src = entity.get("source", "")
+            if src and src != onto.shortname and src != str(onto.id):
+                continue
+        items.append(render(entity, onto))
+    return items
 
 
 async def get_latest_version_or_404(db: AsyncSession, ontology_id: str) -> OntologyVersion:
