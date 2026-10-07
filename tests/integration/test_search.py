@@ -3,7 +3,8 @@ import fakeredis
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from ontoexplorer.modules.search.indexer import _prefix_key, _iri_key
+from ontoexplorer.models.db import EntityIndex
+from ontoexplorer.modules.search.indexer import _prefix_key, _iri_key, normalise_label
 
 _VERSION_MOCK = MagicMock()
 _MOCK_VERSION = AsyncMock(return_value=_VERSION_MOCK)
@@ -30,6 +31,38 @@ def _seed_redis(version_id: str, entities: list[tuple[str, str, str]] | None = N
         })
 
 
+async def _seed_entity_index(db_session, version_id: str,
+                             entities: list[tuple[str, str, str]] | None = None):
+    """Seed entity_index rows mirroring `_seed_redis`'s default entity list.
+
+    The MOS expression evaluator resolves labels from Postgres `entity_index`
+    (#242 Workstream B), not Redis, so expression-mode tests seed their query
+    terms here. Each entity is (label, iri, type).
+
+    The test engine is session-scoped and commits persist across tests, so this
+    first clears any rows for `version_id` (keeping re-seeding idempotent) and
+    commits the fresh set itself.
+    """
+    from sqlalchemy import delete
+    if entities is None:
+        entities = [
+            ("cell death", "http://ex.org/CD", "class"),
+            ("nucleus", "http://ex.org/N", "class"),
+            ("has part", "http://ex.org/HP", "object_property"),
+            ("apoptosis", "http://ex.org/AP", "class"),
+        ]
+    await db_session.execute(
+        delete(EntityIndex).where(EntityIndex.version_id == version_id))
+    for label, iri, etype in entities:
+        db_session.add(EntityIndex(
+            version_id=version_id, iri=iri, ontology_id="fake-oid",
+            type=etype, primary_label=label,
+            primary_label_norm=normalise_label(label),
+            short=iri.split("/")[-1], source="", search_text=label,
+        ))
+    await db_session.commit()
+
+
 def _classification(subclasses: dict | None = None, superclasses: dict | None = None):
     sc = subclasses or {
         "http://ex.org/CD": ["http://ex.org/AP"],
@@ -54,7 +87,6 @@ def _classification(subclasses: dict | None = None, superclasses: dict | None = 
 _SEARCH_PATCHES = dict(
     version_404="ontoexplorer.api.search._get_version_or_404",
     redis_indexer="ontoexplorer.modules.search.indexer._get_redis",
-    redis_evaluator="ontoexplorer.modules.search.evaluator._get_redis",
     classification="ontoexplorer.modules.search.evaluator.get_classification",
 )
 
@@ -120,15 +152,15 @@ async def test_search_auto_single_word_falls_back_to_entity(client, user_and_key
 
 
 @pytest.mark.anyio
-async def test_search_auto_and_triggers_expression(client, user_and_key):
+async def test_search_auto_and_triggers_expression(client, user_and_key, db_session):
     """'A and B' in auto-mode → expression mode."""
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
     _seed_redis("fake-vid")
+    await _seed_entity_index(db_session, "fake-vid")
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"],
                new=AsyncMock(return_value=_classification())):
         resp = await client.get(
@@ -143,15 +175,15 @@ async def test_search_auto_and_triggers_expression(client, user_and_key):
 # ── Boolean operators ─────────────────────────────────────────────────────────
 
 @pytest.mark.anyio
-async def test_search_expression_and_intersection(client, user_and_key):
+async def test_search_expression_and_intersection(client, user_and_key, db_session):
     """'cell death' and 'nucleus' → intersection of their subclasses (empty here)."""
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
     _seed_redis("fake-vid")
+    await _seed_entity_index(db_session, "fake-vid")
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"],
                new=AsyncMock(return_value=_classification())):
         resp = await client.get(
@@ -168,11 +200,12 @@ async def test_search_expression_and_intersection(client, user_and_key):
 
 
 @pytest.mark.anyio
-async def test_search_expression_and_with_shared_subclass(client, user_and_key):
+async def test_search_expression_and_with_shared_subclass(client, user_and_key, db_session):
     """Two classes sharing a subclass → 'and' returns that subclass."""
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
     _seed_redis("fake-vid")
+    await _seed_entity_index(db_session, "fake-vid")
     cls = _classification(subclasses={
         "http://ex.org/CD": ["http://ex.org/AP", "http://ex.org/SHARED"],
         "http://ex.org/N":  ["http://ex.org/InnerN", "http://ex.org/SHARED"],
@@ -183,7 +216,6 @@ async def test_search_expression_and_with_shared_subclass(client, user_and_key):
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"], new=AsyncMock(return_value=cls)):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/search",
@@ -205,10 +237,10 @@ async def test_search_expression_source_from_entity_index(client, user_and_key, 
     per-result hget the source would be "". With the entity_index row present it
     resolves to that row's source.
     """
-    from ontoexplorer.models.db import EntityIndex
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
     _seed_redis("fake-vid")
+    await _seed_entity_index(db_session, "fake-vid")
     db_session.add(EntityIndex(
         version_id="fake-vid", iri="http://ex.org/SHARED", ontology_id="fake-oid",
         type="class", primary_label="shared", primary_label_norm="shared",
@@ -225,7 +257,6 @@ async def test_search_expression_source_from_entity_index(client, user_and_key, 
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"], new=AsyncMock(return_value=cls)):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/search",
@@ -238,15 +269,15 @@ async def test_search_expression_source_from_entity_index(client, user_and_key, 
 
 
 @pytest.mark.anyio
-async def test_search_expression_or_union(client, user_and_key):
+async def test_search_expression_or_union(client, user_and_key, db_session):
     """'cell death' or 'nucleus' → union of subclasses (plus both classes themselves)."""
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
     _seed_redis("fake-vid")
+    await _seed_entity_index(db_session, "fake-vid")
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"],
                new=AsyncMock(return_value=_classification())):
         resp = await client.get(
@@ -263,15 +294,15 @@ async def test_search_expression_or_union(client, user_and_key):
 
 
 @pytest.mark.anyio
-async def test_search_expression_not_complement(client, user_and_key):
+async def test_search_expression_not_complement(client, user_and_key, db_session):
     """'not nucleus' → all classes except nucleus and its subclasses."""
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
     _seed_redis("fake-vid")
+    await _seed_entity_index(db_session, "fake-vid")
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"],
                new=AsyncMock(return_value=_classification())):
         resp = await client.get(
@@ -288,11 +319,12 @@ async def test_search_expression_not_complement(client, user_and_key):
 
 
 @pytest.mark.anyio
-async def test_search_expression_nested(client, user_and_key):
+async def test_search_expression_nested(client, user_and_key, db_session):
     """'cell death' and ('nucleus' or 'apoptosis') → intersection with union."""
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
     _seed_redis("fake-vid")
+    await _seed_entity_index(db_session, "fake-vid")
     cls = _classification(subclasses={
         "http://ex.org/CD": ["http://ex.org/AP", "http://ex.org/SHARED"],
         "http://ex.org/N":  ["http://ex.org/InnerN"],
@@ -303,7 +335,6 @@ async def test_search_expression_nested(client, user_and_key):
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"], new=AsyncMock(return_value=cls)):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/search",
@@ -328,15 +359,15 @@ def _mock_sparql_cls(iri: str):
 
 
 @pytest.mark.anyio
-async def test_search_some_values_from(client, user_and_key):
+async def test_search_some_values_from(client, user_and_key, db_session):
     """'has part' some 'nucleus' → SPARQL query, returns matching class."""
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
     _seed_redis("fake-vid")
+    await _seed_entity_index(db_session, "fake-vid")
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"],
                new=AsyncMock(return_value=_classification())), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
@@ -354,15 +385,15 @@ async def test_search_some_values_from(client, user_and_key):
 
 
 @pytest.mark.anyio
-async def test_search_only_restriction(client, user_and_key):
+async def test_search_only_restriction(client, user_and_key, db_session):
     """'has part' only 'nucleus' → SPARQL, returns matching class."""
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
     _seed_redis("fake-vid")
+    await _seed_entity_index(db_session, "fake-vid")
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"],
                new=AsyncMock(return_value=_classification())), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
@@ -377,15 +408,15 @@ async def test_search_only_restriction(client, user_and_key):
 
 
 @pytest.mark.anyio
-async def test_search_min_cardinality(client, user_and_key):
+async def test_search_min_cardinality(client, user_and_key, db_session):
     """'has part' min 2 'nucleus' → SPARQL minCardinality query."""
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
     _seed_redis("fake-vid")
+    await _seed_entity_index(db_session, "fake-vid")
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"],
                new=AsyncMock(return_value=_classification())), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
@@ -403,15 +434,15 @@ async def test_search_min_cardinality(client, user_and_key):
 
 
 @pytest.mark.anyio
-async def test_search_max_cardinality(client, user_and_key):
+async def test_search_max_cardinality(client, user_and_key, db_session):
     """'has part' max 1 'nucleus' → SPARQL maxCardinality query."""
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
     _seed_redis("fake-vid")
+    await _seed_entity_index(db_session, "fake-vid")
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"],
                new=AsyncMock(return_value=_classification())), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
@@ -426,15 +457,15 @@ async def test_search_max_cardinality(client, user_and_key):
 
 
 @pytest.mark.anyio
-async def test_search_exact_cardinality(client, user_and_key):
+async def test_search_exact_cardinality(client, user_and_key, db_session):
     """'has part' exactly 1 'nucleus' → SPARQL owl:cardinality query."""
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
     _seed_redis("fake-vid")
+    await _seed_entity_index(db_session, "fake-vid")
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"],
                new=AsyncMock(return_value=_classification())), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
@@ -451,19 +482,20 @@ async def test_search_exact_cardinality(client, user_and_key):
 # ── Annotation property exclusion ────────────────────────────────────────────
 
 @pytest.mark.anyio
-async def test_search_annotation_property_rejected_in_restriction(client, user_and_key):
+async def test_search_annotation_property_rejected_in_restriction(client, user_and_key, db_session):
     """Annotation property in property position → 400 (not found as object/data property)."""
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
-    _seed_redis("fake-vid", entities=[
+    _entities = [
         ("cell death", "http://ex.org/CD", "class"),
         ("nucleus", "http://ex.org/N", "class"),
         ("label", "http://www.w3.org/2000/01/rdf-schema#label", "annotation_property"),
-    ])
+    ]
+    _seed_redis("fake-vid", entities=_entities)
+    await _seed_entity_index(db_session, "fake-vid", entities=_entities)
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"],
                new=AsyncMock(return_value=_classification())):
         resp = await client.get(
@@ -479,15 +511,15 @@ async def test_search_annotation_property_rejected_in_restriction(client, user_a
 # ── Label resolution edge cases ───────────────────────────────────────────────
 
 @pytest.mark.anyio
-async def test_search_unresolved_term_returns_400(client, user_and_key):
+async def test_search_unresolved_term_returns_400(client, user_and_key, db_session):
     """Label not in index → 400 unresolved_term."""
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
     _seed_redis("fake-vid")
+    await _seed_entity_index(db_session, "fake-vid")
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"],
                new=AsyncMock(return_value=_classification())):
         resp = await client.get(
@@ -500,18 +532,18 @@ async def test_search_unresolved_term_returns_400(client, user_and_key):
 
 
 @pytest.mark.anyio
-async def test_search_expression_not_classified(client, user_and_key):
+async def test_search_expression_not_classified(client, user_and_key, db_session):
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
     _seed_redis("fake-vid")
+    await _seed_entity_index(db_session, "fake-vid")
 
     from ontoexplorer.clients.reasoning import ReasoningNotReadyError
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"],
-               new=AsyncMock(side_effect=ReasoningNotReadyError("fake-vid"))), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS):
+               new=AsyncMock(side_effect=ReasoningNotReadyError("fake-vid"))):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/search",
             params={"q": "'cell death' and 'nucleus'", "mode": "expression"},
@@ -547,7 +579,6 @@ async def test_search_ambiguous_label_returns_422(client, user_and_key):
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"],
                new=AsyncMock(return_value={"subclasses": {}, "class_count": 0})), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
          patch("ontoexplorer.modules.search.evaluator._resolve_label",
                side_effect=AmbiguousLabelError("cell death", [
                    {"label": "cell death", "short": "GO:CD", "iri": "http://go.org/CD"},
@@ -585,15 +616,15 @@ async def test_search_iri_direct(client, user_and_key):
 # ── Result shape ──────────────────────────────────────────────────────────────
 
 @pytest.mark.anyio
-async def test_search_result_fields(client, user_and_key):
+async def test_search_result_fields(client, user_and_key, db_session):
     """Each result has iri, label, short, match_type."""
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
     _seed_redis("fake-vid")
+    await _seed_entity_index(db_session, "fake-vid")
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"],
                new=AsyncMock(return_value=_classification())):
         resp = await client.get(
@@ -610,15 +641,15 @@ async def test_search_result_fields(client, user_and_key):
 
 
 @pytest.mark.anyio
-async def test_search_limit_respected(client, user_and_key):
+async def test_search_limit_respected(client, user_and_key, db_session):
     """limit=1 returns at most 1 result."""
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
     _seed_redis("fake-vid")
+    await _seed_entity_index(db_session, "fake-vid")
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["redis_evaluator"], return_value=_FAKE_REDIS), \
          patch(_SEARCH_PATCHES["classification"],
                new=AsyncMock(return_value=_classification())):
         resp = await client.get(

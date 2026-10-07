@@ -100,8 +100,11 @@ async def search(
 
     # Expression mode
     try:
+        from ontoexplorer.modules.search.evaluator import build_resolver, _collect_refs
+        _refs, _needs_classes = _collect_refs(ast)
+        _resolver = await build_resolver(db, version_id, _refs, need_classes=_needs_classes)
         search_results = await evaluate_relation(
-            ast, version_id, ontology_id,
+            ast, version_id, ontology_id, _resolver,
             relation=relation, lang=effective_lang, direct=direct,
             reasoner=version.reasoner,
         )
@@ -149,19 +152,27 @@ async def search(
     # produces named classes from `and`/`or`/`some`/`only`/etc). Tag them so
     # the UI can render a CLASS badge and the chip filter on the homepage
     # compares like-for-like instead of falling back to an implicit default.
+    _rows = [
+        {
+            "iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type,
+            "type": "class",
+            "source": sources.get(r.iri, ""),
+            "version_id": version_id,
+            "lang": r.lang,
+            "cross_language": r.cross_language,
+        }
+        for r in trimmed
+    ]
+    # Result labels (subclasses/fillers) are not in the ref-scoped resolver (#242
+    # Workstream B) — restore them in one batched lookup over the capped set.
+    from ontoexplorer.modules.search.evaluator import enrich_labels
+    await enrich_labels(db, _rows, effective_lang)
+    for _row in _rows:
+        _row.pop("version_id", None)
     return {
         "mode": "expression",
         "query": q,
-        "results": [
-            {
-                "iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type,
-                "type": "class",
-                "source": sources.get(r.iri, ""),
-                "lang": r.lang,
-                "cross_language": r.cross_language,
-            }
-            for r in trimmed
-        ],
+        "results": _rows,
         "count": len(trimmed),
         "truncated": len(search_results) > limit,
         "semantic_results": [],
