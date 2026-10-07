@@ -392,6 +392,18 @@ def entity_lookup_multi(
     return by_vid
 
 
+class _NoopPipe:
+    """Drop-in for a Redis pipeline that discards every write — used when
+    INDEX_WRITE_REDIS is off so the indexer's pipe.* calls become no-ops without
+    touching their call sites (#242 Workstream B)."""
+    def hset(self, *a, **k): return self
+    def sadd(self, *a, **k): return self
+    def zadd(self, *a, **k): return self
+    def expire(self, *a, **k): return self
+    def delete(self, *a, **k): return self
+    def execute(self): return []
+
+
 def build_index(version_id: str, ontology_id: str = "", profile: dict | None = None) -> IndexStats:
     """Extract all entities and labels from Oxigraph and write the Redis entity index."""
     from datetime import datetime, timezone
@@ -657,18 +669,29 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
                 defs_by_iri[iri] = [{"value": val, "lang": lang_tag}]
                 lang_counts[lang_tag] = lang_counts.get(lang_tag, 0) + 1
 
+    # #242 Workstream B: once all readers are off Redis (Stage 2 + B1/B2),
+    # INDEX_WRITE_REDIS=false stops writing the per-entity Redis search index
+    # (:iri: hashes, type-sets, prefix-zset, meta, langs, deprecated/individuals
+    # sets). entity_index is still populated (directly from the in-memory output,
+    # B1), and the response caches below (tree/stats/reuse) still write. Default
+    # on, so this is a no-op until the flag is flipped post-validation.
+    _write_redis = os.getenv("INDEX_WRITE_REDIS", "true").strip().lower() not in (
+        "false", "0", "no", "off")
+
     # Invalidate root terms cache so API serves fresh data with the new source fields
     for key in r.scan_iter(f"terms_root:{version_id}:*", count=5000):
         r.delete(key)
 
-    # Write to Redis via pipeline
+    # Write to Redis via pipeline (a no-op pipe when the Redis index is disabled, so
+    # the hset/sadd/zadd calls below stay unchanged).
     prefix_key = _prefix_key(version_id)
-    r.delete(prefix_key)
-    # Delete meta key upfront so we can safely use hset even if a previous run
-    # left a string value there (WRONGTYPE error otherwise).
-    r.delete(_meta_key(version_id))
+    if _write_redis:
+        r.delete(prefix_key)
+        # Delete meta key upfront so we can safely use hset even if a previous run
+        # left a string value there (WRONGTYPE error otherwise).
+        r.delete(_meta_key(version_id))
 
-    pipe = r.pipeline(transaction=False)
+    pipe = r.pipeline(transaction=False) if _write_redis else _NoopPipe()
     class_count = property_count = 0
     # individual_count was set above during threshold-gated collection
     # Flush the write pipeline every _FLUSH_ENTITIES entities so its in-memory
@@ -814,16 +837,17 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         pipe.expire(dep_key, _SEARCH_TTL)
     pipe.execute()
 
-    # Write per-language label counts
-    langs_key = _langs_key(version_id)
-    r.delete(langs_key)
-    if lang_counts:
-        r.hset(langs_key, mapping={k: str(v) for k, v in lang_counts.items()})
-        r.expire(langs_key, _SEARCH_TTL)
+    if _write_redis:
+        # Write per-language label counts
+        langs_key = _langs_key(version_id)
+        r.delete(langs_key)
+        if lang_counts:
+            r.hset(langs_key, mapping={k: str(v) for k, v in lang_counts.items()})
+            r.expire(langs_key, _SEARCH_TTL)
 
-    # Mark index as schema v2
-    r.hset(_meta_key(version_id), "schema_version", "v2")
-    r.expire(_meta_key(version_id), _SEARCH_TTL)
+        # Mark index as schema v2
+        r.hset(_meta_key(version_id), "schema_version", "v2")
+        r.expire(_meta_key(version_id), _SEARCH_TTL)
 
     _build_tree_cache(version_id, ontology_id, entities, labels_by_iri, r)
     _populate_stats_cache(version_id, ontology_id, entities, r)

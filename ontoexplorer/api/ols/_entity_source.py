@@ -17,6 +17,7 @@ directly and the Redis `:iri:` hash is purged.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 from sqlalchemy import func, or_, select
@@ -28,14 +29,30 @@ from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
 
 logger = logging.getLogger(__name__)
 
+# owl:Thing is a queryable built-in class that is never declared as owl:Class in
+# ontology files, so it has no entity_index row (giving it one would make it a tree
+# root + inflate class counts). It is served synthetically here so it keeps
+# resolving once the indexer stops writing the Redis `:iri:` hash (#242 Workstream B),
+# the same legacy-dict shape the indexer wrote for it.
+_OWL_THING_IRI = "http://www.w3.org/2002/07/owl#Thing"
+_OWL_THING_HASH: dict = {
+    "label": "Thing", "primary_label": "Thing", "type": "class",
+    "iri": _OWL_THING_IRI, "short": "owl:Thing", "source": "",
+    "labels": json.dumps([{"value": "Thing", "lang": "en"}]),
+    "synonyms": "[]", "definitions": "[]",
+}
+
 
 def _redis_hash(version_id: str, iri: str) -> dict | None:
-    """The legacy Redis `:iri:` hash for one entity, or None if absent/unreachable.
+    """Fallback payload for an entity absent from entity_index: a synthetic owl:Thing,
+    else the legacy Redis `:iri:` hash (transition), else None.
 
-    The hash is already in the renderer-consumed legacy shape, so it needs no
-    adapter — it *is* what `entity_index_to_legacy_dict` reproduces.  Best-effort:
-    if Redis is unavailable the entity is simply reported absent (404), never a 500.
+    The hash is already in the renderer-consumed legacy shape (what
+    `entity_index_to_legacy_dict` reproduces). Best-effort: if Redis is unavailable
+    the entity is simply reported absent (404), never a 500.
     """
+    if iri == _OWL_THING_IRI:
+        return dict(_OWL_THING_HASH)
     try:
         h = _get_redis().hgetall(_iri_key(version_id, iri))
     except Exception:  # pragma: no cover - transition fallback, Redis optional
@@ -45,17 +62,25 @@ def _redis_hash(version_id: str, iri: str) -> dict | None:
 
 
 def _redis_hashes(version_id: str, iris: list[str]) -> dict[str, dict]:
-    """Batch-fetch legacy Redis hashes for `iris`; missing/empty/unreachable absent."""
-    try:
-        r = _get_redis()
-        pipe = r.pipeline(transaction=False)
-        for iri in iris:
-            pipe.hgetall(_iri_key(version_id, iri))
-        results = pipe.execute()
-    except Exception:  # pragma: no cover - transition fallback, Redis optional
-        logger.debug("entity_index Redis batch fallback failed", exc_info=True)
-        return {}
-    return {iri: h for iri, h in zip(iris, results) if h}
+    """Batch fallback: synthetic owl:Thing + legacy Redis hashes; missing absent."""
+    out: dict[str, dict] = {}
+    redis_iris = []
+    for iri in iris:
+        if iri == _OWL_THING_IRI:
+            out[iri] = dict(_OWL_THING_HASH)
+        else:
+            redis_iris.append(iri)
+    if redis_iris:
+        try:
+            r = _get_redis()
+            pipe = r.pipeline(transaction=False)
+            for iri in redis_iris:
+                pipe.hgetall(_iri_key(version_id, iri))
+            results = pipe.execute()
+            out.update({iri: h for iri, h in zip(redis_iris, results) if h})
+        except Exception:  # pragma: no cover - transition fallback, Redis optional
+            logger.debug("entity_index Redis batch fallback failed", exc_info=True)
+    return out
 
 
 def _iri_order(db: AsyncSession):
