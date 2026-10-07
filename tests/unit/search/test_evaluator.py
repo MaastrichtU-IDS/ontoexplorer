@@ -1,6 +1,6 @@
 """Unit tests for the MOS expression evaluator."""
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import patch, MagicMock
 
 from ontoexplorer.modules.search.mos_parser import (
     NamedClass, And, Or, Not,
@@ -21,6 +21,32 @@ EUKARYOTE = "http://ex.org/EukaryoticCell"
 PROK   = "http://ex.org/ProkaryoticCell"
 HP_IRI = "http://bfo.org/HP"
 NUC    = "http://ex.org/Nucleus"
+
+
+from contextlib import contextmanager
+
+
+@contextmanager
+def _patch_reasoner(classification: dict):
+    """The evaluator now uses targeted per-IRI subclasses()/superclasses() calls
+    instead of loading the full classification (#277). Serve those from the same
+    classification dict the tests already build: subclasses(direct=False) from
+    `subclasses`, subclasses(direct=True) and superclasses(direct=True) from the
+    `direct_*` maps."""
+    subs = classification.get("subclasses", {}) or {}
+    dsub = classification.get("direct_subclasses", {}) or {}
+    dsup = classification.get("direct_superclasses", {}) or {}
+
+    async def _fsub(version_id, class_iri, direct=False, reasoner="rustdl"):
+        m = dsub if direct else subs
+        return {"subclasses": list(m.get(class_iri, []))}
+
+    async def _fsup(version_id, class_iri, direct=False, reasoner="rustdl"):
+        return {"superclasses": list(dsup.get(class_iri, []))}
+
+    with patch("ontoexplorer.modules.search.evaluator._reasoner_subclasses", new=_fsub), \
+         patch("ontoexplorer.modules.search.evaluator._reasoner_superclasses", new=_fsup):
+        yield
 
 
 def _make_classification(subclasses: dict, direct_subclasses: dict | None = None) -> dict:
@@ -78,8 +104,7 @@ async def test_evaluate_named_class_returns_subclasses():
     classification = _make_classification({
         "http://ex.org/Cell": ["http://ex.org/EukaryoticCell", "http://ex.org/ProkaryoticCell"],
     })
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         results = await evaluate(NamedClass(ref="Cell", curie=None), "v1", "ont1", r)
     iris = {r.iri for r in results}
     assert "http://ex.org/EukaryoticCell" in iris
@@ -118,8 +143,7 @@ async def test_evaluate_owl_thing_label_returns_all_classes():
         ("hasPart", "http://ex.org/hp", "object_property"),
     ])
     classification = _make_classification({})
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         results = await evaluate(NamedClass("Thing", None), "v1", "ont1", r)
     iris = {x.iri for x in results}
     # every class, owl:Thing itself excluded, properties excluded
@@ -130,8 +154,7 @@ async def test_evaluate_owl_thing_label_returns_all_classes():
 async def test_evaluate_owl_thing_curie_returns_all_classes():
     r = _make_resolver_multi("v1", [("Cell", "http://ex.org/Cell", "class")])
     classification = _make_classification({})
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         results = await evaluate(NamedClass("owl:Thing", "owl:Thing"), "v1", "ont1", r)
     assert {x.iri for x in results} == {"http://ex.org/Cell"}
 
@@ -142,8 +165,7 @@ async def test_evaluate_real_thing_class_is_ambiguous_with_owl_thing():
     # owl:Thing built-in → AmbiguousLabelError (the old Redis behaviour).
     r = _make_resolver_multi("v1", [("Thing", "http://ex.org/MyThing", "class")])
     classification = _make_classification({})
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         with pytest.raises(AmbiguousLabelError):
             await evaluate(NamedClass("Thing", None), "v1", "ont1", r)
 
@@ -159,8 +181,7 @@ async def test_evaluate_and_intersects():
         "http://ex.org/Cell":   ["http://ex.org/A", "http://ex.org/B"],
         "http://ex.org/Nucleus":["http://ex.org/B", "http://ex.org/C"],
     })
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         results = await evaluate(
             And(NamedClass("Cell", None), NamedClass("Nucleus", None)), "v1", "ont1", r,
         )
@@ -178,8 +199,7 @@ async def test_evaluate_or_unions():
         "http://ex.org/Cell":  ["http://ex.org/A"],
         "http://ex.org/Virus": ["http://ex.org/B"],
     })
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         results = await evaluate(
             Or(NamedClass("Cell", None), NamedClass("Virus", None)), "v1", "ont1", r,
         )
@@ -195,8 +215,7 @@ async def test_evaluate_ambiguous_label_raises():
         ("cell death", "http://mondo.org/CD", "class"),
     ])
     classification = _make_classification({})
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         with pytest.raises(AmbiguousLabelError) as exc_info:
             await evaluate(NamedClass(ref="cell death", curie=None), "v1", "ont1", r)
     assert exc_info.value.label == "cell death"
@@ -214,8 +233,7 @@ async def test_evaluate_some_values_from_calls_sparql():
     mock_sol.__getitem__ = lambda self, k: MagicMock(value="http://ex.org/Cell")
     classification = _make_classification({})
 
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)), \
+    with _patch_reasoner(classification), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
                return_value=[mock_sol]) as mock_sparql:
         results = await evaluate(
@@ -244,8 +262,7 @@ async def test_evaluate_inverse_some_reverse_lookup():
         captured["q"] = q
         return _mock_sparql([NUC])
 
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)), \
+    with _patch_reasoner(classification), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query", side_effect=fake_sparql):
         results = await evaluate(
             InverseRestriction(NamedClass("has part", None), "some", NamedClass("cell", None)),
@@ -268,8 +285,7 @@ async def test_evaluate_inverse_only_uses_allvaluesfrom():
         captured["q"] = q
         return _mock_sparql([NUC])
 
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)), \
+    with _patch_reasoner(classification), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query", side_effect=fake_sparql):
         await evaluate(
             InverseRestriction(NamedClass("has part", None), "only", NamedClass("cell", None)),
@@ -288,8 +304,7 @@ async def test_evaluate_inverse_value_uses_hasvalue():
         captured["q"] = q
         return _mock_sparql([NUC])
 
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)), \
+    with _patch_reasoner(classification), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query", side_effect=fake_sparql):
         await evaluate(
             InverseRestriction(NamedClass("has part", None), "value", NamedClass("cell", None)),
@@ -308,8 +323,7 @@ async def test_evaluate_inverse_min_uses_qualified_cardinality():
         captured["q"] = q
         return _mock_sparql([NUC])
 
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)), \
+    with _patch_reasoner(classification), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query", side_effect=fake_sparql):
         await evaluate(
             InverseRestriction(NamedClass("has part", None), "min", NamedClass("cell", None), cardinality=2),
@@ -332,8 +346,7 @@ async def test_evaluate_inverse_min_one_includes_some_equivalence():
         captured["q"] = q
         return _mock_sparql([NUC])
 
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)), \
+    with _patch_reasoner(classification), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query", side_effect=fake_sparql):
         await evaluate(
             InverseRestriction(NamedClass("has part", None), "min", NamedClass("cell", None), cardinality=1),
@@ -353,8 +366,7 @@ async def test_evaluate_inverse_max_and_exactly_predicates():
         captured["q"] = q
         return _mock_sparql([NUC])
 
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)), \
+    with _patch_reasoner(classification), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query", side_effect=fake_sparql):
         await evaluate(
             InverseRestriction(NamedClass("has part", None), "max", NamedClass("cell", None), cardinality=2),
@@ -380,8 +392,7 @@ async def test_evaluate_value_literal_builds_typed_literal():
         captured["q"] = q
         return _mock_sparql([CELL])
 
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)), \
+    with _patch_reasoner(classification), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query", side_effect=fake_sparql):
         await evaluate(
             HasValue(NamedClass("has age", None), Literal("42", _XSD + "integer")),
@@ -406,8 +417,7 @@ async def test_evaluate_datatype_restriction_matches_facets():
         datatype=NamedClass("xsd:integer", None),
         facets=[(_XSD + "minInclusive", Literal("18", _XSD + "integer"))],
     )
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)), \
+    with _patch_reasoner(classification), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query", side_effect=fake_sparql):
         await evaluate(SomeValuesFrom(NamedClass("has age", None), dr), "v1", "ont1", r)
     q = captured["q"]
@@ -428,8 +438,7 @@ async def test_evaluate_direct_uses_direct_subclasses_index():
         subclasses={CELL: [EUKARYOTE, PROK]},
         direct_subclasses={CELL: [EUKARYOTE]},
     )
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         results = await evaluate(NamedClass("Cell", None), "v1", "ont1", r, direct=True)
     iris = {r.iri for r in results}
     assert EUKARYOTE in iris
@@ -443,8 +452,7 @@ async def test_evaluate_direct_false_uses_all_subclasses():
         subclasses={CELL: [EUKARYOTE, PROK]},
         direct_subclasses={CELL: [EUKARYOTE]},
     )
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         results = await evaluate(NamedClass("Cell", None), "v1", "ont1", r, direct=False)
     iris = {r.iri for r in results}
     assert EUKARYOTE in iris
@@ -464,8 +472,7 @@ async def test_evaluate_named_class_includes_asserted_direct_subclasses():
         subclasses={CELL: [PROK]},              # inferred-only transitive descendant
         direct_subclasses={CELL: [EUKARYOTE]},  # asserted direct child, ABSENT from subclasses
     )
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         results = await evaluate(NamedClass("Cell", None), "v1", "ont1", r, direct=False)
     iris = {res.iri for res in results}
     assert EUKARYOTE in iris   # asserted direct child — was dropped before the fix
@@ -488,8 +495,7 @@ async def test_evaluate_and_includes_asserted_subclass_conjunct():
         subclasses={CELL: [PROK]},              # inferred-only; EUKARYOTE missing
         direct_subclasses={CELL: [EUKARYOTE]},  # asserted direct child
     )
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)), \
+    with _patch_reasoner(classification), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
                return_value=_mock_sparql([EUKARYOTE])):
         results = await evaluate(
@@ -502,22 +508,6 @@ async def test_evaluate_and_includes_asserted_subclass_conjunct():
 
 
 @pytest.mark.anyio
-async def test_evaluate_direct_fallback_when_key_absent():
-    # When direct_subclasses key is missing entirely, fall back to subclasses.
-    r = _make_redis_with_entity("v1", "Cell", CELL)
-    classification = _make_classification(subclasses={CELL: [EUKARYOTE, PROK]})
-    # Remove the key entirely to simulate an older ELK service
-    classification.pop("direct_subclasses")
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
-        results = await evaluate(NamedClass("Cell", None), "v1", "ont1", r, direct=True)
-    iris = {r.iri for r in results}
-    # Falls back to full subclasses index
-    assert EUKARYOTE in iris
-    assert PROK in iris
-
-
-@pytest.mark.anyio
 async def test_evaluate_direct_empty_direct_subclasses_not_treated_as_absent():
     # direct_subclasses={} (present but empty) must NOT fall back to subclasses.
     # Empty means "no direct subclasses", not "key absent".
@@ -526,8 +516,7 @@ async def test_evaluate_direct_empty_direct_subclasses_not_treated_as_absent():
         subclasses={CELL: [EUKARYOTE, PROK]},
         direct_subclasses={},  # present but empty — Cell has no direct subclasses listed
     )
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         results = await evaluate(NamedClass("Cell", None), "v1", "ont1", r, direct=True)
     iris = {r.iri for r in results}
     # Only the queried class itself is returned (added via subs.add(iri))
@@ -548,8 +537,7 @@ async def test_evaluate_not_excludes_subclasses():
         CELL: [EUKARYOTE, PROK],
         "http://ex.org/Virus": [],
     })
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         results = await evaluate(Not(NamedClass("Cell", None)), "v1", "ont1", r)
     iris = {r.iri for r in results}
     # Not Cell = all minus {Cell, Eukaryote, Prokaryote}
@@ -570,8 +558,7 @@ async def test_evaluate_not_ignores_direct_flag():
         subclasses={CELL: [EUKARYOTE, PROK], "http://ex.org/Virus": []},
         direct_subclasses={CELL: [EUKARYOTE]},
     )
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         results_direct = await evaluate(Not(NamedClass("Cell", None)), "v1", "ont1", r, direct=True)
         results_all    = await evaluate(Not(NamedClass("Cell", None)), "v1", "ont1", r, direct=False)
     # Not should give the same result regardless of direct flag
@@ -591,8 +578,7 @@ async def test_evaluate_restriction_expands_with_elk_subclasses():
     ])
     classification = _make_classification(subclasses={CELL: [EUKARYOTE]})
 
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)), \
+    with _patch_reasoner(classification), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
                return_value=_mock_sparql([CELL])):
         results = await evaluate(
@@ -616,8 +602,7 @@ async def test_evaluate_restriction_direct_skips_elk_expansion():
         direct_subclasses={CELL: [EUKARYOTE]},
     )
 
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)), \
+    with _patch_reasoner(classification), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
                return_value=_mock_sparql([CELL])):
         results = await evaluate(
@@ -639,8 +624,7 @@ async def test_evaluate_has_value_calls_sparql():
     ])
     classification = _make_classification({})
 
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)), \
+    with _patch_reasoner(classification), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
                return_value=_mock_sparql([CELL])) as mock_sparql:
         results = await evaluate(
@@ -661,8 +645,7 @@ async def test_evaluate_has_self_calls_sparql():
     ])
     classification = _make_classification({})
 
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)), \
+    with _patch_reasoner(classification), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
                return_value=_mock_sparql([CELL])) as mock_sparql:
         results = await evaluate(
@@ -694,8 +677,7 @@ async def test_evaluate_cardinality_query_includes_qualified_form(node, expected
     ])
     classification = _make_classification({})
 
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)), \
+    with _patch_reasoner(classification), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
                return_value=[]) as mock_sparql:
         await evaluate(node, "v1", "ont1", r)
@@ -716,8 +698,7 @@ async def test_evaluate_and_named_class_with_restriction():
     ])
     classification = _make_classification(subclasses={CELL: [EUKARYOTE]})
 
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)), \
+    with _patch_reasoner(classification), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
                return_value=_mock_sparql([EUKARYOTE])):
         results = await evaluate(
@@ -756,8 +737,7 @@ async def test_evaluate_relation_superclasses_walks_ancestors():
         EUKARYOTE: [CELL],
         CELL: ["http://www.w3.org/2002/07/owl#Thing"],
     })
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         results = await evaluate_relation(
             NamedClass("Eukaryote", None), "v1", "ont1", r, relation="superclasses",
         )
@@ -775,8 +755,7 @@ async def test_evaluate_relation_superclasses_direct_is_one_hop():
         GRAND: [EUKARYOTE],
         EUKARYOTE: [CELL],
     })
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         direct = await evaluate_relation(
             NamedClass("Grandchild", None), "v1", "ont1", r, relation="superclasses", direct=True,
         )
@@ -795,8 +774,7 @@ async def test_evaluate_relation_equivalent_detects_cycle():
     B = "http://ex.org/B"
     r = _make_redis_multi("v1", [("A", A, "class"), ("B", B, "class")])
     classification = _make_classification_super({A: [B], B: [A]})
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         results = await evaluate_relation(
             NamedClass("A", None), "v1", "ont1", r, relation="equivalent",
         )
@@ -810,8 +788,7 @@ async def test_evaluate_relation_superclasses_rejects_complex_expression():
     )
     r = _make_redis_with_entity("v1", "Cell", CELL)
     classification = _make_classification_super({})
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         with pytest.raises(RelationRequiresNamedClassError):
             await evaluate_relation(
                 Not(NamedClass("Cell", None)), "v1", "ont1", r, relation="superclasses",
@@ -823,8 +800,7 @@ async def test_evaluate_relation_subclasses_delegates_to_evaluate():
     from ontoexplorer.modules.search.evaluator import evaluate_relation
     r = _make_redis_with_entity("v1", "Cell", CELL)
     classification = _make_classification({CELL: [EUKARYOTE, PROK]})
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=classification)):
+    with _patch_reasoner(classification):
         results = await evaluate_relation(
             NamedClass("Cell", None), "v1", "ont1", r, relation="subclasses",
         )
@@ -842,8 +818,7 @@ def _redis_haspart_nucleus():
 async def _min_query(cardinality: int) -> str:
     """Run evaluate() for `hasPart min N Nucleus` and return the SPARQL sent."""
     r = _redis_haspart_nucleus()
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=_make_classification({}))), \
+    with _patch_reasoner(_make_classification({})), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
                return_value=[]) as mock_sparql:
         await evaluate(
@@ -872,8 +847,7 @@ async def test_evaluate_min_two_does_not_match_some_values_from():
 
 async def _card_query(node) -> str:
     r = _redis_haspart_nucleus()
-    with patch("ontoexplorer.modules.search.evaluator.get_classification",
-               new=AsyncMock(return_value=_make_classification({}))), \
+    with _patch_reasoner(_make_classification({})), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
                return_value=[]) as mock_sparql:
         await evaluate(node, "v1", "ont1", r)

@@ -84,10 +84,32 @@ def _classification(subclasses: dict | None = None, superclasses: dict | None = 
     }
 
 
+from contextlib import contextmanager
+
+
+@contextmanager
+def _patch_reasoner(classification: dict):
+    """The evaluator uses targeted per-IRI subclasses()/superclasses() calls now
+    (#277), not the full classification — serve those from the test classification
+    dict."""
+    subs = classification.get("subclasses", {}) or {}
+    dsub = classification.get("direct_subclasses", {}) or {}
+    dsup = classification.get("direct_superclasses", {}) or {}
+
+    async def _fsub(version_id, class_iri, direct=False, reasoner="rustdl"):
+        return {"subclasses": list((dsub if direct else subs).get(class_iri, []))}
+
+    async def _fsup(version_id, class_iri, direct=False, reasoner="rustdl"):
+        return {"superclasses": list(dsup.get(class_iri, []))}
+
+    with patch("ontoexplorer.modules.search.evaluator._reasoner_subclasses", new=_fsub), \
+         patch("ontoexplorer.modules.search.evaluator._reasoner_superclasses", new=_fsup):
+        yield
+
+
 _SEARCH_PATCHES = dict(
     version_404="ontoexplorer.api.search._get_version_or_404",
     redis_indexer="ontoexplorer.modules.search.indexer._get_redis",
-    classification="ontoexplorer.modules.search.evaluator.get_classification",
 )
 
 
@@ -161,8 +183,7 @@ async def test_search_auto_and_triggers_expression(client, user_and_key, db_sess
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"],
-               new=AsyncMock(return_value=_classification())):
+         _patch_reasoner(_classification()):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/search",
             params={"q": "'cell death' and 'nucleus'"},
@@ -184,8 +205,7 @@ async def test_search_expression_and_intersection(client, user_and_key, db_sessi
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"],
-               new=AsyncMock(return_value=_classification())):
+         _patch_reasoner(_classification()):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/search",
             params={"q": "'cell death' and 'nucleus'", "mode": "expression"},
@@ -216,7 +236,7 @@ async def test_search_expression_and_with_shared_subclass(client, user_and_key, 
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"], new=AsyncMock(return_value=cls)):
+         _patch_reasoner(cls):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/search",
             params={"q": "'cell death' and 'nucleus'", "mode": "expression"},
@@ -257,7 +277,7 @@ async def test_search_expression_source_from_entity_index(client, user_and_key, 
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"], new=AsyncMock(return_value=cls)):
+         _patch_reasoner(cls):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/search",
             params={"q": "'cell death' and 'nucleus'", "mode": "expression"},
@@ -278,8 +298,7 @@ async def test_search_expression_or_union(client, user_and_key, db_session):
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"],
-               new=AsyncMock(return_value=_classification())):
+         _patch_reasoner(_classification()):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/search",
             params={"q": "'cell death' or 'nucleus'", "mode": "expression"},
@@ -303,8 +322,7 @@ async def test_search_expression_not_complement(client, user_and_key, db_session
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"],
-               new=AsyncMock(return_value=_classification())):
+         _patch_reasoner(_classification()):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/search",
             params={"q": "not 'nucleus'", "mode": "expression"},
@@ -335,7 +353,7 @@ async def test_search_expression_nested(client, user_and_key, db_session):
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"], new=AsyncMock(return_value=cls)):
+         _patch_reasoner(cls):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/search",
             params={"q": "'cell death' and ('nucleus' or 'apoptosis')", "mode": "expression"},
@@ -368,8 +386,7 @@ async def test_search_some_values_from(client, user_and_key, db_session):
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"],
-               new=AsyncMock(return_value=_classification())), \
+         _patch_reasoner(_classification()), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
                return_value=[_mock_sparql_cls("http://ex.org/CD")]):
         resp = await client.get(
@@ -394,8 +411,7 @@ async def test_search_only_restriction(client, user_and_key, db_session):
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"],
-               new=AsyncMock(return_value=_classification())), \
+         _patch_reasoner(_classification()), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
                return_value=[_mock_sparql_cls("http://ex.org/AP")]):
         resp = await client.get(
@@ -417,8 +433,7 @@ async def test_search_min_cardinality(client, user_and_key, db_session):
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"],
-               new=AsyncMock(return_value=_classification())), \
+         _patch_reasoner(_classification()), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
                return_value=[_mock_sparql_cls("http://ex.org/CD")]) as mock_sparql:
         resp = await client.get(
@@ -443,8 +458,7 @@ async def test_search_max_cardinality(client, user_and_key, db_session):
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"],
-               new=AsyncMock(return_value=_classification())), \
+         _patch_reasoner(_classification()), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
                return_value=[]) as mock_sparql:
         resp = await client.get(
@@ -466,8 +480,7 @@ async def test_search_exact_cardinality(client, user_and_key, db_session):
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"],
-               new=AsyncMock(return_value=_classification())), \
+         _patch_reasoner(_classification()), \
          patch("ontoexplorer.modules.search.evaluator.sparql_query",
                return_value=[]) as mock_sparql:
         resp = await client.get(
@@ -496,8 +509,7 @@ async def test_search_annotation_property_rejected_in_restriction(client, user_a
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"],
-               new=AsyncMock(return_value=_classification())):
+         _patch_reasoner(_classification()):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/search",
             params={"q": "'label' some 'nucleus'", "mode": "expression"},
@@ -520,8 +532,7 @@ async def test_search_unresolved_term_returns_400(client, user_and_key, db_sessi
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"],
-               new=AsyncMock(return_value=_classification())):
+         _patch_reasoner(_classification()):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/search",
             params={"q": "'this label does not exist'", "mode": "expression"},
@@ -542,7 +553,7 @@ async def test_search_expression_not_classified(client, user_and_key, db_session
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"],
+         patch("ontoexplorer.modules.search.evaluator._reasoner_subclasses",
                new=AsyncMock(side_effect=ReasoningNotReadyError("fake-vid"))):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/search",
@@ -577,8 +588,7 @@ async def test_search_ambiguous_label_returns_422(client, user_and_key):
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"],
-               new=AsyncMock(return_value={"subclasses": {}, "class_count": 0})), \
+         _patch_reasoner({"subclasses": {}, "class_count": 0}), \
          patch("ontoexplorer.modules.search.evaluator._resolve_label",
                side_effect=AmbiguousLabelError("cell death", [
                    {"label": "cell death", "short": "GO:CD", "iri": "http://go.org/CD"},
@@ -625,8 +635,7 @@ async def test_search_result_fields(client, user_and_key, db_session):
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"],
-               new=AsyncMock(return_value=_classification())):
+         _patch_reasoner(_classification()):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/search",
             params={"q": "'cell death'", "mode": "expression"},
@@ -650,8 +659,7 @@ async def test_search_limit_respected(client, user_and_key, db_session):
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
          patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch(_SEARCH_PATCHES["classification"],
-               new=AsyncMock(return_value=_classification())):
+         _patch_reasoner(_classification()):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/search",
             params={"q": "'cell death' or 'nucleus'", "mode": "expression", "limit": 1},
