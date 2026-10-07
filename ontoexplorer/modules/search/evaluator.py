@@ -91,16 +91,37 @@ class _Resolver:
     class_iris: set[str]
 
 
-def _resolver_from_rows(rows) -> _Resolver:
+# Synthetic owl:Thing — the indexer injects an owl:Thing LABEL entry into the Redis
+# prefix-zset (indexer.py) but writes NO entity_index row for it (it is a built-in,
+# not an asserted class). Seed it into every resolver so `Thing` / the `owl:Thing`
+# CURIE still resolve to the universal class. It is ADDED alongside any real class
+# labelled "Thing" (so a genuine collision still raises AmbiguousLabelError), and
+# `class_iris` (the owl:Thing EXPANSION target) deliberately excludes owl:Thing
+# itself, matching the old `smembers(type:class)` set.
+_OWL_THING_DETAIL = {
+    "iri": _OWL_THING, "primary_label": "Thing", "label": "Thing",
+    "short": "owl:Thing", "type": "class", "source": "",
+    "labels": _json.dumps([{"value": "Thing", "lang": None}]),
+    "synonyms": "[]", "definitions": "[]", "types": "[]",
+}
+
+
+def _seed_owl_thing(resolver: _Resolver) -> None:
+    resolver.by_norm.setdefault("thing", []).append(("class", _OWL_THING))
+    resolver.by_short.setdefault("owl:Thing", ("class", _OWL_THING))
+    resolver.by_iri.setdefault(_OWL_THING, _OWL_THING_DETAIL)
+
+
+def _resolver_from_rows(rows, class_iris: set[str] | None = None) -> _Resolver:
     from ontoexplorer.api.ols._shapes import entity_index_to_legacy_dict as _adapt
     by_norm: dict[str, list[tuple[str, str]]] = {}
     by_short: dict[str, tuple[str, str]] = {}
     by_iri: dict[str, dict] = {}
-    class_iris: set[str] = set()
+    _classes: set[str] = set(class_iris) if class_iris is not None else set()
     for row in rows:
         by_iri[row.iri] = _adapt(row)
-        if row.type == "class":
-            class_iris.add(row.iri)
+        if class_iris is None and row.type == "class":
+            _classes.add(row.iri)
         # Key on the entity's own primary label normalised — matches the old
         # exact-label check `normalise_label(detail["label"]) == norm` (NOT the
         # decamelized primary_label_norm, which is more permissive).
@@ -109,31 +130,148 @@ def _resolver_from_rows(rows) -> _Resolver:
             by_norm.setdefault(n, []).append((row.type, row.iri))
         if row.short and row.short not in by_short:
             by_short[row.short] = (row.type, row.iri)
-    return _Resolver(by_norm, by_short, by_iri, class_iris)
+    resolver = _Resolver(by_norm, by_short, by_iri, _classes)
+    _seed_owl_thing(resolver)
+    return resolver
 
 
-async def build_resolver(db, version_id: str) -> _Resolver:
-    """Load one version's entities from entity_index into a `_Resolver`."""
+def _collect_refs(node) -> tuple[set[str], bool]:
+    """Walk a MOS AST, returning (every NamedClass ref/curie string referenced,
+    whether owl:Thing is referenced). Used to SCOPE the resolver query to just the
+    labels a query mentions, instead of loading a version's whole entity_index."""
+    refs: set[str] = set()
+    owl_thing = False
+
+    def walk(n) -> None:
+        nonlocal owl_thing
+        if isinstance(n, NamedClass):
+            if n.ref:
+                refs.add(n.ref)
+            if n.curie:
+                refs.add(n.curie)
+            if n.curie == "owl:Thing" or normalise_label(n.ref or "") == "thing":
+                owl_thing = True
+            return  # a NamedClass carries no child AST nodes
+        if n is None or isinstance(n, (str, int, float, bool, Literal)):
+            return
+        if isinstance(n, (list, tuple, set)):
+            for x in n:
+                walk(x)
+            return
+        if hasattr(n, "__dict__"):
+            for v in vars(n).values():
+                walk(v)
+
+    walk(node)
+    return refs, owl_thing
+
+
+def _scope_conditions(_EI, refs: set[str]):
+    """SQL predicates selecting entity_index rows that COULD match one of `refs`
+    under the evaluator's exact `normalise_label(primary_label)` / `short` keys.
+
+    A superset (the exact match is re-applied in Python by `_resolver_from_rows`):
+    `primary_label_norm` is the decamelized norm (catches space/punctuation-normal
+    labels) and `lower(primary_label)` catches camelCase labels queried by their
+    concatenated form; `short` catches CURIE/short refs."""
+    from sqlalchemy import func, or_
+    normed = {normalise_label(r) for r in refs if r}
+    normed.discard("")
+    lowered = {r.lower() for r in refs if r}
+    conds = []
+    if normed:
+        conds.append(_EI.primary_label_norm.in_(normed))
+    if lowered:
+        conds.append(func.lower(_EI.primary_label).in_(lowered))
+    if refs:
+        conds.append(_EI.short.in_(refs))
+    return or_(*conds) if conds else None
+
+
+async def build_resolver(
+    db, version_id: str, refs: set[str], *, need_classes: bool = False
+) -> _Resolver:
+    """Load the entity_index rows for one version that `refs` could resolve to.
+
+    Scoped to the query's referenced labels so a single expression search never
+    materialises the whole version (#242 Workstream B). When `need_classes` (the
+    query mentions owl:Thing), also load every class IRI for owl:Thing expansion."""
     from sqlalchemy import select as _select
     from ontoexplorer.models.db import EntityIndex as _EI
-    rows = (await db.execute(_select(_EI).where(_EI.version_id == version_id))).scalars().all()
-    return _resolver_from_rows(rows)
+    cond = _scope_conditions(_EI, refs)
+    rows = []
+    if cond is not None:
+        rows = (await db.execute(
+            _select(_EI).where(_EI.version_id == version_id, cond))).scalars().all()
+    class_iris: set[str] | None = None
+    if need_classes:
+        class_iris = set((await db.execute(
+            _select(_EI.iri).where(_EI.version_id == version_id, _EI.type == "class")
+        )).scalars().all())
+    return _resolver_from_rows(rows, class_iris)
 
 
-async def build_resolvers(db, version_ids: list[str]) -> dict[str, _Resolver]:
-    """Batch-build resolvers for several versions in ONE entity_index query, so the
+async def build_resolvers(
+    db, version_ids: list[str], refs: set[str], *, need_classes: bool = False
+) -> dict[str, _Resolver]:
+    """Batch-build scoped resolvers for several versions in ONE query, so the
     cross-version expression fan-out doesn't run a per-version query on a shared
-    session (asyncio.gather over one AsyncSession is unsafe)."""
+    session (asyncio.gather over one AsyncSession is unsafe). Scoped to `refs`."""
     if not version_ids:
         return {}
     from sqlalchemy import select as _select
     from ontoexplorer.models.db import EntityIndex as _EI
-    rows = (await db.execute(
-        _select(_EI).where(_EI.version_id.in_(list(version_ids))))).scalars().all()
+    vids = list(version_ids)
+    cond = _scope_conditions(_EI, refs)
     by_v: dict[str, list] = {}
-    for row in rows:
-        by_v.setdefault(row.version_id, []).append(row)
-    return {vid: _resolver_from_rows(by_v.get(vid, [])) for vid in version_ids}
+    if cond is not None:
+        rows = (await db.execute(
+            _select(_EI).where(_EI.version_id.in_(vids), cond))).scalars().all()
+        for row in rows:
+            by_v.setdefault(row.version_id, []).append(row)
+    classes_by_v: dict[str, set[str]] = {}
+    if need_classes:
+        crows = (await db.execute(
+            _select(_EI.version_id, _EI.iri).where(
+                _EI.version_id.in_(vids), _EI.type == "class"))).all()
+        for vid, iri in crows:
+            classes_by_v.setdefault(vid, set()).add(iri)
+    return {
+        vid: _resolver_from_rows(
+            by_v.get(vid, []), classes_by_v.get(vid) if need_classes else None)
+        for vid in vids
+    }
+
+
+async def enrich_labels(db, items: list[dict], lang: str | None) -> None:
+    """Fill proper labels on a (small, ≤limit) list of result dicts in place.
+
+    Each item needs `version_id` and `iri`; `label`/`short`/`lang`/`cross_language`
+    are overwritten from entity_index. The resolver renders labels only for the
+    query's referenced IRIs, so expression RESULTS (subclasses/fillers, unknown
+    until evaluation) arrive with a shortname fallback — this batched lookup
+    (one query, bounded by the capped result set) restores their real labels.
+    IRIs with no entity_index row (e.g. owl:Thing-expanded externals) keep the
+    fallback."""
+    from sqlalchemy import select as _select
+    from ontoexplorer.models.db import EntityIndex as _EI
+    from ontoexplorer.api.ols._shapes import entity_index_to_legacy_dict as _adapt
+    pairs = {(it["version_id"], it["iri"]) for it in items if it.get("version_id")}
+    if not pairs:
+        return
+    vids = {v for v, _ in pairs}
+    iris = {i for _, i in pairs}
+    rows = (await db.execute(
+        _select(_EI).where(_EI.version_id.in_(vids), _EI.iri.in_(iris)))).scalars().all()
+    by_key = {(r.version_id, r.iri): _adapt(r) for r in rows}
+    for it in items:
+        detail = by_key.get((it.get("version_id"), it["iri"]))
+        if detail:
+            label, result_lang = _pick_label(detail, lang)
+            it["label"] = label
+            it["short"] = detail.get("short", "")
+            it["lang"] = result_lang
+            it["cross_language"] = bool(lang) and result_lang != lang
 
 
 def _resolve_label(

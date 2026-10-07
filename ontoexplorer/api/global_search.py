@@ -227,9 +227,15 @@ async def global_search(
 
     # Prebuild the entity_index resolvers for all versions in ONE query (#242
     # Workstream B) — the per-version evaluate() below runs under asyncio.gather on
-    # the shared db session, so it must not query the DB itself.
-    from ontoexplorer.modules.search.evaluator import build_resolvers
-    _resolvers = await build_resolvers(db, [str(v.id) for v in versions])
+    # the shared db session, so it must not query the DB itself. Scope the resolver
+    # to the labels THIS query references, so one expression search never loads the
+    # whole catalogue's entity_index into the api pod.
+    from ontoexplorer.modules.search.evaluator import (
+        build_resolvers, enrich_labels, _collect_refs,
+    )
+    _refs, _needs_classes = _collect_refs(ast)
+    _resolvers = await build_resolvers(
+        db, [str(v.id) for v in versions], _refs, need_classes=_needs_classes)
 
     async def search_one_expression(v: OntologyVersion) -> list[dict]:
         try:
@@ -266,8 +272,13 @@ async def global_search(
         if len(merged) >= limit:
             break
 
-    return {"mode": "expression", "query": q, "results": merged[:limit],
-            "count": len(merged[:limit]), "truncated": len(merged) > limit,
+    # Result labels (subclasses/fillers, unknown until evaluation) are not in the
+    # ref-scoped resolver — restore them here in one batched lookup over the final
+    # capped set (runs after gather, so no concurrent DB on the shared session).
+    capped = merged[:limit]
+    await enrich_labels(db, capped, effective_lang)
+    return {"mode": "expression", "query": q, "results": capped,
+            "count": len(capped), "truncated": len(merged) > limit,
             "semantic_results": [], "warnings": warnings}
 
 
@@ -330,8 +341,11 @@ async def ontology_search(
         }
 
     try:
-        from ontoexplorer.modules.search.evaluator import build_resolver
-        _resolver = await build_resolver(db, version_id)
+        from ontoexplorer.modules.search.evaluator import (
+            build_resolver, enrich_labels, _collect_refs,
+        )
+        _refs, _needs_classes = _collect_refs(ast)
+        _resolver = await build_resolver(db, version_id, _refs, need_classes=_needs_classes)
         search_results = await evaluate(ast, version_id, ontology_id, _resolver, lang=effective_lang, direct=direct, reasoner=version.reasoner)
     except AmbiguousLabelError as exc:
         return JSONResponse(status_code=422, content={
@@ -341,14 +355,19 @@ async def ontology_search(
         return JSONResponse(status_code=503, content={"error": "not_classified"})
 
     trimmed = search_results[:limit]
+    _rows = [
+        {"iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type,
+         "type": "class", "version_id": version_id,
+         "lang": r.lang, "cross_language": r.cross_language}
+        for r in trimmed
+    ]
+    # Restore result labels not in the ref-scoped resolver (see fan-out above).
+    await enrich_labels(db, _rows, effective_lang)
+    for _row in _rows:
+        _row.pop("version_id", None)
     return {
         "mode": "expression", "query": q, "version_id": version_id,
-        "results": [
-            {"iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type,
-             "type": "class",
-             "lang": r.lang, "cross_language": r.cross_language}
-            for r in trimmed
-        ],
+        "results": _rows,
         "count": len(trimmed), "truncated": len(search_results) > limit,
         "semantic_results": [],
     }

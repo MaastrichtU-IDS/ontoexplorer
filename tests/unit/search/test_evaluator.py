@@ -87,6 +87,46 @@ async def test_evaluate_named_class_returns_subclasses():
 
 
 @pytest.mark.anyio
+async def test_evaluate_owl_thing_label_returns_all_classes():
+    # owl:Thing has no entity_index row (built-in) — the resolver seeds it, so a
+    # `Thing` query still expands to every class (parity with the old Redis inject).
+    r = _make_resolver_multi("v1", [
+        ("Cell", "http://ex.org/Cell", "class"),
+        ("Nucleus", "http://ex.org/Nucleus", "class"),
+        ("hasPart", "http://ex.org/hp", "object_property"),
+    ])
+    classification = _make_classification({})
+    with patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)):
+        results = await evaluate(NamedClass("Thing", None), "v1", "ont1", r)
+    iris = {x.iri for x in results}
+    # every class, owl:Thing itself excluded, properties excluded
+    assert iris == {"http://ex.org/Cell", "http://ex.org/Nucleus"}
+
+
+@pytest.mark.anyio
+async def test_evaluate_owl_thing_curie_returns_all_classes():
+    r = _make_resolver_multi("v1", [("Cell", "http://ex.org/Cell", "class")])
+    classification = _make_classification({})
+    with patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)):
+        results = await evaluate(NamedClass("owl:Thing", "owl:Thing"), "v1", "ont1", r)
+    assert {x.iri for x in results} == {"http://ex.org/Cell"}
+
+
+@pytest.mark.anyio
+async def test_evaluate_real_thing_class_is_ambiguous_with_owl_thing():
+    # An ontology defining its own class labelled "Thing" collides with the seeded
+    # owl:Thing built-in → AmbiguousLabelError (the old Redis behaviour).
+    r = _make_resolver_multi("v1", [("Thing", "http://ex.org/MyThing", "class")])
+    classification = _make_classification({})
+    with patch("ontoexplorer.modules.search.evaluator.get_classification",
+               new=AsyncMock(return_value=classification)):
+        with pytest.raises(AmbiguousLabelError):
+            await evaluate(NamedClass("Thing", None), "v1", "ont1", r)
+
+
+@pytest.mark.anyio
 async def test_evaluate_and_intersects():
     # Cell subclasses: A, B; Nucleus subclasses: B, C → and = {B}
     r = _make_resolver_multi("v1", [
