@@ -269,23 +269,26 @@ async def list_properties_hal(
         return hal_page(items, request, total=len(items), page=0, size=size,
                         embedded_key="properties")
 
-    # short_form filter: scan all property IRIs
+    # short_form filter → a direct entity_index `short` lookup over the property
+    # types (#242 Workstream B — was a full Redis type-set scan + per-IRI load).
     if short_form:
-        all_iris = await asyncio.to_thread(_all_property_iris_sorted, vid)
-        matched_items = []
-        for candidate_iri in all_iris:
-            entity = await _load_entity(db, vid, candidate_iri)
-            if not entity:
-                continue
-            if entity.get("short") != short_form:
-                continue
-            matched_items.append(
-                entity_to_v1_term(
-                    entity, ontology,
-                    request=request, is_obsolete=False, is_root=False, has_children=False,
-                    lang=lang, resource_kind="properties",
-                )
+        from sqlalchemy import select as _select
+        from ontoexplorer.models.db import EntityIndex as _EI
+        from ontoexplorer.api.ols._shapes import entity_index_to_legacy_dict as _adapt
+        rows = (await db.execute(
+            _select(_EI).where(
+                _EI.version_id == vid,
+                _EI.type.in_(["object_property", "data_property", "annotation_property"]),
+                _EI.short == short_form)
+        )).scalars().all()
+        matched_items = [
+            entity_to_v1_term(
+                _adapt(r), ontology,
+                request=request, is_obsolete=False, is_root=False, has_children=False,
+                lang=lang, resource_kind="properties",
             )
+            for r in rows
+        ]
         return hal_page(matched_items, request, total=len(matched_items), page=0, size=size,
                         embedded_key="properties")
 
