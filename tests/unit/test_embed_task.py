@@ -1,5 +1,42 @@
 """Unit tests for embed_ontology task wiring (no DB or embedder calls)."""
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+
+
+def _fake_entity_row(iri: str):
+    """An EntityIndex-shaped row the adapter (entity_index_to_legacy_dict) can read —
+    the embedder now loads its entities from entity_index (#242 Workstream B)."""
+    return SimpleNamespace(
+        iri=iri, primary_label="Term", short="Term", type="class", source=None,
+        labels={"en": "Term"}, synonyms=[], definitions=[], types=[], is_individual=False,
+    )
+
+
+def _entity_index_session(rows):
+    """A fake async session whose entity_index SELECT yields `rows`; other
+    statements (COUNT, inserts) are recorded in `calls` with a 0 scalar."""
+    calls: list = []
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def execute(self, stmt, *a, **k):
+            calls.append(stmt)
+            res = MagicMock()
+            if "entity_index" in str(stmt).lower():
+                res.scalars.return_value.all.return_value = rows
+            else:
+                res.scalar.return_value = 0
+            return res
+
+        async def commit(self):
+            pass
+
+    return _FakeSession, calls
 
 
 def test_embed_ontology_task_registered():
@@ -8,16 +45,16 @@ def test_embed_ontology_task_registered():
 
 
 def test_embed_ontology_skips_empty_index(monkeypatch):
-    """Task returns skip status when no entities are in the Redis index."""
+    """Task returns skip status when entity_index has no entities for the version."""
     from ontoexplorer.modules.jobs.tasks import embed_ontology
 
     mock_redis = MagicMock()
-    mock_redis.smembers.return_value = set()
     mock_redis.incr.return_value = 1  # attempt-cap guard reads an int
     monkeypatch.setattr(
-        "ontoexplorer.modules.search.indexer._get_redis",
-        lambda: mock_redis,
-    )
+        "ontoexplorer.modules.search.indexer._get_redis", lambda: mock_redis)
+    _FakeSession, _ = _entity_index_session([])  # empty entity_index -> skip
+    monkeypatch.setattr(
+        "ontoexplorer.database.make_celery_db_session", lambda: (lambda: _FakeSession()))
 
     # embed_ontology is now bind=True, so invoke via .apply() (which binds `self`
     # and provides a request context) rather than calling it directly.
@@ -39,9 +76,6 @@ def test_embed_ontology_batches_upserts(monkeypatch):
 
     mock_redis = MagicMock()
     mock_redis.incr.return_value = 1  # attempt-cap guard reads an int
-    mock_redis.smembers.side_effect = lambda key: set(iris) if key.endswith(":class") else set()
-    mock_redis.hgetall.return_value = {"primary_label": "Term", "type": "class"}
-    mock_redis.hget.return_value = "Term"
     monkeypatch.setattr("ontoexplorer.modules.search.indexer._get_redis", lambda: mock_redis)
 
     # No hierarchy edges — keeps the SPARQL step a no-op.
@@ -52,24 +86,8 @@ def test_embed_ontology_batches_upserts(monkeypatch):
         lambda texts: [[0.0] * 8 for _ in texts],
     )
 
-    execute_calls = []
-
-    class _FakeSession:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def execute(self, stmt, *a, **k):
-            execute_calls.append(stmt)
-            res = MagicMock()
-            res.scalar.return_value = 0  # for the post-loop embed_count COUNT(*)
-            return res
-
-        async def commit(self):
-            pass
-
+    # The embedder loads its entities from entity_index (#242 Workstream B).
+    _FakeSession, execute_calls = _entity_index_session([_fake_entity_row(i) for i in iris])
     monkeypatch.setattr(
         "ontoexplorer.database.make_celery_db_session", lambda: (lambda: _FakeSession())
     )

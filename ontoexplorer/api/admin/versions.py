@@ -57,6 +57,15 @@ async def admin_ontology_versions(
     )).all()
     embed_counts = {str(r.version_id): int(r.cnt) for r in count_rows}
 
+    # "indexed" = the version has entity_index rows (#242 Workstream B — was a Redis
+    # `exists(search:meta:{vid})` check), matching admin/health's coverage.
+    from ontoexplorer.models.db import EntityIndex as _EI
+    _indexed_rows = (await db.execute(
+        select(_EI.version_id)
+        .where(_EI.version_id.in_([str(x) for x in version_ids])).distinct()
+    )).scalars().all()
+    indexed_vids = {str(x) for x in _indexed_rows}
+
     search_r = await asyncio.to_thread(_search_redis)
     # Pin-aware, version-aware default (not merely the newest by created_at), so
     # the admin "latest" marker matches the rest of the app.
@@ -66,9 +75,7 @@ async def admin_ontology_versions(
 
     async def _entry(idx: int, v: OntologyVersion) -> dict:
         vid = v.id
-        indexed = await asyncio.to_thread(
-            lambda: bool(search_r.exists(f"search:meta:{vid}"))
-        )
+        indexed = str(vid) in indexed_vids
         profile_computed = await asyncio.to_thread(
             lambda: bool(search_r.exists(f"owl_profile:{vid}"))
         )

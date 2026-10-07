@@ -376,26 +376,25 @@ async def list_terms_hal(
         )
         return hal_page(items, request, total=len(items), page=0, size=size, embedded_key="terms")
 
-    # short_form / obo_id filters: scan the entire type set and match
+    # short_form / obo_id filters → a direct entity_index `short` lookup (#242
+    # Workstream B — was a full Redis class type-set scan + per-IRI load). obo_id
+    # (PREFIX:NNN) reverses to the stored short (PREFIX_NNN).
     if short_form or obo_id:
-        all_iris = await asyncio.to_thread(_redis_smembers_sorted, _type_key(vid, "class"))
-        matched_items = []
-        for candidate_iri in all_iris:
-            entity = await _load_entity(db, vid, candidate_iri)
-            if not entity:
-                continue
-            if short_form and entity.get("short") != short_form:
-                continue
-            if obo_id:
-                from ontoexplorer.api.ols._shapes import derive_obo_id
-                if derive_obo_id(entity.get("short", "")) != obo_id:
-                    continue
-            matched_items.append(
-                entity_to_v1_term(
-                    entity, ontology,
-                    request=request, is_obsolete=False, is_root=False, has_children=False, lang=lang,
-                )
+        from sqlalchemy import select as _select
+        from ontoexplorer.models.db import EntityIndex as _EI
+        from ontoexplorer.api.ols._shapes import entity_index_to_legacy_dict as _adapt
+        _short = short_form if short_form else obo_id.replace(":", "_", 1)
+        rows = (await db.execute(
+            _select(_EI).where(
+                _EI.version_id == vid, _EI.type == "class", _EI.short == _short)
+        )).scalars().all()
+        matched_items = [
+            entity_to_v1_term(
+                _adapt(r), ontology,
+                request=request, is_obsolete=False, is_root=False, has_children=False, lang=lang,
             )
+            for r in rows
+        ]
         return hal_page(matched_items, request, total=len(matched_items), page=0, size=size, embedded_key="terms")
 
     # Paged list of all classes — enumerate + load from entity_index (#242 PR2).
@@ -450,12 +449,17 @@ async def list_terms_roots_hal(
         total = len(cached_terms)
         page_terms = cached_terms[offset:offset + size]
 
+        # Prefetch the root entities from entity_index (#242 Workstream B — was a
+        # per-root Redis hgetall) so synonyms/definitions/source/non-en labels
+        # survive once the Redis :iri: hash stops being written.
+        from ontoexplorer.api.ols._entity_source import load_entities
+        _ent_map = await load_entities(db, vid, [t["iri"] for t in page_terms])
+
         def _enrich(row_terms: list[dict]) -> list[dict]:
-            r = _get_redis()
             result = []
             for t in row_terms:
                 term_iri = t["iri"]
-                entity = r.hgetall(_iri_key(vid, term_iri))
+                entity = _ent_map.get(term_iri)
                 if not entity:
                     # Fallback: construct a minimal entity from the cached row
                     entity = {
