@@ -49,11 +49,6 @@ def _redis_smembers_sorted(key: str) -> list[str]:
     return sorted(_get_redis().smembers(key))
 
 
-def _redis_scard(key: str) -> int:
-    """Sync helper: returns cardinality of a set."""
-    return _get_redis().scard(key)
-
-
 async def _load_entity(db, version_id: str, iri: str) -> dict | None:
     """Load the entity payload from entity_index (#242 Stage 1 PR2); None if absent."""
     from ontoexplorer.api.ols._entity_source import load_entity

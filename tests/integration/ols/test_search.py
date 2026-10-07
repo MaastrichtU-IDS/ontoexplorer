@@ -2,9 +2,8 @@
 
 Covers /ols/api/search, /ols/api/select, and /ols/api/suggest.
 
-All tests use the shared fake-Redis fixture from conftest.py.  The search
-routes call entity_lookup (for /search) and get_completions (for /select and
-/suggest), both of which read from the fake Redis populated by the fixtures.
+The search routes resolve entities from Postgres entity_index now (#242): /search
+via pg_entity_search, /select and /suggest via mos_autocomplete / pg_autocomplete.
 """
 import json
 import uuid

@@ -239,8 +239,8 @@ async def select(
 ) -> dict:
     """Autocomplete-tuned prefix search using the autocomplete pipeline.
 
-    Uses ``get_completions`` (cursor-aware MOS autocomplete) for each indexed
-    version, then aggregates and paginates the results.  Label-only completions
+    Uses ``mos_autocomplete`` (cursor-aware MOS autocomplete, entity_index-backed)
+    for each indexed version, then aggregates and paginates the results.  Label-only completions
     (``iri=None``) are included as lightweight docs.
 
     Accepted-but-ignored in v1: slim, fieldList, queryFields, childrenOf, allChildrenOf

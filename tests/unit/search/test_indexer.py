@@ -5,7 +5,6 @@ from unittest.mock import patch
 
 from ontoexplorer.modules.search.indexer import (
     normalise_label,
-    entity_lookup,
     build_index,
     invalidate_index,
     _prefix_key,
@@ -38,63 +37,6 @@ def test_normalise_label_strips_leading_article():
 
 def test_normalise_label_preserves_curie_colon():
     assert normalise_label("GO:0008219") == "go:0008219"
-
-
-def test_entity_lookup_prefix_match():
-    r = _make_redis()
-    vid = "v1"
-    # Manually insert prefix members
-    key = _prefix_key(vid)
-    r.zadd(key, {"cell death|class|http://ex.org/CellDeath": 0})
-    r.zadd(key, {"cell division|class|http://ex.org/CellDiv": 0})
-    r.zadd(key, {"neuron|class|http://ex.org/Neuron": 0})
-    # Insert entity hashes
-    r.hset(_iri_key(vid, "http://ex.org/CellDeath"), mapping={
-        "label": "cell death", "type": "class",
-        "iri": "http://ex.org/CellDeath", "short": "CellDeath", "synonyms": "",
-    })
-    r.hset(_iri_key(vid, "http://ex.org/CellDiv"), mapping={
-        "label": "cell division", "type": "class",
-        "iri": "http://ex.org/CellDiv", "short": "CellDiv", "synonyms": "",
-    })
-
-    with patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r):
-        results = entity_lookup(vid, "cell", None, limit=10)
-
-    assert len(results) == 2
-    iris = {r["iri"] for r in results}
-    assert "http://ex.org/CellDeath" in iris
-    assert "http://ex.org/CellDiv" in iris
-    assert "http://ex.org/Neuron" not in iris
-
-
-def test_entity_lookup_type_filter():
-    r = _make_redis()
-    vid = "v1"
-    key = _prefix_key(vid)
-    r.zadd(key, {"has part|property|http://ex.org/HasPart": 0})
-    r.zadd(key, {"has attribute|class|http://ex.org/HasAttr": 0})
-    r.hset(_iri_key(vid, "http://ex.org/HasPart"), mapping={
-        "label": "has part", "type": "property",
-        "iri": "http://ex.org/HasPart", "short": "HasPart", "synonyms": "",
-    })
-    r.hset(_iri_key(vid, "http://ex.org/HasAttr"), mapping={
-        "label": "has attribute", "type": "class",
-        "iri": "http://ex.org/HasAttr", "short": "HasAttr", "synonyms": "",
-    })
-
-    with patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r):
-        results = entity_lookup(vid, "has", "property", limit=10)
-
-    assert len(results) == 1
-    assert results[0]["iri"] == "http://ex.org/HasPart"
-
-
-def test_entity_lookup_empty_prefix():
-    r = _make_redis()
-    with patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r):
-        results = entity_lookup("v1", "", None, limit=10)
-    assert results == []
 
 
 def _make_sparql_rows(rows):
@@ -175,3 +117,43 @@ def test_invalidate_index_removes_all_keys():
     assert r.zcard(_prefix_key(vid)) == 0
     assert r.hgetall(_iri_key(vid, "http://ex.org/C")) == {}
     assert r.get(_meta_key(vid)) is None
+
+
+def test_build_index_skips_redis_search_writes_when_gate_off(monkeypatch):
+    """#242 Workstream B write-gate: with INDEX_WRITE_REDIS=false, build_index
+    must not write ANY ``search:*`` entity-index keys (the per-entity ``:iri:``
+    hashes, type-sets, prefix-zset, meta, langs, deprecated/individuals sets).
+    The producer still runs and returns IndexStats — those readers now live on
+    Postgres entity_index — but the Redis search index stays empty.
+
+    build_index reads the flag per call via ``os.getenv("INDEX_WRITE_REDIS")``,
+    so setting the env var off here routes every pipe.* write through _NoopPipe.
+    _populate_reuse_cache is patched to a no-op because it would otherwise open a
+    real Postgres session (unrelated to this gate assertion).
+    """
+    r = _make_redis()
+    monkeypatch.setenv("INDEX_WRITE_REDIS", "false")
+
+    entity_rows = _make_sparql_rows([{"entity": "http://ex.org/Cell"}])
+    label_rows = _make_sparql_rows([
+        {"entity": "http://ex.org/Cell", "label": "cell", "lang": "en"},
+    ])
+
+    def fake_sparql(q):
+        if "owl#Class" in q:
+            return entity_rows
+        if "?label" in q:
+            return label_rows
+        return []
+
+    with patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.indexer.sparql_query", side_effect=fake_sparql), \
+         patch("ontoexplorer.modules.search.indexer.graph_iri", return_value="urn:test"), \
+         patch("ontoexplorer.modules.search.indexer._populate_reuse_cache", return_value=None):
+        stats = build_index("v1", "o1")
+
+    # The in-memory producer still ran and classified the entity.
+    assert stats.class_count == 1
+    assert stats.entities and "http://ex.org/Cell" in stats.entities
+    # ...but nothing was written to the Redis search index.
+    assert r.keys("search:*") == []
