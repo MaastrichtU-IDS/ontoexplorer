@@ -34,6 +34,12 @@ class IndexStats:
     class_count: int
     property_count: int
     individual_count: int
+    # #242 Workstream B: the in-memory producer output, so entity_index can be
+    # populated directly (not re-read from Redis). `entities` is {iri: hash_dict}
+    # in the exact Redis-hash shape; `deprecated`/`individuals` are IRI sets.
+    entities: dict | None = None
+    deprecated: set | None = None
+    individuals: set | None = None
 
 
 def normalise_label(label: str) -> str:
@@ -676,6 +682,12 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
     _FLUSH_ENTITIES = 2000
     _since_flush = 0
 
+    # Collect the exact per-entity hash dicts so entity_index can be populated
+    # DIRECTLY from them (#242 Stage 2 Workstream B), instead of pg_indexer reading
+    # these same hashes back out of Redis. Same dicts in → identical entity_index
+    # rows (parity), and it stops the producer depending on its own Redis output.
+    entity_hashes: dict[str, dict] = {}
+
     for iri, entity_type in entities.items():
         if iri in deprecated_iris:
             continue
@@ -716,6 +728,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         _types = types_by_iri.get(iri)
         if _types:
             _hash["types"] = json.dumps(_types)
+        entity_hashes[iri] = _hash
         pipe.hset(_iri_key(version_id, iri), mapping=_hash)
         pipe.expire(_iri_key(version_id, iri), _SEARCH_TTL)
         pipe.sadd(_type_key(version_id, entity_type), iri)
@@ -753,6 +766,11 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
     if class_count > 0:
         _OWL_THING_IRI = "http://www.w3.org/2002/07/owl#Thing"
         _owl_thing_key = _iri_key(version_id, _OWL_THING_IRI)
+        # NOTE: owl:Thing is intentionally NOT added to entity_hashes (so it does not
+        # become an entity_index row). Giving it a row makes it is_root=True → a
+        # "Thing" node in every class tree and +1 in class/lang counts. It stays a
+        # Redis-only built-in served via the _entity_source fallback; promoting it to
+        # entity_index (with the needed root/list/count filtering) is a separate change.
         pipe.hset(_owl_thing_key, mapping={
             "label":         "Thing",
             "primary_label": "Thing",
@@ -821,6 +839,9 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         class_count=class_count,
         property_count=property_count,
         individual_count=individual_count,
+        entities=entity_hashes,
+        deprecated=deprecated_iris,
+        individuals=individual_iris,
     )
 
 

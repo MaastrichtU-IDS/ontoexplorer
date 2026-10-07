@@ -1173,7 +1173,17 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
             # write (a single DELETE+bulk-insert txn, ~38-120s); ttl comfortably
             # exceeds that, and a stuck lock fails open after `wait`.
             with _pg_write_lock(ttl=600, wait=600, label="entity_index"):
-                pg_rows = populate_entity_index_sync(version_id, ontology_id, _non_roots)
+                # Populate entity_index DIRECTLY from build_index's in-memory output
+                # (#242 Workstream B) instead of pg_indexer re-reading the Redis
+                # hashes/sets — same records, so the rows are identical.
+                pg_rows = populate_entity_index_sync(
+                    version_id, ontology_id, _non_roots,
+                    entities_in=stats.entities,
+                    deprecated_in=stats.deprecated,
+                    individuals_in=stats.individuals)
+            # Release the per-entity dicts now the rows are written — they can be
+            # ~1 GB on the largest ontologies and aren't needed past this point.
+            stats.entities = stats.deprecated = stats.individuals = None
             log.info("entity_index_populated", version_id=version_id, rows=pg_rows,
                      duration_s=round(_phase_t.monotonic() - _et, 2))
         except Exception as exc:
