@@ -225,9 +225,16 @@ async def global_search(
     # Expression mode — evaluate against each version separately
     warnings: list[dict] = []
 
+    # Prebuild the entity_index resolvers for all versions in ONE query (#242
+    # Workstream B) — the per-version evaluate() below runs under asyncio.gather on
+    # the shared db session, so it must not query the DB itself.
+    from ontoexplorer.modules.search.evaluator import build_resolvers
+    _resolvers = await build_resolvers(db, [str(v.id) for v in versions])
+
     async def search_one_expression(v: OntologyVersion) -> list[dict]:
         try:
-            results = await evaluate(ast, str(v.id), str(v.ontology_id), lang=effective_lang, reasoner=v.reasoner)
+            results = await evaluate(ast, str(v.id), str(v.ontology_id),
+                                     _resolvers[str(v.id)], lang=effective_lang, reasoner=v.reasoner)
             # MOS class expressions always yield classes — tag explicitly so the
             # UI badge renders and the chip filter compares like-for-like.
             return [
@@ -323,7 +330,9 @@ async def ontology_search(
         }
 
     try:
-        search_results = await evaluate(ast, version_id, ontology_id, lang=effective_lang, direct=direct, reasoner=version.reasoner)
+        from ontoexplorer.modules.search.evaluator import build_resolver
+        _resolver = await build_resolver(db, version_id)
+        search_results = await evaluate(ast, version_id, ontology_id, _resolver, lang=effective_lang, direct=direct, reasoner=version.reasoner)
     except AmbiguousLabelError as exc:
         return JSONResponse(status_code=422, content={
             "error": "ambiguous_label", "label": exc.label, "candidates": exc.candidates,

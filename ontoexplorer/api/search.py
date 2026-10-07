@@ -100,8 +100,10 @@ async def search(
 
     # Expression mode
     try:
+        from ontoexplorer.modules.search.evaluator import build_resolver
+        _resolver = await build_resolver(db, version_id)
         search_results = await evaluate_relation(
-            ast, version_id, ontology_id,
+            ast, version_id, ontology_id, _resolver,
             relation=relation, lang=effective_lang, direct=direct,
             reasoner=version.reasoner,
         )
