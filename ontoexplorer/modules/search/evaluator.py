@@ -7,7 +7,11 @@ import re
 from dataclasses import dataclass
 
 from ontoexplorer.clients.oxigraph import graph_iri as _graph_iri, sparql_query
-from ontoexplorer.clients.reasoning import get_classification
+from ontoexplorer.clients.reasoning import (
+    ClassNotFoundError,
+    subclasses as _reasoner_subclasses,
+    superclasses as _reasoner_superclasses,
+)
 from ontoexplorer.modules.search.indexer import normalise_label
 from ontoexplorer.modules.search.mos_parser import (
     AllValuesFrom,
@@ -137,20 +141,26 @@ def _resolver_from_rows(rows, class_iris: set[str] | None = None) -> _Resolver:
 
 def _collect_refs(node) -> tuple[set[str], bool]:
     """Walk a MOS AST, returning (every NamedClass ref/curie string referenced,
-    whether owl:Thing is referenced). Used to SCOPE the resolver query to just the
-    labels a query mentions, instead of loading a version's whole entity_index."""
+    whether the FULL class set is needed). Used to SCOPE the resolver query to just
+    the labels a query mentions, instead of loading a version's whole entity_index.
+
+    The full class set (resolver.class_iris) is needed when the expression references
+    owl:Thing (expands to every class) OR contains a `not` (its complement is taken
+    against every class) — so flag either."""
     refs: set[str] = set()
-    owl_thing = False
+    needs_all_classes = False
 
     def walk(n) -> None:
-        nonlocal owl_thing
+        nonlocal needs_all_classes
+        if isinstance(n, Not):
+            needs_all_classes = True
         if isinstance(n, NamedClass):
             if n.ref:
                 refs.add(n.ref)
             if n.curie:
                 refs.add(n.curie)
             if n.curie == "owl:Thing" or normalise_label(n.ref or "") == "thing":
-                owl_thing = True
+                needs_all_classes = True
             return  # a NamedClass carries no child AST nodes
         if n is None or isinstance(n, (str, int, float, bool, Literal)):
             return
@@ -163,7 +173,7 @@ def _collect_refs(node) -> tuple[set[str], bool]:
                 walk(v)
 
     walk(node)
-    return refs, owl_thing
+    return refs, needs_all_classes
 
 
 def resolver_can_resolve(resolver: _Resolver, refs: set[str]) -> bool:
@@ -387,68 +397,77 @@ async def evaluate(
     classes that directly assert a restriction, without expanding via ELK subclasses.
     """
 
-    # Always load ELK: needed for NamedClass/And/Or/Not, and (when direct=False) to
-    # expand SPARQL restriction results with inherited subclasses.
-    classification = await get_classification(version_id, reasoner=reasoner)
-    subclasses_index: dict[str, list[str]] = classification.get("subclasses", {})
-    # The whelk backend keeps ASSERTED subclass edges only in `direct_subclasses`
-    # — `subclasses` holds inferred-not-asserted transitive edges. Neither map
-    # alone is the complete closure: their union is (every edge missing from
-    # `subclasses` is an asserted one, and asserted edges are exactly what
-    # `direct_subclasses` carries). So a class whose subsumption under the query
-    # is asserted (e.g. GO_0016218 subClassOf 'catalytic activity') lives only in
-    # `direct_subclasses` and must be folded back in for a complete answer.
-    _asserted_direct_sub: dict[str, list[str]] = classification.get("direct_subclasses") or {}
-    # direct_subclasses_index falls back to subclasses_index if the key is absent
-    # (older ELK service versions may not include it).
-    _ds = classification.get("direct_subclasses")
-    direct_subclasses_index: dict[str, list[str]] = (
-        _ds if _ds is not None else subclasses_index
-    ) if direct else subclasses_index
-    all_class_iris: set[str] = (
-        set(subclasses_index.keys())
-        | {iri for subs in subclasses_index.values() for iri in subs}
-        | set(_asserted_direct_sub.keys())
-        | {iri for subs in _asserted_direct_sub.values() for iri in subs}
-    )
+    # Targeted subsumption lookups instead of the full (often 40+ MB) classification:
+    # the expression references only a few classes, so fetch each one's subclass set
+    # on demand — small, cached per-IRI by the reasoning client — rather than loading
+    # the whole classification per version (#277). Memoised within this call.
+    _sub_cache: dict[tuple[str, bool], set[str]] = {}
+    # Bound concurrent reasoner round-trips within one evaluate: a restriction can
+    # produce many SPARQL asserters, each expanded with a _closure (2 calls), and
+    # an unbounded gather over those would stampede the reasoner / blow the httpx
+    # timeout. The re-check under the semaphore also collapses duplicate fetches.
+    _sub_sem = asyncio.Semaphore(16)
 
-    async def _eval_with_index(n, idx: dict) -> set[str]:
+    async def _subs(iri: str, direct_only: bool) -> set[str]:
+        key = (iri, direct_only)
+        if key not in _sub_cache:
+            async with _sub_sem:
+                if key not in _sub_cache:
+                    try:
+                        data = await _reasoner_subclasses(
+                            version_id, iri, direct=direct_only, reasoner=reasoner)
+                        _sub_cache[key] = {s for s in data.get("subclasses", []) if s != _OWL_THING}
+                    except ClassNotFoundError:
+                        # The reasoner doesn't know this class — no subclasses (the
+                        # class itself is still included reflexively). ReasoningNotReady
+                        # is deliberately NOT caught: it propagates so the per-version
+                        # endpoint returns 503, and the global fan-out skips it.
+                        _sub_cache[key] = set()
+        return _sub_cache[key]
+
+    async def _closure(iri: str) -> set[str]:
+        # Full subclass closure of iri: the transitive set UNION the asserted-direct
+        # set. The reasoner keeps ASSERTED subclass edges only in the direct set
+        # (`subclasses` holds inferred-not-asserted transitive edges), so a class
+        # whose subsumption is asserted (e.g. GO_0016218 subClassOf 'catalytic
+        # activity') appears only in the direct set and must be folded in. Mirrors
+        # the old subclasses_index ∪ direct_subclasses union.
+        trans, direct_edges = await asyncio.gather(_subs(iri, False), _subs(iri, True))
+        return trans | direct_edges
+
+    async def _eval_elk(n, direct_mode: bool) -> set[str]:
         if isinstance(n, NamedClass):
             iri = _resolve_label(resolver, version_id, n)
             if iri == _OWL_THING:
                 return set(resolver.class_iris)
-            # Union the asserted direct edges so asserted genus links (present
-            # only in direct_subclasses) are never dropped. Idempotent in direct
-            # mode, where `idx` already is the asserted-direct map.
-            subs = set(idx.get(iri, [])) | set(_asserted_direct_sub.get(iri, []))
+            subs = set(await _subs(iri, True)) if direct_mode else set(await _closure(iri))
             subs.add(iri)
             return subs
 
         if isinstance(n, And):
             left, right = await asyncio.gather(
-                _eval_with_index(n.left, idx), _eval_with_index(n.right, idx)
+                _eval_elk(n.left, direct_mode), _eval_elk(n.right, direct_mode)
             )
             return left & right
 
         if isinstance(n, Or):
             left, right = await asyncio.gather(
-                _eval_with_index(n.left, idx), _eval_with_index(n.right, idx)
+                _eval_elk(n.left, direct_mode), _eval_elk(n.right, direct_mode)
             )
             return left | right
 
         if isinstance(n, Not):
-            # Always subtract using the full subclass index — "not A" means
-            # all classes that are not A or any of its subclasses, regardless
-            # of the direct flag on the outer query.
-            return all_class_iris - await _eval_with_index(n.operand, subclasses_index)
+            # "not A" = every class except A and its subclasses, regardless of the
+            # outer direct flag. The universe is the version's full class set.
+            return set(resolver.class_iris) - await _eval_elk(n.operand, False)
 
-        # Restriction nodes (SomeValuesFrom, HasValue, etc.) are not ELK-based;
-        # delegate to _eval which handles SPARQL evaluation for them.
+        # Restriction nodes (SomeValuesFrom, HasValue, etc.) are SPARQL-based;
+        # delegate to _eval which handles them.
         return await _eval(n)
 
     async def _eval(n) -> set[str]:
         if isinstance(n, (NamedClass, And, Or, Not)):
-            return await _eval_with_index(n, direct_subclasses_index)
+            return await _eval_elk(n, direct)
 
         if isinstance(n, InverseRestriction):
             # Reverse lookup: resolve the holder-constraint class, expand it with
@@ -457,8 +476,7 @@ async def evaluate(
             holder_iri = _resolve_label(resolver, version_id, n.holder_ref)
             holders = {holder_iri}
             if not direct:
-                holders |= set(subclasses_index.get(holder_iri, []))
-                holders |= set(_asserted_direct_sub.get(holder_iri, []))
+                holders |= await _closure(holder_iri)
             return await asyncio.to_thread(
                 _sparql_eval_inverse, n, holders, version_id, ontology_id, resolver)
 
@@ -467,14 +485,13 @@ async def evaluate(
             asserters = await asyncio.to_thread(_sparql_eval, n, version_id, ontology_id, resolver)
             if direct:
                 # Direct mode: only classes that explicitly assert the restriction,
-                # no ELK subclass expansion.
+                # no subclass expansion.
                 return asserters
-            # Non-direct: expand with ELK subclasses so classes that inherit the
-            # restriction from a superclass are also included.
+            # Non-direct: expand each asserter with its subclass closure so classes
+            # that inherit the restriction from a superclass are also included.
             expanded = set(asserters)
-            for iri in asserters:
-                expanded.update(subclasses_index.get(iri, []))
-                expanded.update(_asserted_direct_sub.get(iri, []))
+            for c in await asyncio.gather(*[_closure(iri) for iri in asserters]):
+                expanded |= c
             return expanded
 
         return set()
@@ -545,30 +562,38 @@ async def evaluate_relation(
     if not isinstance(node, NamedClass):
         raise RelationRequiresNamedClassError(relation)
 
-    classification = await get_classification(version_id, reasoner=reasoner)
-    # ELK's transitive `superclasses` index is unreliable on some ontologies
-    # (entries missing, or inconsistent with direct_superclasses — e.g. SULO).
-    # `direct_superclasses` is the trustworthy edge set; derive everything from it.
-    direct_superclasses: dict[str, list[str]] = classification.get("direct_superclasses") or {}
-
     iri = _resolve_label(resolver, version_id, node)
 
-    def _direct_parents(c: str) -> list[str]:
-        return [p for p in direct_superclasses.get(c, []) if p != _OWL_THING]
+    # The reasoner's transitive `superclasses` set is unreliable on some ontologies
+    # (entries missing / inconsistent — e.g. SULO); the DIRECT-superclass edges are
+    # the trustworthy set, so derive everything from direct parents. Fetched per-IRI
+    # via targeted reasoner calls (small, cached) instead of the full classification.
+    _parents_cache: dict[str, list[str]] = {}
+
+    async def _direct_parents(c: str) -> list[str]:
+        if c not in _parents_cache:
+            try:
+                data = await _reasoner_superclasses(
+                    version_id, c, direct=True, reasoner=reasoner)
+                _parents_cache[c] = [p for p in data.get("superclasses", []) if p != _OWL_THING]
+            except ClassNotFoundError:
+                # ReasoningNotReadyError propagates (per-version 503); see _subs.
+                _parents_cache[c] = []
+        return _parents_cache[c]
 
     if relation == "superclasses":
         if direct:
-            supers = {p for p in _direct_parents(iri) if p != iri}
+            supers = {p for p in await _direct_parents(iri) if p != iri}
         else:
             # Walk the direct-superclass DAG upward to collect all ancestors.
             supers = set()
-            stack = list(_direct_parents(iri))
+            stack = list(await _direct_parents(iri))
             while stack:
                 cur = stack.pop()
                 if cur in supers or cur == iri:
                     continue
                 supers.add(cur)
-                stack.extend(_direct_parents(cur))
+                stack.extend(await _direct_parents(cur))
         return _build_results(supers, version_id, lang, resolver, "elk")
 
     # relation == "equivalent": A ≡ B iff each is an ancestor of the other.
@@ -577,22 +602,25 @@ async def evaluate_relation(
     # reachable upward from B.
     _ancestor_memo: dict[str, set[str]] = {}
 
-    def _ancestors(start: str) -> set[str]:
+    async def _ancestors(start: str) -> set[str]:
         if start in _ancestor_memo:
             return _ancestor_memo[start]
         seen: set[str] = set()
-        stack = list(_direct_parents(start))
+        stack = list(await _direct_parents(start))
         while stack:
             cur = stack.pop()
             if cur in seen:
                 continue
             seen.add(cur)
-            stack.extend(_direct_parents(cur))
+            stack.extend(await _direct_parents(cur))
         _ancestor_memo[start] = seen
         return seen
 
-    a_ancestors = _ancestors(iri)
-    equivalents = {b for b in a_ancestors if b != iri and iri in _ancestors(b)}
+    a_ancestors = await _ancestors(iri)
+    equivalents = set()
+    for b in a_ancestors:
+        if b != iri and iri in await _ancestors(b):
+            equivalents.add(b)
     return _build_results(equivalents, version_id, lang, resolver, "elk")
 
 
