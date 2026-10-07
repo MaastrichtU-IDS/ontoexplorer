@@ -301,7 +301,13 @@ def _resolve_label(
         if m and m.group(1) in _WELL_KNOWN_PREFIXES:
             return _WELL_KNOWN_PREFIXES[m.group(1)] + m.group(2)
 
-        # Try direct lookup by normalised label (short/CURIE-shaped ref).
+        # A CURIE-shaped ref may be stored verbatim as an entity's `short`
+        # (e.g. ontologies that keep CURIE short-forms) — try that first, then a
+        # normalised-label match, mirroring the old prefix-zset recall for this
+        # branch. Last resort: treat the ref as an IRI directly.
+        hit = resolver.by_short.get(node.ref)
+        if hit and (not allowed_types or hit[0] in allowed_types):
+            return hit[1]
         for etype, iri in resolver.by_norm.get(normalise_label(node.ref), []):
             if not allowed_types or etype in allowed_types:
                 return iri
