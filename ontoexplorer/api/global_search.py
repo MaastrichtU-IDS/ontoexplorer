@@ -238,14 +238,22 @@ async def global_search(
         db, [str(v.id) for v in versions], _refs, need_classes=_needs_classes)
 
     # #277: only evaluate versions whose entity_index actually contains the query's
-    # terms. A version that can't resolve them returns [] anyway, but each one costs
-    # a get_classification() round-trip to the reasoner — fanning that out over every
-    # version (~thousands) is what made global expression search take minutes. The
-    # ref-scoped resolvers were already prefetched above, so this filter is free.
+    # terms. A version that can't resolve them returns [] anyway. The ref-scoped
+    # resolvers were already prefetched above, so this filter is free.
     _candidates = [v for v in versions if resolver_can_resolve(_resolvers[str(v.id)], _refs)]
 
-    # Bound how many reasoner round-trips run at once (defense-in-depth: a common
-    # term may still match many versions; don't stampede the ELK service).
+    # #277: and of those, only evaluate versions that are ALREADY classified. A bare
+    # get_classification() TRIGGERS on-demand reasoning for an unreasoned version
+    # (seconds to minutes each), so a global expression query must never reason
+    # synchronously — it reports matches from already-reasoned ontologies and skips
+    # the rest (one pipelined EXISTS, no reasoner calls).
+    from ontoexplorer.clients.reasoning import filter_already_classified
+    _ready = await filter_already_classified([(str(v.id), v.reasoner) for v in _candidates])
+    _skipped_unclassified = sum(1 for v in _candidates if str(v.id) not in _ready)
+    _candidates = [v for v in _candidates if str(v.id) in _ready]
+
+    # Bound how many cached-classification fetches run at once (each can be a large
+    # payload; don't stampede the reasoner / event loop).
     _sem = asyncio.Semaphore(8)
 
     async def search_one_expression(v: OntologyVersion) -> list[dict]:
@@ -289,6 +297,13 @@ async def global_search(
     # capped set (runs after gather, so no concurrent DB on the shared session).
     capped = merged[:limit]
     await enrich_labels(db, capped, effective_lang)
+    if _skipped_unclassified:
+        # Transparency: a term may exist in ontologies that aren't reasoned yet; those
+        # can't contribute to an expression result until their pipeline classifies them.
+        warnings.append({
+            "type": "versions_skipped_unclassified",
+            "count": _skipped_unclassified,
+        })
     return {"mode": "expression", "query": q, "results": capped,
             "count": len(capped), "truncated": len(merged) > limit,
             "semantic_results": [], "warnings": warnings}

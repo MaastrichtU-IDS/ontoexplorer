@@ -71,6 +71,45 @@ def _get_redis_client():
     return _get_redis()
 
 
+def _classification_cache_redis():
+    """Redis DB 2, where the reasoner (rustdl) caches a full classification under
+    `classification:{vid}:{reasoner}` once a version has been reasoned. Distinct
+    from the app Redis (DB 0) used for the per-IRI super/subclass caches."""
+    import redis as _redis
+
+    from ontoexplorer.config import get_settings
+    base = get_settings().redis_url.rsplit("/", 1)[0]
+    return _redis.from_url(f"{base}/2", decode_responses=True)
+
+
+async def filter_already_classified(pairs: list[tuple[str, str]]) -> set[str]:
+    """Given (version_id, reasoner) pairs, return the subset of version_ids whose
+    classification is ALREADY cached — i.e. can be evaluated without triggering an
+    on-demand classification.
+
+    A single pipelined EXISTS batch against the reasoner's classification cache
+    (DB 2); it NEVER calls the reasoner. Used by global expression search (#277
+    follow-up) so one query can't synchronously classify dozens of large
+    ontologies — it evaluates only the versions already reasoned by the pipeline."""
+    if not pairs:
+        return set()
+
+    def _check() -> set[str]:
+        r = _classification_cache_redis()
+        pipe = r.pipeline(transaction=False)
+        for vid, reasoner in pairs:
+            pipe.exists(f"classification:{vid}:{reasoner}")
+            pipe.exists(f"classification:{vid}")  # legacy bare key
+        res = pipe.execute()
+        ready: set[str] = set()
+        for i, (vid, _reasoner) in enumerate(pairs):
+            if res[2 * i] or res[2 * i + 1]:
+                ready.add(vid)
+        return ready
+
+    return await asyncio.to_thread(_check)
+
+
 async def classify_v2(
     graph: rdflib.Graph,
     version_id: str,
