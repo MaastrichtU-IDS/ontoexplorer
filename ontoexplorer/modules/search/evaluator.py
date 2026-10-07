@@ -402,20 +402,27 @@ async def evaluate(
     # on demand — small, cached per-IRI by the reasoning client — rather than loading
     # the whole classification per version (#277). Memoised within this call.
     _sub_cache: dict[tuple[str, bool], set[str]] = {}
+    # Bound concurrent reasoner round-trips within one evaluate: a restriction can
+    # produce many SPARQL asserters, each expanded with a _closure (2 calls), and
+    # an unbounded gather over those would stampede the reasoner / blow the httpx
+    # timeout. The re-check under the semaphore also collapses duplicate fetches.
+    _sub_sem = asyncio.Semaphore(16)
 
     async def _subs(iri: str, direct_only: bool) -> set[str]:
         key = (iri, direct_only)
         if key not in _sub_cache:
-            try:
-                data = await _reasoner_subclasses(
-                    version_id, iri, direct=direct_only, reasoner=reasoner)
-                _sub_cache[key] = {s for s in data.get("subclasses", []) if s != _OWL_THING}
-            except ClassNotFoundError:
-                # The reasoner doesn't know this class — no subclasses (the class
-                # itself is still included reflexively). ReasoningNotReadyError is
-                # deliberately NOT caught: it propagates so the per-version endpoint
-                # returns 503 "not_classified", and the global fan-out skips it.
-                _sub_cache[key] = set()
+            async with _sub_sem:
+                if key not in _sub_cache:
+                    try:
+                        data = await _reasoner_subclasses(
+                            version_id, iri, direct=direct_only, reasoner=reasoner)
+                        _sub_cache[key] = {s for s in data.get("subclasses", []) if s != _OWL_THING}
+                    except ClassNotFoundError:
+                        # The reasoner doesn't know this class — no subclasses (the
+                        # class itself is still included reflexively). ReasoningNotReady
+                        # is deliberately NOT caught: it propagates so the per-version
+                        # endpoint returns 503, and the global fan-out skips it.
+                        _sub_cache[key] = set()
         return _sub_cache[key]
 
     async def _closure(iri: str) -> set[str]:
