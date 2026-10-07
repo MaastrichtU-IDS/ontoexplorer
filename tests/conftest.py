@@ -1,12 +1,21 @@
 """Shared pytest fixtures for OntoExplorer tests."""
 
-import pytest
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+import os
 
-from ontoexplorer.database import Base, get_db
-from ontoexplorer.main import create_app
-from ontoexplorer.models.db import ApiKey, User
+# Pin AUTH_BYPASS off for the whole test lane, BEFORE any ontoexplorer import reads
+# Settings(). The dev `.env` ships AUTH_BYPASS=true (so local requests are silently
+# dev@localhost), which makes the auth tests get 200 where they assert 401 — a
+# divergence from CI, which has no `.env`. Environment variables win over `.env` in
+# pydantic-settings, so this forces every `get_settings()` to see auth_bypass=False.
+os.environ["AUTH_BYPASS"] = "false"
+
+import pytest  # noqa: E402
+from httpx import ASGITransport, AsyncClient  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
+
+from ontoexplorer.database import Base, get_db  # noqa: E402
+from ontoexplorer.main import create_app  # noqa: E402
+from ontoexplorer.models.db import ApiKey, User  # noqa: E402
 
 # SQLite in-memory for fast, isolated tests
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
