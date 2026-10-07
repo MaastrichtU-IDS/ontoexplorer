@@ -1458,7 +1458,7 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
     try:
         import uuid as _uuid_mod
         from ontoexplorer.clients.oxigraph import graph_iri, sparql_query
-        from ontoexplorer.modules.search.indexer import _get_redis, _iri_key, _type_key
+        from ontoexplorer.modules.search.indexer import _get_redis
         from ontoexplorer.modules.search.embedder import build_entity_text, text_hash, embed_texts
         from ontoexplorer.database import make_celery_db_session
         from ontoexplorer.models.db import OntologyVersion, TermEmbedding
@@ -1481,10 +1481,20 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
             log.warning("embed_ontology_gave_up", version_id=version_id, attempts=_attempts)
             return {"status": "gave_up", "attempts": _attempts, "version_id": version_id}
 
-        all_entities: dict[str, str] = {}
-        for etype in ["class", "object_property", "data_property", "annotation_property", "individual"]:
-            for iri in r.smembers(_type_key(version_id, etype)):
-                all_entities[iri] = etype
+        # Load the version's entities from entity_index (#242 Workstream B — was the
+        # Redis type-sets + per-entity :iri: hgetall) to build the embedding text.
+        from ontoexplorer.models.db import EntityIndex as _EI
+        from ontoexplorer.api.ols._shapes import entity_index_to_legacy_dict as _adapt_ei
+        from sqlalchemy import select as _select
+
+        async def _load_ents() -> dict[str, dict]:
+            async with make_celery_db_session()() as _db:
+                _rows = (await _db.execute(
+                    _select(_EI).where(_EI.version_id == version_id))).scalars().all()
+            return {rr.iri: _adapt_ei(rr) for rr in _rows}
+
+        _ent_map = asyncio.run(_load_ents())
+        all_entities: dict[str, str] = {iri: e.get("type", "class") for iri, e in _ent_map.items()}
 
         if not all_entities:
             log.info("embed_ontology_skip_empty", version_id=version_id)
@@ -1529,12 +1539,12 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
             log.warning("embed_ontology_sparql_warn", version_id=version_id, error=str(exc))
 
         def _label(iri: str) -> str:
-            v = r.hget(_iri_key(version_id, iri), "primary_label")
-            return v or iri.split("/")[-1].split("#")[-1]
+            e = _ent_map.get(iri)
+            return (e.get("primary_label") if e else None) or iri.split("/")[-1].split("#")[-1]
 
         records: list[tuple[str, str, str, str]] = []
         for iri, etype in all_entities.items():
-            entity = r.hgetall(_iri_key(version_id, iri))
+            entity = _ent_map.get(iri)
             if not entity:
                 continue
             p_labels = [_label(p) for p in parents_by_iri.get(iri, [])[:5]]
@@ -1759,7 +1769,6 @@ def refresh_reuse(version_id: str, ontology_id: str) -> dict:
     from ontoexplorer.modules.search.indexer import (
         _get_redis,
         _SEARCH_TTL,
-        _type_key,
     )
 
     async def _gather():
@@ -1773,19 +1782,18 @@ def refresh_reuse(version_id: str, ontology_id: str) -> dict:
             db_imports = [
                 {"import_iri": row.import_iri, "depth": 1} for row in imp_rows
             ]
-            return ont.iri if ont else "", db_imports
+            # Re-collect (iri, type) from entity_index (#242 Workstream B — was the
+            # Redis type-sets).
+            from ontoexplorer.models.db import EntityIndex as _EI
+            _ent_rows = (await db.execute(
+                select(_EI.iri, _EI.type).where(_EI.version_id == version_id))).all()
+            entities = [(iri, etype) for iri, etype in _ent_rows]
+            return ont.iri if ont else "", db_imports, entities
 
-    host_iri, db_imports = asyncio.run(_gather())
+    host_iri, db_imports, entities = asyncio.run(_gather())
     host_namespaces = [host_iri + sep for sep in ("#", "/")] if host_iri else []
 
-    # Re-collect entities from the existing search index in Redis
     r = _get_redis()
-    entities: list[tuple[str, str]] = []
-    for etype in ("class", "object_property", "data_property",
-                  "annotation_property", "individual"):
-        for iri in r.smembers(_type_key(version_id, etype)):
-            entities.append((iri, etype))
-
     g = graph_iri(ontology_id, version_id)
     report = detect_reuse(
         get_store(),
