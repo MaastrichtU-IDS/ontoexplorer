@@ -243,17 +243,17 @@ async def global_search(
     _candidates = [v for v in versions if resolver_can_resolve(_resolvers[str(v.id)], _refs)]
 
     # #277: and of those, only evaluate versions that are ALREADY classified. A bare
-    # get_classification() TRIGGERS on-demand ELK classification for an unreasoned
-    # version (seconds to minutes each), so a global expression query must never
-    # reason synchronously — it reports matches from already-reasoned ontologies and
-    # skips the rest (one pipelined EXISTS, no reasoner calls).
+    # get_classification() TRIGGERS on-demand reasoning for an unreasoned version
+    # (seconds to minutes each), so a global expression query must never reason
+    # synchronously — it reports matches from already-reasoned ontologies and skips
+    # the rest (one pipelined EXISTS, no reasoner calls).
     from ontoexplorer.clients.reasoning import filter_already_classified
     _ready = await filter_already_classified([(str(v.id), v.reasoner) for v in _candidates])
     _skipped_unclassified = sum(1 for v in _candidates if str(v.id) not in _ready)
     _candidates = [v for v in _candidates if str(v.id) in _ready]
 
     # Bound how many cached-classification fetches run at once (each can be a large
-    # payload; don't stampede the ELK service / event loop).
+    # payload; don't stampede the reasoner / event loop).
     _sem = asyncio.Semaphore(8)
 
     async def search_one_expression(v: OntologyVersion) -> list[dict]:

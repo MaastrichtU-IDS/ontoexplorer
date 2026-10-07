@@ -31,7 +31,7 @@ class _FakeRedis:
 @pytest.mark.anyio
 async def test_filter_already_classified(monkeypatch):
     monkeypatch.setattr(
-        reasoning, "_elk_cache_redis",
+        reasoning, "_classification_cache_redis",
         lambda: _FakeRedis({"classification:v1:rustdl", "classification:v2"}),
     )
     ready = await reasoning.filter_already_classified(

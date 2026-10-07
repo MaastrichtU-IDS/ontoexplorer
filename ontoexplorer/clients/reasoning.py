@@ -71,10 +71,10 @@ def _get_redis_client():
     return _get_redis()
 
 
-def _elk_cache_redis():
-    """Redis DB 2, where the reasoner-service caches a full classification under
+def _classification_cache_redis():
+    """Redis DB 2, where the reasoner (rustdl) caches a full classification under
     `classification:{vid}:{reasoner}` once a version has been reasoned. Distinct
-    from the app Redis (DB 0) used for the elk:super/sub per-IRI caches."""
+    from the app Redis (DB 0) used for the per-IRI super/subclass caches."""
     import redis as _redis
 
     from ontoexplorer.config import get_settings
@@ -87,15 +87,15 @@ async def filter_already_classified(pairs: list[tuple[str, str]]) -> set[str]:
     classification is ALREADY cached — i.e. can be evaluated without triggering an
     on-demand classification.
 
-    A single pipelined EXISTS batch against the ELK cache (DB 2); it NEVER calls the
-    reasoner service. Used by global expression search (#277 follow-up) so one query
-    can't synchronously classify dozens of large ontologies — it evaluates only the
-    versions already reasoned by the pipeline."""
+    A single pipelined EXISTS batch against the reasoner's classification cache
+    (DB 2); it NEVER calls the reasoner. Used by global expression search (#277
+    follow-up) so one query can't synchronously classify dozens of large
+    ontologies — it evaluates only the versions already reasoned by the pipeline."""
     if not pairs:
         return set()
 
     def _check() -> set[str]:
-        r = _elk_cache_redis()
+        r = _classification_cache_redis()
         pipe = r.pipeline(transaction=False)
         for vid, reasoner in pairs:
             pipe.exists(f"classification:{vid}:{reasoner}")
