@@ -231,16 +231,28 @@ async def global_search(
     # to the labels THIS query references, so one expression search never loads the
     # whole catalogue's entity_index into the api pod.
     from ontoexplorer.modules.search.evaluator import (
-        build_resolvers, enrich_labels, _collect_refs,
+        build_resolvers, enrich_labels, _collect_refs, resolver_can_resolve,
     )
     _refs, _needs_classes = _collect_refs(ast)
     _resolvers = await build_resolvers(
         db, [str(v.id) for v in versions], _refs, need_classes=_needs_classes)
 
+    # #277: only evaluate versions whose entity_index actually contains the query's
+    # terms. A version that can't resolve them returns [] anyway, but each one costs
+    # a get_classification() round-trip to the reasoner — fanning that out over every
+    # version (~thousands) is what made global expression search take minutes. The
+    # ref-scoped resolvers were already prefetched above, so this filter is free.
+    _candidates = [v for v in versions if resolver_can_resolve(_resolvers[str(v.id)], _refs)]
+
+    # Bound how many reasoner round-trips run at once (defense-in-depth: a common
+    # term may still match many versions; don't stampede the ELK service).
+    _sem = asyncio.Semaphore(8)
+
     async def search_one_expression(v: OntologyVersion) -> list[dict]:
         try:
-            results = await evaluate(ast, str(v.id), str(v.ontology_id),
-                                     _resolvers[str(v.id)], lang=effective_lang, reasoner=v.reasoner)
+            async with _sem:
+                results = await evaluate(ast, str(v.id), str(v.ontology_id),
+                                         _resolvers[str(v.id)], lang=effective_lang, reasoner=v.reasoner)
             # MOS class expressions always yield classes — tag explicitly so the
             # UI badge renders and the chip filter compares like-for-like.
             return [
@@ -261,7 +273,7 @@ async def global_search(
         except (ReasoningNotReadyError, Exception):
             return []
 
-    nested = await asyncio.gather(*[search_one_expression(v) for v in versions])
+    nested = await asyncio.gather(*[search_one_expression(v) for v in _candidates])
     for rows in nested:
         for row in rows:
             if row["iri"] not in seen_iris:

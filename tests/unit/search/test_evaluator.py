@@ -86,6 +86,28 @@ async def test_evaluate_named_class_returns_subclasses():
     assert "http://ex.org/ProkaryoticCell" in iris
 
 
+def test_resolver_can_resolve_prefilter():
+    # #277: pre-filter the global expression fan-out to versions that actually
+    # contain the query's plain-label terms.
+    from ontoexplorer.modules.search.evaluator import resolver_can_resolve
+    r = _make_resolver_multi("v1", [
+        ("Cell", "http://ex.org/Cell", "class"),
+        ("has part", "http://ex.org/HP", "object_property"),
+    ])
+    # all plain-label refs present -> candidate
+    assert resolver_can_resolve(r, {"Cell", "has part"}) is True
+    # a missing plain-label ref -> not a candidate (evaluate would ValueError -> [])
+    assert resolver_can_resolve(r, {"Cell", "Nucleus"}) is False
+    assert resolver_can_resolve(r, {"Nucleus"}) is False
+    # empty refs -> candidate (nothing to exclude on)
+    assert resolver_can_resolve(r, set()) is True
+    # CURIE/IRI-shaped refs (a colon) are not filtered on — handled as literal IRIs
+    assert resolver_can_resolve(r, {"GO:0006915"}) is True
+    assert resolver_can_resolve(r, {"http://x/Y"}) is True
+    # owl:Thing is seeded into every resolver, so a bare Thing term stays a candidate
+    assert resolver_can_resolve(r, {"Thing"}) is True
+
+
 @pytest.mark.anyio
 async def test_evaluate_owl_thing_label_returns_all_classes():
     # owl:Thing has no entity_index row (built-in) — the resolver seeds it, so a

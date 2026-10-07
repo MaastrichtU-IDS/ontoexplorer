@@ -166,6 +166,25 @@ def _collect_refs(node) -> tuple[set[str], bool]:
     return refs, owl_thing
 
 
+def resolver_can_resolve(resolver: _Resolver, refs: set[str]) -> bool:
+    """True if every PLAIN-LABEL ref (one with no CURIE/IRI colon) resolves to >=1
+    entity in this resolver.
+
+    Pre-filter for the global expression fan-out (#277): a version that can't resolve
+    the query's terms would raise ValueError in evaluate() and return [], so skipping
+    it is behaviour-preserving — but it avoids that version's get_classification()
+    reasoner round-trip. CURIE/IRI-shaped refs (with a colon) are NOT filtered on:
+    they fall back to a literal IRI that may or may not exist in the version, which
+    evaluate() handles without raising. owl:Thing ("thing") is seeded into every
+    resolver, so a bare Thing term keeps every version a candidate."""
+    for ref in refs:
+        if not ref or ":" in ref:
+            continue
+        if not resolver.by_norm.get(normalise_label(ref)) and ref not in resolver.by_short:
+            return False
+    return True
+
+
 def _scope_conditions(_EI, refs: set[str]):
     """SQL predicates selecting entity_index rows that COULD match one of `refs`
     under the evaluator's exact `normalise_label(primary_label)` / `short` keys.
