@@ -7,6 +7,21 @@ from ontoexplorer.models.db import SavedQuery, User
 
 
 @pytest.fixture()
+def requires_postgres(db_session):
+    """Skip a test on the sqlite lane.
+
+    `pg_entity_search` / `pg_autocomplete_entities` are Postgres-only: the prefix
+    stage orders by `COLLATE "C"` (dialect-handled), but the tsvector fallback
+    (`search_tsv @@ to_tsquery`), trigram `similarity()`, and `= ANY(:array)`
+    filters have no sqlite equivalent. Tests that depend on their results therefore
+    only run against a real Postgres backend.
+    """
+    bind = db_session.get_bind()
+    if bind is None or bind.dialect.name != "postgresql":
+        pytest.skip("Postgres-only: pg_search uses tsvector/trigram/ANY (no sqlite equivalent)")
+
+
+@pytest.fixture()
 async def admin_client(app, client):
     """Yield the test client with _require_admin overridden to skip DB/email checks."""
     from ontoexplorer.api.admin._common import _require_admin

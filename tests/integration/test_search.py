@@ -115,6 +115,7 @@ _SEARCH_PATCHES = dict(
 
 # ── Entity mode ───────────────────────────────────────────────────────────────
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_search_entity_mode(client, user_and_key):
     _, raw_key = user_and_key
@@ -135,6 +136,7 @@ async def test_search_entity_mode(client, user_and_key):
     assert any(r["iri"] == "http://ex.org/CD" for r in body["results"])
 
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_search_entity_mode_prefix_match(client, user_and_key):
     """Prefix 'nuc' matches 'nucleus'."""
@@ -155,6 +157,7 @@ async def test_search_entity_mode_prefix_match(client, user_and_key):
 
 # ── Auto-mode detection ───────────────────────────────────────────────────────
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_search_auto_single_word_falls_back_to_entity(client, user_and_key):
     """Bare single word (no operators) → auto-mode picks entity, not expression."""
@@ -444,8 +447,10 @@ async def test_search_min_cardinality(client, user_and_key, db_session):
     assert resp.status_code == 200
     assert mock_sparql.called
     sparql_text = mock_sparql.call_args[0][0]
-    assert "minCardinality" in sparql_text
-    assert "2" in sparql_text
+    # Named-class filler ('nucleus') → qualified cardinality (owl:minQualifiedCardinality
+    # + onClass); the unqualified owl:minCardinality form is only emitted for owl:Thing.
+    assert "minQualifiedCardinality" in sparql_text
+    assert ">= 2" in sparql_text
 
 
 @pytest.mark.anyio
@@ -467,7 +472,10 @@ async def test_search_max_cardinality(client, user_and_key, db_session):
             headers=auth,
         )
     assert resp.status_code == 200
-    assert "maxCardinality" in mock_sparql.call_args[0][0]
+    # Named-class filler → owl:maxQualifiedCardinality (+ FILTER(?n <= 1)).
+    sparql_text = mock_sparql.call_args[0][0]
+    assert "maxQualifiedCardinality" in sparql_text
+    assert "<= 1" in sparql_text
 
 
 @pytest.mark.anyio
@@ -489,7 +497,10 @@ async def test_search_exact_cardinality(client, user_and_key, db_session):
             headers=auth,
         )
     assert resp.status_code == 200
-    assert "cardinality" in mock_sparql.call_args[0][0]
+    # Named-class filler → owl:qualifiedCardinality (+ FILTER(?n = 1)).
+    sparql_text = mock_sparql.call_args[0][0]
+    assert "qualifiedCardinality" in sparql_text
+    assert "= 1" in sparql_text
 
 
 # ── Annotation property exclusion ────────────────────────────────────────────
@@ -605,6 +616,7 @@ async def test_search_ambiguous_label_returns_422(client, user_and_key):
     assert len(body["candidates"]) == 2
 
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_search_iri_direct(client, user_and_key):
     """Bare IRI skips parser entirely → entity mode lookup."""
@@ -673,6 +685,7 @@ async def test_search_limit_respected(client, user_and_key, db_session):
 
 # ── Autocomplete ──────────────────────────────────────────────────────────────
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_autocomplete_open_quote(client, user_and_key):
     _, raw_key = user_and_key
@@ -680,8 +693,7 @@ async def test_autocomplete_open_quote(client, user_and_key):
     _seed_redis("fake-vid")
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
-         patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch("ontoexplorer.modules.search.autocomplete._get_redis", return_value=_FAKE_REDIS):
+         patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/autocomplete",
             params={"q": "'cell", "cursor": 5},
@@ -693,13 +705,13 @@ async def test_autocomplete_open_quote(client, user_and_key):
     assert any("cell death" in c["text"] for c in body["completions"])
 
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_autocomplete_after_entity_returns_keywords(client, user_and_key):
     _, raw_key = user_and_key
     auth = {"Authorization": f"Bearer {raw_key}"}
 
-    with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
-         patch("ontoexplorer.modules.search.autocomplete._get_redis", return_value=_FAKE_REDIS):
+    with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/autocomplete",
             params={"q": "'Cell'", "cursor": 6},
@@ -719,8 +731,7 @@ async def test_autocomplete_after_and_suggests_entities(client, user_and_key):
     _seed_redis("fake-vid")
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
-         patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch("ontoexplorer.modules.search.autocomplete._get_redis", return_value=_FAKE_REDIS):
+         patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/autocomplete",
             params={"q": "'cell death' and '", "cursor": 18},
@@ -739,8 +750,7 @@ async def test_autocomplete_after_some_suggests_entities(client, user_and_key):
     _seed_redis("fake-vid")
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
-         patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch("ontoexplorer.modules.search.autocomplete._get_redis", return_value=_FAKE_REDIS):
+         patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/autocomplete",
             params={"q": "'has part' some '", "cursor": 17},
@@ -750,6 +760,7 @@ async def test_autocomplete_after_some_suggests_entities(client, user_and_key):
     assert resp.json()["context"] == "open_quote"
 
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_autocomplete_response_shape(client, user_and_key):
     """Each completion has text, type, insert fields."""
@@ -758,8 +769,7 @@ async def test_autocomplete_response_shape(client, user_and_key):
     _seed_redis("fake-vid")
 
     with patch(_SEARCH_PATCHES["version_404"], new=_MOCK_VERSION), \
-         patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS), \
-         patch("ontoexplorer.modules.search.autocomplete._get_redis", return_value=_FAKE_REDIS):
+         patch(_SEARCH_PATCHES["redis_indexer"], return_value=_FAKE_REDIS):
         resp = await client.get(
             "/api/v1/ontologies/fake-oid/fake-vid/autocomplete",
             params={"q": "'nuc", "cursor": 4},
