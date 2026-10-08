@@ -724,12 +724,16 @@ async def list_ontologies(
             .subquery()
         )
         _joins.append((_latest_meta, _latest_meta.c.oid == Ontology.id))
+        # `resolved` is a PG `json` column (not `jsonb`), and once it is projected
+        # through a subquery the `.astext` accessor is gone — so pull the text out
+        # with json_extract_path_text (the json-typed counterpart of ->>). This
+        # branch is already Postgres-only (`_q_sql`), so the PG function is safe.
         conditions.append(_or(
             Ontology.shortname.ilike(ql),
             Ontology.iri.ilike(ql),
             Ontology.title.ilike(ql),
-            _latest_meta.c.resolved["title"].astext.ilike(ql),
-            _latest_meta.c.resolved["description"].astext.ilike(ql),
+            func.json_extract_path_text(_latest_meta.c.resolved, "title").ilike(ql),
+            func.json_extract_path_text(_latest_meta.c.resolved, "description").ilike(ql),
         ))
 
     stmt = select(Ontology)
