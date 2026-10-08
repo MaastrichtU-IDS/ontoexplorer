@@ -202,6 +202,44 @@ async def version_lang_counts(db: AsyncSession, version_id: str) -> dict[str, in
     return out
 
 
+async def version_lang_counts_bulk(
+    db: AsyncSession, version_ids: list[str]
+) -> dict[str, dict[str, int]]:
+    """`{version_id: {lang: count}}` for several versions in ONE query.
+
+    The per-version `version_lang_counts` is a jsonb_object_keys aggregation that
+    costs hundreds of ms on a large ontology; calling it in a loop over the whole
+    catalogue is what made the catalogue search ~100s (#286). This batches them
+    into a single `GROUP BY version_id, k` so a page's langs are one round-trip.
+    """
+    if not version_ids:
+        return {}
+    vids = list(version_ids)
+    out: dict[str, dict[str, int]] = {v: {} for v in vids}
+    bind = db.get_bind()
+    if bind is not None and bind.dialect.name == "postgresql":
+        from sqlalchemy import text as _text
+        rows = (await db.execute(_text(
+            "SELECT version_id, k AS lang, count(*) AS n "
+            "FROM entity_index, jsonb_object_keys(labels) AS k "
+            "WHERE version_id = ANY(:vids) GROUP BY version_id, k"
+        ), {"vids": vids})).all()
+        for version_id, lang, n in rows:
+            out.setdefault(version_id, {})[lang] = int(n)
+        return out
+    # sqlite (tests): tally in Python.
+    rows2 = (await db.execute(
+        select(EntityIndex.version_id, EntityIndex.labels)
+        .where(EntityIndex.version_id.in_(vids))
+    )).all()
+    for version_id, labels in rows2:
+        if isinstance(labels, dict):
+            d = out.setdefault(version_id, {})
+            for lang in labels:
+                d[lang] = d.get(lang, 0) + 1
+    return out
+
+
 def _local_name(iri: str) -> str:
     """Human-readable fallback label: the IRI's local name."""
     fragment = iri.rstrip("/")
