@@ -3405,44 +3405,24 @@ async def term_ancestors(
     version = await _get_version_or_404(db, ontology_id, version_id)
 
     if mode == "inferred":
-        from ontoexplorer.clients.reasoning import get_classification
+        # One targeted call for this term's transitive superclasses (#282), NOT the
+        # full classification blob — that parsed into multi-GB on a large ontology
+        # (CHEBI, 218k classes) and OOM-killed the api pod just to walk one term's
+        # ancestors. superclasses(direct=False) is exactly the flat ancestor set.
+        from ontoexplorer.clients.reasoning import superclasses as _reasoner_superclasses
         from ontoexplorer.api.ols._entity_source import label_for, version_label_map
 
         try:
-            classification = await get_classification(version_id, reasoner=version.reasoner)
+            data = await _reasoner_superclasses(version_id, iri, direct=False, reasoner=version.reasoner)
         except Exception:
             return {"ancestors": [], "reasoning_available": False}
 
-        elk_direct: dict[str, list[str]] = classification.get("direct_superclasses", {})
-        elk_all:    dict[str, list[str]] = classification.get("superclasses", {})
         _excl = {_OWL_THING, _OWL_NOTHING}
-
-        def _direct_parents(c: str) -> list[str]:
-            if c in elk_direct:
-                return elk_direct[c]
-            raw = [p for p in elk_all.get(c, []) if p not in _excl]
-            return [p for p in raw
-                    if not any(p in elk_all.get(q, []) for q in raw if q != p)]
-
-        # Walk up from term to root collecting every ancestor
-        ancestors: list[str] = []
-        visited: set[str] = set()
-        queue = list(_direct_parents(iri))
-        while queue:
-            p = queue.pop()
-            if p in visited or p in _excl:
-                continue
-            visited.add(p)
-            ancestors.append(p)
-            queue.extend(_direct_parents(p))
+        ancestors = [a for a in data.get("superclasses", []) if a not in _excl]
 
         _lmap = await version_label_map(db, version_id)
-
-        def _label(i: str) -> str:
-            return label_for(_lmap, i)
-
         return {
-            "ancestors": [{"iri": a, "label": _label(a)} for a in ancestors],
+            "ancestors": [{"iri": a, "label": label_for(_lmap, a)} for a in ancestors],
             "reasoning_available": True,
         }
 

@@ -11,7 +11,6 @@ This module's routes MUST be included in the top-level router BEFORE
 are included after that catch-all the literal suffixes "jstree" and "graph"
 would be consumed by it and return 404.
 """
-import asyncio
 from collections import deque
 
 from fastapi import APIRouter, Depends, Query
@@ -22,10 +21,14 @@ from ontoexplorer.api.ols._entity_source import label_for, version_label_map
 from ontoexplorer.api.ols._iri import double_decode_iri
 from ontoexplorer.database import get_db
 
-# Re-use asserted hierarchy fetchers from terms.py (already tested there).
+# Async asserted-edge fetchers from terms.py: one indexed hierarchy_edge query per
+# call (SPARQL fallback when a version isn't materialised). #283: the jstree/graph
+# builders used the SYNC helpers, which scanned EVERY class via per-IRI Redis hgets
+# (_has_children alone did that for every node) — a fixed multi-second cost even on
+# a tiny ontology. Going async lets these widgets use the indexed path.
 from ontoexplorer.api.ols.terms import (
-    _asserted_children_sync,
-    _asserted_parents_sync,
+    _asserted_children,
+    _asserted_parents,
     _OWL_EXCLUDED,
 )
 
@@ -38,16 +41,22 @@ router = APIRouter()
 _RDFS_SUBCLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
 
 
-def _has_children_sync(ontology_id: str, vid: str, iri: str) -> bool:
-    """Return True when the given IRI has at least one asserted child."""
-    return bool(_asserted_children_sync(ontology_id, vid, iri))
+async def _direct_children(db, ontology_id: str, vid: str, iri: str) -> list[str]:
+    return [c for c in await _asserted_children(db, ontology_id, vid, iri)
+            if c not in _OWL_EXCLUDED]
+
+
+async def _direct_parents(db, ontology_id: str, vid: str, iri: str) -> list[str]:
+    return [p for p in await _asserted_parents(db, ontology_id, vid, iri)
+            if p not in _OWL_EXCLUDED]
 
 
 # ---------------------------------------------------------------------------
 # jstree builder
 # ---------------------------------------------------------------------------
 
-def _build_jstree(
+async def _build_jstree(
+    db,
     ontology_id: str,
     ontology_name: str,
     vid: str,
@@ -57,93 +66,60 @@ def _build_jstree(
 ) -> list[dict]:
     """Build jstree node list.
 
-    Algorithm
-    ---------
     1. BFS up from focus_iri to collect the ancestor chain.
-    2. For every node in the chain, build a jstree dict.
-    3. The direct parent id for each node is its immediate parent's IRI;
-       nodes with no parents get ``parent="#"``.
-    4. state.opened=True for all nodes in the focus path.
-    5. If include_siblings, for each ancestor find its siblings (other children
-       of the ancestor's parent) and add them as collapsed nodes.
+    2. For every node in the chain, build a jstree dict (parent id = first direct
+       parent, or "#" for roots); state.opened=True for the focus path.
+    3. If include_siblings, add each ancestor's siblings as collapsed nodes.
     """
     # --- Step 1: collect the ancestor chain (BFS upward) --------------------
-    # path_nodes: list of (iri, parent_iri_or_None)
-    # We keep a mapping iri → immediate_parents for building the tree later.
     visited: set[str] = set()
     parents_map: dict[str, list[str]] = {}  # iri -> its direct parents
 
     queue: deque[str] = deque([focus_iri])
     visited.add(focus_iri)
-
     while queue:
         node = queue.popleft()
-        parents = [
-            p for p in _asserted_parents_sync(ontology_id, vid, node)
-            if p not in _OWL_EXCLUDED
-        ]
+        parents = await _direct_parents(db, ontology_id, vid, node)
         parents_map[node] = parents
         for p in parents:
             if p not in visited:
                 visited.add(p)
                 queue.append(p)
 
-    # --- Step 2: build jstree nodes -----------------------------------------
-    # All nodes in the focus path should be opened.
     focus_path_iris: set[str] = set(visited)
-
-    # Map from iri → jstree node id (same as IRI for single-parent chains;
-    # kept as IRI for simplicity).
     nodes: list[dict] = []
     emitted: set[str] = set()
 
-    def _make_node(iri: str, parent_id: str, opened: bool) -> dict:
+    async def _make_node(iri: str, parent_id: str, opened: bool) -> dict:
         return {
             "id": iri,
             "parent": parent_id,
             "text": label_for(lmap, iri),
             "iri": iri,
-            "children": _has_children_sync(ontology_id, vid, iri),
+            "children": bool(await _direct_children(db, ontology_id, vid, iri)),
             "state": {"opened": opened},
             "a_attr": {"iri": iri},
             "ontology_name": ontology_name,
         }
 
-    # Emit all nodes in the focus path.  For each node, determine its parent
-    # id: the first element in its parents_map entry (or "#" for roots).
+    # --- Step 2: emit the focus-path nodes ----------------------------------
     for iri in focus_path_iris:
         parents = parents_map.get(iri, [])
-        # Use the first parent as the tree parent (OLS behaviour for multi-parent
-        # is to pick one; pick the first in the list).
         parent_id = parents[0] if parents else "#"
-        opened = True  # all nodes in the focus path are opened
-        node_dict = _make_node(iri, parent_id, opened)
-        nodes.append(node_dict)
+        nodes.append(await _make_node(iri, parent_id, opened=True))
         emitted.add(iri)
 
     # --- Step 3: siblings (if requested) ------------------------------------
     if include_siblings:
-        # For each ancestor (non-focus nodes), add its siblings: other children
-        # of the ancestor's parent.
         ancestors = focus_path_iris - {focus_iri}
         for ancestor in ancestors:
-            ancestor_parents = parents_map.get(ancestor, [])
-            for ap in ancestor_parents:
-                # ap's children = siblings of ancestor
-                siblings = _asserted_children_sync(ontology_id, vid, ap)
-                for sibling in siblings:
-                    if sibling in _OWL_EXCLUDED:
-                        continue
+            for ap in parents_map.get(ancestor, []):
+                for sibling in await _direct_children(db, ontology_id, vid, ap):
                     if sibling in emitted:
                         continue
-                    # Siblings are collapsed (not on focus path)
-                    sibling_parents = [
-                        p for p in _asserted_parents_sync(ontology_id, vid, sibling)
-                        if p not in _OWL_EXCLUDED
-                    ]
-                    sibling_parent_id = sibling_parents[0] if sibling_parents else "#"
-                    sibling_node = _make_node(sibling, sibling_parent_id, False)
-                    nodes.append(sibling_node)
+                    sib_parents = await _direct_parents(db, ontology_id, vid, sibling)
+                    sib_parent_id = sib_parents[0] if sib_parents else "#"
+                    nodes.append(await _make_node(sibling, sib_parent_id, opened=False))
                     emitted.add(sibling)
 
     return nodes
@@ -173,79 +149,36 @@ async def term_jstree(
     vid = str(version.id)
 
     lmap = await version_label_map(db, vid)
-    nodes = await asyncio.to_thread(
-        _build_jstree,
-        str(ontology.id),
-        ontology.shortname,
-        vid,
-        iri,
-        siblings,
-        lmap,
+    return await _build_jstree(
+        db, str(ontology.id), ontology.shortname, vid, iri, siblings, lmap,
     )
-    return nodes
 
 
 # ---------------------------------------------------------------------------
 # graph builder
 # ---------------------------------------------------------------------------
 
-def _build_graph(
-    ontology_id: str,
-    vid: str,
-    focus_iri: str,
-    lmap: dict,
-) -> dict:
-    """Build 1-hop neighbourhood graph centred on focus_iri.
-
-    Includes:
-    - focus_iri as a node
-    - direct asserted parents as nodes + subClassOf edges (focus → parent)
-    - direct asserted children as nodes + subClassOf edges (child → focus)
-    """
+async def _build_graph(db, ontology_id: str, vid: str, focus_iri: str, lmap: dict) -> dict:
+    """1-hop neighbourhood graph: focus_iri + its direct asserted parents & children."""
     nodes_map: dict[str, dict] = {}
     edges: list[dict] = []
 
     def _node(iri: str) -> dict:
-        return {
-            "id": iri,
-            "iri": iri,
-            "label": label_for(lmap, iri),
-            "type": "class",
-        }
+        return {"id": iri, "iri": iri, "label": label_for(lmap, iri), "type": "class"}
 
     def _edge(source: str, target: str) -> dict:
-        return {
-            "source": source,
-            "target": target,
-            "label": "rdfs:subClassOf",
-            "uri": _RDFS_SUBCLASS_OF,
-        }
+        return {"source": source, "target": target,
+                "label": "rdfs:subClassOf", "uri": _RDFS_SUBCLASS_OF}
 
-    # Focus node
     nodes_map[focus_iri] = _node(focus_iri)
-
-    # Parents
-    parents = [
-        p for p in _asserted_parents_sync(ontology_id, vid, focus_iri)
-        if p not in _OWL_EXCLUDED
-    ]
-    for p in parents:
+    for p in await _direct_parents(db, ontology_id, vid, focus_iri):
         nodes_map[p] = _node(p)
         edges.append(_edge(focus_iri, p))
-
-    # Children
-    children = [
-        c for c in _asserted_children_sync(ontology_id, vid, focus_iri)
-        if c not in _OWL_EXCLUDED
-    ]
-    for c in children:
+    for c in await _direct_children(db, ontology_id, vid, focus_iri):
         nodes_map[c] = _node(c)
         edges.append(_edge(c, focus_iri))
 
-    return {
-        "nodes": list(nodes_map.values()),
-        "edges": edges,
-    }
+    return {"nodes": list(nodes_map.values()), "edges": edges}
 
 
 # ---------------------------------------------------------------------------
@@ -269,11 +202,4 @@ async def term_graph(
     vid = str(version.id)
 
     lmap = await version_label_map(db, vid)
-    graph = await asyncio.to_thread(
-        _build_graph,
-        str(ontology.id),
-        vid,
-        iri,
-        lmap,
-    )
-    return graph
+    return await _build_graph(db, str(ontology.id), vid, iri, lmap)
