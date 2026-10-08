@@ -32,7 +32,6 @@ from ontoexplorer.api.ols._envelope import hal_page
 from ontoexplorer.api.ols._iri import double_decode_iri
 from ontoexplorer.api.ols._shapes import entity_to_v1_term
 from ontoexplorer.database import get_db
-from ontoexplorer.modules.search.indexer import _get_redis, _type_key
 
 router = APIRouter()
 
@@ -55,15 +54,6 @@ async def _load_entity(db, version_id: str, iri: str) -> dict | None:
     """Load the entity payload from entity_index (#242 Stage 1 PR2); None if absent."""
     from ontoexplorer.api.ols._entity_source import load_entity
     return await load_entity(db, version_id, iri)
-
-
-def _all_property_iris_sorted(vid: str) -> list[str]:
-    """Return a deterministically-ordered list of all property IRIs across the three types."""
-    r = _get_redis()
-    all_iris: set[str] = set()
-    for pt in _PROPERTY_TYPES:
-        all_iris.update(r.smembers(_type_key(vid, pt)))
-    return sorted(all_iris)
 
 
 # ---------------------------------------------------------------------------

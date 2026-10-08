@@ -1,27 +1,22 @@
-"""Populate the Postgres `entity_index` table from the Redis search index.
+"""Populate the Postgres `entity_index` table — the authoritative search index.
 
-The Redis index (built by `indexer.build_index`) remains the source of truth: it owns
-the heavy SPARQL → label/synonym/definition assembly. This module mirrors a slim
-projection of that work into Postgres so /search can run as one SQL query with
-real tsvector ranking and trigram fuzzy matching.
+`indexer.build_index` owns the heavy SPARQL → label/synonym/definition assembly and
+hands its in-memory output straight to `populate_entity_index`, which projects a
+slim per-entity row into Postgres so /search runs as one SQL query with real
+tsvector ranking and trigram fuzzy matching. (Before #242 Workstream B this read
+the records back out of the Redis search index; that index is gone.)
 """
 from __future__ import annotations
 
 import json
 import logging
 import re
-from typing import Iterable
 
 from sqlalchemy import insert, text
 
 from ontoexplorer.models.db import EntityIndex
 from ontoexplorer.modules.search.lang import canonical_lang
-from ontoexplorer.modules.search.indexer import (
-    _get_redis,
-    _iri_key,
-    _type_key,
-    normalise_label,
-)
+from ontoexplorer.modules.search.indexer import normalise_label
 
 
 # Insert a space at every camelCase boundary: `aB → a B` and `XMLP → XML P`.
@@ -52,15 +47,6 @@ def split_compound_labels(s: str) -> str:
 logger = logging.getLogger(__name__)
 
 _ENTITY_TYPES = ("class", "object_property", "data_property", "annotation_property", "individual")
-
-
-def _iter_version_iris(version_id: str) -> Iterable[str]:
-    """Yield every entity IRI indexed for the version. Reads the per-type sets."""
-    r = _get_redis()
-    for entity_type in _ENTITY_TYPES:
-        members = r.smembers(_type_key(version_id, entity_type))
-        for iri in members:
-            yield iri
 
 
 def _build_search_text(entity: dict) -> str:
@@ -101,43 +87,22 @@ async def populate_entity_index(
     session, version_id: str, ontology_id: str,
     non_roots: set[str] | None = None,
     *,
-    entities_in: dict | None = None,
-    deprecated_in: set | None = None,
-    individuals_in: set | None = None,
+    entities_in: dict,
+    deprecated_in: set,
+    individuals_in: set,
 ) -> int:
     """Populate the `entity_index` table for *version_id*.
 
     Deletes existing rows for the version first, then bulk-inserts. Returns the number
     of rows written. Safe to re-run; uses a single transaction.
 
-    Source of the per-entity records: the in-memory producer output when
-    `entities_in`/`deprecated_in`/`individuals_in` are passed (#242 Workstream B —
-    build_index hands over the exact hash dicts + sets it just built), else the Redis
-    `:iri:` hashes + sets (the original mirror path). Either way the derivation below
-    is identical, so the rows are identical.
+    The per-entity records come straight from `build_index`'s in-memory output
+    (#242 Workstream B — the exact hash dicts + sets it just built). `deprecated_in`
+    lets the SQL-backed tree honour hide_obsolete; `individuals_in` is independent of
+    `type` so a punned Class/NamedIndividual still lists as an individual.
     """
-    from ontoexplorer.modules.search.indexer import _deprecated_key, _individuals_key
-
-    if deprecated_in is not None:
-        deprecated = deprecated_in
-    else:
-        # Deprecation is computed during indexing and kept as a Redis set; mirroring
-        # it lets the SQL-backed navigation tree honour hide_obsolete.
-        r = _get_redis()
-        deprecated = {
-            m.decode() if isinstance(m, bytes) else m
-            for m in r.smembers(_deprecated_key(version_id))
-        }
-    if individuals_in is not None:
-        individuals = individuals_in
-    else:
-        # Independent of `type`: a punned Class/NamedIndividual is typed 'class'
-        # but still belongs in the individuals listing.
-        r = _get_redis()
-        individuals = {
-            m.decode() if isinstance(m, bytes) else m
-            for m in r.smembers(_individuals_key(version_id))
-        }
+    deprecated = deprecated_in
+    individuals = individuals_in
 
     # Entities that appear as a child in either hierarchy. Anything else is a
     # root; storing that here avoids an anti-join the planner handles badly.
@@ -145,21 +110,7 @@ async def populate_entity_index(
     non_roots = non_roots if non_roots is not None else set()
 
     def _iter_entities():
-        if entities_in is not None:
-            yield from entities_in.items()
-            return
-        # Fetch entity hashes in pipelined chunks rather than one hgetall round-trip
-        # per entity — that per-entity round-trip is an N+1 that dominates this mirror
-        # step on large ontologies (uberon ~25k, mondo ~58k entities). #185
-        r = _get_redis()
-        iris = list(_iter_version_iris(version_id))
-        chunk_size = 1000
-        for start in range(0, len(iris), chunk_size):
-            chunk = iris[start:start + chunk_size]
-            pipe = r.pipeline(transaction=False)
-            for iri in chunk:
-                pipe.hgetall(_iri_key(version_id, iri))
-            yield from zip(chunk, pipe.execute())
+        yield from entities_in.items()
 
     rows: list[dict] = []
     for iri, entity in _iter_entities():
@@ -253,9 +204,9 @@ async def populate_entity_index(
 def populate_entity_index_sync(
     version_id: str, ontology_id: str, non_roots: set[str] | None = None,
     *,
-    entities_in: dict | None = None,
-    deprecated_in: set | None = None,
-    individuals_in: set | None = None,
+    entities_in: dict,
+    deprecated_in: set,
+    individuals_in: set,
 ) -> int:
     """Synchronous wrapper for use inside Celery tasks."""
     import asyncio
