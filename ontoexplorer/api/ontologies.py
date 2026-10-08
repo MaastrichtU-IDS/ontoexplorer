@@ -674,12 +674,17 @@ async def list_ontologies(
                 detail=f"Invalid language '{language}'. Must be one of: {', '.join(LANGUAGE_TIERS)}",
             )
 
-    # `q`, `profile`, `language` (tier), `reuses`, and `lang` (code) are all
-    # Redis/cache-derived, so those requests must load every matching row and
-    # filter/sort/slice in Python. The unfiltered/group-only browse (the hot
-    # path that transfers the whole catalogue) instead sorts + paginates in SQL,
-    # so first paint fetches one page regardless of catalogue size.
-    filtered = bool(q or profile or language or reuses or lang_set)
+    # `profile`, `language` (tier), and `reuses` are cache-derived and `lang` (code)
+    # is version-derived, so those requests load every matching row and filter/sort/
+    # slice in Python. `q` (#286) and the unfiltered/group-only browse sort +
+    # paginate in SQL, so first paint fetches one page regardless of catalogue size.
+    # `q` is filtered in SQL on Postgres (#286); the SQL uses DISTINCT ON + jsonb,
+    # so on sqlite (tests) it falls back to the Python keyword match below.
+    _bind = db.get_bind()
+    _q_sql = bool(q) and _bind is not None and _bind.dialect.name == "postgresql"
+    # Cache/version-derived filters still force the load-all-then-filter-in-Python
+    # path; so does `q` when it can't be pushed to SQL (sqlite).
+    cache_filtered = bool(profile or language or reuses or lang_set) or (bool(q) and not _q_sql)
 
     # ?mine=true → restrict to the caller's owned/maintained ontologies (the
     # contributor dashboard). Anonymous callers get an empty list.
@@ -696,10 +701,46 @@ async def list_ontologies(
         else:
             conditions.append(text("groups @> cast(:grp as jsonb)").bindparams(grp=_json_grp.dumps([group])))
 
-    stmt = select(Ontology).where(*conditions)
+    # Keyword filter in SQL (#286): match shortname / IRI / title (columns) and the
+    # latest ready version's resolved metadata title/description — so a search
+    # paginates like the browse instead of loading & enriching the whole catalogue
+    # and matching in Python. (The old Python match also consulted the Redis stats
+    # label/description cache as a last-resort fallback; that source is dropped —
+    # title/metadata are authoritative.)
+    _joins: list = []
+    if _q_sql:
+        from sqlalchemy import or_ as _or
+        from ontoexplorer.models.db import OntologyMetaProfile as _OMP
+        ql = f"%{q}%"
+        _latest_meta = (
+            select(
+                OntologyVersion.ontology_id.label("oid"),
+                _OMP.resolved.label("resolved"),
+            )
+            .join(_OMP, _OMP.version_id == OntologyVersion.id)
+            .where(OntologyVersion.status == "ready")
+            .distinct(OntologyVersion.ontology_id)
+            .order_by(OntologyVersion.ontology_id, OntologyVersion.created_at.desc())
+            .subquery()
+        )
+        _joins.append((_latest_meta, _latest_meta.c.oid == Ontology.id))
+        conditions.append(_or(
+            Ontology.shortname.ilike(ql),
+            Ontology.iri.ilike(ql),
+            Ontology.title.ilike(ql),
+            _latest_meta.c.resolved["title"].astext.ilike(ql),
+            _latest_meta.c.resolved["description"].astext.ilike(ql),
+        ))
+
+    stmt = select(Ontology)
+    count_from = select(func.count()).select_from(Ontology)
+    for _tbl, _on in _joins:
+        stmt = stmt.outerjoin(_tbl, _on)
+        count_from = count_from.outerjoin(_tbl, _on)
+    stmt = stmt.where(*conditions)
 
     total: int | None = None
-    if not filtered:
+    if not cache_filtered:
         from sqlalchemy import nulls_last
         if sort == "date":
             # Latest READY version's created_at. NB: this is max(created_at), which
@@ -720,11 +761,11 @@ async def list_ontologies(
             order_col = func.lower(func.coalesce(func.nullif(Ontology.shortname, ""), Ontology.title, Ontology.iri))
         primary = order_col.desc() if dir == "desc" else order_col.asc()
         stmt = stmt.order_by(nulls_last(primary), Ontology.created_at.desc())
-        total = (await db.execute(select(func.count()).select_from(Ontology).where(*conditions))).scalar_one()
+        total = (await db.execute(count_from.where(*conditions))).scalar_one()
         stmt = stmt.offset(offset).limit(limit)
     else:
-        # Deterministic base order; the authoritative sort happens in Python once
-        # the Redis-derived filters have narrowed the set.
+        # Cache-derived filters narrow in Python after enrichment; q is already
+        # applied in SQL above, so this set is q-narrowed (not the whole catalogue).
         stmt = stmt.order_by(Ontology.created_at.desc())
 
     result = await db.execute(stmt)
@@ -892,10 +933,9 @@ async def list_ontologies(
         await _attach_langs(rows)
         rows = [r for r in rows if _row_has_language(r, lang_set)]
 
-    # Keyword filter: keep rows matching q on short name / IRI / label / description.
-    # Result order is the sort param (below), matching the table's sort controls —
-    # the same as the prior behaviour, where the client re-sorted server results.
-    if q:
+    # q is applied in SQL on Postgres (#286); on sqlite it falls back here. Match on
+    # short name / IRI / label / description (the enriched row fields).
+    if q and not _q_sql:
         ql = q.lower()
 
         def _matches(r: dict) -> bool:
@@ -909,8 +949,8 @@ async def list_ontologies(
 
         rows = [r for r in rows if _matches(r)]
 
-    if filtered:
-        # Redis-derived filter path: sort + paginate in Python (exact displayName).
+    if cache_filtered:
+        # Cache-derived filter path: sort + paginate in Python (exact displayName).
         total = len(rows)
         rows = _sort_rows(rows, sort, dir)
         rows = rows[offset: offset + limit]
