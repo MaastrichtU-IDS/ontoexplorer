@@ -209,12 +209,14 @@ def _asserted_children_sync(ontology_id: str, vid: str, iri: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 async def _inferred_parents_fetcher(db, ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
-    """Direct inferred parents via ELK `direct_superclasses`; fallback: asserted."""
+    """Direct inferred parents via targeted superclasses(direct=True); fallback: asserted.
+
+    #282: per-IRI call, not the full classification blob (OOM on large ontologies).
+    """
     try:
-        from ontoexplorer.clients.reasoning import get_classification
-        classification = await get_classification(vid, reasoner=reasoner)
-        direct = classification.get("direct_superclasses", {})
-        parents = [p for p in direct.get(iri, []) if p not in _OWL_EXCLUDED]
+        from ontoexplorer.clients.reasoning import superclasses as _reasoner_superclasses
+        data = await _reasoner_superclasses(vid, iri, direct=True, reasoner=reasoner)
+        parents = [p for p in data.get("superclasses", []) if p not in _OWL_EXCLUDED]
         if parents:
             return parents
         # Fall through to asserted if empty (term may not be in the classification)
@@ -223,13 +225,20 @@ async def _inferred_parents_fetcher(db, ontology_id: str, vid: str, iri: str, re
     return await _asserted_parents(db, ontology_id, vid, iri)
 
 
+# These fetch ONE class's inferred edges via targeted per-IRI reasoner calls
+# (#282), NOT get_classification() — that returned the whole classification blob,
+# whose transitive maps on a large ontology (CHEBI, 218k classes) parse into
+# multi-GB of Python dicts and OOM-killed the api pod just to read one class's
+# children. Same pattern the MOS evaluator moved to in #280. The reasoner serves
+# each from the same maps, cached per-IRI; a raise (not-ready / not-found) falls
+# back to the asserted edges exactly as before.
+
 async def _inferred_children_fetcher(db, ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
-    """Direct inferred children via ELK `direct_subclasses`; fallback: asserted."""
+    """Direct inferred children via targeted subclasses(direct=True); fallback: asserted."""
     try:
-        from ontoexplorer.clients.reasoning import get_classification
-        classification = await get_classification(vid, reasoner=reasoner)
-        direct = classification.get("direct_subclasses", {})
-        children = [c for c in direct.get(iri, []) if c not in _OWL_EXCLUDED]
+        from ontoexplorer.clients.reasoning import subclasses as _reasoner_subclasses
+        data = await _reasoner_subclasses(vid, iri, direct=True, reasoner=reasoner)
+        children = [c for c in data.get("subclasses", []) if c not in _OWL_EXCLUDED]
         if children:
             return children
     except Exception:
@@ -238,12 +247,11 @@ async def _inferred_children_fetcher(db, ontology_id: str, vid: str, iri: str, r
 
 
 async def _inferred_ancestors_fetcher(db, ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
-    """All inferred ancestors via ELK `superclasses`; fallback: asserted-BFS."""
+    """All inferred ancestors via targeted superclasses(direct=False); fallback: asserted-BFS."""
     try:
-        from ontoexplorer.clients.reasoning import get_classification
-        classification = await get_classification(vid, reasoner=reasoner)
-        all_sup = classification.get("superclasses", {})
-        ancestors = [a for a in all_sup.get(iri, []) if a not in _OWL_EXCLUDED]
+        from ontoexplorer.clients.reasoning import superclasses as _reasoner_superclasses
+        data = await _reasoner_superclasses(vid, iri, direct=False, reasoner=reasoner)
+        ancestors = [a for a in data.get("superclasses", []) if a not in _OWL_EXCLUDED]
         if ancestors:
             return ancestors
     except Exception:
@@ -252,12 +260,11 @@ async def _inferred_ancestors_fetcher(db, ontology_id: str, vid: str, iri: str, 
 
 
 async def _inferred_descendants_fetcher(db, ontology_id: str, vid: str, iri: str, reasoner: str = "rustdl") -> list[str]:
-    """All inferred descendants via ELK `subclasses`; fallback: asserted-BFS."""
+    """All inferred descendants via targeted subclasses(direct=False); fallback: asserted-BFS."""
     try:
-        from ontoexplorer.clients.reasoning import get_classification
-        classification = await get_classification(vid, reasoner=reasoner)
-        all_sub = classification.get("subclasses", {})
-        descendants = [d for d in all_sub.get(iri, []) if d not in _OWL_EXCLUDED]
+        from ontoexplorer.clients.reasoning import subclasses as _reasoner_subclasses
+        data = await _reasoner_subclasses(vid, iri, direct=False, reasoner=reasoner)
+        descendants = [d for d in data.get("subclasses", []) if d not in _OWL_EXCLUDED]
         if descendants:
             return descendants
     except Exception:
