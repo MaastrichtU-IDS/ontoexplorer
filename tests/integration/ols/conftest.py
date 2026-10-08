@@ -36,6 +36,21 @@ def _mk_entity_index(version_id, ontology_id, iri, label, type_="class",
 
 
 @pytest.fixture()
+def requires_postgres(db_session):
+    """Skip a test on the sqlite lane.
+
+    `pg_entity_search` / `pg_autocomplete_entities` are Postgres-only: the prefix
+    stage orders by `COLLATE "C"` (dialect-handled), but the tsvector fallback
+    (`search_tsv @@ to_tsquery`), trigram `similarity()`, and `= ANY(:array)`
+    filters have no sqlite equivalent. These contract tests therefore only run
+    against a real Postgres backend.
+    """
+    bind = db_session.get_bind()
+    if bind is None or bind.dialect.name != "postgresql":
+        pytest.skip("Postgres-only: pg_search uses tsvector/trigram/ANY (no sqlite equivalent)")
+
+
+@pytest.fixture()
 def fake_redis():
     """A FakeRedis instance shared across the OLS layer and the indexer.
 

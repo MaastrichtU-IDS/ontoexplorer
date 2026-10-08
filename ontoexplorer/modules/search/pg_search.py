@@ -29,6 +29,19 @@ _log = structlog.get_logger("ontoexplorer.autocomplete")
 _OVERSAMPLE = 5
 
 
+def _collate_c(db: AsyncSession) -> str:
+    """`COLLATE "C"` on Postgres, empty on sqlite.
+
+    The prefix stage pages by `primary_label_norm` in byte order so results are
+    stable and the text_pattern_ops btree drives an ordered index scan. Postgres'
+    default collation is locale-aware, so it needs an explicit `COLLATE "C"`; sqlite
+    (tests) has no `C` collation but its default TEXT comparison is already
+    codepoint/byte order, so the clause is simply omitted there.
+    """
+    bind = db.get_bind()
+    return 'COLLATE "C"' if bind is not None and bind.dialect.name == "postgresql" else ""
+
+
 def _row_to_dict(row: Any) -> dict:
     return {
         "iri": row.iri,
@@ -115,6 +128,7 @@ async def pg_entity_search(
     type_filter_sql = "AND ei.type = ANY(:types)" if types else ""
     vid_filter_sql = "AND ei.version_id = :vid" if version_id else ""
     ontology_filter_sql = "AND ei.ontology_id = ANY(:ontology_ids)" if ontology_ids else ""
+    collate_sql = _collate_c(db)
 
     # Stage 1: prefix-on-primary-label. Fetch a bounded pool in the
     # text_pattern_ops btree's own (C-collation) order — an index range scan that
@@ -138,13 +152,13 @@ async def pg_entity_search(
               {ontology_filter_sql}
             -- Order + LIMIT on entity_index ALONE. The LIMIT is an optimization
             -- fence, so the C-collation btree drives an ordered index scan that
-            -- STOPS at :pool rows (~:pool heap fetches). Joining versions/ontologies
+            -- STOPS at `pool` rows (~`pool` heap fetches). Joining versions/ontologies
             -- up here instead lets the planner hash-join and materialise EVERY
             -- `LIKE 'x%'` match — tens of thousands of rows for a common prefix
             -- (cross-ontology duplication), each a cold heap read, then a top-N
             -- sort over all of them. That was the ~23s prefix stage (#190): the
             -- EXPLAIN showed 13k heap-fetched rows for `protein%` before the LIMIT.
-            ORDER BY ei.primary_label_norm COLLATE "C"
+            ORDER BY ei.primary_label_norm {collate_sql}
             LIMIT :pool
         ) p
         JOIN versions v ON v.id = p.version_id
@@ -258,6 +272,8 @@ async def pg_autocomplete_entities(
     if version_id:
         version_filter_sql = "AND ei.version_id = :version_id"
 
+    collate_sql = _collate_c(db)
+
     # Stage 1: btree text_pattern_ops prefix scan. Fetch a bounded pool in the
     # index's C-collation order (early-terminating range scan), then rank in
     # Python (_rank_prefix_rows: exact-first, shortest-label) — same reason as
@@ -275,12 +291,12 @@ async def pg_autocomplete_entities(
               {ontology_filter_sql}
               {version_filter_sql}
             -- Order + LIMIT on entity_index ALONE so the C-collation index scan
-            -- early-terminates at :pool rows. Joining versions/ontologies before
+            -- early-terminates at `pool` rows. Joining versions/ontologies before
             -- the LIMIT lets the planner hash-join and heap-materialise EVERY match
             -- (tens of thousands for a common prefix, cross-ontology dups) then
             -- top-N sort them — the ~23s prefix stage (#190). Same fix as
             -- pg_entity_search. The excluded-type filter runs in Python below.
-            ORDER BY ei.primary_label_norm COLLATE "C"
+            ORDER BY ei.primary_label_norm {collate_sql}
             LIMIT :pool
         ) p
         JOIN versions v ON v.id = p.version_id
