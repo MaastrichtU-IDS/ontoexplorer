@@ -81,6 +81,24 @@ async def test_roots_return_the_requested_language(db_session):
 
 
 @pytest.mark.anyio
+async def test_version_lang_counts_bulk_matches_per_version(db_session):
+    """version_lang_counts_bulk (#286) batches several versions into one query and
+    must return the same per-version counts as the single-version helper."""
+    from ontoexplorer.api.ols._entity_source import (
+        version_lang_counts, version_lang_counts_bulk,
+    )
+    await _seed(db_session, "vA", "http://x/1", "a", {"en": "a", "fr": "a1"}, "en")
+    await _seed(db_session, "vA", "http://x/2", "b", {"en": "b"}, "en")
+    await _seed(db_session, "vB", "http://x/3", "c", {"de": "c"}, "de")
+
+    bulk = await version_lang_counts_bulk(db_session, ["vA", "vB", "vC"])
+    assert bulk["vA"] == {"en": 2, "fr": 1} == await version_lang_counts(db_session, "vA")
+    assert bulk["vB"] == {"de": 1} == await version_lang_counts(db_session, "vB")
+    assert bulk.get("vC", {}) == {}            # unknown version → empty
+    assert await version_lang_counts_bulk(db_session, []) == {}   # no round-trip
+
+
+@pytest.mark.anyio
 async def test_roots_report_a_language_so_the_tree_can_badge_it(db_session):
     """ClassTree renders its badge only when a node reports a lang; the SQL
     paths returned null for every node, so the badges vanished."""

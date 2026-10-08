@@ -761,25 +761,34 @@ async def list_ontologies(
                 _tier = (_json.loads(raw).get("language") or {}).get("tier")
                 if _tier:
                     tier_by_vid[vid] = _tier
-        # Language counts per version from entity_index (#242 Stage 2 — was a
-        # pipelined hgetall over the Redis `:langs` hashes).
+        # Language counts are NOT computed here (#286): a per-version entity_index
+        # jsonb aggregation for every row made a filtered catalogue request ~100s
+        # (it enriched the whole catalogue before the Python filter). They're
+        # attached below only for the rows that survive to the page — or the whole
+        # candidate set when a ?lang= filter actually needs them — batched.
+    except Exception:
+        pass
+
+    async def _attach_langs(rows_subset: list[dict]) -> None:
+        """Populate row['languages'] for a (small) subset, in ONE batched query."""
         from ontoexplorer.modules.search.lang import canonical_lang
-        from ontoexplorer.api.ols._entity_source import version_lang_counts
-        for vid in vid_list:
-            raw = await version_lang_counts(db, vid)
+        from ontoexplorer.api.ols._entity_source import version_lang_counts_bulk
+        pairs = [(r, latest_by_oid.get(r["id"])) for r in rows_subset]
+        vids = [v.id for _r, v in pairs if v]
+        bulk = await version_lang_counts_bulk(db, vids)
+        for r, v in pairs:
+            if not v:
+                continue
             counts: dict[str, int] = {}
-            for lang, cnt in raw.items():
+            for lang, cnt in bulk.get(v.id, {}).items():
                 key = canonical_lang(lang)
                 if not key:  # skip empty-string untagged entries
                     continue
                 counts[key] = counts.get(key, 0) + int(cnt)
-            if counts:
-                langs_by_vid[vid] = sorted(
-                    ({"lang": k, "label_count": v} for k, v in counts.items()),
-                    key=lambda x: x["lang"],
-                )
-    except Exception:
-        pass
+            r["languages"] = sorted(
+                ({"lang": k, "label_count": c} for k, c in counts.items()),
+                key=lambda x: x["lang"],
+            ) if counts else []
 
     # Batch-load resolved metadata from ontology_meta_profiles
     from ontoexplorer.models.db import OntologyMetaProfile
@@ -876,7 +885,11 @@ async def list_ontologies(
         rows = [r for r in rows if r["id"] in matching_ids]
 
     # Language-code facet filter (the client's `langs` chips, now server-side).
+    # This one genuinely needs langs on every candidate row to filter, so compute
+    # them here (batched) for the current set; the rows are already narrowed by any
+    # q/profile/language/reuses filters above.
     if lang_set:
+        await _attach_langs(rows)
         rows = [r for r in rows if _row_has_language(r, lang_set)]
 
     # Keyword filter: keep rows matching q on short name / IRI / label / description.
@@ -902,6 +915,11 @@ async def list_ontologies(
         rows = _sort_rows(rows, sort, dir)
         rows = rows[offset: offset + limit]
     # else: hot path already sorted + paginated + counted in SQL.
+
+    # Attach language counts for ONLY the returned page (#286) — unless a ?lang=
+    # filter already computed them for the candidate set above.
+    if not lang_set:
+        await _attach_langs(rows)
 
     if view == "list":
         rows = [_leanify_list_row(r) for r in rows]
