@@ -100,6 +100,15 @@ async def widget_hierarchy(db_session, fake_redis):
     _seed(parent_iri,  "Parent",      [gp_iri])
     _seed(child_iri,   "Child",       [parent_iri])
     _seed(sibling_iri, "Sibling",     [gp_iri])
+
+    # The jstree/graph widgets read asserted edges from hierarchy_edge now (#283),
+    # not the Redis `parents` field — seed the (child, parent) edges.
+    from ontoexplorer.modules.hierarchy.edges import CLASS_KIND, replace_edges
+    await replace_edges(db_session, vid, [
+        (parent_iri, gp_iri, CLASS_KIND),
+        (child_iri, parent_iri, CLASS_KIND),
+        (sibling_iri, gp_iri, CLASS_KIND),
+    ])
     await db_session.commit()
 
     yield {
