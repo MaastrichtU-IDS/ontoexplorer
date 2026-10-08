@@ -202,20 +202,14 @@ async def version_lang_counts(db: AsyncSession, version_id: str) -> dict[str, in
     return out
 
 
-async def version_lang_counts_bulk(
+async def _version_lang_counts_aggregate(
     db: AsyncSession, version_ids: list[str]
 ) -> dict[str, dict[str, int]]:
-    """`{version_id: {lang: count}}` for several versions in ONE query.
-
-    The per-version `version_lang_counts` is a jsonb_object_keys aggregation that
-    costs hundreds of ms on a large ontology; calling it in a loop over the whole
-    catalogue is what made the catalogue search ~100s (#286). This batches them
-    into a single `GROUP BY version_id, k` so a page's langs are one round-trip.
-    """
+    """`{version_id: {lang: count}}` by aggregating entity_index.labels, in ONE query.
+    The fallback for versions whose `lang_counts` column isn't materialized yet."""
     if not version_ids:
         return {}
-    vids = list(version_ids)
-    out: dict[str, dict[str, int]] = {v: {} for v in vids}
+    out: dict[str, dict[str, int]] = {}
     bind = db.get_bind()
     if bind is not None and bind.dialect.name == "postgresql":
         from sqlalchemy import text as _text
@@ -223,20 +217,51 @@ async def version_lang_counts_bulk(
             "SELECT version_id, k AS lang, count(*) AS n "
             "FROM entity_index, jsonb_object_keys(labels) AS k "
             "WHERE version_id = ANY(:vids) GROUP BY version_id, k"
-        ), {"vids": vids})).all()
+        ), {"vids": list(version_ids)})).all()
         for version_id, lang, n in rows:
             out.setdefault(version_id, {})[lang] = int(n)
         return out
-    # sqlite (tests): tally in Python.
     rows2 = (await db.execute(
         select(EntityIndex.version_id, EntityIndex.labels)
-        .where(EntityIndex.version_id.in_(vids))
+        .where(EntityIndex.version_id.in_(list(version_ids)))
     )).all()
     for version_id, labels in rows2:
         if isinstance(labels, dict):
             d = out.setdefault(version_id, {})
             for lang in labels:
                 d[lang] = d.get(lang, 0) + 1
+    return out
+
+
+async def version_lang_counts_bulk(
+    db: AsyncSession, version_ids: list[str]
+) -> dict[str, dict[str, int]]:
+    """`{version_id: {lang: count}}` for several versions.
+
+    Reads the materialized `versions.lang_counts` (#286) — an O(1) batch — and
+    aggregates entity_index only for versions whose column isn't populated yet
+    (NULL), so it's correct before the backfill and fast after. Running the
+    aggregation per version over the whole catalogue is what made catalogue search
+    ~100s (one agg is ~638ms on a large ontology).
+    """
+    if not version_ids:
+        return {}
+    vids = list(version_ids)
+    out: dict[str, dict[str, int]] = {}
+    from ontoexplorer.models.db import OntologyVersion as _OV
+    rows = (await db.execute(
+        select(_OV.id, _OV.lang_counts).where(_OV.id.in_(vids))
+    )).all()
+    for vid, lc in rows:
+        if lc is not None:
+            out[vid] = {k: int(v) for k, v in lc.items()}
+    # Aggregate for any vid whose column isn't materialized yet (NULL, or — in
+    # tests — no versions row at all).
+    missing = [vid for vid in vids if vid not in out]
+    if missing:
+        out.update(await _version_lang_counts_aggregate(db, missing))
+    for vid in vids:
+        out.setdefault(vid, {})
     return out
 
 

@@ -99,6 +99,29 @@ async def test_version_lang_counts_bulk_matches_per_version(db_session):
 
 
 @pytest.mark.anyio
+async def test_version_lang_counts_bulk_prefers_materialized_column(db_session):
+    """When versions.lang_counts is materialized (#286), the bulk read uses it and
+    does NOT fall back to aggregating entity_index."""
+    import uuid
+    from ontoexplorer.models.db import Ontology, OntologyVersion
+    from ontoexplorer.api.ols._entity_source import version_lang_counts_bulk
+    uid = uuid.uuid4().hex[:8]
+    o = Ontology(iri=f"http://x/o-{uid}", shortname=f"o{uid}", title="O")
+    db_session.add(o)
+    await db_session.flush()
+    v = OntologyVersion(
+        ontology_id=o.id, minio_key=f"k-{uid}", sha256=f"s-{uid}", format="owl",
+        status="ready", lang_counts={"en": 5, "de": 2},
+    )
+    db_session.add(v)
+    await db_session.commit()
+    # No entity_index rows for this version: a non-empty result can only come from
+    # the materialized column.
+    bulk = await version_lang_counts_bulk(db_session, [v.id])
+    assert bulk[v.id] == {"en": 5, "de": 2}
+
+
+@pytest.mark.anyio
 async def test_roots_report_a_language_so_the_tree_can_badge_it(db_session):
     """ClassTree renders its badge only when a node reports a lang; the SQL
     paths returned null for every node, so the badges vanished."""

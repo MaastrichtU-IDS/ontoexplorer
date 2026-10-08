@@ -149,6 +149,13 @@ class OntologyVersion(Base):
     # embed_ontology at completion. Lets /admin/overview read the per-version embed
     # count from this row instead of a ~2s GROUP BY over all term_embeddings.
     embed_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # Materialized {lang: count} of entities carrying a label in each language
+    # (#286), written at index time = the same value version_lang_counts aggregates
+    # from entity_index.labels. NULL = not yet computed (readers fall back to the
+    # aggregation until backfilled). Avoids a per-request jsonb_object_keys agg over
+    # the whole catalogue on filtered /ontologies requests.
+    lang_counts: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # Set by index_ontology when the version flips to "ready". The other pipeline
     # times derive from existing tables; only the index time had no SQL home.

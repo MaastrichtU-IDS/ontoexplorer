@@ -1241,11 +1241,22 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
 
         async def _mark_ready():
             from datetime import datetime as _dt, timezone as _tz
+            from ontoexplorer.api.ols._entity_source import version_lang_counts
             async with make_celery_db_session()() as db:
+                # Materialize the per-version language counts (#286) from the rows we
+                # just wrote, so the catalogue reads them O(1) instead of aggregating
+                # per request. Same value version_lang_counts produces on read.
+                try:
+                    _lc = await version_lang_counts(db, version_id)
+                except Exception:
+                    _lc = None
+                _vals = {"status": "ready", "indexed_at": _dt.now(_tz.utc)}
+                if _lc is not None:
+                    _vals["lang_counts"] = _lc
                 await db.execute(
                     _sa_update(_OV)
                     .where(_OV.id == version_id, _OV.status != "deprecated")
-                    .values(status="ready", indexed_at=_dt.now(_tz.utc))
+                    .values(**_vals)
                 )
                 await db.commit()
 
