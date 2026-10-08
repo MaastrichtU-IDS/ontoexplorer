@@ -43,6 +43,7 @@ def _assert_solr_shape(body: dict) -> None:
 # /api/search tests
 # ---------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_search_returns_solr_shape(client: AsyncClient, sample_term):
     """GET /search?q=Foo returns the Solr envelope shape with numFound >= 1."""
@@ -62,6 +63,7 @@ async def test_search_returns_solr_shape(client: AsyncClient, sample_term):
     assert "is_defining_ontology" in doc
 
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_search_filter_by_ontology(client: AsyncClient, sample_term):
     """ontology=<id> restricts results to that ontology; nonexistent ontology returns 0."""
@@ -82,6 +84,7 @@ async def test_search_filter_by_ontology(client: AsyncClient, sample_term):
     assert body2["response"]["docs"] == []
 
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_search_filter_by_type_class(client: AsyncClient, sample_term, sample_property):
     """type=class returns only class entities."""
@@ -95,6 +98,7 @@ async def test_search_filter_by_type_class(client: AsyncClient, sample_term, sam
         assert doc["type"] == "class", f"Expected class, got {doc['type']} for {doc['iri']}"
 
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_search_filter_by_type_property(client: AsyncClient, sample_property):
     """type=property returns only property entities."""
@@ -108,6 +112,7 @@ async def test_search_filter_by_type_property(client: AsyncClient, sample_proper
     assert body["response"]["numFound"] >= 1, "Expected at least one property hit for 'has'"
 
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_search_group_field_iri_dedups(
     client: AsyncClient, db_session, fake_redis, sample_term
@@ -164,6 +169,7 @@ async def test_search_group_field_iri_dedups(
     )
 
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_search_paginates(client: AsyncClient, db_session, fake_redis):
     """rows=2&start=2 returns exactly 2 docs from offset 2 of 5 seeded entities."""
@@ -231,6 +237,7 @@ async def test_search_paginates(client: AsyncClient, db_session, fake_redis):
     )
 
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_search_local_filter(client: AsyncClient, db_session, fake_redis):
     """local=true excludes entities whose source differs from their host ontology."""
@@ -335,6 +342,7 @@ async def test_search_local_filter(client: AsyncClient, db_session, fake_redis):
 # /api/select tests
 # ---------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_select_returns_solr_shape(client: AsyncClient, sample_term):
     """GET /select?q=Foo returns a Solr envelope with prefix-match results."""
@@ -353,6 +361,7 @@ async def test_select_returns_solr_shape(client: AsyncClient, sample_term):
     assert "label" in doc
 
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_select_ontology_filter(client: AsyncClient, sample_term):
     """GET /select?q=Foo&ontology=<id> restricts to given ontology."""
@@ -373,6 +382,7 @@ async def test_select_ontology_filter(client: AsyncClient, sample_term):
 # /api/suggest tests
 # ---------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_suggest_returns_label_only(client: AsyncClient, sample_term):
     """GET /suggest?q=Foo returns lightweight autosuggest docs with only the label."""

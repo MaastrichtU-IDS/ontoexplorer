@@ -151,6 +151,7 @@ async def test_property_children(client: AsyncClient, property_hierarchy):
 # Test 7: global /properties?iri=... lookup
 # ---------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_property_global_lookup(client: AsyncClient, sample_property):
     """GET /ols/api/properties?iri=... returns matching property across all ontologies."""
@@ -167,6 +168,7 @@ async def test_property_global_lookup(client: AsyncClient, sample_property):
 # Test 8: findByIdAndIsDefiningOntology — query-param form
 # ---------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("requires_postgres")
 @pytest.mark.anyio
 async def test_property_find_by_id_defining_ontology(client: AsyncClient, sample_property):
     """GET /ols/api/properties/findByIdAndIsDefiningOntology?iri=... returns only defining-ontology hits."""

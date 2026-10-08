@@ -89,7 +89,7 @@ CONTRACT_CASES: list[tuple[str, str]] = [
 # Test fails if the actual gap count differs in either direction — closing a
 # gap requires also reducing this count.
 KNOWN_GAPS: dict[str, int] = {
-    "ontologies_list_v1":   1,  # only _links.next missing (test DB has 1 ontology, no next page)
+    "ontologies_list_v1":   1,  # _links.next absent when the (accumulated) catalogue has no next page
     "ontology_detail_v1":   0,  # fully compliant
     "terms_list_v1":        2,  # annotation.database_cross_reference + _links.next (test-data driven)
     "term_roots_v1":        4,  # missing annotation keys (created_by etc) — test-data driven
@@ -111,6 +111,7 @@ KNOWN_GAPS: dict[str, int] = {
 @pytest.mark.anyio
 async def test_response_shape_matches_ebi(
     client: AsyncClient,
+    db_session,
     sample_ontology,
     sample_term,
     fixture_name: str,
@@ -126,8 +127,14 @@ async def test_response_shape_matches_ebi(
     (gap count increased) AND know to update the dict when we close a gap
     (gap count decreased).
     """
+    # The search_solr case hits /ols/api/search → pg_search, which is Postgres-only
+    # (tsvector/trigram/ANY); skip it on the sqlite lane.
+    if fixture_name == "search_solr":
+        bind = db_session.get_bind()
+        if bind is None or bind.dialect.name != "postgresql":
+            pytest.skip("search_solr hits pg_search (Postgres-only; no sqlite equivalent)")
+
     expected = _read(fixture_name)
-    # `sample_term` is a Redis-stored fixture; its label is the sub-key "Foo".
     url = our_url_tmpl.format(ont=sample_ontology.shortname, term="Foo")
     resp = await client.get(url)
     assert resp.status_code == 200, f"{url} returned {resp.status_code}: {resp.text[:200]}"
