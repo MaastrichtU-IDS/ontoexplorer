@@ -236,7 +236,6 @@ async def test_ols_v1_list_with_profile_filter(client, db_session):
     r.set(owl_profile_cache_key(str(ver_noel.id)), json.dumps(_profile_payload(str(ver_noel.id), in_el=False, in_dl=True)))
 
     with (
-        patch("ontoexplorer.api.ols.ontologies._get_redis", return_value=r),
         patch("ontoexplorer.api.owl_profile._get_redis", return_value=r),
         patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r),
     ):

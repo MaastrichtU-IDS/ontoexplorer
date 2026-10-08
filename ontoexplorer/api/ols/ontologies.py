@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Ontology
-from ontoexplorer.modules.search.indexer import _get_redis, _meta_key  # noqa: F401 — patched in tests
 from ontoexplorer.modules.owl_profile.registry import PROFILE_NAMES
 from ontoexplorer.api.ols._envelope import hal_page, v2_page
 from ontoexplorer.api.ols._shapes import ontology_to_v1, ontology_to_v2
