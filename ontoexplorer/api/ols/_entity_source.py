@@ -1,22 +1,18 @@
-"""Load OLS entity payloads from Postgres `entity_index` instead of the Redis
-`:iri:` hash (#242 Stage 1 PR 2).
+"""Load OLS entity payloads from Postgres `entity_index` (#242 Stage 1 PR 2).
 
-Returns the same Redis-hash-shaped dicts the OLS renderers consume, via
-`entity_index_to_legacy_dict`, so call sites swap their `hgetall(_iri_key(...))`
-for these without touching the renderers.
+Returns the same legacy-hash-shaped dicts the OLS renderers consume, via
+`entity_index_to_legacy_dict`, so call sites that used to `hgetall(_iri_key(...))`
+read these instead without touching the renderers.
 
-Transition fallback (#242 Stage 1): while the indexer still writes the Redis
-`:iri:` hash, a handful of entities live only in Redis and have no entity_index
-row yet — most notably `owl:Thing` (present in the Redis hash + prefix zset but
-never added to a class type-set, so `pg_indexer` creates no row) and any entity
-whose best-effort entity_index mirror failed during ingest.  On an entity_index
-miss we fall back to the Redis hash so these keep resolving instead of 404ing.
-The fallback is removed in Stage 2/3 once the indexer populates entity_index
-directly and the Redis `:iri:` hash is purged.
+`owl:Thing` is a queryable built-in that is never declared as owl:Class, so it has
+no entity_index row (giving it one would make it a tree root + inflate class
+counts). It is served synthetically here — the only entity without a row. The
+Redis `:iri:` hash miss-fallback that briefly backed other unmirrored entities was
+removed in #242 Stage 3 once the Postgres index became authoritative and the Redis
+search index was purged.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 
@@ -25,15 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.api.ols._shapes import entity_index_to_legacy_dict
 from ontoexplorer.models.db import EntityIndex
-from ontoexplorer.modules.search.indexer import _get_redis, _iri_key
 
 logger = logging.getLogger(__name__)
 
-# owl:Thing is a queryable built-in class that is never declared as owl:Class in
-# ontology files, so it has no entity_index row (giving it one would make it a tree
-# root + inflate class counts). It is served synthetically here so it keeps
-# resolving once the indexer stops writing the Redis `:iri:` hash (#242 Workstream B),
-# the same legacy-dict shape the indexer wrote for it.
+# owl:Thing is a queryable built-in class with no entity_index row; served
+# synthetically in the legacy-dict shape so it keeps resolving.
 _OWL_THING_IRI = "http://www.w3.org/2002/07/owl#Thing"
 _OWL_THING_HASH: dict = {
     "label": "Thing", "primary_label": "Thing", "type": "class",
@@ -41,46 +33,6 @@ _OWL_THING_HASH: dict = {
     "labels": json.dumps([{"value": "Thing", "lang": "en"}]),
     "synonyms": "[]", "definitions": "[]",
 }
-
-
-def _redis_hash(version_id: str, iri: str) -> dict | None:
-    """Fallback payload for an entity absent from entity_index: a synthetic owl:Thing,
-    else the legacy Redis `:iri:` hash (transition), else None.
-
-    The hash is already in the renderer-consumed legacy shape (what
-    `entity_index_to_legacy_dict` reproduces). Best-effort: if Redis is unavailable
-    the entity is simply reported absent (404), never a 500.
-    """
-    if iri == _OWL_THING_IRI:
-        return dict(_OWL_THING_HASH)
-    try:
-        h = _get_redis().hgetall(_iri_key(version_id, iri))
-    except Exception:  # pragma: no cover - transition fallback, Redis optional
-        logger.debug("entity_index Redis fallback failed for %s", iri, exc_info=True)
-        return None
-    return h or None
-
-
-def _redis_hashes(version_id: str, iris: list[str]) -> dict[str, dict]:
-    """Batch fallback: synthetic owl:Thing + legacy Redis hashes; missing absent."""
-    out: dict[str, dict] = {}
-    redis_iris = []
-    for iri in iris:
-        if iri == _OWL_THING_IRI:
-            out[iri] = dict(_OWL_THING_HASH)
-        else:
-            redis_iris.append(iri)
-    if redis_iris:
-        try:
-            r = _get_redis()
-            pipe = r.pipeline(transaction=False)
-            for iri in redis_iris:
-                pipe.hgetall(_iri_key(version_id, iri))
-            results = pipe.execute()
-            out.update({iri: h for iri, h in zip(redis_iris, results) if h})
-        except Exception:  # pragma: no cover - transition fallback, Redis optional
-            logger.debug("entity_index Redis batch fallback failed", exc_info=True)
-    return out
 
 
 def _iri_order(db: AsyncSession):
@@ -101,8 +53,8 @@ def _iri_order(db: AsyncSession):
 async def load_entity(db: AsyncSession, version_id: str, iri: str) -> dict | None:
     """One entity's legacy-shaped payload, or None if not indexed.
 
-    Falls back to the Redis `:iri:` hash on an entity_index miss (transition —
-    see module docstring).
+    owl:Thing has no entity_index row and is served synthetically; anything else
+    absent from entity_index is reported as None (#242 Stage 3 — no Redis fallback).
     """
     row = (await db.execute(
         select(EntityIndex).where(
@@ -111,7 +63,9 @@ async def load_entity(db: AsyncSession, version_id: str, iri: str) -> dict | Non
     )).scalar_one_or_none()
     if row is not None:
         return entity_index_to_legacy_dict(row)
-    return await asyncio.to_thread(_redis_hash, version_id, iri)
+    if iri == _OWL_THING_IRI:
+        return dict(_OWL_THING_HASH)
+    return None
 
 
 async def count_entities(db: AsyncSession, version_id: str, types: list[str]) -> int:
@@ -352,8 +306,8 @@ async def page_entities_global(
 async def load_entities(db: AsyncSession, version_id: str, iris) -> dict[str, dict]:
     """Batch-load {iri: legacy_dict} for `iris` in one query.
 
-    IRIs absent from entity_index fall back to the Redis `:iri:` hash (transition —
-    see module docstring); IRIs missing from both are absent from the result.
+    owl:Thing (no entity_index row) is served synthetically; any other IRI absent
+    from entity_index is simply missing from the result (#242 Stage 3 — no Redis).
     """
     iris = list(iris)
     if not iris:
@@ -364,7 +318,6 @@ async def load_entities(db: AsyncSession, version_id: str, iris) -> dict[str, di
         )
     )).scalars().all()
     out = {r.iri: entity_index_to_legacy_dict(r) for r in rows}
-    missing = [iri for iri in iris if iri not in out]
-    if missing:
-        out.update(await asyncio.to_thread(_redis_hashes, version_id, missing))
+    if _OWL_THING_IRI in iris and _OWL_THING_IRI not in out:
+        out[_OWL_THING_IRI] = dict(_OWL_THING_HASH)
     return out

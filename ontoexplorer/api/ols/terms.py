@@ -39,16 +39,6 @@ _OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing"
 _OWL_EXCLUDED = {_OWL_THING, _OWL_NOTHING}
 
 
-def _redis_hgetall(key: str) -> dict:
-    """Sync helper: returns hash as dict, or empty dict."""
-    return _get_redis().hgetall(key) or {}
-
-
-def _redis_smembers_sorted(key: str) -> list[str]:
-    """Sync helper: returns sorted set members."""
-    return sorted(_get_redis().smembers(key))
-
-
 async def _load_entity(db, version_id: str, iri: str) -> dict | None:
     """Load the entity payload from entity_index (#242 Stage 1 PR2); None if absent."""
     from ontoexplorer.api.ols._entity_source import load_entity
