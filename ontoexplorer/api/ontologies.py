@@ -674,17 +674,26 @@ async def list_ontologies(
                 detail=f"Invalid language '{language}'. Must be one of: {', '.join(LANGUAGE_TIERS)}",
             )
 
-    # `profile`, `language` (tier), and `reuses` are cache-derived and `lang` (code)
-    # is version-derived, so those requests load every matching row and filter/sort/
-    # slice in Python. `q` (#286) and the unfiltered/group-only browse sort +
-    # paginate in SQL, so first paint fetches one page regardless of catalogue size.
-    # `q` is filtered in SQL on Postgres (#286); the SQL uses DISTINCT ON + jsonb,
-    # so on sqlite (tests) it falls back to the Python keyword match below.
+    # `profile`, `language` (tier), and `reuses` are cache-derived, so those requests
+    # load every matching row and filter/sort/slice in Python. `q` (#286), the
+    # `lang` code facet (#286) now that versions.lang_counts is materialized, and the
+    # unfiltered/group-only browse all sort + paginate in SQL, so first paint fetches
+    # one page regardless of catalogue size.
+    # `q`/`lang` are pushed to SQL on Postgres only (DISTINCT ON + jsonb); on sqlite
+    # (tests) they fall back to the Python filters below.
+    from ontoexplorer.modules.search.lang import canonical_lang as _canon
+    _lang_canon = {c for c in (_canon(x) for x in lang_set) if c}  # collapse en-GB→en
     _bind = db.get_bind()
-    _q_sql = bool(q) and _bind is not None and _bind.dialect.name == "postgresql"
-    # Cache/version-derived filters still force the load-all-then-filter-in-Python
-    # path; so does `q` when it can't be pushed to SQL (sqlite).
-    cache_filtered = bool(profile or language or reuses or lang_set) or (bool(q) and not _q_sql)
+    _pg = _bind is not None and _bind.dialect.name == "postgresql"
+    _q_sql = bool(q) and _pg
+    _lang_sql = bool(_lang_canon) and _pg
+    # Cache-derived filters still force the load-all-then-filter-in-Python path; so do
+    # `q`/`lang` when they can't be pushed to SQL (sqlite).
+    cache_filtered = (
+        bool(profile or language or reuses)
+        or (bool(lang_set) and not _lang_sql)
+        or (bool(q) and not _q_sql)
+    )
 
     # ?mine=true → restrict to the caller's owned/maintained ontologies (the
     # contributor dashboard). Anonymous callers get an empty list.
@@ -735,6 +744,35 @@ async def list_ontologies(
             func.json_extract_path_text(_latest_meta.c.resolved, "title").ilike(ql),
             func.json_extract_path_text(_latest_meta.c.resolved, "description").ilike(ql),
         ))
+
+    # Language-code facet in SQL (#286): keep ontologies whose latest ready version
+    # has at least one label language collapsing to a requested code. Reads the
+    # materialized versions.lang_counts (jsonb) so the catalogue paginates like
+    # browse instead of enriching every row to filter in Python. Postgres-only
+    # (`_lang_sql`); sqlite falls back to _row_has_language below.
+    # NB: "latest ready" here is newest-by-created_at — the same approximation the
+    # `q` join and the date sort use; it can differ from the pin/version-IRI-aware
+    # default version on a handful of pinned/re-uploaded ontologies.
+    if _lang_sql:
+        from sqlalchemy import text as _text
+        _latest_ver = (
+            select(
+                OntologyVersion.ontology_id.label("oid"),
+                OntologyVersion.lang_counts.label("lc"),
+            )
+            .where(OntologyVersion.status == "ready")
+            .distinct(OntologyVersion.ontology_id)
+            .order_by(OntologyVersion.ontology_id, OntologyVersion.created_at.desc())
+            .subquery("latest_ver")
+        )
+        _joins.append((_latest_ver, _latest_ver.c.oid == Ontology.id))
+        # jsonb_object_keys over the matched version's counts, collapsing regional
+        # subtags (en-GB→en) to mirror canonical_lang in _attach_langs. Empty {} and
+        # NULL yield no keys, so those versions correctly fail the filter.
+        conditions.append(_text(
+            "EXISTS (SELECT 1 FROM jsonb_object_keys(latest_ver.lc) AS k "
+            "WHERE split_part(lower(k), '-', 1) = ANY(:lang_codes))"
+        ).bindparams(lang_codes=list(_lang_canon)))
 
     stmt = select(Ontology)
     count_from = select(func.count()).select_from(Ontology)
@@ -933,7 +971,7 @@ async def list_ontologies(
     # This one genuinely needs langs on every candidate row to filter, so compute
     # them here (batched) for the current set; the rows are already narrowed by any
     # q/profile/language/reuses filters above.
-    if lang_set:
+    if lang_set and not _lang_sql:
         await _attach_langs(rows)
         rows = [r for r in rows if _row_has_language(r, lang_set)]
 
@@ -960,9 +998,10 @@ async def list_ontologies(
         rows = rows[offset: offset + limit]
     # else: hot path already sorted + paginated + counted in SQL.
 
-    # Attach language counts for ONLY the returned page (#286) — unless a ?lang=
-    # filter already computed them for the candidate set above.
-    if not lang_set:
+    # Attach language counts for ONLY the returned page (#286) — unless the Python
+    # ?lang= path above already attached them for the candidate set (sqlite only; the
+    # SQL lang filter leaves them to be attached here, page-only).
+    if not (lang_set and not _lang_sql):
         await _attach_langs(rows)
 
     if view == "list":
