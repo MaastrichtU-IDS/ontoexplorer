@@ -45,9 +45,7 @@ def fake_redis():
     r = fakeredis.FakeRedis(decode_responses=True)
     with (
         patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r),
-        patch("ontoexplorer.api.ols.ontologies._get_redis", return_value=r),
         patch("ontoexplorer.api.ols.terms._get_redis", return_value=r),
-        patch("ontoexplorer.api.ols.properties._get_redis", return_value=r),
     ):
         yield r
 
