@@ -6,10 +6,14 @@ from ontoexplorer.modules.resolve.conneg import check_resolvable
 
 
 class _Resp:
-    def __init__(self, status, content_type, url):
+    def __init__(self, status, content_type, url, body: bytes = b""):
         self.status_code = status
         self.headers = {"content-type": content_type} if content_type else {}
         self.url = url
+        self._body = body
+
+    def iter_bytes(self):
+        yield self._body
 
 
 class _FakeClient:
@@ -66,6 +70,35 @@ def test_check_resolvable_timeout_is_false():
                          client_factory=_factory(exc=httpx.ConnectTimeout("boom")))
     assert r.resolvable is False
     assert r.error and "boom" in r.error
+
+
+def test_check_resolvable_sniffs_rdf_under_octet_stream():
+    # OBO PURL → raw .owl served as application/octet-stream; body is RDF/XML.
+    body = b'<?xml version="1.0"?>\n<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">'
+    r = check_resolvable(
+        "http://purl.obolibrary.org/obo/omit.owl",
+        client_factory=_factory(_Resp(200, "application/octet-stream", "https://x/omit.owl", body)),
+    )
+    assert r.resolvable is True
+
+
+def test_check_resolvable_sniffs_turtle_under_text_plain():
+    body = b"@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<x> a owl:Ontology ."
+    r = check_resolvable(
+        "https://example.org/onto.ttl",
+        client_factory=_factory(_Resp(200, "text/plain; charset=utf-8", "https://example.org/onto.ttl", body)),
+    )
+    assert r.resolvable is True
+
+
+def test_check_resolvable_generic_but_not_rdf_is_false():
+    # text/plain README, not RDF.
+    r = check_resolvable(
+        "https://example.org/readme",
+        client_factory=_factory(_Resp(200, "text/plain", "https://example.org/readme",
+                                      b"This repository contains an ontology. See docs.")),
+    )
+    assert r.resolvable is False
 
 
 def test_check_resolvable_blocks_redirect_to_private():

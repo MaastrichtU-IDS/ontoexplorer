@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -16,13 +17,25 @@ RDF_ACCEPT = (
 )
 
 _RDF_TYPES = {
-    "text/turtle", "application/rdf+xml", "application/ld+json",
+    "text/turtle", "application/x-turtle", "application/rdf+xml", "application/ld+json",
     "application/n-triples", "application/n-quads", "application/trig",
-    "text/n3", "application/owl+xml", "application/xml",  # some servers label RDF/XML this way
+    "text/n3", "text/rdf+n3", "application/owl+xml", "application/xml",  # some servers label RDF/XML this way
 }
+
+# Generic/missing content-types that MIGHT be RDF served by a plain file server
+# (OBO PURLs → raw .owl, GitHub raw, etc.); these trigger a body sniff.
+_GENERIC_TYPES = {"application/octet-stream", "text/plain"}
+
+# RDF signatures to recognise in the first bytes of a body. Bytes-based to skip
+# decoding; case-insensitive. Covers Turtle/N3, RDF/XML, OWL, JSON-LD.
+_RDF_MARKERS_RE = re.compile(
+    rb"@prefix|@base|rdf:RDF|<rdf:|owl:Ontology|<owl:|\"@context\"", re.IGNORECASE)
+# An N-Triples/Turtle IRI-subject statement: <iri> <iri> …
+_TRIPLE_RE = re.compile(rb"<https?://[^>\s]+>\s+<https?://[^>\s]+>")
 
 _TIMEOUT_S = 10.0
 _MAX_REDIRECTS = 5
+_SNIFF_CAP = 4096
 
 
 def is_rdf_content_type(content_type: str | None) -> bool:
@@ -34,6 +47,35 @@ def is_rdf_content_type(content_type: str | None) -> bool:
         return False
     media = content_type.split(";", 1)[0].strip().lower()
     return media in _RDF_TYPES
+
+
+def _is_generic_type(content_type: str | None) -> bool:
+    """True for a missing or generic content-type (octet-stream / text-plain),
+    where the label can't be trusted and we fall back to a body sniff."""
+    if not content_type:
+        return True
+    media = content_type.split(";", 1)[0].strip().lower()
+    return media in _GENERIC_TYPES
+
+
+def _sniff_rdf(resp, cap: int = _SNIFF_CAP) -> bool:
+    """Read up to `cap` bytes of the (streamed) response body and decide whether
+    it looks like RDF — for servers that serve RDF under a generic content-type.
+    Bounded and best-effort; never raises."""
+    try:
+        buf = b""
+        for chunk in resp.iter_bytes():
+            buf += chunk
+            if len(buf) >= cap:
+                break
+        head = buf[:cap]
+    except Exception:
+        return False
+    if _RDF_MARKERS_RE.search(head) or _TRIPLE_RE.search(head):
+        return True
+    low = head.lstrip().lower()
+    # XML that declares an RDF/OWL namespace (RDF/XML without a proper label).
+    return low.startswith(b"<?xml") and (b"rdf" in low or b"owl" in low)
 
 
 @dataclass(frozen=True)
@@ -74,7 +116,11 @@ def check_resolvable(iri: str, *, client_factory=None) -> ResolveResult:
                 status = resp.status_code
                 ctype = resp.headers.get("content-type")
                 final = str(getattr(resp, "url", iri) or iri)
-                ok = 200 <= status < 300 and is_rdf_content_type(ctype)
+                if not 200 <= status < 300:
+                    return ResolveResult(False, final_url=final, http_status=status, content_type=ctype)
+                # RDF by its label, OR a generic/missing label whose body sniffs as
+                # RDF (OBO PURLs → raw .owl served as octet-stream/text-plain, etc.).
+                ok = is_rdf_content_type(ctype) or (_is_generic_type(ctype) and _sniff_rdf(resp))
                 return ResolveResult(ok, final_url=final, http_status=status, content_type=ctype)
     except Exception as exc:  # httpx errors, guard rejection, DNS, etc.
         logger.debug("resolvability check failed for %s", iri, exc_info=True)
