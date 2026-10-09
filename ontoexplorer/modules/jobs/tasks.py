@@ -1810,6 +1810,7 @@ async def _apply_resolvability(db, ontology_id: str, *, client_factory=None) -> 
             resolve_detail={
                 "final_url": res.final_url, "http_status": res.http_status,
                 "content_type": res.content_type, "error": res.error,
+                "retry_after": res.retry_after,
             },
         )
     )
