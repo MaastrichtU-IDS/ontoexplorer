@@ -116,6 +116,14 @@ class Ontology(Base):
         ForeignKey("versions.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    # Resolvability: does the canonical IRI dereference to RDF via content
+    # negotiation? NULL = not yet checked. Set by the conneg check task.
+    resolvable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    resolve_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolve_detail: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
+
     owner: Mapped[User | None] = relationship(back_populates="ontologies")
     # `foreign_keys` is explicit because there are now two FKs between ontologies
     # and versions (versions.ontology_id and ontologies.current_version_id); this

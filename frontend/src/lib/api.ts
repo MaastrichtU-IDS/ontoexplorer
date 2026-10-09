@@ -241,6 +241,9 @@ export interface Ontology {
   languages?: OntologyLanguage[]
   /** Language/expressivity tier of the latest ready version: rdf | rdfs | rdfs-plus | owl. */
   language_tier?: LanguageTier | null
+  /** Whether the IRI dereferences to RDF via content negotiation (null = unchecked). */
+  resolvable?: boolean | null
+  resolve_checked_at?: string | null
   /** Public identity of the uploader ("Added by"). Never includes email. */
   owner_display_name?: string | null
   owner_orcid?: string | null

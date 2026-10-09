@@ -1376,6 +1376,7 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
             # Non-fatal: the endpoint still computes on demand.
             log.warning("root_cache_warm_failed", version_id=version_id, error=str(exc))
         embed_ontology.delay(version_id, ontology_id=ontology_id)
+        _dispatch_resolvability_check(ontology_id)
         log.info("index_ontology_done", version_id=version_id,
                  class_count=stats.class_count, property_count=stats.property_count)
         return {"status": "done", "version_id": version_id,
@@ -1785,6 +1786,56 @@ def reconcile_embeddings(limit: int = 50) -> dict:
     n = asyncio.run(_run())
     log.info("reconcile_embeddings", dispatched=n)
     return {"dispatched": n}
+
+
+async def _apply_resolvability(db, ontology_id: str, *, client_factory=None) -> None:
+    """Check whether the ontology's IRI dereferences to RDF (conneg) and store
+    the result. Best-effort: a check that can't run leaves resolvable=False."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select, update
+
+    from ontoexplorer.models.db import Ontology
+    from ontoexplorer.modules.resolve.conneg import check_resolvable
+
+    onto = (await db.execute(select(Ontology).where(Ontology.id == ontology_id))).scalar_one_or_none()
+    if onto is None:
+        return
+    # check_resolvable does blocking HTTP; run it off the event loop.
+    res = await asyncio.to_thread(check_resolvable, onto.iri, client_factory=client_factory)
+    await db.execute(
+        update(Ontology).where(Ontology.id == ontology_id).values(
+            resolvable=res.resolvable,
+            resolve_checked_at=datetime.now(timezone.utc),
+            resolve_detail={
+                "final_url": res.final_url, "http_status": res.http_status,
+                "content_type": res.content_type, "error": res.error,
+            },
+        )
+    )
+    await db.commit()
+
+
+@celery_app.task(name="ontoexplorer.check_ontology_resolvable", time_limit=60)
+def check_ontology_resolvable(ontology_id: str) -> dict:
+    """Celery entry point: dereference-check one ontology's IRI via conneg."""
+    from ontoexplorer.database import make_celery_db_session
+
+    async def _run():
+        async with make_celery_db_session()() as db:
+            await _apply_resolvability(db, ontology_id)
+
+    asyncio.run(_run())
+    return {"ontology_id": ontology_id}
+
+
+def _dispatch_resolvability_check(ontology_id: str) -> None:
+    """Fire the IRI resolvability (conneg) check; never let a dispatch error block
+    the ingest-ready path."""
+    try:
+        check_ontology_resolvable.delay(ontology_id)
+    except Exception:
+        log.warning("resolvability_dispatch_failed", ontology_id=ontology_id)
 
 
 @celery_app.task(name="ontoexplorer.refresh_owl_profile", time_limit=300)
