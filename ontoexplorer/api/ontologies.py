@@ -623,6 +623,33 @@ def _sort_rows(rows: list[dict], sort: str, direction: str) -> list[dict]:
     return sorted(rows, key=lambda r: _row_display_name(r).casefold(), reverse=reverse)
 
 
+def _q_rank(shortname: str | None, title: str | None, q: str) -> int:
+    """Relevance tier for a keyword-search match, lower = more relevant.
+
+    The `q` filter matches on shortname / IRI / title / metadata, so a plain
+    alphabetical sort buries the thing the user most likely meant — an exact
+    shortname like `go` or `sulo` — under every other substring hit. Rank the
+    shortname the user is almost certainly typing first, then the title, then
+    everything else (an IRI- or description-only match). Ties fall back to the
+    caller's chosen sort. Keep this in lock-step with the SQL CASE in
+    list_ontologies.
+    """
+    ql = (q or "").casefold()
+    if not ql:
+        return 0
+    sn = (shortname or "").casefold()
+    ti = (title or "").casefold()
+    if sn == ql:
+        return 0
+    if sn.startswith(ql):
+        return 1
+    if ql in sn:
+        return 2
+    if ql in ti:
+        return 3
+    return 4
+
+
 def _row_has_language(r: dict, langs: set[str]) -> bool:
     """True if the ontology has labels in any of the requested language codes —
     the server-side equivalent of the client's `langs` facet filter."""
@@ -802,7 +829,28 @@ async def list_ontologies(
             # this orders by full IRI rather than the IRI's last segment.
             order_col = func.lower(func.coalesce(func.nullif(Ontology.shortname, ""), Ontology.title, Ontology.iri))
         primary = order_col.desc() if dir == "desc" else order_col.asc()
-        stmt = stmt.order_by(nulls_last(primary), Ontology.created_at.desc())
+        order_keys: list = []
+        if _q_sql:
+            # Relevance tier (mirrors _q_rank): exact shortname → prefix → substring
+            # → title substring → else. Keeps the alphabetical/date `primary` as the
+            # intra-tier tiebreaker. _latest_meta exists whenever _q_sql is true.
+            from sqlalchemy import case as _case
+            _ql = q.casefold()
+            _sn = func.lower(func.coalesce(Ontology.shortname, ""))
+            _ti = func.lower(func.coalesce(
+                Ontology.title,
+                func.json_extract_path_text(_latest_meta.c.resolved, "title"),
+                "",
+            ))
+            order_keys.append(_case(
+                (_sn == _ql, 0),
+                (_sn.like(_ql + "%"), 1),
+                (_sn.like("%" + _ql + "%"), 2),
+                (_ti.like("%" + _ql + "%"), 3),
+                else_=4,
+            ).asc())
+        order_keys += [nulls_last(primary), Ontology.created_at.desc()]
+        stmt = stmt.order_by(*order_keys)
         total = (await db.execute(count_from.where(*conditions))).scalar_one()
         stmt = stmt.offset(offset).limit(limit)
     else:
@@ -995,6 +1043,10 @@ async def list_ontologies(
         # Cache-derived filter path: sort + paginate in Python (exact displayName).
         total = len(rows)
         rows = _sort_rows(rows, sort, dir)
+        if q:
+            # Relevance first (exact shortname → … → metadata-only), name/date order
+            # preserved within each tier — the sort is stable. Mirrors the SQL CASE.
+            rows.sort(key=lambda r: _q_rank(r.get("shortname"), r.get("label") or r.get("title"), q))
         rows = rows[offset: offset + limit]
     # else: hot path already sorted + paginated + counted in SQL.
 
