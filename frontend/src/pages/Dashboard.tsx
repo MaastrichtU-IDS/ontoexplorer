@@ -853,6 +853,23 @@ type SortDir = 'asc' | 'desc'
 
 const STATUS_RANK: Record<string, number> = { ready: 0, ingested: 1, indexing: 2, reasoning: 2, failed: 3 }
 
+// Relevance tier for a dashboard search match, mirroring the server's `_q_rank`
+// (exact shortname → prefix → substring → title → else). The server already
+// returns results in this order, but the client then applies its own name/date
+// sort, which would re-shuffle them — so when searching we re-assert the tier as
+// the primary key and keep the name/date sort as the intra-tier tiebreaker.
+export function qRank(o: Ontology, query: string): number {
+  const ql = query.trim().toLowerCase()
+  if (!ql) return 0
+  const sn = (o.shortname ?? '').toLowerCase()
+  const ti = (o.title ?? o.label ?? '').toLowerCase()
+  if (sn === ql) return 0
+  if (sn.startsWith(ql)) return 1
+  if (sn.includes(ql)) return 2
+  if (ti.includes(ql)) return 3
+  return 4
+}
+
 function sortOntologies(list: Ontology[], col: SortCol, dir: SortDir): Ontology[] {
   const sorted = [...list].sort((a, b) => {
     let cmp = 0
@@ -919,7 +936,11 @@ export default function Dashboard() {
         (o.label ?? '').toLowerCase().includes(q)
       )
     : all
-  const ontologies = sortOntologies(filtered, sortCol, sortDir)
+  // Name/date sort first, then (when searching) a stable sort by relevance tier so
+  // the exact match leads — Array.sort is stable, so the chosen sort survives
+  // within each tier. Matches the server's rank-then-sort ordering.
+  const sorted = sortOntologies(filtered, sortCol, sortDir)
+  const ontologies = q ? [...sorted].sort((a, b) => qRank(a, q) - qRank(b, q)) : sorted
 
   return (
     <div>
