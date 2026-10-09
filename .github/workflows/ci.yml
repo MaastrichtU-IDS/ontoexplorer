@@ -86,12 +86,28 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Skip the actual image build when only docs changed: the Dockerfile can't
+      # have changed, and the base-image pulls (python/node from Docker Hub) burn
+      # the shared-runner anonymous quota — docs-only PRs were failing on 429s.
+      # The job still runs + reports green; only the build step is gated.
+      - name: Detect code changes
+        id: changes
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        with:
+          filters: |
+            code:
+              - '**'
+              - '!docs/**'
+              - '!**/*.md'
+
       - name: Set up Docker Buildx
+        if: steps.changes.outputs.code == 'true'
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       # No push — this job only proves the Dockerfile still resolves.
       # Layer cache speeds up reruns on the same branch.
       - name: Build ${{ matrix.image }} image
+        if: steps.changes.outputs.code == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: ${{ matrix.context }}
