@@ -1817,6 +1817,53 @@ async def _apply_resolvability(db, ontology_id: str, *, client_factory=None) -> 
     await db.commit()
 
 
+# HTTP statuses worth retrying: rate-limit + the 5xx family (incl. common Cloudflare
+# edge codes). Anything else that produced a definite answer (404/403/401/400/406,
+# or a 2xx that simply wasn't RDF) is permanent and never re-checked.
+_RETRYABLE_STATUSES = ("429", "500", "502", "503", "504", "520", "522", "524")
+
+
+async def _retryable_resolvability_ids(db, *, limit: int, now=None) -> list[str]:
+    """Ontology ids whose last resolvability check was a TRANSIENT failure
+    (429/5xx, or a fetch error with no HTTP status) and that are not inside a
+    Retry-After cooldown. Oldest-checked first so the backlog rotates fairly.
+
+    Permanent failures (404/403/200-not-RDF) and already-resolvable rows are
+    excluded, so the re-check loop only ever retries recoverable states.
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy import bindparam, text
+
+    now = now or datetime.now(timezone.utc)
+    bind = db.get_bind()
+    is_pg = bind is not None and bind.dialect.name == "postgresql"
+    # The retry_after cooldown compares an ISO timestamp stored in JSON against
+    # `now`. On Postgres cast to timestamptz; on sqlite compare the ISO strings
+    # lexically (correct for UTC ISO-8601) and bind `now` as its ISO string.
+    if is_pg:
+        cooldown = "(resolve_detail->>'retry_after')::timestamptz <= :now"
+        now_param = now
+    else:
+        cooldown = "resolve_detail->>'retry_after' <= :now"
+        now_param = now.isoformat()
+    stmt = text(f"""
+        SELECT id FROM ontologies
+        WHERE resolvable IS FALSE
+          AND (
+            resolve_detail->>'http_status' IN :statuses
+            OR (resolve_detail->>'http_status' IS NULL AND resolve_detail->>'error' IS NOT NULL)
+          )
+          AND (resolve_detail->>'retry_after' IS NULL OR {cooldown})
+        ORDER BY resolve_checked_at ASC NULLS FIRST
+        LIMIT :lim
+    """).bindparams(bindparam("statuses", expanding=True))
+    rows = (await db.execute(
+        stmt, {"statuses": list(_RETRYABLE_STATUSES), "now": now_param, "lim": limit}
+    )).all()
+    return [str(r.id) for r in rows]
+
+
 @celery_app.task(name="ontoexplorer.check_ontology_resolvable", time_limit=60)
 def check_ontology_resolvable(ontology_id: str) -> dict:
     """Celery entry point: dereference-check one ontology's IRI via conneg."""
