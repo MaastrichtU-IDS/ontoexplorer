@@ -248,9 +248,18 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
             )
 
     if identity_iri and identity_iri != provisional_iri:
-        reconciled_id = await _reconcile_ontology_iri(
-            db, bogus_ontology_id=ontology_id, canonical_iri=identity_iri, version_id=version_id
-        )
+        try:
+            reconciled_id = await _reconcile_ontology_iri(
+                db, bogus_ontology_id=ontology_id, canonical_iri=identity_iri,
+                version_id=version_id, request=request,
+            )
+        except OntologyAccessDenied:
+            # Post-load reject: the DB rows (provisional ontology; the version
+            # isn't added yet) roll back with the transaction, but the MinIO
+            # object + Oxigraph graph are already written — purge them.
+            from ontoexplorer.modules.jobs.tasks import purge_version_artifacts
+            purge_version_artifacts.delay(ontology_id, version_id, minio_key)
+            raise
         # Merged into a pre-existing row → not a fresh ontology; don't rename it.
         if reconciled_id != ontology_id:
             ontology_created = False
@@ -353,6 +362,46 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     )
 
 
+class OntologyAccessDenied(Exception):
+    """An upload resolved to an existing ontology the uploader may not edit.
+
+    Ingest identifies the target ontology purely from the IRI declared inside the
+    uploaded content, so without a check any authorized uploader could inject a
+    version into — and overwrite the displayed content of — another account's
+    ontology. This is raised (not merged) when the uploader is not the owner, an
+    admin, or an approved maintainer of the matched ontology. Carries the matched
+    ontology's id + IRI so the caller can file a maintainer request and surface a
+    clear message. Terminal — never retried.
+    """
+
+    def __init__(self, ontology_id: str, iri: str):
+        self.ontology_id = ontology_id
+        self.iri = iri
+        super().__init__(f"IRI already registered to another account: {iri}")
+
+
+async def _assert_can_attach(
+    db: AsyncSession, existing: "Ontology", request: IngestionRequest
+) -> None:
+    """Guard against version-injection into another user's ontology.
+
+    When an upload resolves to an *existing* ontology, the uploader may attach a
+    version only if they can edit it (admin / owner / approved maintainer).
+    System/backfill ingests carry no owner_id and are trusted, so they skip the
+    check. Raises OntologyAccessDenied otherwise.
+    """
+    if not request.owner_id:
+        return
+    from ontoexplorer.models.db import User
+    from ontoexplorer.modules.auth.permissions import can_edit_ontology
+    user = (await db.execute(
+        select(User).where(User.id == request.owner_id)
+    )).scalar_one_or_none()
+    if await can_edit_ontology(db, user, existing):
+        return
+    raise OntologyAccessDenied(existing.id, existing.iri)
+
+
 async def _ensure_ontology(
     db: AsyncSession, ontology_iri: str, request: IngestionRequest
 ) -> tuple[str, bool]:
@@ -361,6 +410,9 @@ async def _ensure_ontology(
     Returns ``(ontology_id, created)``. For freshly-created rows, derive a unique
     shortname from the IRI so the ontology has a canonical user-facing identifier
     from the moment it lands (refined from metadata post-load — see #249).
+
+    Raises OntologyAccessDenied when the IRI matches an existing ontology the
+    uploader may not edit (version-injection guard).
     """
     from ontoexplorer.modules.ingestion.shortname import (
         find_ontology_by_canonical_iri,
@@ -372,6 +424,7 @@ async def _ensure_ontology(
     # or trailing-`#` variant lands on the existing row instead of a new one (#250).
     existing = await find_ontology_by_canonical_iri(db, ontology_iri)
     if existing:
+        await _assert_can_attach(db, existing, request)
         return existing.id, False
 
     candidate = infer_shortname_from_iri(ontology_iri)
@@ -442,6 +495,7 @@ async def _reconcile_ontology_iri(
     bogus_ontology_id: str,
     canonical_iri: str,
     version_id: str,
+    request: IngestionRequest,
 ) -> str:
     """Reconcile a post-load canonical IRI against the provisional Ontology row.
 
@@ -497,6 +551,11 @@ async def _reconcile_ontology_iri(
 
     if existing.id == bogus_ontology_id:
         return bogus_ontology_id
+
+    # Merging into a DIFFERENT, pre-existing ontology — the post-load collision
+    # point. Same version-injection guard as _ensure_ontology: only owners /
+    # admins / approved maintainers may attach here.
+    await _assert_can_attach(db, existing, request)
 
     await _move_named_graph(bogus_ontology_id, existing.id, version_id)
 
