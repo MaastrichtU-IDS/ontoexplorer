@@ -571,7 +571,7 @@ _LIST_VIEW_FIELDS = (
     "id", "iri", "shortname", "label", "groups", "created_at",
     "class_count", "object_property_count", "datatype_property_count",
     "annotation_property_count", "individual_count", "triple_count",
-    "languages", "language_tier",
+    "languages", "language_tier", "resolvable",
 )
 _LIST_DESC_CAP = 500
 
@@ -1091,6 +1091,22 @@ async def record_ontology_view(ontology_id: str, request: Request, db: AsyncSess
     from ontoexplorer.modules.usage.capture import KIND_VIEW, record_usage
     await record_usage(request, ontology_id, KIND_VIEW)
     return Response(status_code=204)
+
+
+@router.post("/{ontology_id}/recheck-resolvable", status_code=202,
+             summary="Re-run the IRI resolvability (content-negotiation) check")
+async def recheck_resolvable(
+    ontology_id: str,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    ontology = await _get_ontology_or_404(db, ontology_id)
+    from ontoexplorer.modules.auth.permissions import can_edit_ontology
+    if not await can_edit_ontology(db, user, ontology):
+        raise HTTPException(status_code=403, detail="Not allowed to re-check this ontology")
+    from ontoexplorer.modules.jobs.tasks import check_ontology_resolvable
+    check_ontology_resolvable.delay(ontology.id)
+    return {"status": "queued"}
 
 
 @router.get("/{ontology_id}/versions", summary="All versions with provenance")
@@ -3954,7 +3970,8 @@ def _owner_public_fields(owner: User | None) -> dict:
 
 
 def _ontology_dict(o: Ontology, owner: User | None = None) -> dict:
-    return {"id": o.id, "iri": o.iri, "shortname": o.shortname, "title": o.title, "groups": o.groups or [], "auto_sync": o.auto_sync, "current_version_id": o.current_version_id, "created_at": o.created_at.isoformat(), **_owner_public_fields(owner)}
+    _checked = getattr(o, "resolve_checked_at", None)
+    return {"id": o.id, "iri": o.iri, "shortname": o.shortname, "title": o.title, "groups": o.groups or [], "auto_sync": o.auto_sync, "current_version_id": o.current_version_id, "created_at": o.created_at.isoformat(), "resolvable": getattr(o, "resolvable", None), "resolve_checked_at": _checked.isoformat() if _checked else None, **_owner_public_fields(owner)}
 
 
 def _version_dict(v: OntologyVersion) -> dict:
