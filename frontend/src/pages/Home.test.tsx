@@ -28,6 +28,7 @@ vi.mock('../lib/api', async (importOriginal) => {
         ...actual.api.ontologies,
         versions: () => Promise.resolve({ versions: [] }),
         search: () => Promise.resolve({ results: [], count: 0, truncated: false }),
+        list: () => Promise.resolve({ ontologies: [], offset: 0, limit: 50, total: 0 }),
       },
     },
   }
@@ -61,13 +62,19 @@ test('renders OntoExplorer heading', () => {
 
 test('renders mode toggle buttons', () => {
   renderHome()
-  expect(screen.getByText('Keyword Search')).toBeInTheDocument()
-  expect(screen.getByText('Structured Query')).toBeInTheDocument()
+  expect(screen.getByText('Ontologies')).toBeInTheDocument()
+  expect(screen.getByText('Entities')).toBeInTheDocument()
+  expect(screen.getByText('Query')).toBeInTheDocument()
 })
 
-test('switching to Structured Query tab shows search bar', () => {
+test('defaults to the Ontologies tab', () => {
   renderHome()
-  fireEvent.click(screen.getByText('Structured Query'))
+  expect(screen.getByPlaceholderText(/Search ontologies by name/i)).toBeInTheDocument()
+})
+
+test('switching to Query tab shows the structured-query search bar', () => {
+  renderHome()
+  fireEvent.click(screen.getByText('Query'))
   expect(screen.getByTestId('search-bar')).toBeInTheDocument()
   expect(screen.getByTestId('ontology-picker')).toBeInTheDocument()
 })
