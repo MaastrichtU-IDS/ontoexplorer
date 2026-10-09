@@ -86,19 +86,30 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Skip the actual image build when only docs changed: the Dockerfile can't
-      # have changed, and the base-image pulls (python/node from Docker Hub) burn
-      # the shared-runner anonymous quota — docs-only PRs were failing on 429s.
-      # The job still runs + reports green; only the build step is gated.
+      # Skip the actual image build when nothing that feeds an image changed
+      # (e.g. docs-only PRs): the base-image pulls (python/node from Docker Hub)
+      # burn the shared-runner anonymous quota — docs-only PRs were failing on
+      # 429s. The job still runs + reports green; only the build step is gated.
+      #
+      # paths-filter combines list entries with OR, so a leading '**' with '!'
+      # exclusions never subtracts (every file matches '**'). Instead whitelist
+      # the paths the two Dockerfiles actually COPY, plus this workflow itself.
       - name: Detect code changes
         id: changes
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         with:
           filters: |
             code:
-              - '**'
-              - '!docs/**'
-              - '!**/*.md'
+              - 'ontoexplorer/**'
+              - 'frontend/**'
+              - 'alembic/**'
+              - 'alembic.ini'
+              - 'scripts/**'
+              - 'Dockerfile'
+              - 'docker/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - '.github/workflows/ci.yml'
 
       - name: Set up Docker Buildx
         if: steps.changes.outputs.code == 'true'
