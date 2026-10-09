@@ -100,6 +100,14 @@ celery_app.conf.update(
             "task": "ontoexplorer.reconcile_embeddings",
             "schedule": 1200.0,
         },
+        # Politely recover transient resolvability failures (429/5xx/timeout):
+        # a small per-host-spaced batch every 30 min, so throttled shared hosts
+        # (w3id.org, OBO PURLs) clear over a few runs without us ever bursting
+        # them. Permanent failures (404/200-not-RDF) are never re-checked.
+        "recheck-resolvability-30min": {
+            "task": "ontoexplorer.recheck_resolvability",
+            "schedule": 1800.0,
+        },
         # Weekly snapshot of the processed aggregates to MinIO (durability).
         "backup-usage-weekly": {
             "task": "ontoexplorer.backup_usage_daily",
