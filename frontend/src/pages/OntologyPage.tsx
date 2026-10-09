@@ -5,6 +5,7 @@ import { useVersions } from '../hooks/useVersions'
 import { useTerm } from '../hooks/useTerm'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { OntologyVersion, OntologyMetadataEntry, SearchResult, Term, api } from '../lib/api'
+import ResolvableBadge from '../components/ResolvableBadge'
 import ClassTree from '../components/ClassTree'
 import TermPanel from '../components/TermPanel'
 import ResizeHandle from '../components/ResizeHandle'
@@ -461,12 +462,14 @@ function OntologyDocMeta({ ontologyId, versionId, lang }: { ontologyId: string; 
 
 // ── Metadata + stats panel ────────────────────────────────────────────────────
 
-function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid }: {
+function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid, resolvable, resolveCheckedAt }: {
   iri: string
   version: OntologyVersion | undefined
   lang?: string | null
   ownerDisplayName?: string | null
   ownerOrcid?: string | null
+  resolvable?: boolean | null
+  resolveCheckedAt?: string | null
 }) {
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['version-stats', version?.ontology_id, version?.id],
@@ -540,7 +543,12 @@ function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid }: {
       </h3>
       <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: 28 }}>
         <tbody>
-          <MetaRow label="Ontology IRI">{linkHref(iri) ? <ExternalValueLink value={iri} /> : iri}</MetaRow>
+          <MetaRow label="Ontology IRI">
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              {linkHref(iri) ? <ExternalValueLink value={iri} /> : iri}
+              <ResolvableBadge resolvable={resolvable} checkedAt={resolveCheckedAt} />
+            </span>
+          </MetaRow>
           {version.version_iri && (
             <MetaRow label="Version IRI">
               {linkHref(version.version_iri) ? <ExternalValueLink value={version.version_iri} /> : version.version_iri}
@@ -1323,6 +1331,8 @@ export default function OntologyPage() {
                 lang={effectiveLang}
                 ownerDisplayName={ontology?.owner_display_name}
                 ownerOrcid={ontology?.owner_orcid}
+                resolvable={ontology?.resolvable}
+                resolveCheckedAt={ontology?.resolve_checked_at}
               />
             ) : detailTab === 'history' ? (
               oid && activeVid && versions.length > 1

@@ -7,6 +7,7 @@ import { useRepositoryLanguages } from '../hooks/useRepositoryLanguages'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { api, Ontology, OwlProfileFleetEntry, ProfileName, LanguageTier, slugFromIri } from '../lib/api'
 import { endonym } from '../components/LanguagePicker'
+import ResolvableBadge from '../components/ResolvableBadge'
 
 // The secondary tabs (Coverage/OWL Profile/Compare/Reuse — the last two pull the
 // heavier diff/compare code) only render when their tab is active, so lazy-load
@@ -151,6 +152,7 @@ const OntologyRow = memo(function OntologyRow({ o, profileEntry }: { o: Ontology
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ color: 'var(--accent)', fontWeight: 500 }}>{displayName(o)}</span>
           <IriChip iri={o.iri} />
+          <ResolvableBadge resolvable={o.resolvable} checkedAt={o.resolve_checked_at} />
           <TierChip tier={o.language_tier} />
           <ProfileBadges entry={profileEntry} />
           {knownGroups.map(g => {
