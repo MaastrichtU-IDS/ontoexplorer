@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi } from 'vitest'
@@ -36,6 +36,7 @@ vi.mock('../lib/api', async (importOriginal) => {
       ontologies: {
         ...actual.api.ontologies,
         search: () => Promise.resolve({ results: [], count: 0, truncated: false }),
+        list: () => Promise.resolve({ ontologies: [], offset: 0, limit: 50, total: 0 }),
       },
     },
   }
@@ -51,6 +52,8 @@ describe('Home semantic results', () => {
         <MemoryRouter><Home /></MemoryRouter>
       </QueryClientProvider>
     )
+    // The entity (keyword) search is no longer the default tab — switch to it.
+    fireEvent.click(screen.getByText('Entities'))
     expect(screen.queryByText('Semantically similar')).not.toBeNull()
   })
 })

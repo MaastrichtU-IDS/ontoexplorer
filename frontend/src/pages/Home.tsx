@@ -4,14 +4,23 @@ import { useQuery, useQueries } from '@tanstack/react-query'
 import { useOntologies } from '../hooks/useOntologies'
 import { useGlobalSearch } from '../hooks/useSearch'
 import { useDebounced } from '../hooks/useDebounced'
-import { SearchResult, api } from '../lib/api'
+import { SearchResult, Ontology, api } from '../lib/api'
 import SearchBar from '../components/SearchBar'
 import OntologyPicker from '../components/OntologyPicker'
 import SourceBadge from '../components/SourceBadge'
 
 const EXAMPLES = ['cell death', 'apoptosis', 'protein binding', 'nucleus', 'membrane']
+const ONTOLOGY_EXAMPLES = ['gene', 'disease', 'chemical', 'anatomy', 'protein']
 
-type Mode = 'search' | 'query'
+type Mode = 'ontology' | 'search' | 'query'
+
+// Display order + labels for the front-page mode toggle.
+const MODES: Mode[] = ['ontology', 'search', 'query']
+const MODE_LABELS: Record<Mode, string> = {
+  ontology: 'Ontologies',
+  search: 'Entities',
+  query: 'Query',
+}
 
 type EntityTypeFilter = 'class' | 'object_property' | 'data_property' | 'individual'
 
@@ -236,6 +245,118 @@ function ResultList({ results, pathFor, ontologyNameFor }: {
 }
 
 // ── Search tab ────────────────────────────────────────────────────────────────
+
+function OntologySearch() {
+  const [query, setQuery] = useState('')
+  // Live search over the ontology catalogue, debounced like the entity search.
+  // Only fires at >= 2 chars so the idle front page never lists the whole
+  // catalogue. Reuses the same `/ontologies?q=` endpoint the catalogue uses.
+  const debouncedQuery = useDebounced(query.trim(), 250)
+  const activeQuery = debouncedQuery.length >= 2 ? debouncedQuery : ''
+  const { data, isFetching } = useQuery({
+    queryKey: ['home-ontology-search', activeQuery],
+    queryFn: () =>
+      api.ontologies.list(0, 50, activeQuery, undefined, undefined, undefined, false, undefined, 'list'),
+    enabled: activeQuery.length >= 2,
+    staleTime: 30_000,
+  })
+  const results: Ontology[] = data?.ontologies ?? []
+  const total = data?.total ?? results.length
+
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 8, marginBottom: '0.75rem' }}>
+        <input
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Search ontologies by name, IRI, or description…"
+          autoFocus
+          style={{
+            flex: 1, padding: '10px 14px', fontSize: 15,
+            background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)', color: 'var(--text)', outline: 'none',
+          }}
+          onFocus={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+          onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')}
+        />
+        {query && (
+          <button
+            type="button"
+            onClick={() => setQuery('')}
+            title="Clear"
+            style={{
+              padding: '10px 16px', background: 'var(--bg-secondary)', color: 'var(--text-dim)',
+              border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: 14, cursor: 'pointer',
+            }}
+          >
+            ✕
+          </button>
+        )}
+      </div>
+
+      {!activeQuery && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>Try:</span>
+          {ONTOLOGY_EXAMPLES.map(ex => (
+            <button key={ex} onClick={() => setQuery(ex)} style={{
+              fontSize: 12, padding: '3px 10px', borderRadius: 12,
+              background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+              color: 'var(--text-muted)', cursor: 'pointer',
+            }}
+              onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--accent)')}
+              onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}
+            >{ex}</button>
+          ))}
+        </div>
+      )}
+
+      {activeQuery && (
+        <div style={{ marginTop: '0.75rem' }}>
+          {isFetching && results.length === 0 && (
+            <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>Searching…</p>
+          )}
+          {!isFetching && results.length === 0 && (
+            <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>No ontologies match “{activeQuery}”.</p>
+          )}
+          {results.length > 0 && (
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {results.map(o => (
+                <li key={o.id}>
+                  <Link
+                    to={`/ontologies/${encodeURIComponent(o.shortname ?? o.id)}`}
+                    style={{
+                      display: 'flex', alignItems: 'baseline', gap: 8, padding: '8px 12px',
+                      borderRadius: 'var(--radius)', textDecoration: 'none', color: 'var(--text)',
+                      border: '1px solid transparent',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; e.currentTarget.style.borderColor = 'var(--border)' }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'transparent' }}
+                  >
+                    <span style={{ fontWeight: 600 }}>{o.shortname ?? o.title ?? o.iri}</span>
+                    {o.title && o.shortname && (
+                      <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>{o.title}</span>
+                    )}
+                    {o.class_count != null && (
+                      <span style={{ marginLeft: 'auto', color: 'var(--text-dim)', fontSize: 12, whiteSpace: 'nowrap' }}>
+                        {o.class_count.toLocaleString()} classes
+                      </span>
+                    )}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+          {total > results.length && (
+            <p style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 8 }}>
+              Showing {results.length} of {total.toLocaleString()} — refine your search or{' '}
+              <Link to="/ontologies" style={{ color: 'var(--accent)' }}>browse the catalogue</Link>.
+            </p>
+          )}
+        </div>
+      )}
+    </>
+  )
+}
 
 function KeywordSearch({ typeFilters, onTypeFiltersChange }: {
   typeFilters: EntityTypeFilter[]
@@ -585,7 +706,7 @@ function MOSQuery({ relation, onRelationChange }: {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function Home() {
-  const [mode, setMode] = useState<Mode>('search')
+  const [mode, setMode] = useState<Mode>('ontology')
   const [typeFilters, setTypeFilters] = useState<EntityTypeFilter[]>([])
   const [mosRelation, setMosRelation] = useState<MosRelation>('subclasses')
 
@@ -639,7 +760,7 @@ export default function Home() {
       {/* Mode toggle */}
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
       <div style={{ display: 'flex', borderRadius: 'var(--radius)', overflow: 'hidden', border: '1px solid var(--border)' }}>
-        {(['search', 'query'] as Mode[]).map(m => (
+        {MODES.map(m => (
           <button
             key={m}
             onClick={() => setMode(m)}
@@ -647,19 +768,17 @@ export default function Home() {
               padding: '7px 22px', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500,
               background: mode === m ? 'var(--accent)' : 'transparent',
               color: mode === m ? 'var(--on-accent)' : 'var(--text-dim)',
-              textTransform: 'capitalize',
             }}
           >
-            {m === 'search' ? 'Keyword Search' : 'Structured Query'}
+            {MODE_LABELS[m]}
           </button>
         ))}
       </div>
       </div>
 
-      {mode === 'search'
-        ? <KeywordSearch typeFilters={typeFilters} onTypeFiltersChange={setTypeFilters} />
-        : <MOSQuery relation={mosRelation} onRelationChange={setMosRelation} />
-      }
+      {mode === 'ontology' && <OntologySearch />}
+      {mode === 'search' && <KeywordSearch typeFilters={typeFilters} onTypeFiltersChange={setTypeFilters} />}
+      {mode === 'query' && <MOSQuery relation={mosRelation} onRelationChange={setMosRelation} />}
     </div>
   )
 }
