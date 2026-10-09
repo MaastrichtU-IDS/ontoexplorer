@@ -93,6 +93,13 @@ celery_app.conf.update(
             "task": "ontoexplorer.rollup_usage",
             "schedule": 900.0,
         },
+        # Self-heal embeddings orphaned by worker restarts: re-dispatch embedding
+        # for `ready` versions that still have no term_embeddings. Capped per run so
+        # a large gap drains gradually; a normal small gap clears in one interval.
+        "reconcile-embeddings-20min": {
+            "task": "ontoexplorer.reconcile_embeddings",
+            "schedule": 1200.0,
+        },
         # Weekly snapshot of the processed aggregates to MinIO (durability).
         "backup-usage-weekly": {
             "task": "ontoexplorer.backup_usage_daily",
@@ -1697,6 +1704,54 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
     except Exception as exc:
         log.error("embed_ontology_failed", version_id=version_id, error=str(exc))
         return {"status": "failed", "version_id": version_id, "error": str(exc)}
+
+
+async def _reconcile_embeddings(db, *, limit: int, dispatch) -> int:
+    """Re-dispatch embedding for `ready` versions that have no term_embeddings.
+
+    Embeds that are interrupted by a worker restart leave the version indexed but
+    un-embedded (all observed embedding failures are restart interruptions, never
+    genuine errors), and acks_late redelivery does not reliably resume them. This
+    self-heals that gap: it finds un-embedded ready versions, skips any with an
+    in-flight ('running') embedding job so a slow embed isn't double-queued, and
+    re-dispatches up to `limit` per run so a large gap drains gradually rather than
+    flooding the serial embed worker. `dispatch(version_id, ontology_id)` is
+    injected for testing; production passes `embed_ontology.delay`. Returns the
+    number dispatched.
+    """
+    from sqlalchemy import text
+    rows = (await db.execute(text("""
+        SELECT v.id AS version_id, v.ontology_id
+        FROM versions v
+        WHERE v.status = 'ready'
+          AND NOT EXISTS (SELECT 1 FROM term_embeddings te WHERE te.version_id = v.id)
+          AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.version_id = v.id
+                          AND j.type = 'embedding' AND j.status = 'running')
+        ORDER BY v.created_at DESC
+        LIMIT :lim
+    """), {"lim": limit})).all()
+    for r in rows:
+        dispatch(str(r.version_id), str(r.ontology_id))
+    return len(rows)
+
+
+@celery_app.task(name="ontoexplorer.reconcile_embeddings")
+def reconcile_embeddings(limit: int = 50) -> dict:
+    """Beat task: re-dispatch embedding for ready-but-unembedded versions so an
+    embed orphaned by a worker restart self-corrects within the beat interval."""
+    import asyncio
+    from ontoexplorer.database import make_celery_db_session
+
+    def _dispatch(version_id: str, ontology_id: str) -> None:
+        embed_ontology.delay(version_id, ontology_id=ontology_id)
+
+    async def _run() -> int:
+        async with make_celery_db_session()() as db:
+            return await _reconcile_embeddings(db, limit=limit, dispatch=_dispatch)
+
+    n = asyncio.run(_run())
+    log.info("reconcile_embeddings", dispatched=n)
+    return {"dispatched": n}
 
 
 @celery_app.task(name="ontoexplorer.refresh_owl_profile", time_limit=300)
