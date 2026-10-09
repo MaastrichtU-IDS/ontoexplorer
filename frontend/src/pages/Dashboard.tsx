@@ -5,6 +5,7 @@ import { api, slugFromIri, type Ontology, type OntologyVersion } from '../lib/ap
 import { useAuth } from '../hooks/useAuth'
 import ReindexWithReasoner from '../components/ReindexWithReasoner'
 import { useIsMobile } from '../hooks/useIsMobile'
+import { useDebounced } from '../hooks/useDebounced'
 
 const INGEST_POLL_MS = 1500
 const INGEST_TRACK_TIMEOUT_MS = 30 * 60_000
@@ -880,11 +881,16 @@ export default function Dashboard() {
   const [pollUntil, setPollUntil] = useState(0)
   const qc = useQueryClient()
 
+  // Push the filter to the server (debounced): a prolific owner can have
+  // thousands of ontologies, so a client-only filter over the first page misses
+  // anything past it. The server applies the same `q` match (and relevance rank)
+  // the catalogue uses, scoped to the caller's owned/maintained set via `mine`.
+  const debouncedSearch = useDebounced(search.trim(), 300)
   const { data, isLoading } = useQuery({
-    queryKey: ['ontologies', 'mine'],
+    queryKey: ['ontologies', 'mine', debouncedSearch],
     // "My Ontologies" = owned or maintained (distinct from the global catalog
     // cache under ['ontologies'] used by search/OntologyPage).
-    queryFn: () => api.ontologies.list(0, 200, undefined, undefined, undefined, undefined, true),
+    queryFn: () => api.ontologies.list(0, 200, debouncedSearch || undefined, undefined, undefined, undefined, true),
     refetchInterval: () => (Date.now() < pollUntil ? 4000 : false),
   })
 
