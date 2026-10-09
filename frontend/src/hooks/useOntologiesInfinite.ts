@@ -29,17 +29,21 @@ export function useOntologiesInfinite(opts: {
   langs: string[]           // BCP-47 language codes from the facet chips
   sort: 'name' | 'date'
   dir: 'asc' | 'desc'
+  mine?: boolean            // scope to the caller's owned/maintained set (dashboard)
+  // Poll while a just-submitted ontology is still ingesting (dashboard). Static
+  // false for the catalogue — no polling there.
+  refetchInterval?: number | false | (() => number | false)
 }) {
-  const { group, profile, reuses, language, langs, sort, dir } = opts
+  const { group, profile, reuses, language, langs, sort, dir, mine = false, refetchInterval = false } = opts
   const q = useDebounce(opts.query.trim(), 250)
   const langKey = [...langs].sort().join(',')
 
   const query = useInfiniteQuery({
-    queryKey: ['ontologies', 'infinite', q, group ?? '', profile ?? '', reuses ?? '', language ?? '', langKey, sort, dir],
+    queryKey: ['ontologies', 'infinite', mine ? 'mine' : 'all', q, group ?? '', profile ?? '', reuses ?? '', language ?? '', langKey, sort, dir],
     queryFn: ({ pageParam }) =>
       api.ontologies.list(
         pageParam as number, PAGE_SIZE,
-        q || undefined, group || undefined, profile, reuses, false, language, 'list',
+        q || undefined, group || undefined, profile, reuses, mine, language, 'list',
         { sort, dir, langs },
       ),
     // Prefer the server `total` to know when to stop; fall back to short-page
@@ -51,6 +55,7 @@ export function useOntologiesInfinite(opts: {
     },
     initialPageParam: 0,
     staleTime: 30_000,
+    refetchInterval,
   })
 
   const ontologies: Ontology[] = query.data?.pages.flatMap(p => p.ontologies) ?? []

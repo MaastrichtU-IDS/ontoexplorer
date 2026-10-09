@@ -5,7 +5,7 @@ import { api, slugFromIri, type Ontology, type OntologyVersion } from '../lib/ap
 import { useAuth } from '../hooks/useAuth'
 import ReindexWithReasoner from '../components/ReindexWithReasoner'
 import { useIsMobile } from '../hooks/useIsMobile'
-import { useDebounced } from '../hooks/useDebounced'
+import { useOntologiesInfinite } from '../hooks/useOntologiesInfinite'
 
 const INGEST_POLL_MS = 1500
 const INGEST_TRACK_TIMEOUT_MS = 30 * 60_000
@@ -848,44 +848,8 @@ function AddOntologyForm({ onSuccess }: { onSuccess: () => void }) {
 
 // ── Dashboard page ────────────────────────────────────────────────────────────
 
-type SortCol = 'name' | 'date' | 'status'
+type SortCol = 'name' | 'date'
 type SortDir = 'asc' | 'desc'
-
-const STATUS_RANK: Record<string, number> = { ready: 0, ingested: 1, indexing: 2, reasoning: 2, failed: 3 }
-
-// Relevance tier for a dashboard search match, mirroring the server's `_q_rank`
-// (exact shortname → prefix → substring → title → else). The server already
-// returns results in this order, but the client then applies its own name/date
-// sort, which would re-shuffle them — so when searching we re-assert the tier as
-// the primary key and keep the name/date sort as the intra-tier tiebreaker.
-export function qRank(o: Ontology, query: string): number {
-  const ql = query.trim().toLowerCase()
-  if (!ql) return 0
-  const sn = (o.shortname ?? '').toLowerCase()
-  const ti = (o.title ?? o.label ?? '').toLowerCase()
-  if (sn === ql) return 0
-  if (sn.startsWith(ql)) return 1
-  if (sn.includes(ql)) return 2
-  if (ti.includes(ql)) return 3
-  return 4
-}
-
-function sortOntologies(list: Ontology[], col: SortCol, dir: SortDir): Ontology[] {
-  const sorted = [...list].sort((a, b) => {
-    let cmp = 0
-    if (col === 'name') {
-      cmp = displayName(a).localeCompare(displayName(b))
-    } else if (col === 'date') {
-      cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-    } else {
-      const ra = STATUS_RANK[a.latest_version?.status ?? ''] ?? 4
-      const rb = STATUS_RANK[b.latest_version?.status ?? ''] ?? 4
-      cmp = ra - rb || displayName(a).localeCompare(displayName(b))
-    }
-    return dir === 'asc' ? cmp : -cmp
-  })
-  return sorted
-}
 
 export default function Dashboard() {
   const [showForm, setShowForm] = useState(false)
@@ -898,24 +862,25 @@ export default function Dashboard() {
   const [pollUntil, setPollUntil] = useState(0)
   const qc = useQueryClient()
 
-  // Push the filter to the server (debounced): a prolific owner can have
-  // thousands of ontologies, so a client-only filter over the first page misses
-  // anything past it. The server applies the same `q` match (and relevance rank)
-  // the catalogue uses, scoped to the caller's owned/maintained set via `mine`.
-  const debouncedSearch = useDebounced(search.trim(), 300)
-  const { data, isLoading } = useQuery({
-    queryKey: ['ontologies', 'mine', debouncedSearch],
-    // "My Ontologies" = owned or maintained (distinct from the global catalog
-    // cache under ['ontologies'] used by search/OntologyPage).
-    queryFn: () => api.ontologies.list(0, 200, debouncedSearch || undefined, undefined, undefined, undefined, true),
-    refetchInterval: () => (Date.now() < pollUntil ? 4000 : false),
-  })
+  // Server-authoritative list, scoped to the caller's owned/maintained set and
+  // paginated on scroll — a prolific owner can have thousands of ontologies, so a
+  // single capped fetch both truncated browse and hid matches past the cap. The
+  // server owns the filter (`q`, relevance-ranked) and the name/date sort, so
+  // there is no client-side re-sort to desync. Polls while an upload ingests.
+  const { ontologies, total, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useOntologiesInfinite({
+      query: search,
+      sort: sortCol,
+      dir: sortDir,
+      langs: [],
+      mine: true,
+      refetchInterval: () => (Date.now() < pollUntil ? 4000 : false),
+    })
 
   function handleAdded() {
     // Ingestion is async — keep refetching for ~90s so the new ontology shows
     // up on its own once the worker finishes (covers all but very large loads).
     setPollUntil(Date.now() + 90_000)
-    qc.invalidateQueries({ queryKey: ['ontologies', 'mine'] })
     qc.invalidateQueries({ queryKey: ['ontologies'] })
     qc.invalidateQueries({ queryKey: ['stats'] })
     setShowForm(false)
@@ -926,21 +891,7 @@ export default function Dashboard() {
     else { setSortCol(col); setSortDir('asc') }
   }
 
-  const all = data?.ontologies ?? []
-  const q = search.trim().toLowerCase()
-  const filtered = q
-    ? all.filter(o =>
-        (o.shortname ?? '').toLowerCase().includes(q) ||
-        o.iri.toLowerCase().includes(q) ||
-        (o.title ?? '').toLowerCase().includes(q) ||
-        (o.label ?? '').toLowerCase().includes(q)
-      )
-    : all
-  // Name/date sort first, then (when searching) a stable sort by relevance tier so
-  // the exact match leads — Array.sort is stable, so the chosen sort survives
-  // within each tier. Matches the server's rank-then-sort ordering.
-  const sorted = sortOntologies(filtered, sortCol, sortDir)
-  const ontologies = q ? [...sorted].sort((a, b) => qRank(a, q) - qRank(b, q)) : sorted
+  const q = search.trim()
 
   return (
     <div>
@@ -1033,6 +984,29 @@ export default function Dashboard() {
             )}
           </tbody>
         </table>
+      )}
+
+      {/* Pagination: load the next server page on demand. A prolific owner's full
+          set is reachable here instead of being capped at the first page. */}
+      {!isLoading && ontologies.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: '0.75rem' }}>
+          <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
+            Showing {ontologies.length}{typeof total === 'number' ? ` of ${total.toLocaleString()}` : ''}
+          </span>
+          {hasNextPage && (
+            <button
+              onClick={() => fetchNextPage()}
+              disabled={isFetchingNextPage}
+              style={{
+                padding: '0.3rem 0.9rem', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+                background: 'var(--bg-secondary)', color: 'var(--text)', cursor: isFetchingNextPage ? 'default' : 'pointer',
+                fontSize: 'var(--font-size-sm)',
+              }}
+            >
+              {isFetchingNextPage ? 'Loading…' : 'Load more'}
+            </button>
+          )}
+        </div>
       )}
     </div>
   )
