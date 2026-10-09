@@ -1864,6 +1864,65 @@ async def _retryable_resolvability_ids(db, *, limit: int, now=None) -> list[str]
     return [str(r.id) for r in rows]
 
 
+async def _recheck_batch(db, *, limit, min_host_interval_s, sleep, apply, clock=None) -> int:
+    """Re-check a capped batch of transient-failure ontologies, spacing requests
+    to the same host by >= `min_host_interval_s` so we never burst a shared host
+    (w3id.org, OBO PURLs). Requests to *different* hosts are not spaced.
+
+    `sleep(seconds)`, `apply(db, ontology_id)`, and `clock()` are injected for
+    testability; production passes `time.sleep`, `_apply_resolvability`, and
+    `time.monotonic`. Using a real monotonic clock credits the seconds each HTTP
+    check already took toward the per-host interval, so we only sleep the
+    remainder. Returns the number of ontologies re-checked.
+    """
+    import time as _t
+    from urllib.parse import urlparse
+
+    from sqlalchemy import select
+
+    from ontoexplorer.models.db import Ontology
+
+    clock = clock or _t.monotonic
+    ids = await _retryable_resolvability_ids(db, limit=limit)
+    if not ids:
+        return 0
+    rows = (await db.execute(
+        select(Ontology.id, Ontology.iri).where(Ontology.id.in_(ids))
+    )).all()
+    last_hit: dict[str, float] = {}
+    for oid, iri in rows:
+        host = (urlparse(iri).hostname or "").lower()
+        if host in last_hit:
+            wait = min_host_interval_s - (clock() - last_hit[host])
+            if wait > 0:
+                sleep(wait)
+        await apply(db, str(oid))
+        last_hit[host] = clock()
+    return len(rows)
+
+
+@celery_app.task(name="ontoexplorer.recheck_resolvability", time_limit=600)
+def recheck_resolvability(limit: int = 60, min_host_interval_s: float = 2.0) -> dict:
+    """Beat task: politely re-check transient-failure ontologies (429/5xx/timeout),
+    spacing same-host requests so we never rate-limit ourselves again. A single
+    serial worker drains a small capped batch per run; over a few runs the
+    throttled hosts clear and the ontologies flip to their true resolvable state."""
+    import time
+
+    from ontoexplorer.database import make_celery_db_session
+
+    async def _run() -> int:
+        async with make_celery_db_session()() as db:
+            return await _recheck_batch(
+                db, limit=limit, min_host_interval_s=min_host_interval_s,
+                sleep=time.sleep, apply=_apply_resolvability,
+            )
+
+    n = asyncio.run(_run())
+    log.info("recheck_resolvability", rechecked=n)
+    return {"rechecked": n}
+
+
 @celery_app.task(name="ontoexplorer.check_ontology_resolvable", time_limit=60)
 def check_ontology_resolvable(ontology_id: str) -> dict:
     """Celery entry point: dereference-check one ontology's IRI via conneg."""
