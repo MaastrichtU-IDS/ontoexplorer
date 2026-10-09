@@ -100,6 +100,14 @@ celery_app.conf.update(
             "task": "ontoexplorer.reconcile_embeddings",
             "schedule": 1200.0,
         },
+        # Politely recover transient resolvability failures (429/5xx/timeout):
+        # a small per-host-spaced batch every 30 min, so throttled shared hosts
+        # (w3id.org, OBO PURLs) clear over a few runs without us ever bursting
+        # them. Permanent failures (404/200-not-RDF) are never re-checked.
+        "recheck-resolvability-30min": {
+            "task": "ontoexplorer.recheck_resolvability",
+            "schedule": 1800.0,
+        },
         # Weekly snapshot of the processed aggregates to MinIO (durability).
         "backup-usage-weekly": {
             "task": "ontoexplorer.backup_usage_daily",
@@ -1810,10 +1818,117 @@ async def _apply_resolvability(db, ontology_id: str, *, client_factory=None) -> 
             resolve_detail={
                 "final_url": res.final_url, "http_status": res.http_status,
                 "content_type": res.content_type, "error": res.error,
+                "retry_after": res.retry_after,
             },
         )
     )
     await db.commit()
+
+
+# HTTP statuses worth retrying: rate-limit + the 5xx family (incl. common Cloudflare
+# edge codes). Anything else that produced a definite answer (404/403/401/400/406,
+# or a 2xx that simply wasn't RDF) is permanent and never re-checked.
+_RETRYABLE_STATUSES = ("429", "500", "502", "503", "504", "520", "522", "524")
+
+
+async def _retryable_resolvability_ids(db, *, limit: int, now=None) -> list[str]:
+    """Ontology ids whose last resolvability check was a TRANSIENT failure
+    (429/5xx, or a fetch error with no HTTP status) and that are not inside a
+    Retry-After cooldown. Oldest-checked first so the backlog rotates fairly.
+
+    Permanent failures (404/403/200-not-RDF) and already-resolvable rows are
+    excluded, so the re-check loop only ever retries recoverable states.
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy import bindparam, text
+
+    now = now or datetime.now(timezone.utc)
+    bind = db.get_bind()
+    is_pg = bind is not None and bind.dialect.name == "postgresql"
+    # The retry_after cooldown compares an ISO timestamp stored in JSON against
+    # `now`. On Postgres cast to timestamptz; on sqlite compare the ISO strings
+    # lexically (correct for UTC ISO-8601) and bind `now` as its ISO string.
+    if is_pg:
+        cooldown = "(resolve_detail->>'retry_after')::timestamptz <= :now"
+        now_param = now
+    else:
+        cooldown = "resolve_detail->>'retry_after' <= :now"
+        now_param = now.isoformat()
+    stmt = text(f"""
+        SELECT id FROM ontologies
+        WHERE resolvable IS FALSE
+          AND (
+            resolve_detail->>'http_status' IN :statuses
+            OR (resolve_detail->>'http_status' IS NULL AND resolve_detail->>'error' IS NOT NULL)
+          )
+          AND (resolve_detail->>'retry_after' IS NULL OR {cooldown})
+        ORDER BY resolve_checked_at ASC NULLS FIRST
+        LIMIT :lim
+    """).bindparams(bindparam("statuses", expanding=True))
+    rows = (await db.execute(
+        stmt, {"statuses": list(_RETRYABLE_STATUSES), "now": now_param, "lim": limit}
+    )).all()
+    return [str(r.id) for r in rows]
+
+
+async def _recheck_batch(db, *, limit, min_host_interval_s, sleep, apply, clock=None) -> int:
+    """Re-check a capped batch of transient-failure ontologies, spacing requests
+    to the same host by >= `min_host_interval_s` so we never burst a shared host
+    (w3id.org, OBO PURLs). Requests to *different* hosts are not spaced.
+
+    `sleep(seconds)`, `apply(db, ontology_id)`, and `clock()` are injected for
+    testability; production passes `time.sleep`, `_apply_resolvability`, and
+    `time.monotonic`. Using a real monotonic clock credits the seconds each HTTP
+    check already took toward the per-host interval, so we only sleep the
+    remainder. Returns the number of ontologies re-checked.
+    """
+    import time as _t
+    from urllib.parse import urlparse
+
+    from sqlalchemy import select
+
+    from ontoexplorer.models.db import Ontology
+
+    clock = clock or _t.monotonic
+    ids = await _retryable_resolvability_ids(db, limit=limit)
+    if not ids:
+        return 0
+    rows = (await db.execute(
+        select(Ontology.id, Ontology.iri).where(Ontology.id.in_(ids))
+    )).all()
+    last_hit: dict[str, float] = {}
+    for oid, iri in rows:
+        host = (urlparse(iri).hostname or "").lower()
+        if host in last_hit:
+            wait = min_host_interval_s - (clock() - last_hit[host])
+            if wait > 0:
+                sleep(wait)
+        await apply(db, str(oid))
+        last_hit[host] = clock()
+    return len(rows)
+
+
+@celery_app.task(name="ontoexplorer.recheck_resolvability", time_limit=600)
+def recheck_resolvability(limit: int = 60, min_host_interval_s: float = 2.0) -> dict:
+    """Beat task: politely re-check transient-failure ontologies (429/5xx/timeout),
+    spacing same-host requests so we never rate-limit ourselves again. A single
+    serial worker drains a small capped batch per run; over a few runs the
+    throttled hosts clear and the ontologies flip to their true resolvable state."""
+    import time
+
+    from ontoexplorer.database import make_celery_db_session
+
+    async def _run() -> int:
+        async with make_celery_db_session()() as db:
+            return await _recheck_batch(
+                db, limit=limit, min_host_interval_s=min_host_interval_s,
+                sleep=time.sleep, apply=_apply_resolvability,
+            )
+
+    n = asyncio.run(_run())
+    log.info("recheck_resolvability", rechecked=n)
+    return {"rechecked": n}
 
 
 @celery_app.task(name="ontoexplorer.check_ontology_resolvable", time_limit=60)

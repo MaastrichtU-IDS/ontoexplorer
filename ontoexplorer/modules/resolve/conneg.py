@@ -4,9 +4,15 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+# Sent on every dereference so shared hosts (w3id.org, OBO PURLs) can identify and
+# rate-shape us rather than blanket-blocking an anonymous client.
+POLITE_UA = "OntoExplorer-ResolvabilityBot/1.0 (+https://ontoexplorer.dev; dereference check)"
 
 # Ask for RDF in rough fidelity order, then fall back to anything so a server
 # that ignores Accept still answers (we judge the response by its Content-Type).
@@ -36,6 +42,30 @@ _TRIPLE_RE = re.compile(rb"<https?://[^>\s]+>\s+<https?://[^>\s]+>")
 _TIMEOUT_S = 10.0
 _MAX_REDIRECTS = 5
 _SNIFF_CAP = 4096
+
+
+def parse_retry_after(value: str | None, *, now: datetime | None = None) -> datetime | None:
+    """Absolute 'do not retry before' time from a `Retry-After` header, or None.
+
+    Accepts either delta-seconds (``"120"``) or an HTTP-date
+    (``"Wed, 01 Jan 2026 12:05:00 GMT"``). Never raises — a malformed value yields
+    None so a bad header can't crash the check.
+    """
+    if not value:
+        return None
+    now = now or datetime.now(timezone.utc)
+    value = value.strip()
+    if not value:
+        return None
+    if value.isdigit():
+        return now + timedelta(seconds=int(value))
+    try:
+        dt = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if dt is not None and dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def is_rdf_content_type(content_type: str | None) -> bool:
@@ -85,6 +115,10 @@ class ResolveResult:
     http_status: int | None = None
     content_type: str | None = None
     error: str | None = None
+    # ISO-8601 'do not retry before' time parsed from a Retry-After header on a
+    # throttled (429/503) response; None when absent/unparseable. Drives the
+    # polite re-check cooldown.
+    retry_after: str | None = None
 
 
 def _default_client_factory():
@@ -112,12 +146,18 @@ def check_resolvable(iri: str, *, client_factory=None) -> ResolveResult:
     factory = client_factory or _default_client_factory()
     try:
         with factory() as client:
-            with client.stream("GET", iri, headers={"Accept": RDF_ACCEPT}) as resp:
+            with client.stream(
+                "GET", iri, headers={"Accept": RDF_ACCEPT, "User-Agent": POLITE_UA}
+            ) as resp:
                 status = resp.status_code
                 ctype = resp.headers.get("content-type")
                 final = str(getattr(resp, "url", iri) or iri)
                 if not 200 <= status < 300:
-                    return ResolveResult(False, final_url=final, http_status=status, content_type=ctype)
+                    ra = parse_retry_after(resp.headers.get("retry-after"))
+                    return ResolveResult(
+                        False, final_url=final, http_status=status, content_type=ctype,
+                        retry_after=ra.isoformat() if ra else None,
+                    )
                 # RDF by its label, OR a generic/missing label whose body sniffs as
                 # RDF (OBO PURLs → raw .owl served as octet-stream/text-plain, etc.).
                 ok = is_rdf_content_type(ctype) or (_is_generic_type(ctype) and _sniff_rdf(resp))
