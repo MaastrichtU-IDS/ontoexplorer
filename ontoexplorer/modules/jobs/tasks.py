@@ -1502,6 +1502,18 @@ def poll_for_updates() -> None:
     asyncio.run(_run())
 
 
+def _filter_unchanged_records(records, existing: dict) -> list:
+    """Drop records whose embedding text is unchanged (same text_hash already
+    stored for the entity), keeping only new or changed ones.
+
+    `records` are (iri, entity_type, text, text_hash); `existing` maps
+    entity_iri -> stored text_hash. Re-embedding a version is otherwise a full
+    model re-run over every entity (embed_texts), even though the DB upsert then
+    skips unchanged rows — pure wasted compute that choked worker-embed. This
+    makes an unchanged re-embed near-free (no model inference)."""
+    return [r for r in records if existing.get(r[0]) != r[3]]
+
+
 @celery_app.task(name="ontoexplorer.embed_ontology", bind=True)
 def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
     """Compute pgvector embeddings for all indexed entities in a version."""
@@ -1560,6 +1572,17 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
             log.info("embed_ontology_skip_empty", version_id=version_id)
             return {"status": "skip", "version_id": version_id}
 
+        # Existing (entity_iri -> text_hash) for this version, so we re-embed only
+        # new/changed entities instead of re-running the model over everything.
+        async def _load_existing_hashes() -> dict[str, str]:
+            async with make_celery_db_session()() as _db:
+                _rows = (await _db.execute(_sa_text(
+                    "SELECT entity_iri, text_hash FROM term_embeddings WHERE version_id = :v"
+                ), {"v": version_id})).all()
+            return {r.entity_iri: r.text_hash for r in _rows}
+
+        existing_hashes = asyncio.run(_load_existing_hashes())
+
         _SKIP_IRIS = {
             "http://www.w3.org/2002/07/owl#Thing",
             "http://www.w3.org/2002/07/owl#topObjectProperty",
@@ -1612,8 +1635,18 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
             t = build_entity_text(entity, p_labels, c_labels)
             records.append((iri, etype, t, text_hash(t)))
 
+        # Re-embed only new/changed entities — skip those already stored with the
+        # same text_hash so a re-embed of an unchanged version runs no model
+        # inference. This is the fix for the mass-re-embed backlog that pegged
+        # worker-embed recomputing embeddings it would never even write.
+        _all_n = len(records)
+        records = _filter_unchanged_records(records, existing_hashes)
         if not records:
-            return {"status": "skip", "version_id": version_id}
+            log.info("embed_ontology_skip_unchanged", version_id=version_id, entities=_all_n)
+            return {"status": "skip", "reason": "unchanged", "version_id": version_id}
+        if len(records) != _all_n:
+            log.info("embed_ontology_incremental", version_id=version_id,
+                     changed=len(records), total=_all_n)
 
         # Larger batches amortize ONNX call overhead and cut DB-commit frequency.
         # embed_texts feeds these to passage_embed in sub-batches of 128.
