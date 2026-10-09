@@ -583,7 +583,7 @@ async def _ingest_tracked(request, job_id: str | None, session_factory):
     of the (possibly failed) ingestion transaction, and a tracking failure is
     logged rather than allowed to mask the real outcome.
     """
-    from ontoexplorer.modules.ingestion.pipeline import run_ingestion
+    from ontoexplorer.modules.ingestion.pipeline import OntologyAccessDenied, run_ingestion
     from ontoexplorer.modules.jobs import tracker
 
     async def _track(fn) -> None:
@@ -600,6 +600,19 @@ async def _ingest_tracked(request, job_id: str | None, session_factory):
     try:
         async with session_factory() as db:
             result = await run_ingestion(db, request)
+    except OntologyAccessDenied as exc:
+        # Terminal: the uploader is not owner/admin/approved-maintainer of the
+        # ontology this upload's IRI resolves to (version-injection guard). File a
+        # maintainer request — in its own session, so it survives the rolled-back
+        # ingest transaction — and fail the job with guidance.
+        uid = getattr(request, "owner_id", None)
+        oid = exc.ontology_id
+        await _track(lambda db: _file_ontology_maintainer_request(db, uid, oid))
+        msg = ("This ontology's IRI is already registered to another account. A "
+               "maintainer request has been filed — the owner or an admin can grant "
+               "you access, after which you can upload this version.")
+        await _track(lambda db: tracker.mark_failed(db, job_id, msg))
+        raise
     except Exception as exc:
         # Bind the text now: Python unbinds `exc` at the end of the except block,
         # so a lambda closing over it would be reading a name about to vanish.
@@ -608,6 +621,35 @@ async def _ingest_tracked(request, job_id: str | None, session_factory):
         raise
     await _track(lambda db: tracker.mark_done(db, job_id, version_id=result.version_id))
     return result
+
+
+async def _file_ontology_maintainer_request(db, user_id: str | None, ontology_id: str | None) -> None:
+    """Auto-file a pending 'ontology' maintainer request so a rejected uploader can
+    be granted access. Deduped: no-op if they already maintain it or already have a
+    pending request. Runs in its own session (survives the rolled-back ingest)."""
+    if not user_id or not ontology_id:
+        return
+    from sqlalchemy import select as _select
+    from ontoexplorer.models.db import MaintainerRequest, OntologyMaintainer
+    already = (await db.execute(_select(OntologyMaintainer).where(
+        OntologyMaintainer.user_id == user_id,
+        OntologyMaintainer.ontology_id == ontology_id,
+    ))).scalar_one_or_none()
+    if already is not None:
+        return
+    pending = (await db.execute(_select(MaintainerRequest).where(
+        MaintainerRequest.user_id == user_id,
+        MaintainerRequest.request_type == "ontology",
+        MaintainerRequest.ontology_id == ontology_id,
+        MaintainerRequest.status == "pending",
+    ))).scalar_one_or_none()
+    if pending is not None:
+        return
+    db.add(MaintainerRequest(
+        user_id=user_id, request_type="ontology", ontology_id=ontology_id,
+        note="Auto-filed: you uploaded a version whose IRI is already registered to another account.",
+    ))
+    await db.commit()
 
 
 @celery_app.task(bind=True, name="ontoexplorer.ingest_ontology", max_retries=3)
@@ -634,6 +676,8 @@ def ingest_ontology(
     # File uploads are staged in MinIO and referenced by key (see submit_ontology),
     # so the bytes never travel through the broker. Fall back to the legacy
     # inline-hex path for backward compatibility.
+    from ontoexplorer.modules.ingestion.pipeline import OntologyAccessDenied
+
     if upload_key:
         from ontoexplorer.modules.storage.minio_client import fetch_staged_upload
         raw_bytes = fetch_staged_upload(upload_key)
@@ -669,6 +713,11 @@ def ingest_ontology(
             "is_duplicate": result.is_duplicate,
             "warnings": result.warnings,
         }
+    except OntologyAccessDenied:
+        # Permission rejection (version-injection guard) — terminal, not transient.
+        # The job is already marked failed with guidance in _ingest_tracked; don't
+        # retry (a retry would just re-reject). Re-raise so the task ends in FAILURE.
+        raise
     except Exception as exc:
         log.exception("ingestion_task_failed", error=str(exc))
         raise self.retry(exc=exc, countdown=60) from exc
