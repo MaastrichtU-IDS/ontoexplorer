@@ -10,6 +10,7 @@ from ontoexplorer.api.ontologies import (
     _LIST_DESC_CAP,
     _LIST_VIEW_FIELDS,
     _leanify_list_row,
+    _q_rank,
     _row_display_name,
     _row_has_language,
     _row_modified,
@@ -155,3 +156,36 @@ def test_row_has_language():
     assert not _row_has_language(row, {"de"})
     assert not _row_has_language({"languages": []}, {"en"})
     assert not _row_has_language({}, {"en"})
+
+
+# ── Keyword-search relevance ranking (#issue: exact matches must rank first) ────
+
+
+def test_q_rank_tiers():
+    # 0 exact shortname, 1 shortname prefix, 2 shortname substring,
+    # 3 title substring, 4 metadata-only (neither shortname nor title matched).
+    assert _q_rank("sulo", "Simple Upper Level Ontology", "sulo") == 0
+    assert _q_rank("sulophon", "x", "sulo") == 1
+    assert _q_rank("mysulo", "x", "sulo") == 2
+    assert _q_rank("pizza", "Pizza mentions sulo in its title", "sulo") == 3
+    assert _q_rank("pizza", "Pizza Ontology", "sulo") == 4
+
+
+def test_q_rank_is_case_insensitive():
+    assert _q_rank("GO", "Gene Ontology", "go") == 0
+    assert _q_rank("go", "Gene Ontology", "GO") == 0
+
+
+def test_q_rank_empty_query_is_neutral():
+    assert _q_rank("anything", "x", "") == 0
+
+
+def test_relevance_puts_exact_shortname_first_over_alphabetical():
+    """'sulo' matched three ontologies; alphabetical put the exact match ('sulo')
+    last. Relevance ranking must float the exact shortname match to the top while
+    keeping name order within a tier."""
+    rows = [_r("pizza", "2026"), _r("pro", "2026"), _r("sulo", "2026")]
+    # Endpoint composition: name sort, then a stable sort by relevance tier.
+    rows = _sort_rows(rows, "name", "asc")
+    rows.sort(key=lambda r: _q_rank(r.get("shortname"), r.get("label") or r.get("title"), "sulo"))
+    assert [r["shortname"] for r in rows] == ["sulo", "pizza", "pro"]
