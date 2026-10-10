@@ -335,6 +335,22 @@ def delete_graph(ontology_id: str, version_id: str, inferred: bool = False) -> N
         get_store().remove_graph(pyoxigraph.NamedNode(iri))
 
 
+def sparql_update(update: str) -> None:
+    """Execute a SPARQL UPDATE — against the HTTP server if configured, else the
+    embedded store. Mirrors the write path used by delete_graph."""
+    ep = _http_write_endpoint()
+    if ep:
+        r = _sync_http_client().post(
+            f"{ep.rstrip('/')}/update",
+            content=update.encode(),
+            headers={"Content-Type": "application/sparql-update"},
+            timeout=120.0,
+        )
+        r.raise_for_status()
+    else:
+        get_store().update(update)
+
+
 def sparql_query(
     query: str,
     default_graph_uris: list[str] | None = None,
