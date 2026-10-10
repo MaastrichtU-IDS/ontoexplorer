@@ -197,6 +197,18 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
         log.info("parsed_triples", count=len(graph))
         triple_count = load_graph(ontology_id, version_id, graph)
 
+    # ── Strip copied-in (bled) title/description from the host subject ────────────
+    # A host authored by copying a template (SIO/SKOS/BFO/…) keeps the template's
+    # dcterms:title/description on its own ontology node, alongside the template's own
+    # declaration — both in the SOURCE file (the twin to detect it by). This MUST run
+    # BEFORE the import closure is loaded: an import never writes to the host subject
+    # (append loads imports under their own subjects), it only adds false twins —
+    # e.g. an ontology that vendors modules sharing its own title would otherwise have
+    # its real title wrongly stripped (#318 follow-up). Keyed on fast_iri (the main
+    # document's own owl:Ontology). Best-effort.
+    from ontoexplorer.modules.ingestion.annotation_cleanup import strip_bled_annotations
+    await asyncio.to_thread(strip_bled_annotations, ontology_id, version_id, fast_iri)
+
     # ── Step 3: Resolve owl:imports and load into Oxigraph ───────────────────
     if graph is not None:
         import_results = resolve_imports(graph)
@@ -276,14 +288,6 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
         if reconciled_id != ontology_id:
             ontology_created = False
         ontology_id = reconciled_id
-
-    # ── Strip copied-in (bled) title/description from the host subject ────────────
-    # A host authored by copying a template (SIO/SKOS/BFO/…) keeps the template's
-    # dcterms:title/description on its own ontology node; the import closure (loaded
-    # above) provides the foreign twin to detect it. Runs before naming/metadata so
-    # the bled value can't become o.title or the resolved profile. Best-effort.
-    from ontoexplorer.modules.ingestion.annotation_cleanup import strip_bled_annotations
-    await asyncio.to_thread(strip_bled_annotations, ontology_id, version_id, subject_iri)
 
     # ── Refine the shortname + title from the ontology's own metadata (#249) ──────
     # Only for freshly-created ontologies, so an established (possibly linked)
