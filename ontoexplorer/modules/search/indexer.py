@@ -341,6 +341,63 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
                 entities[iri] = "individual"
                 individual_count += 1
 
+    # Fallback for ABox-only vocabularies whose terms are declared *purely* by
+    # membership in a domain class — no owl:Class/Property/skos:Concept typing and
+    # no explicit owl:NamedIndividual — e.g. QUDT's units vocab, whose terms are
+    # typed qudt:Prefix / qudt:DecimalPrefix / qudt:SystemOfUnits (named, labelled,
+    # but invisible to every check above). Without this they index to zero entities
+    # and vanish from search. Gated on the standard extraction having found NOTHING,
+    # so a well-typed ontology's output never changes (zero blast radius on the
+    # catalogue): it only rescues versions that would otherwise be empty. Such terms
+    # are instances of a class, so they are indexed as individuals. "Domain class" =
+    # an rdf:type IRI outside the OWL/RDF(S)/SKOS meta-vocabularies and the vocab-
+    # description terms (voaf:Vocabulary, dcat:Dataset) — those are structural, not
+    # browsable terms. Respects the same IND_INDEX_THRESHOLD to bound memory.
+    if not entities:
+        _META_TYPE_NS = (
+            "http://www.w3.org/2002/07/owl#",
+            "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+            "http://www.w3.org/2000/01/rdf-schema#",
+            "http://www.w3.org/2004/02/skos/core#",
+        )
+        _META_TYPE_IRIS = (
+            "http://purl.org/vocommons/voaf#Vocabulary",
+            "http://www.w3.org/ns/dcat#Dataset",
+            "http://purl.org/vocab/vann/",
+            # FOAF is a metadata/provenance vocab (foaf:Document for the RDF file
+            # itself, foaf:Agent for maintainers) — not browsable ontology terms.
+            "http://xmlns.com/foaf/0.1/",
+        )
+        _ns_filter = "".join(
+            f'\n                    FILTER(!STRSTARTS(STR(?t), "{ns}"))'
+            for ns in _META_TYPE_NS + _META_TYPE_IRIS
+        )
+        fb_count_q = f"""
+            SELECT (COUNT(DISTINCT ?entity) AS ?n) WHERE {{
+                GRAPH <{named_graph}> {{
+                    ?entity a ?t .
+                    FILTER(isIRI(?entity) && isIRI(?t)){_ns_filter}
+                }}
+            }}
+        """
+        fb_rows = list(sparql_query(fb_count_q))
+        fb_total = int(fb_rows[0]["n"].value) if fb_rows else 0
+        if 0 < fb_total <= IND_INDEX_THRESHOLD:
+            fb_q = f"""
+                SELECT DISTINCT ?entity WHERE {{
+                    GRAPH <{named_graph}> {{
+                        ?entity a ?t .
+                        FILTER(isIRI(?entity) && isIRI(?t)){_ns_filter}
+                    }}
+                }}
+            """
+            for sol in sparql_query(fb_q):
+                iri = sol["entity"].value
+                if iri not in entities:
+                    entities[iri] = "individual"
+                    individual_iris.add(iri)
+                    individual_count += 1
+
     # Collect each individual's rdf:type classes (minus owl:NamedIndividual) so the
     # OLS /types endpoint and the class→individuals filter can read them from
     # entity_index instead of a per-request SPARQL query (#242 Stage 1 PR 5).
@@ -894,6 +951,12 @@ def _populate_stats_cache(
             GRAPH <{named_graph}> {{ ?i a owl:NamedIndividual . FILTER(isIRI(?i)) }}
         }}
     """)
+    # ABox-only vocabs rescued by the indexer fallback (domain-class instances with
+    # no owl:NamedIndividual typing, e.g. QUDT units) are typed "individual" in the
+    # entities dict but not counted by the owl:NamedIndividual query above — floor
+    # the stat with them so /stats agrees with what entity_index actually holds.
+    ind_from_entities = sum(1 for t in entities.values() if t == "individual")
+    ind_count = max(ind_count, ind_from_entities)
 
     onto_label, onto_description = _onto_meta_from_graph(named_graph)
 
