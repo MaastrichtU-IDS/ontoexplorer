@@ -8,6 +8,8 @@ them rather than persist a silently-invisible "ready" version. These tests pin
 the detector's verdict and its safety gate (never block a vocab that has real
 entities, or a legitimately metadata-only wrapper).
 """
+import pytest
+
 from ontoexplorer.modules.ingestion.lossy_owlxml import (
     LossyOwlXmlIngest,
     lossy_owlxml_report,
@@ -90,3 +92,31 @@ def test_detector_failure_never_blocks_ingest():
 def test_exception_is_a_plain_exception():
     """LossyOwlXmlIngest is a terminal error type the ingest task matches on."""
     assert issubclass(LossyOwlXmlIngest, Exception)
+
+
+def test_ingest_task_treats_lossy_as_terminal_no_retry(monkeypatch):
+    """Regression guard for the wiring: when the pipeline raises LossyOwlXmlIngest,
+    `ingest_ontology` must re-raise it WITHOUT retrying — exactly like
+    OntologyAccessDenied. A reorder of the except clauses, or dropping
+    LossyOwlXmlIngest from the terminal tuple, would make this fail (it would
+    instead be swallowed into self.retry)."""
+    from ontoexplorer.modules.jobs import tasks
+
+    async def _raise_lossy(*_a, **_k):
+        raise LossyOwlXmlIngest("flattened dump")
+
+    # Replace the pipeline body so no real infra is touched; the task's own
+    # try/except is what's under test.
+    monkeypatch.setattr(tasks, "_ingest_tracked", _raise_lossy)
+
+    retried = {"called": False}
+
+    def _retry(*_a, **_k):
+        retried["called"] = True
+        raise AssertionError("ingest_ontology retried a terminal lossy ingest")
+
+    monkeypatch.setattr(type(tasks.ingest_ontology), "retry", _retry, raising=False)
+
+    with pytest.raises(LossyOwlXmlIngest):
+        tasks.ingest_ontology(raw_bytes_hex=b"<rdf/>".hex())
+    assert retried["called"] is False

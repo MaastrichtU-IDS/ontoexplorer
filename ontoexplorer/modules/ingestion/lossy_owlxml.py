@@ -95,7 +95,8 @@ def lossy_owlxml_report(graph: str, *, query=None) -> dict | None:
                 FILTER(isIRI(?s) && isIRI(?t))
             }}
         """)
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:
+        # Fail open: never block an ingest on a detector/store error.
         log.warning("lossy_owlxml_detect_failed", graph=graph, error=str(exc))
         return None
 
@@ -111,8 +112,8 @@ def lossy_owlxml_report(graph: str, *, query=None) -> dict | None:
             f"({structural} owl:Declaration/owl:IRI/owl:AbbreviatedIRI wrapper "
             "nodes, 0 IRI-typed entities). The entity IRIs and labels are not "
             "present as RDF terms, so it would index to zero searchable terms and "
-            "no converter can recover them. Re-fetch from a source that serves "
-            "valid RDF/XML or Turtle, or the native OWL/XML (which the ingester "
-            "converts), instead of this flattened dump."
+            "no converter can recover them. Re-fetch a valid RDF/XML or Turtle "
+            "serialization of the ontology (e.g. convert the original with ROBOT "
+            "or Protégé) instead of this flattened dump."
         ),
     }
