@@ -150,8 +150,12 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
 
     # ── Step 5: Store artifact in MinIO ───────────────────────────────────────
     # Determine provisional ontology IRI before creating the DB record.
+    # Identity from the MAIN document, parsed in-memory BEFORE the import closure is
+    # loaded — the authoritative owl:Ontology subject. Keep it (fast_iri) to use as
+    # the identity below; the post-closure SPARQL must not override it (#318).
+    fast_iri = _extract_ontology_iri_fast(source.data, fmt)
     provisional_iri = (
-        _extract_ontology_iri_fast(source.data, fmt)
+        fast_iri
         or request.iri
         or request.url
         or f"urn:uuid:{uuid.uuid4()}"
@@ -223,7 +227,15 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     )
 
     # The owl:Ontology *subject* — used for metadata/version extraction below.
-    subject_iri = _extract_ontology_iri_sparql(ontology_id, version_id)
+    # Prefer the main document's own owl:Ontology (fast_iri, parsed before imports);
+    # the SPARQL re-check runs against the merged closure and is ONLY a fallback for
+    # when the eager parse missed. Querying the closure for any owl:Ontology (LIMIT 1)
+    # could otherwise pick an IMPORTED ontology's IRI and reconcile this version onto
+    # a different ontology (#318: enanomapper re-ingest attached to fabio). The
+    # fallback excludes import targets and prefers the submitted IRI.
+    subject_iri = fast_iri or _extract_ontology_iri_sparql(
+        ontology_id, version_id, prefer=request.iri or request.url
+    )
     # Prefer the declared canonical namespace (vann:preferredNamespaceUri) as the
     # IDENTITY key when the subject lives within it — stable across versions, the
     # conneg base (#250 Layer 2). Falls back to the subject.
@@ -754,15 +766,36 @@ def _extract_ontology_iri_by_parsing(data: bytes, fmt: OntologyFormat) -> str | 
     return None
 
 
-def _extract_ontology_iri_sparql(ontology_id: str, version_id: str) -> str | None:
-    """Query Oxigraph for the ontology IRI of the loaded graph."""
+def _extract_ontology_iri_sparql(
+    ontology_id: str, version_id: str, prefer: str | None = None
+) -> str | None:
+    """Query Oxigraph for the main ontology's IRI in the loaded (closure-merged) graph.
+
+    Fallback only — callers should prefer the main document's own owl:Ontology parsed
+    before the import closure was loaded. Because the graph holds the full closure
+    (the host PLUS every imported ontology's owl:Ontology node), this must not pick an
+    arbitrary one (#318): it (1) returns `prefer` if that IRI is itself an owl:Ontology
+    here, else (2) picks an owl:Ontology that is NOT an owl:imports target, with a
+    deterministic ORDER BY so the choice is at least stable across re-ingests.
+    """
     from ontoexplorer.clients.oxigraph import sparql_query, graph_iri
     g = graph_iri(ontology_id, version_id)
+    owl_ontology = "http://www.w3.org/2002/07/owl#Ontology"
+    owl_imports = "http://www.w3.org/2002/07/owl#imports"
+
+    if prefer and prefer.startswith("http"):
+        hit = sparql_query(
+            f"ASK {{ GRAPH <{g}> {{ <{prefer}> a <{owl_ontology}> }} }}"
+        )
+        if bool(hit):
+            return prefer
+
     results = sparql_query(f"""
         SELECT ?iri FROM <{g}> WHERE {{
-            ?iri a <http://www.w3.org/2002/07/owl#Ontology> .
+            ?iri a <{owl_ontology}> .
             FILTER(isIRI(?iri))
-        }} LIMIT 1
+            FILTER NOT EXISTS {{ ?other <{owl_imports}> ?iri . }}
+        }} ORDER BY ?iri LIMIT 1
     """)
     for row in results:
         val = str(row["iri"])

@@ -65,3 +65,53 @@ def test_extract_iri_turtle():
 def test_extract_iri_returns_none_when_no_ontology_declaration():
     raw = b"<?xml version='1.0'?><rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'/>\n"
     assert _extract_ontology_iri_fast(raw, OntologyFormat.RDF_XML) is None
+
+
+# ── #318: identity must not be grabbed arbitrarily from the import closure ──────
+from unittest.mock import patch  # noqa: E402
+
+from ontoexplorer.modules.ingestion import pipeline as _pl  # noqa: E402
+
+
+class _Term:
+    def __init__(self, v):
+        self._v = v
+    def __str__(self):
+        return self._v
+
+
+class _Row:
+    def __init__(self, v):
+        self._t = _Term(v)
+    def __getitem__(self, _k):
+        return self._t
+
+
+def test_sparql_identity_prefers_submitted_iri():
+    """When the submitted IRI is itself an owl:Ontology in the graph, use it —
+    don't pick an arbitrary (possibly imported) owl:Ontology."""
+    def fake(q):
+        if q.lstrip().startswith("ASK"):
+            return "http://host.example/onto" in q   # prefer IS an owl:Ontology
+        return [_Row("http://imported.example/other")]  # SELECT would pick an import
+    with patch("ontoexplorer.clients.oxigraph.sparql_query", side_effect=fake), \
+         patch("ontoexplorer.clients.oxigraph.graph_iri", return_value="urn:g"):
+        out = _pl._extract_ontology_iri_sparql("o", "v", prefer="http://host.example/onto")
+    assert out == "http://host.example/onto"
+
+
+def test_sparql_identity_fallback_excludes_imports_and_is_ordered():
+    """Without a usable prefer, the SELECT must exclude owl:imports targets and be
+    deterministically ordered (not a bare LIMIT 1)."""
+    captured = {}
+    def fake(q):
+        if q.lstrip().startswith("ASK"):
+            return False
+        captured["select"] = q
+        return [_Row("http://host.example/onto")]
+    with patch("ontoexplorer.clients.oxigraph.sparql_query", side_effect=fake), \
+         patch("ontoexplorer.clients.oxigraph.graph_iri", return_value="urn:g"):
+        out = _pl._extract_ontology_iri_sparql("o", "v", prefer="http://not-present.example")
+    assert out == "http://host.example/onto"
+    assert "owl#imports" in captured["select"]
+    assert "ORDER BY" in captured["select"]
