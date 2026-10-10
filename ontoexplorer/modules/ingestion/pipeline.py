@@ -228,6 +228,36 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
                 log.warning("failed_to_load_import_triples", iri=imp_iri, error=str(exc))
                 warnings.append(f"Could not load import triples: {imp_iri}")
 
+    # ── Guard: refuse lossy OWL/XML-structural-flatten ingests (#311) ──────────
+    # Some sources serve an ontology's OWL/XML structural syntax flattened into RDF
+    # (blank nodes typed owl:Declaration/owl:IRI/owl:AbbreviatedIRI, zero IRI-typed
+    # subjects). Its entity IRIs/labels aren't present as RDF, so it would index to
+    # zero terms and reach "ready" silently invisible — and no converter can recover
+    # the names. Refuse it with guidance, after purging the artifacts already written
+    # (MinIO object + Oxigraph graph). The provisional Ontology row is only flushed,
+    # not committed, so it rolls back with the session on raise. Runs here — after the
+    # import closure loads, before any DB-committing refine step — so the reject is
+    # the OntologyAccessDenied post-load pattern with nothing committed to undo.
+    from ontoexplorer.clients.oxigraph import graph_iri as _lossy_graph_iri
+    from ontoexplorer.modules.ingestion.lossy_owlxml import (
+        LossyOwlXmlIngest,
+        lossy_owlxml_report,
+    )
+
+    _lossy = lossy_owlxml_report(_lossy_graph_iri(ontology_id, version_id))
+    if _lossy is not None:
+        from ontoexplorer.modules.jobs.tasks import purge_version_artifacts
+        purge_version_artifacts.delay(ontology_id, version_id, minio_key)
+        log.warning(
+            "ingest_rejected_lossy_owlxml",
+            ontology_id=ontology_id,
+            version_id=version_id,
+            structural_count=_lossy["structural_count"],
+            entity_count=_lossy["entity_count"],
+            source_url=source.final_url or request.url or request.iri,
+        )
+        raise LossyOwlXmlIngest(_lossy["message"])
+
     # ── Refine ontology IRI from loaded triples (safety net) ──────────────────
     # _extract_ontology_iri_fast already runs an in-memory parse before any DB
     # writes, so this normally agrees with provisional_iri. The SPARQL re-check

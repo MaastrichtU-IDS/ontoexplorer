@@ -692,6 +692,7 @@ def ingest_ontology(
     # so the bytes never travel through the broker. Fall back to the legacy
     # inline-hex path for backward compatibility.
     from ontoexplorer.modules.ingestion.pipeline import OntologyAccessDenied
+    from ontoexplorer.modules.ingestion.lossy_owlxml import LossyOwlXmlIngest
 
     if upload_key:
         from ontoexplorer.modules.storage.minio_client import fetch_staged_upload
@@ -728,10 +729,11 @@ def ingest_ontology(
             "is_duplicate": result.is_duplicate,
             "warnings": result.warnings,
         }
-    except OntologyAccessDenied:
-        # Permission rejection (version-injection guard) — terminal, not transient.
-        # The job is already marked failed with guidance in _ingest_tracked; don't
-        # retry (a retry would just re-reject). Re-raise so the task ends in FAILURE.
+    except (OntologyAccessDenied, LossyOwlXmlIngest):
+        # Terminal, not transient: a permission rejection (version-injection guard)
+        # or a structurally-lossy OWL/XML-flatten source (#311) re-rejects on every
+        # retry. The job is already marked failed with guidance in _ingest_tracked;
+        # don't retry. Re-raise so the task ends in FAILURE.
         raise
     except Exception as exc:
         log.exception("ingestion_task_failed", error=str(exc))
