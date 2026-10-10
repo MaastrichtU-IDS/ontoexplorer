@@ -1267,7 +1267,7 @@ export const api = {
   },
 
   ontologies: {
-    list: (offset = 0, limit = 50, q?: string, group?: string, profile?: ProfileName, reuses?: string, mine = false, language?: LanguageTier, view?: 'list', opts?: { sort?: 'name' | 'date'; dir?: 'asc' | 'desc'; langs?: string[] }) => {
+    list: (offset = 0, limit = 50, q?: string, group?: string, profile?: ProfileName, reuses?: string, mine = false, language?: LanguageTier, view?: 'list', opts?: { sort?: 'name' | 'date'; dir?: 'asc' | 'desc'; langs?: string[]; skos?: boolean }) => {
       const params = new URLSearchParams({ offset: String(offset), limit: String(limit) })
       if (q) params.set('q', q)
       if (group) params.set('group', group)   // single group filter sent to API
@@ -1281,6 +1281,7 @@ export const api = {
       // Server-authoritative sort + language-code facet, so the list can paginate.
       if (opts?.sort) params.set('sort', opts.sort)
       if (opts?.dir) params.set('dir', opts.dir)
+      if (opts?.skos) params.set('skos', 'true')   // derived SKOS-vocabulary filter
       for (const code of opts?.langs ?? []) params.append('lang', code)
       return request<{ ontologies: Ontology[]; offset: number; limit: number; total?: number }>(
         `/ontologies?${params}`

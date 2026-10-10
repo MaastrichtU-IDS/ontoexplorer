@@ -664,6 +664,7 @@ async def list_ontologies(
     language: str | None = Query(None, description="Filter by language tier: rdf | rdfs | rdfs-plus | owl"),
     reuses: str | None = Query(None, description="Filter: latest version reuses this prefix"),
     mine: bool = Query(False, description="Only ontologies the caller owns or maintains"),
+    skos: bool = Query(False, description="Only SKOS vocabularies (latest version has skos:Concept terms indexed). Derived, not a group tag."),
     lang: list[str] = Query(default=[], description="Filter: has labels in this language code (repeatable, e.g. ?lang=en&lang=fr)"),
     sort: str = Query("name", description="Sort column: name | date (last modified)"),
     dir: str = Query("asc", description="Sort direction: asc | desc"),
@@ -736,6 +737,19 @@ async def list_ontologies(
             conditions.append(func.jsonb_array_length(Ontology.groups) == 0)
         else:
             conditions.append(text("groups @> cast(:grp as jsonb)").bindparams(grp=_json_grp.dumps([group])))
+    if skos:
+        # Derived "is a SKOS vocabulary" filter: the ontology has concept-type
+        # entity_index rows (skos:Concept terms indexed on 0.4.109+). Not a group
+        # tag — stays accurate as content changes. One subquery of the ~189
+        # concept-bearing ontologies; dialect-agnostic ORM so unit tests pass.
+        from ontoexplorer.models.db import EntityIndex as _EI
+        _concept_oids = (
+            select(OntologyVersion.ontology_id)
+            .join(_EI, _EI.version_id == OntologyVersion.id)
+            .where(_EI.type == "concept")
+            .distinct()
+        )
+        conditions.append(Ontology.id.in_(_concept_oids))
 
     # Keyword filter in SQL (#286): match shortname / IRI / title (columns) and the
     # latest ready version's resolved metadata title/description — so a search
