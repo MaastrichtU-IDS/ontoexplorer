@@ -42,12 +42,13 @@ function displayName(o: Ontology): string {
   return last.replace(/\.(owl|ttl|rdf|obo|json|xml|nt)$/i, '')
 }
 
+// Per-row group badges (provenance tags only). metadata/biomedical removed
+// (never assigned to any ontology); skos is intentionally absent — it's a
+// derived property, surfaced as a filter chip, not a group tag.
 const GROUP_LABELS: Record<string, string> = {
   upper:       'Upper Ontology',
   sulo_family: 'SULO Family',
-  metadata:    'Metadata',
   obo:         'OBO Foundry',
-  biomedical:  'Biomedical',
   bioportal:   'BioPortal',
   lov:         'LOV',
 }
@@ -55,11 +56,11 @@ const GROUP_LABELS: Record<string, string> = {
 const GROUP_COLORS: Record<string, { bg: string; border: string; color: string }> = {
   upper:       { bg: 'rgba(97,175,239,0.12)',  border: 'rgba(97,175,239,0.4)',  color: 'var(--od-blue)' },
   sulo_family: { bg: 'rgba(229,192,123,0.12)', border: 'rgba(229,192,123,0.4)', color: 'var(--od-yellow)' },
-  metadata:    { bg: 'rgba(198,120,221,0.12)', border: 'rgba(198,120,221,0.4)', color: 'var(--od-purple)' },
   obo:         { bg: 'rgba(152,195,121,0.12)', border: 'rgba(152,195,121,0.4)', color: 'var(--od-green)' },
-  biomedical:  { bg: 'rgba(224,108,117,0.12)', border: 'rgba(224,108,117,0.4)', color: 'var(--error)' },
   bioportal:   { bg: 'rgba(86,182,194,0.12)',  border: 'rgba(86,182,194,0.4)',  color: 'var(--od-cyan)' },
   lov:         { bg: 'rgba(240,136,62,0.12)',  border: 'rgba(240,136,62,0.4)',  color: 'var(--orange)' },
+  // Filter-chip color only (SKOS is a derived filter, not a per-row group badge).
+  skos:        { bg: 'rgba(198,120,221,0.12)', border: 'rgba(198,120,221,0.4)', color: 'var(--od-purple)' },
 }
 
 function IriChip({ iri }: { iri: string }) {
@@ -254,11 +255,12 @@ const GROUPS: { value: string; label: string }[] = [
   { value: '',            label: 'All' },
   { value: 'upper',       label: 'Upper Ontology' },
   { value: 'sulo_family', label: 'SULO Family' },
-  { value: 'metadata',    label: 'Metadata' },
   { value: 'obo',         label: 'OBO Foundry' },
-  { value: 'biomedical',  label: 'Biomedical' },
   { value: 'bioportal',   label: 'BioPortal' },
   { value: 'lov',         label: 'LOV' },
+  // Derived filter (not a group tag): SKOS vocabularies, via ?skos=true. Wired
+  // in the list query below — selecting it sends skos=true, not group=skos.
+  { value: 'skos',        label: 'SKOS' },
 ]
 
 // ── Profile filter ────────────────────────────────────────────────────────────
@@ -344,7 +346,9 @@ export default function Ontologies() {
     fetchNextPage, hasNextPage, isFetchingNextPage,
   } = useOntologiesInfinite({
     query,
-    group: group || undefined,
+    // 'skos' is a derived filter, not a group tag → send skos=true, not group=skos.
+    group: group === 'skos' ? undefined : (group || undefined),
+    skos: group === 'skos',
     profile: profile || undefined,
     reuses,
     language: language || undefined,
