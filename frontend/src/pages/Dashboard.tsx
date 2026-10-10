@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { api, slugFromIri, type Ontology, type OntologyVersion } from '../lib/api'
 import { useAuth } from '../hooks/useAuth'
 import ReindexWithReasoner from '../components/ReindexWithReasoner'
+import ResolvableBadge from '../components/ResolvableBadge'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useOntologiesInfinite } from '../hooks/useOntologiesInfinite'
 
@@ -54,7 +55,6 @@ const GROUP_LABELS: Record<string, string> = {
   obo:         'OBO Foundry',
   bioportal:   'BioPortal',
   lov:         'LOV',
-  skos:        'SKOS',
 }
 
 const GROUP_COLORS: Record<string, { bg: string; border: string; color: string }> = {
@@ -63,8 +63,11 @@ const GROUP_COLORS: Record<string, { bg: string; border: string; color: string }
   obo:         { bg: 'rgba(152,195,121,0.12)', border: 'rgba(152,195,121,0.4)', color: 'var(--od-green)' },
   bioportal:   { bg: 'rgba(86,182,194,0.12)',  border: 'rgba(86,182,194,0.4)',  color: 'var(--od-cyan)' },
   lov:         { bg: 'rgba(240,136,62,0.12)',  border: 'rgba(240,136,62,0.4)',  color: 'var(--orange)' },
-  skos:        { bg: 'rgba(198,120,221,0.12)', border: 'rgba(198,120,221,0.4)', color: 'var(--od-purple)' },
 }
+
+// Derived chip styling for content-property chips (SKOS), computed from the live
+// stats rather than an editable group tag — so they never drift.
+const SKOS_CHIP = { bg: 'rgba(198,120,221,0.12)', border: 'rgba(198,120,221,0.4)', color: 'var(--od-purple)' }
 
 const ALL_GROUPS = Object.keys(GROUP_LABELS)
 
@@ -211,21 +214,32 @@ function GroupsEditor({ ontology }: { ontology: Ontology }) {
   if (!editing) {
     return (
       <span style={{ display: 'inline-flex', gap: '0.2rem', flexWrap: 'wrap', alignItems: 'center' }}>
-        {current.length === 0
-          ? <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>—</span>
-          : current.map(g => {
-              const c = GROUP_COLORS[g]
-              return (
-                <span key={g} style={{
-                  fontSize: 9, padding: '1px 6px', borderRadius: 10,
-                  background: c.bg, border: `1px solid ${c.border}`,
-                  color: c.color, fontWeight: 600, letterSpacing: 0.3,
-                }}>
-                  {GROUP_LABELS[g]}
-                </span>
-              )
-            })
-        }
+        {current.map(g => {
+          const c = GROUP_COLORS[g]
+          return (
+            <span key={g} style={{
+              fontSize: 9, padding: '1px 6px', borderRadius: 10,
+              background: c.bg, border: `1px solid ${c.border}`,
+              color: c.color, fontWeight: 600, letterSpacing: 0.3,
+            }}>
+              {GROUP_LABELS[g]}
+            </span>
+          )
+        })}
+        {/* Derived content-property chips — computed from live stats, NOT editable
+            group tags, so they never drift. SKOS = has skos:Concept terms
+            (concept_count > 0); Resolvable = the live resolvable column. */}
+        {(ontology.concept_count ?? 0) > 0 && (
+          <span style={{
+            fontSize: 9, padding: '1px 6px', borderRadius: 10,
+            background: SKOS_CHIP.bg, border: `1px solid ${SKOS_CHIP.border}`,
+            color: SKOS_CHIP.color, fontWeight: 600, letterSpacing: 0.3,
+          }}>SKOS</span>
+        )}
+        <ResolvableBadge resolvable={ontology.resolvable} checkedAt={ontology.resolve_checked_at} />
+        {current.length === 0 && ontology.resolvable !== true && (ontology.concept_count ?? 0) === 0 && (
+          <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>—</span>
+        )}
         <button onClick={open} title="Edit groups" style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: 1 }}>✎</button>
       </span>
     )
