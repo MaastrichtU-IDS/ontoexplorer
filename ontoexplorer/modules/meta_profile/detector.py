@@ -182,7 +182,48 @@ def _fetch_onto_triples(named_graph: str, onto_iri: str) -> dict[str, list[dict]
             }}
         """)
 
+    _suppress_bled_titles(named_graph, onto_iri, triples)
     return triples
+
+
+def _suppress_bled_titles(named_graph: str, onto_iri: str, triples: dict[str, list[dict]]) -> None:
+    """Drop a title value that the host carries but which is ALSO asserted on a
+    different NAMED subject in the graph — the signature of a title copied in from
+    a source/template ontology (e.g. a vocabulary built atop SIO/SKOS/BFO keeps
+    the template's dcterms:title on its own header). Mutates `triples` in place.
+
+    Self-limiting: a canonical owner whose title appears only on its own subject
+    is never touched, so we never strip a legitimate title (only clear copies).
+    Blank-node subjects are ignored so a genuine blank-node header isn't counted
+    as a foreign source.
+    """
+    title_preds = [p for p in ALL_META_ROLES["title"] if p in triples]
+    host_vals = {e["value"] for p in title_preds for e in triples[p]}
+    if not host_vals:
+        return
+    preds = " ".join(f"<{p}>" for p in ALL_META_ROLES["title"])
+    try:
+        rows = sparql_query(f"""
+            SELECT DISTINCT ?t WHERE {{
+                GRAPH <{named_graph}> {{
+                    VALUES ?p {{ {preds} }}
+                    ?s ?p ?t .
+                    FILTER(isIRI(?s) && STR(?s) != "{onto_iri}")
+                }}
+            }}
+        """)
+        foreign = {r["t"].value for r in rows}
+    except Exception:
+        return
+    bled = host_vals & foreign
+    if not bled:
+        return
+    for p in title_preds:
+        kept = [e for e in triples[p] if e["value"] not in bled]
+        if kept:
+            triples[p] = kept
+        else:
+            del triples[p]
 
 
 def _build_role_props(iris: list[str], triples: dict[str, list[dict]]) -> list[str]:
