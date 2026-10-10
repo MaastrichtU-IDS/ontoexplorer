@@ -51,21 +51,19 @@ function displayName(ontology: Ontology): string {
 const GROUP_LABELS: Record<string, string> = {
   upper:       'Upper Ontology',
   sulo_family: 'SULO Family',
-  metadata:    'Metadata',
   obo:         'OBO Foundry',
-  biomedical:  'Biomedical',
   bioportal:   'BioPortal',
   lov:         'LOV',
+  skos:        'SKOS',
 }
 
 const GROUP_COLORS: Record<string, { bg: string; border: string; color: string }> = {
   upper:       { bg: 'rgba(97,175,239,0.12)',  border: 'rgba(97,175,239,0.4)',  color: 'var(--od-blue)' },
   sulo_family: { bg: 'rgba(229,192,123,0.12)', border: 'rgba(229,192,123,0.4)', color: 'var(--od-yellow)' },
-  metadata:    { bg: 'rgba(198,120,221,0.12)', border: 'rgba(198,120,221,0.4)', color: 'var(--od-purple)' },
   obo:         { bg: 'rgba(152,195,121,0.12)', border: 'rgba(152,195,121,0.4)', color: 'var(--od-green)' },
-  biomedical:  { bg: 'rgba(224,108,117,0.12)', border: 'rgba(224,108,117,0.4)', color: 'var(--error)' },
   bioportal:   { bg: 'rgba(86,182,194,0.12)',  border: 'rgba(86,182,194,0.4)',  color: 'var(--od-cyan)' },
   lov:         { bg: 'rgba(240,136,62,0.12)',  border: 'rgba(240,136,62,0.4)',  color: 'var(--orange)' },
+  skos:        { bg: 'rgba(198,120,221,0.12)', border: 'rgba(198,120,221,0.4)', color: 'var(--od-purple)' },
 }
 
 const ALL_GROUPS = Object.keys(GROUP_LABELS)
