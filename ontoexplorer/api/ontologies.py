@@ -570,7 +570,7 @@ async def patch_ontology(
 _LIST_VIEW_FIELDS = (
     "id", "iri", "shortname", "label", "groups", "created_at",
     "class_count", "object_property_count", "datatype_property_count",
-    "annotation_property_count", "individual_count", "triple_count",
+    "annotation_property_count", "individual_count", "concept_count", "triple_count",
     "languages", "language_tier", "resolvable",
 )
 _LIST_DESC_CAP = 500
@@ -973,6 +973,7 @@ async def list_ontologies(
             d["annotation_property_count"] = s.get("annotation_property_count")
             d["triple_count"] = s.get("triple_count") or v.triple_count
             d["individual_count"] = s.get("individual_count")
+            d["concept_count"] = s.get("concept_count")
             d["languages"] = langs_by_vid.get(v.id, [])
             d["language_tier"] = tier_by_vid.get(v.id)
             meta = meta_by_oid.get(o.id, {})
@@ -987,6 +988,7 @@ async def list_ontologies(
             d["annotation_property_count"] = None
             d["triple_count"] = None
             d["individual_count"] = None
+            d["concept_count"] = None
             d["languages"] = []
             d["language_tier"] = None
             meta = meta_by_oid.get(o.id, {})
@@ -1328,6 +1330,7 @@ async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = De
             "property_count":   await count_entities(
                 db, version_id, ["object_property", "data_property", "annotation_property"]),
             "individual_count": await count_entities(db, version_id, ["individual"]),
+            "concept_count":    await count_entities(db, version_id, ["concept"]),
         }
         if _indexed_at is not None:
             index_meta["indexed_at"] = (

@@ -370,6 +370,7 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
   if (s?.datatype_property_count != null)  statParts.push(`${fmtCount(s.datatype_property_count)} data props`)
   if (s?.annotation_property_count != null) statParts.push(`${fmtCount(s.annotation_property_count)} ann props`)
   if (s?.individual_count != null)         statParts.push(`${fmtCount(s.individual_count)} individuals`)
+  if (s?.concept_count != null)            statParts.push(`${fmtCount(s.concept_count)} concepts`)
 
   return (
     <tr style={{ borderBottom: '1px solid var(--border)' }}>

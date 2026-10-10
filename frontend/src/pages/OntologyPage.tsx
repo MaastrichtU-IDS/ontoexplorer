@@ -518,6 +518,9 @@ function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid, resolv
           {stats.individual_count > 0 && (
             <StatCard label="Individuals" value={stats.individual_count} />
           )}
+          {(stats.concept_count ?? 0) > 0 && (
+            <StatCard label="Concepts (SKOS)" value={stats.concept_count ?? 0} />
+          )}
           {langs.length > 0 && (
             <StatCard label="Languages" value={langs.length} />
           )}
@@ -814,7 +817,7 @@ function OntologySearchBar({
                       borderRadius: 2, background: 'var(--bg)',
                       color: typeColor, flexShrink: 0, minWidth: 28, textAlign: 'center',
                     }}>
-                      {r.type === 'class' ? 'cls' : r.type === 'individual' ? 'ind' : 'prop'}
+                      {r.type === 'class' ? 'cls' : r.type === 'individual' ? 'ind' : r.type === 'concept' ? 'skos' : 'prop'}
                     </span>
                     <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {r.label}
@@ -979,6 +982,7 @@ export default function OntologyPage() {
     staleTime: 120_000,
   })
   const individualCount = versionStats?.individual_count ?? 0
+  const conceptCount = versionStats?.concept_count ?? 0
 
   // Default to the inferred (reasoned) hierarchy when the version has been
   // reasoned; ClassTree calls onReasoningUnavailable to fall back to asserted
@@ -1239,6 +1243,21 @@ export default function OntologyPage() {
               <IndividualList
                 ontologyId={oid} versionId={activeVid}
                 selectedIri={selectedTermIri} onSelect={selectTerm}
+                lang={effectiveLang}
+              />
+            </CollapsibleSection>
+          )}
+          {conceptCount > 0 && (
+            <CollapsibleSection
+              label={`Concepts (SKOS) (${conceptCount.toLocaleString()})`}
+              defaultOpen={false}
+              openSignal={selectedTermData?.entityType === 'concept' ? selectedTermIri : null}
+            >
+              <ClassTree
+                ontologyId={oid} versionId={activeVid}
+                selectedIri={selectedTermIri} onSelect={selectTerm}
+                entityType="concept" revealIri={selectedTermIri}
+                hideObsolete={hideObsolete}
                 lang={effectiveLang}
               />
             </CollapsibleSection>

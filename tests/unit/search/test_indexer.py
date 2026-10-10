@@ -106,7 +106,7 @@ def test_build_index_writes_entity_hash():
 
 def test_build_index_extracts_skos_concepts():
     """A pure-SKOS vocabulary (terms typed only skos:Concept, no OWL/RDFS types)
-    must index its concepts as ``class`` entities rather than indexing to zero.
+    must index its concepts as ``concept`` entities rather than indexing to zero.
     Not marked slow — _populate_reuse_cache is patched out (it would open a real
     Postgres session), so this runs in CI."""
     r = _make_redis()
@@ -132,10 +132,11 @@ def test_build_index_extracts_skos_concepts():
          patch("ontoexplorer.modules.search.indexer._populate_reuse_cache", return_value=None):
         stats = build_index("v1", "o1")
 
-    assert stats.class_count == 2
+    assert stats.concept_count == 2
+    assert stats.class_count == 0
     for iri in ("http://ex.org/concept/Apple", "http://ex.org/concept/Pear"):
-        assert stats.entities[iri]["type"] == "class"
-        assert r.hgetall(_iri_key("v1", iri))["type"] == "class"
+        assert stats.entities[iri]["type"] == "concept"
+        assert r.hgetall(_iri_key("v1", iri))["type"] == "concept"
 
 
 def test_build_index_owl_type_wins_over_skos_concept():

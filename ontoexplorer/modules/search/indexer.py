@@ -34,6 +34,7 @@ class IndexStats:
     class_count: int
     property_count: int
     individual_count: int
+    concept_count: int = 0
     # #242 Workstream B: the in-memory producer output, so entity_index can be
     # populated directly (not re-read from Redis). `entities` is {iri: hash_dict}
     # in the exact Redis-hash shape; `deprecated`/`individuals` are IRI sets.
@@ -291,12 +292,12 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         ("class",               "http://www.w3.org/2000/01/rdf-schema#Class"),
         ("object_property",     "http://www.w3.org/1999/02/22-rdf-syntax-ns#Property"),
         # SKOS concepts — the browsable terms of a thesaurus/controlled vocabulary.
-        # Indexed as "class" (their role here: searchable, navigable terms) and
-        # placed last so any OWL/RDFS typing wins for a punned term. This is the
-        # only typing a pure-SKOS vocabulary carries, so without it those
-        # ontologies index to zero entities and vanish from search (e.g. dpv-pd:
-        # 206 skos:Concept, 0 owl terms). Labels already union skos:prefLabel.
-        ("class",               "http://www.w3.org/2004/02/skos/core#Concept"),
+        # Given their own entity type "concept" (a first-class tag alongside the
+        # OWL/RDFS types) and placed last so any OWL/RDFS typing wins for a punned
+        # term. This is the only typing a pure-SKOS vocabulary carries, so without
+        # it those ontologies index to zero entities and vanish from search (e.g.
+        # dpv-pd: 206 skos:Concept, 0 owl terms). Labels already union skos:prefLabel.
+        ("concept",             "http://www.w3.org/2004/02/skos/core#Concept"),
     ]:
         q = f"""
             SELECT DISTINCT ?entity WHERE {{
@@ -476,7 +477,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         r.delete(_meta_key(version_id))
 
     pipe = r.pipeline(transaction=False) if _write_redis else _NoopPipe()
-    class_count = property_count = 0
+    class_count = property_count = concept_count = 0
     # individual_count was set above during threshold-gated collection
     # Flush the write pipeline every _FLUSH_ENTITIES entities so its in-memory
     # command buffer stays bounded. A single non-transactional pipeline over a
@@ -560,6 +561,8 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
 
         if entity_type == "class":
             class_count += 1
+        elif entity_type == "concept":
+            concept_count += 1
         elif entity_type != "individual":
             property_count += 1
 
@@ -600,6 +603,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
     pipe.expire(_type_key(version_id, "data_property"),       _SEARCH_TTL)
     pipe.expire(_type_key(version_id, "annotation_property"), _SEARCH_TTL)
     pipe.expire(_type_key(version_id, "individual"),          _SEARCH_TTL)
+    pipe.expire(_type_key(version_id, "concept"),             _SEARCH_TTL)
     # Rewritten wholesale: a re-index must not leave individuals behind that
     # the ontology no longer declares.
     pipe.delete(_individuals_key(version_id))
@@ -611,6 +615,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         "class_count":      str(class_count),
         "property_count":   str(property_count),
         "individual_count": str(individual_count),
+        "concept_count":    str(concept_count),
     })
     pipe.expire(_meta_key(version_id), _SEARCH_TTL)
     # Store deprecated IRI set for use by the inferred-tree endpoint.
@@ -647,6 +652,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         class_count=class_count,
         property_count=property_count,
         individual_count=individual_count,
+        concept_count=concept_count,
         entities=entity_hashes,
         deprecated=deprecated_iris,
         individuals=individual_iris,
@@ -869,6 +875,7 @@ def _populate_stats_cache(
     data_prop_count = sum(1 for t in entities.values() if t == "data_property")
     ann_prop_count  = sum(1 for t in entities.values() if t == "annotation_property")
     class_count     = sum(1 for t in entities.values() if t == "class")
+    concept_count   = sum(1 for t in entities.values() if t == "concept")
 
     # Two extra queries for counts not derivable from the entity dict
     def _count(sparql: str) -> int:
@@ -902,6 +909,7 @@ def _populate_stats_cache(
         "datatype_property_count":   data_prop_count,
         "annotation_property_count": ann_prop_count,
         "individual_count":          ind_count,
+        "concept_count":             concept_count,
         "label":                     onto_label,
         "description":               onto_description,
         "index_meta": {

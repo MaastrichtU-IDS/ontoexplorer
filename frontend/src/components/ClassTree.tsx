@@ -337,6 +337,7 @@ export default function ClassTree({ ontologyId, versionId, selectedIri, onSelect
       : entityType === 'object_property' ? 'object properties'
       : entityType === 'data_property' ? 'data properties'
       : entityType === 'annotation_property' ? 'annotation properties'
+      : entityType === 'concept' ? 'concepts'
       : 'properties'
     return <div style={{ padding: '0.5rem 1rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
       No {label} found

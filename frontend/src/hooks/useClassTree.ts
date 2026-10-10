@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../lib/api'
 
-export type EntityType = 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property'
+export type EntityType = 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' | 'concept'
 
 export function useClassTreeNodes(
   ontologyId: string | null,

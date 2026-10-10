@@ -133,14 +133,14 @@ async def global_search(
     backend: str = Query("pg", description="Search backend: pg (default, Postgres entity_index) | redis (legacy)"),
     types: list[str] = Query(
         default=[],
-        description="Filter by entity_index type: class | object_property | data_property | annotation_property | individual. Empty = all.",
+        description="Filter by entity_index type: class | object_property | data_property | annotation_property | individual | concept. Empty = all.",
     ),
     _user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     effective_lang = lang or (getattr(_user, 'preferred_lang', None) if isinstance(_user, User) else None)
     # Drop unknown values so we never silently pass-through and return nothing.
-    _ALLOWED_TYPES = {"class", "object_property", "data_property", "annotation_property", "individual"}
+    _ALLOWED_TYPES = {"class", "object_property", "data_property", "annotation_property", "individual", "concept"}
     types = [t for t in types if t in _ALLOWED_TYPES]
 
     # Short-TTL response cache for entity-mode queries (the hot path from the homepage).

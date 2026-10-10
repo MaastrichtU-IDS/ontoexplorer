@@ -22,13 +22,14 @@ const MODE_LABELS: Record<Mode, string> = {
   query: 'Query',
 }
 
-type EntityTypeFilter = 'class' | 'object_property' | 'data_property' | 'individual'
+type EntityTypeFilter = 'class' | 'object_property' | 'data_property' | 'individual' | 'concept'
 
 const TYPE_FILTERS: { value: EntityTypeFilter; label: string }[] = [
   { value: 'class', label: 'Class' },
   { value: 'object_property', label: 'Object Property' },
   { value: 'data_property', label: 'Data Property' },
   { value: 'individual', label: 'Individual' },
+  { value: 'concept', label: 'Concept (SKOS)' },
 ]
 
 const TYPE_BADGE: Record<string, string> = {
@@ -37,6 +38,7 @@ const TYPE_BADGE: Record<string, string> = {
   data_property: 'DP',
   annotation_property: 'AP',
   individual: 'IND',
+  concept: 'SKOS',
 }
 
 function TypeBadge({ type }: { type?: string }) {
