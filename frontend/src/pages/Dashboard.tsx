@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { api, slugFromIri, type Ontology, type OntologyVersion } from '../lib/api'
 import { useAuth } from '../hooks/useAuth'
 import ReindexWithReasoner from '../components/ReindexWithReasoner'
+import ResolvableBadge from '../components/ResolvableBadge'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useOntologiesInfinite } from '../hooks/useOntologiesInfinite'
 
@@ -211,21 +212,24 @@ function GroupsEditor({ ontology }: { ontology: Ontology }) {
   if (!editing) {
     return (
       <span style={{ display: 'inline-flex', gap: '0.2rem', flexWrap: 'wrap', alignItems: 'center' }}>
-        {current.length === 0
-          ? <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>—</span>
-          : current.map(g => {
-              const c = GROUP_COLORS[g]
-              return (
-                <span key={g} style={{
-                  fontSize: 9, padding: '1px 6px', borderRadius: 10,
-                  background: c.bg, border: `1px solid ${c.border}`,
-                  color: c.color, fontWeight: 600, letterSpacing: 0.3,
-                }}>
-                  {GROUP_LABELS[g]}
-                </span>
-              )
-            })
-        }
+        {current.map(g => {
+          const c = GROUP_COLORS[g]
+          return (
+            <span key={g} style={{
+              fontSize: 9, padding: '1px 6px', borderRadius: 10,
+              background: c.bg, border: `1px solid ${c.border}`,
+              color: c.color, fontWeight: 600, letterSpacing: 0.3,
+            }}>
+              {GROUP_LABELS[g]}
+            </span>
+          )
+        })}
+        {/* Derived from the live `resolvable` column (not an editable group) so it
+            stays accurate as the re-check beat flips values. Positive-only. */}
+        <ResolvableBadge resolvable={ontology.resolvable} checkedAt={ontology.resolve_checked_at} />
+        {current.length === 0 && ontology.resolvable !== true && (
+          <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>—</span>
+        )}
         <button onClick={open} title="Edit groups" style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: 1 }}>✎</button>
       </span>
     )
