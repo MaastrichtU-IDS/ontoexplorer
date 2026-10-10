@@ -53,35 +53,23 @@ def test_fallback_restricted_to_blank_nodes(monkeypatch):
     assert any("isBlank(?onto)" in q for q in captured)
 
 
-def test_bled_title_suppressed_when_on_another_subject(monkeypatch):
-    """Host carries title 'SIO' which is ALSO asserted on a different named subject
-    (the copied-in source) → the host title is dropped (option 2)."""
-    _SIO = "Semanticscience Integrated Ontology (SIO)"
+def test_host_title_kept_even_if_shared_with_another_subject(monkeypatch):
+    """The detector no longer suppresses a host title that is also asserted on
+    another subject (that over-reached on ontologies vendoring modules which share
+    their own title, e.g. enanomapper + enanomapper-auto). Bled-title cleanup is now
+    done once, at ingest, before the import closure is loaded — the detector reads
+    the host's own triples faithfully. No foreign-subject suppression query runs."""
+    captured = []
 
     def fake_sparql(q):
-        if "STR(?s) !=" in q:                 # suppression: title on a foreign subject
-            return [_VarRow(_SIO)]
-        if "isBlank(?onto)" in q:             # blank-node fallback
-            return []
-        return [_Row(_TITLE, _Lit(_SIO))]     # first host-IRI query: host carries SIO title
+        captured.append(q)
+        return [_Row(_TITLE, _Lit("eNanoMapper ontology"))]  # host IRI's own title
 
     monkeypatch.setattr(detector, "sparql_query", fake_sparql)
     triples = detector._fetch_onto_triples("urn:g", "http://host.example/onto")
-    assert _TITLE not in triples              # bled title suppressed
-
-
-def test_own_title_kept_when_unique(monkeypatch):
-    """A title that appears ONLY on the host subject (no foreign source) is kept."""
-    def fake_sparql(q):
-        if "STR(?s) !=" in q:                 # title not on any other subject
-            return []
-        if "isBlank(?onto)" in q:
-            return []
-        return [_Row(_TITLE, _Lit("My Own Ontology"))]
-
-    monkeypatch.setattr(detector, "sparql_query", fake_sparql)
-    triples = detector._fetch_onto_triples("urn:g", "http://host.example/onto")
-    assert triples[_TITLE][0]["value"] == "My Own Ontology"
+    assert triples[_TITLE][0]["value"] == "eNanoMapper ontology"
+    # no cross-subject suppression query is issued anymore
+    assert not any("STR(?s) !=" in q for q in captured)
 
 
 def test_blank_node_header_still_resolved(monkeypatch):
