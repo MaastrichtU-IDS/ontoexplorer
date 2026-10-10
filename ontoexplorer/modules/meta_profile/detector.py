@@ -130,7 +130,6 @@ def _get_prop_labels(named_graph: str, iris: list[str]) -> dict[str, str]:
 
 
 _OWL_ONTOLOGY = "http://www.w3.org/2002/07/owl#Ontology"
-_OWL_IMPORTS = "http://www.w3.org/2002/07/owl#imports"
 
 
 def _fetch_onto_triples(named_graph: str, onto_iri: str) -> dict[str, list[dict]]:
@@ -162,17 +161,22 @@ def _fetch_onto_triples(named_graph: str, onto_iri: str) -> dict[str, list[dict]
     """)
 
     # If the direct-IRI query found no title predicates, the ontology header is likely
-    # on a blank node.  Re-query for any owl:Ontology subject that isn't an import target
-    # so we don't accidentally pick up metadata from a loaded owl:imports dependency.
+    # on a BLANK NODE ([] a owl:Ontology ; dcterms:title "…") where onto_iri is the
+    # submission URL, not the actual subject. Restrict the fallback to blank-node
+    # headers: a loaded owl:imports dependency (SKOS/BFO/SIO/SWEET/…) always has a
+    # NAMED owl:Ontology subject, so its title would otherwise bleed into the host's
+    # metadata. The former `FILTER NOT EXISTS { ?other owl:imports ?onto }` exclusion
+    # was ineffective because import-closure loading frequently drops the owl:imports
+    # edges, leaving the imported ontology node indistinguishable from a native one
+    # (observed: ~94 ontologies mis-titled from imported SKOS/BFO/SIO/SWEET nodes).
+    # An ontology that declares no own title now correctly falls back to its shortname.
     title_iris = ALL_META_ROLES["title"]
     if not any(iri in triples for iri in title_iris):
         _collect(f"""
             SELECT ?pred ?obj WHERE {{
                 GRAPH <{named_graph}> {{
                     ?onto a <{_OWL_ONTOLOGY}> .
-                    FILTER NOT EXISTS {{
-                        GRAPH <{named_graph}> {{ ?other <{_OWL_IMPORTS}> ?onto . }}
-                    }}
+                    FILTER(isBlank(?onto))
                     ?onto ?pred ?obj .
                 }}
             }}
