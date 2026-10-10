@@ -9,6 +9,7 @@ ENTITY_TYPES: tuple[str, ...] = (
     "data_property",
     "annotation_property",
     "individual",
+    "concept",
 )
 
 

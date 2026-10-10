@@ -236,6 +236,7 @@ export interface Ontology {
   annotation_property_count?: number | null
   triple_count?: number | null
   individual_count?: number | null
+  concept_count?: number | null
   label?: string | null
   description?: string | null
   languages?: OntologyLanguage[]
@@ -390,7 +391,7 @@ export interface ParsedTerm {
   label: string
   source?: string
   definition: string | null
-  entityType: 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' | 'individual'
+  entityType: 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' | 'individual' | 'concept'
   isInverseTarget: boolean
   typeOf: ClassRef[]
   rawProperties: Record<string, LangLabel[]>
@@ -920,6 +921,7 @@ export type CoverageEntityType =
   | 'data_property'
   | 'annotation_property'
   | 'individual'
+  | 'concept'
 
 export interface CoverageBucket {
   total: number
@@ -1091,6 +1093,7 @@ const P = {
   owlDataProp: 'http://www.w3.org/2002/07/owl#DatatypeProperty',
   owlAnnProp:  'http://www.w3.org/2002/07/owl#AnnotationProperty',
   owlIndividual: 'http://www.w3.org/2002/07/owl#NamedIndividual',
+  skosConcept: 'http://www.w3.org/2004/02/skos/core#Concept',
 }
 
 const OWL_CHARACTERISTICS: Record<string, string> = {
@@ -1167,6 +1170,8 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
     entityType = 'individual'
   } else if (types.includes('http://www.w3.org/1999/02/22-rdf-syntax-ns#Property')) {
     entityType = 'property'
+  } else if (types.includes(P.skosConcept)) {
+    entityType = 'concept'
   }
   const characteristics = types.map(t => OWL_CHARACTERISTICS[t]).filter(Boolean) as string[]
   return {
@@ -1298,7 +1303,7 @@ export const api = {
       }),
     versions: (id: string) =>
       request<{ versions: OntologyVersion[] }>(`/ontologies/${id}/versions`),
-    terms: (oid: string, vid: string, parent?: string | null, entityType: 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' | 'individual' = 'class', hideInverse = false, hideObsolete = true, limit = 200, offset = 0, lang?: string | null) => {
+    terms: (oid: string, vid: string, parent?: string | null, entityType: 'class' | 'property' | 'object_property' | 'data_property' | 'annotation_property' | 'individual' | 'concept' = 'class', hideInverse = false, hideObsolete = true, limit = 200, offset = 0, lang?: string | null) => {
       const params = new URLSearchParams({ limit: String(limit), offset: String(offset), entity_type: entityType })
       params.set('parent', parent ?? 'root')
       if (hideInverse) params.set('hide_inverse', 'true')
@@ -1388,6 +1393,7 @@ export const api = {
         datatype_property_count: number
         annotation_property_count: number
         individual_count: number
+        concept_count?: number
         index_meta: { indexed_at?: string; class_count?: number; property_count?: number }
       }>(`/ontologies/${oid}/${vid}/stats`),
 
@@ -1604,6 +1610,7 @@ export const api = {
         total_axioms: number
         total_individuals: number
         unique_individuals: number
+        unique_concepts?: number
       }>('/stats/public'),
     usagePublic: (granularity = 'month', periods = 12) =>
       request<UsagePublic>(`/stats/usage/public?granularity=${granularity}&periods=${periods}`),

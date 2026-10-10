@@ -52,7 +52,7 @@ def classify_terms(
         if prefix == host_prefix:
             continue  # also native (host's own prefix used in mixed-namespace form)
         entry = out.setdefault(prefix, TermIRIReuseEntry(resolved=resolved))
-        if etype == "class":
+        if etype in ("class", "concept"):
             entry.class_count += 1
         elif etype in ("object_property", "data_property", "annotation_property"):
             entry.property_count += 1

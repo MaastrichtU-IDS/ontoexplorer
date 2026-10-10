@@ -7,10 +7,11 @@ const TYPE_LABELS: Record<CoverageEntityType, string> = {
   data_property:       'Data properties',
   annotation_property: 'Annotation properties',
   individual:          'Individuals',
+  concept:             'Concepts (SKOS)',
 }
 
 const TYPE_ORDER: CoverageEntityType[] = [
-  'class', 'object_property', 'data_property', 'annotation_property', 'individual',
+  'class', 'object_property', 'data_property', 'annotation_property', 'individual', 'concept',
 ]
 
 function pct(num: number, denom: number): string {
@@ -51,6 +52,9 @@ export default function CoverageSection({ ontologyId, versionId }: {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: '0.5rem', marginBottom: '1rem' }}>
         {TYPE_ORDER.map(t => {
           const b = record.by_type[t]
+          // A type absent from this record (e.g. no concepts, or an older
+          // response predating the concept bucket) renders no card.
+          if (!b) return null
           return (
             <div key={t} data-testid={`coverage-card-${t}`} style={{
               background: 'var(--bg-secondary)', border: '1px solid var(--border)',

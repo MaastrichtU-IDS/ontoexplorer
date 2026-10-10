@@ -157,7 +157,7 @@ async def v2_stats(db: AsyncSession = Depends(get_db)):
     if vids:
         row = (await db.execute(_text("""
             SELECT
-              SUM(CASE WHEN type = 'class' THEN 1 ELSE 0 END) AS classes,
+              SUM(CASE WHEN type IN ('class','concept') THEN 1 ELSE 0 END) AS classes,
               SUM(CASE WHEN type IN ('object_property','data_property','annotation_property')
                        THEN 1 ELSE 0 END) AS properties,
               SUM(CASE WHEN is_individual THEN 1 ELSE 0 END) AS individuals

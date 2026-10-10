@@ -40,7 +40,9 @@ def _ols_type(internal_type: str) -> str:
     ``object_property``, ``data_property``, and ``annotation_property``
     all collapse to ``"property"`` in OLS4 output.
     """
-    if internal_type == "class":
+    # SKOS concepts collapse to "class" in OLS output — OLS4 has no concept type,
+    # and concepts are the class-like browsable terms of a vocabulary.
+    if internal_type in ("class", "concept"):
         return "class"
     if internal_type.endswith("_property") or internal_type == "property":
         return "property"
@@ -51,17 +53,19 @@ def _ols_type(internal_type: str) -> str:
 
 _ALL_ENTITY_TYPES = (
     "class", "object_property", "data_property", "annotation_property", "individual",
+    "concept",
 )
 
 
 def _entity_index_types(ols_type: str | None) -> list[str] | None:
     """Map the OLS ``type=`` query param to entity_index.type values (inclusion).
 
-    class→[class], individual→[individual], property→the three property sub-types.
-    ``ontology``/unknown/None → None (no filter).
+    class→[class, concept], individual→[individual], property→the three property
+    sub-types. ``ontology``/unknown/None → None (no filter). Concepts ride with
+    "class" to match the _ols_type output mapping.
     """
     if ols_type == "class":
-        return ["class"]
+        return ["class", "concept"]
     if ols_type == "individual":
         return ["individual"]
     if ols_type == "property":

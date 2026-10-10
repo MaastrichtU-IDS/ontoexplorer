@@ -1686,7 +1686,7 @@ function PropertyBody({ data, slug, ontologyId, roleMap, versionId, lang }: {
         )
       })()}
 
-      {ontologyId && data.entityType !== 'class' && data.entityType !== 'individual' && (
+      {ontologyId && data.entityType !== 'class' && data.entityType !== 'individual' && data.entityType !== 'concept' && (
         <SubPropertyList
           ontologyId={ontologyId}
           versionId={versionId}

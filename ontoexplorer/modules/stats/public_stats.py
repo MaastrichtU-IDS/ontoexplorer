@@ -84,7 +84,7 @@ async def _unique_counts(db: AsyncSession, version_ids: list[str]) -> dict:
     sets). One grouped query."""
     empty = {
         "unique_classes": 0, "unique_object_properties": 0, "unique_data_properties": 0,
-        "unique_annotation_properties": 0, "unique_individuals": 0,
+        "unique_annotation_properties": 0, "unique_individuals": 0, "unique_concepts": 0,
     }
     if not version_ids:
         return empty
@@ -100,6 +100,7 @@ async def _unique_counts(db: AsyncSession, version_ids: list[str]) -> dict:
         "unique_data_properties":       by_type.get("data_property", 0),
         "unique_annotation_properties": by_type.get("annotation_property", 0),
         "unique_individuals":           by_type.get("individual", 0),
+        "unique_concepts":              by_type.get("concept", 0),
     }
 
 

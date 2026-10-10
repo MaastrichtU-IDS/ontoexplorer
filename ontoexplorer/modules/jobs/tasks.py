@@ -344,7 +344,7 @@ def purge_version_artifacts(ontology_id: str, version_id: str, minio_key: str | 
             _meta_key, _deprecated_key, _langs_key, _stats_cache_key,
         )
         _OWL_THING_IRI = "http://www.w3.org/2002/07/owl#Thing"
-        _TYPES = ("class", "object_property", "data_property", "annotation_property", "individual")
+        _TYPES = ("class", "object_property", "data_property", "annotation_property", "individual", "concept")
         r = _get_redis()
         iris: set[str] = {_OWL_THING_IRI}
         for _t in _TYPES:

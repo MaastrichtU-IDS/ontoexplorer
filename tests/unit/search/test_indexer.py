@@ -104,6 +104,65 @@ def test_build_index_writes_entity_hash():
     assert detail["type"] == "class"
 
 
+def test_build_index_extracts_skos_concepts():
+    """A pure-SKOS vocabulary (terms typed only skos:Concept, no OWL/RDFS types)
+    must index its concepts as ``concept`` entities rather than indexing to zero.
+    Not marked slow — _populate_reuse_cache is patched out (it would open a real
+    Postgres session), so this runs in CI."""
+    r = _make_redis()
+    concept_rows = _make_sparql_rows([
+        {"entity": "http://ex.org/concept/Apple"},
+        {"entity": "http://ex.org/concept/Pear"},
+    ])
+    label_rows = _make_sparql_rows([
+        {"entity": "http://ex.org/concept/Apple", "label": "apple", "lang": "en"},
+        {"entity": "http://ex.org/concept/Pear", "label": "pear", "lang": "en"},
+    ])
+
+    def fake_sparql(q):
+        if "skos/core#Concept" in q:
+            return concept_rows
+        if "?label" in q:
+            return label_rows
+        return []  # no owl:Class / rdfs:Class / properties / individuals
+
+    with patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.indexer.sparql_query", side_effect=fake_sparql), \
+         patch("ontoexplorer.modules.search.indexer.graph_iri", return_value="urn:test"), \
+         patch("ontoexplorer.modules.search.indexer._populate_reuse_cache", return_value=None):
+        stats = build_index("v1", "o1")
+
+    assert stats.concept_count == 2
+    assert stats.class_count == 0
+    for iri in ("http://ex.org/concept/Apple", "http://ex.org/concept/Pear"):
+        assert stats.entities[iri]["type"] == "concept"
+        assert r.hgetall(_iri_key("v1", iri))["type"] == "concept"
+
+
+def test_build_index_owl_type_wins_over_skos_concept():
+    """A term typed BOTH owl:AnnotationProperty and skos:Concept keeps its OWL
+    type — skos:Concept is queried last and is first-wins in the entities map."""
+    r = _make_redis()
+    iri = "http://ex.org/dualTyped"
+    rows = _make_sparql_rows([{"entity": iri}])
+
+    def fake_sparql(q):
+        # the term is returned by BOTH the annotation-property and skos queries
+        if "owl#AnnotationProperty" in q or "skos/core#Concept" in q:
+            return rows
+        if "?label" in q:
+            return _make_sparql_rows([{"entity": iri, "label": "dual", "lang": "en"}])
+        return []
+
+    with patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.indexer.sparql_query", side_effect=fake_sparql), \
+         patch("ontoexplorer.modules.search.indexer.graph_iri", return_value="urn:test"), \
+         patch("ontoexplorer.modules.search.indexer._populate_reuse_cache", return_value=None):
+        stats = build_index("v1", "o1")
+
+    assert stats.entities[iri]["type"] == "annotation_property"
+
+
 def test_invalidate_index_removes_all_keys():
     r = _make_redis()
     vid = "v99"

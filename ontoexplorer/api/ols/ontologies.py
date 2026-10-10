@@ -49,6 +49,7 @@ async def _ontology_shape(
         "property_count":   await count_entities(
             db, vid, ["object_property", "data_property", "annotation_property"]),
         "individual_count": await count_entities(db, vid, ["individual"]),
+        "concept_count":    await count_entities(db, vid, ["concept"]),
     }
     if version.indexed_at is not None:
         meta["indexed_at"] = (
