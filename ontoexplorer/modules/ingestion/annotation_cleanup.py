@@ -2,14 +2,19 @@
 
 A host ontology authored by copying a template (SIO/SKOS/BFO/SWEET/…) frequently
 keeps the template's dcterms:title / dcterms:description on its OWN ontology
-subject. This deletes a host title/description value that is ALSO asserted on a
-different NAMED subject in the same graph — i.e. the template's own declaration
-rides along in the file, giving a twin to compare against.
+subject, alongside the template's own declaration — both in the SOURCE file. This
+deletes a host title/description value that is ALSO asserted on a different NAMED
+subject in the same graph (the twin).
 
-Self-limiting: a value present only on the host subject (no foreign twin) is
-never touched, so a legitimate title/description is never removed. Scoped to the
-DC/DCTERMS title + description predicates — deliberately NOT rdfs:label /
-rdfs:comment, which are generic and collide benignly across many subjects.
+MUST run BEFORE the import closure is loaded. An import never writes to the host
+subject (imports load under their own subjects), so a genuine bleed's twin is
+always in the source file. Running after the closure is loaded would add false
+twins — e.g. an ontology that vendors modules sharing its own title would have
+its real title wrongly stripped.
+
+Self-limiting: a value present only on the host subject (no twin) is never
+touched. Scoped to the DC/DCTERMS title + description predicates — deliberately
+NOT rdfs:label / rdfs:comment, which are generic and collide benignly.
 """
 from __future__ import annotations
 
