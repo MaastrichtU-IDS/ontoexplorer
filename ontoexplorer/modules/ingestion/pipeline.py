@@ -265,6 +265,14 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
             ontology_created = False
         ontology_id = reconciled_id
 
+    # ── Strip copied-in (bled) title/description from the host subject ────────────
+    # A host authored by copying a template (SIO/SKOS/BFO/…) keeps the template's
+    # dcterms:title/description on its own ontology node; the import closure (loaded
+    # above) provides the foreign twin to detect it. Runs before naming/metadata so
+    # the bled value can't become o.title or the resolved profile. Best-effort.
+    from ontoexplorer.modules.ingestion.annotation_cleanup import strip_bled_annotations
+    await asyncio.to_thread(strip_bled_annotations, ontology_id, version_id, subject_iri)
+
     # ── Refine the shortname + title from the ontology's own metadata (#249) ──────
     # Only for freshly-created ontologies, so an established (possibly linked)
     # shortname is never changed by a re-ingest. Best-effort. Uses the subject IRI
