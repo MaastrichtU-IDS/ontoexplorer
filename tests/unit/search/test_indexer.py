@@ -163,6 +163,79 @@ def test_build_index_owl_type_wins_over_skos_concept():
     assert stats.entities[iri]["type"] == "annotation_property"
 
 
+def test_build_index_fallback_indexes_abox_only_vocab():
+    """An ABox-only vocabulary whose terms are typed solely by a DOMAIN class
+    (no owl:Class/Property/skos:Concept and no owl:NamedIndividual — e.g. QUDT's
+    units vocab, typed qudt:Prefix / qudt:SystemOfUnits) must be rescued by the
+    fallback and indexed as individuals rather than indexing to zero entities."""
+    r = _make_redis()
+    abox_rows = _make_sparql_rows([
+        {"entity": "http://qudt.org/vocab/prefix/Kilo"},
+        {"entity": "http://qudt.org/vocab/prefix/Giga"},
+    ])
+    label_rows = _make_sparql_rows([
+        {"entity": "http://qudt.org/vocab/prefix/Kilo", "label": "Kilo", "lang": "en"},
+        {"entity": "http://qudt.org/vocab/prefix/Giga", "label": "Giga", "lang": "en"},
+    ])
+
+    def fake_sparql(q):
+        # fallback: a COUNT then a DISTINCT SELECT, both scoped by !STRSTARTS filters
+        if "!STRSTARTS" in q and "COUNT" in q:
+            return _make_sparql_rows([{"n": "2"}])
+        if "!STRSTARTS" in q:
+            return abox_rows
+        if "?label" in q:
+            return label_rows
+        return []  # no owl/rdfs/skos types, no owl:NamedIndividual
+
+    with patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.indexer.sparql_query", side_effect=fake_sparql), \
+         patch("ontoexplorer.modules.search.indexer.graph_iri", return_value="urn:test"), \
+         patch("ontoexplorer.modules.search.indexer._populate_reuse_cache", return_value=None):
+        stats = build_index("v1", "o1")
+
+    assert stats.class_count == 0
+    assert stats.concept_count == 0
+    assert stats.individual_count == 2
+    for iri in ("http://qudt.org/vocab/prefix/Kilo", "http://qudt.org/vocab/prefix/Giga"):
+        assert stats.entities[iri]["type"] == "individual"
+        assert r.hgetall(_iri_key("v1", iri))["type"] == "individual"
+
+
+def test_build_index_fallback_dormant_when_standard_extraction_finds_entities():
+    """Zero blast radius: the ABox fallback must NOT run when the standard
+    extraction already found any entity — a well-typed ontology's output is
+    unchanged even if it also contains domain-class-typed IRIs."""
+    r = _make_redis()
+    class_rows = _make_sparql_rows([{"entity": "http://ex.org/Cell"}])
+    abox_rows = _make_sparql_rows([{"entity": "http://ex.org/inst/1"}])
+    label_rows = _make_sparql_rows([
+        {"entity": "http://ex.org/Cell", "label": "cell", "lang": "en"},
+    ])
+
+    seen_fallback = False
+    def fake_sparql(q):
+        nonlocal seen_fallback
+        if "!STRSTARTS" in q:
+            seen_fallback = True
+            return abox_rows
+        if "owl#Class" in q:
+            return class_rows
+        if "?label" in q:
+            return label_rows
+        return []
+
+    with patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.indexer.sparql_query", side_effect=fake_sparql), \
+         patch("ontoexplorer.modules.search.indexer.graph_iri", return_value="urn:test"), \
+         patch("ontoexplorer.modules.search.indexer._populate_reuse_cache", return_value=None):
+        stats = build_index("v1", "o1")
+
+    assert stats.class_count == 1
+    assert stats.individual_count == 0
+    assert seen_fallback is False  # fallback query never issued
+
+
 def test_invalidate_index_removes_all_keys():
     r = _make_redis()
     vid = "v99"
