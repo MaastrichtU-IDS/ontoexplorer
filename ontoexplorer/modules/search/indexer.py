@@ -290,6 +290,13 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         # RDFS fallbacks — only fire when no OWL typing is present
         ("class",               "http://www.w3.org/2000/01/rdf-schema#Class"),
         ("object_property",     "http://www.w3.org/1999/02/22-rdf-syntax-ns#Property"),
+        # SKOS concepts — the browsable terms of a thesaurus/controlled vocabulary.
+        # Indexed as "class" (their role here: searchable, navigable terms) and
+        # placed last so any OWL/RDFS typing wins for a punned term. This is the
+        # only typing a pure-SKOS vocabulary carries, so without it those
+        # ontologies index to zero entities and vanish from search (e.g. dpv-pd:
+        # 206 skos:Concept, 0 owl terms). Labels already union skos:prefLabel.
+        ("class",               "http://www.w3.org/2004/02/skos/core#Concept"),
     ]:
         q = f"""
             SELECT DISTINCT ?entity WHERE {{
