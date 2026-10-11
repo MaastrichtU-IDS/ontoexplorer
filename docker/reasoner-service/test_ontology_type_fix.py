@@ -61,6 +61,12 @@ def test_strips_multiple_extra_types():
         "http://www.w3.org/ns/dcat#Dataset",
     ]))
     assert otf.strip_extra_ontology_types(store) == 3
+    # owl:Ontology must survive even when several extra types are stripped.
+    import pyoxigraph
+    rdf_type = pyoxigraph.NamedNode(otf._RDF + "type")
+    types = {q.object.value for q in
+             store.quads_for_pattern(pyoxigraph.NamedNode(ONT), rdf_type, None, None)}
+    assert types == {otf._OWL + "Ontology"}
 
 
 def test_noop_when_ontology_node_is_clean():
