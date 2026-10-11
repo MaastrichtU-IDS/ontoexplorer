@@ -963,6 +963,7 @@ function repairLabel(kind: string, count: number): string {
   const map: Record<string, [string, string]> = {
     injected_class_declarations: ['class declaration injected', 'class declarations injected'],
     stripped_ontology_types: ['ontology-node type stripped', 'ontology-node types stripped'],
+    dropped_property_axioms: ['mismatched property axiom dropped', 'mismatched property axioms dropped'],
   }
   const pair = map[kind]
   if (pair) return count === 1 ? pair[0] : pair[1]
