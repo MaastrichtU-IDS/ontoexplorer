@@ -30,12 +30,24 @@ from __future__ import annotations
 
 _OWL = "http://www.w3.org/2002/07/owl#"
 _RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+_RDFS = "http://www.w3.org/2000/01/rdf-schema#"
+_XSD = "http://www.w3.org/2001/XMLSchema#"
+
+# Reserved vocabulary namespaces. horned-owl recognises these built-in terms
+# (owl:Thing, owl:Nothing, rdfs:Resource, …) natively without a Declaration, so
+# an operand from one of them never triggers the "Unknown entity" abort — and
+# declaring a built-in as owl:Class would be a redundant, slightly wrong axiom.
+# Skip them so the injected count reflects only genuine external/undeclared
+# classes.
+_RESERVED_NS = (_OWL, _RDF, _RDFS, _XSD)
 
 
 def inject_equivalent_class_declarations(store) -> list[str]:
     """Declare as ``owl:Class`` every named ``owl:equivalentClass`` operand that has
-    no ``rdf:type`` at all. Mutates ``store`` in place; returns the sorted list of
-    IRIs declared (empty if there was nothing to fix). Safe to call unconditionally.
+    no ``rdf:type`` at all. Operands in a reserved vocabulary namespace
+    (owl:/rdf:/rdfs:/xsd:) are skipped — horned-owl knows those built-ins without a
+    declaration. Mutates ``store`` in place; returns the sorted list of IRIs
+    declared (empty if there was nothing to fix). Safe to call unconditionally.
     """
     import pyoxigraph
 
@@ -51,6 +63,8 @@ def inject_equivalent_class_declarations(store) -> list[str]:
 
     injected: list[str] = []
     for iri in operands:
+        if iri.startswith(_RESERVED_NS):
+            continue
         subj = pyoxigraph.NamedNode(iri)
         has_type = any(True for _ in store.quads_for_pattern(subj, rdf_type, None, None))
         if has_type:

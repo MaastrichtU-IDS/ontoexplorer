@@ -83,6 +83,17 @@ def test_both_sides_injected_when_both_undeclared():
     assert ecf.inject_equivalent_class_declarations(store) == sorted([A, B])
 
 
+def test_skips_reserved_vocabulary_operands():
+    # A ≡ owl:Thing: owl:Thing is a built-in horned-owl knows without a
+    # declaration, so it must not be injected (declaring a built-in is redundant).
+    nt = (
+        f"<{A}> <{ecf._RDF}type> <{ecf._OWL}Class> .\n"
+        f"<{A}> <{ecf._OWL}equivalentClass> <{ecf._OWL}Thing> .\n"
+    )
+    store = _load(nt)
+    assert ecf.inject_equivalent_class_declarations(store) == []
+
+
 # ── end-to-end: the parse-crash regression ──────────────────────────────────────
 
 def test_rustdl_classifies_after_injecting_declarations():
@@ -102,3 +113,5 @@ def test_rustdl_classifies_after_injecting_declarations():
     result = RustdlBackend().classify_ntriples(nt, "test-equiv-class")
     assert result.class_count >= 2
     assert B in result.direct_superclasses.get(A, [])
+    # The repair must be reported (this is what gets surfaced as version metadata).
+    assert result.repairs == {"injected_class_declarations": 1}
