@@ -88,6 +88,16 @@ class RustdlBackend:
             log.info("rustdl_injected_class_declarations version_id=%s count=%s",
                      version_id, len(_injected))
 
+        # (3) owl:equivalentProperty / rdfs:subPropertyOf linking properties of
+        # mismatched kind (object/data/annotation, or a bare rdf:Property) —
+        # "Types of two properties do not match". See property_pun_fix.
+        import property_pun_fix
+        _dropped = property_pun_fix.drop_mismatched_property_axioms(store)
+        if _dropped:
+            repairs["dropped_property_axioms"] = _dropped
+            log.info("rustdl_dropped_property_axioms version_id=%s count=%s",
+                     version_id, _dropped)
+
         rdfxml = pyoxigraph.serialize(
             (q.triple for q in store.quads_for_pattern(None, None, None, None)),
             format=pyoxigraph.RdfFormat.RDF_XML,
