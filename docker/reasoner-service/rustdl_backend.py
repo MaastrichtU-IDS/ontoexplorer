@@ -61,17 +61,32 @@ class RustdlBackend:
         store.bulk_load(io.BytesIO(ntriples.encode("utf-8")),
                         format=pyoxigraph.RdfFormat.N_TRIPLES)
 
-        # horned-owl's strict RDF reader ABORTS the parse when the ontology node
-        # carries an rdf:type beyond owl:Ontology (e.g. voaf:Vocabulary /
-        # adms:SemanticAsset / dcat:Dataset — ubiquitous registry metadata). Strip
-        # those extra types before serializing; they are irrelevant to
-        # classification and their removal restores the parse. See ontology_type_fix.
+        # Input repairs for horned-owl's strict RDF reader, applied before the
+        # RDF/XML serialize so both the plain and disjoint_fix OWX paths see the
+        # repaired graph. Each repair works around non-conformant published content
+        # that would otherwise ABORT the parse; the counts are recorded on
+        # `repairs` and surfaced as version metadata so curators can see the
+        # ontology was patched to reason.
+        repairs: dict = {}
+        log = logging.getLogger("reasoner-service")
+
+        # (1) extra rdf:type on the ontology node (voaf:Vocabulary / adms /
+        # dcat …) — "Invalid annotation found". See ontology_type_fix.
         import ontology_type_fix
         _stripped = ontology_type_fix.strip_extra_ontology_types(store)
         if _stripped:
-            logging.getLogger("reasoner-service").info(
-                "rustdl_stripped_ontology_types version_id=%s removed=%s",
-                version_id, _stripped)
+            repairs["stripped_ontology_types"] = _stripped
+            log.info("rustdl_stripped_ontology_types version_id=%s removed=%s",
+                     version_id, _stripped)
+
+        # (2) owl:equivalentClass operand that is a used-but-undeclared class —
+        # "Unknown entity in equivalent class statement". See equiv_class_fix.
+        import equiv_class_fix
+        _injected = equiv_class_fix.inject_equivalent_class_declarations(store)
+        if _injected:
+            repairs["injected_class_declarations"] = len(_injected)
+            log.info("rustdl_injected_class_declarations version_id=%s count=%s",
+                     version_id, len(_injected))
 
         rdfxml = pyoxigraph.serialize(
             (q.triple for q in store.quads_for_pattern(None, None, None, None)),
@@ -222,6 +237,7 @@ class RustdlBackend:
             unsatisfiable=list(cls.unsatisfiable),
             proof_traces={},
             duration_ms=round((time.monotonic() - t0) * 1000, 1),
+            repairs=repairs,
         )
 
     def justify(self, ntriples: str, sub: str, sup: str,

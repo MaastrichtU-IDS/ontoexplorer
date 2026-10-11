@@ -164,6 +164,15 @@ class OntologyVersion(Base):
     # the whole catalogue on filtered /ontologies requests.
     lang_counts: Mapped[dict | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=True)
+    # Input repairs the reasoner applied to this version's graph so horned-owl's
+    # strict reader could parse it (work-arounds for non-conformant published
+    # content). Maps a repair kind to a count, e.g. {"stripped_ontology_types": 2,
+    # "injected_class_declarations": 13}. Written by reason_ontology from the
+    # classification result's `repairs`; NULL = not yet reasoned on a build that
+    # records repairs, {} = reasoned with nothing to repair. Surfaced on the
+    # version detail so curators can see the ontology was patched to reason.
+    reason_repairs: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # Set by index_ontology when the version flips to "ready". The other pipeline
     # times derive from existing tables; only the index time had no SQL home.

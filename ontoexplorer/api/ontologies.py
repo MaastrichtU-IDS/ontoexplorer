@@ -4003,6 +4003,10 @@ def _version_dict(v: OntologyVersion) -> dict:
         "download_url": f"/api/v1/ontologies/{v.ontology_id}/{v.id}/download",
         "created_at": v.created_at.isoformat(),
         "reasoner": v.reasoner,
+        # Input repairs the reasoner applied so horned-owl could parse this
+        # version (e.g. {"injected_class_declarations": 13}). {} = nothing to
+        # repair; null = not yet reasoned on a build that records repairs.
+        "reason_repairs": v.reason_repairs,
     }
 
 
