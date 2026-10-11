@@ -60,6 +60,19 @@ class RustdlBackend:
         store = pyoxigraph.Store()
         store.bulk_load(io.BytesIO(ntriples.encode("utf-8")),
                         format=pyoxigraph.RdfFormat.N_TRIPLES)
+
+        # horned-owl's strict RDF reader ABORTS the parse when the ontology node
+        # carries an rdf:type beyond owl:Ontology (e.g. voaf:Vocabulary /
+        # adms:SemanticAsset / dcat:Dataset — ubiquitous registry metadata). Strip
+        # those extra types before serializing; they are irrelevant to
+        # classification and their removal restores the parse. See ontology_type_fix.
+        import ontology_type_fix
+        _stripped = ontology_type_fix.strip_extra_ontology_types(store)
+        if _stripped:
+            logging.getLogger("reasoner-service").info(
+                "rustdl_stripped_ontology_types version_id=%s removed=%s",
+                version_id, _stripped)
+
         rdfxml = pyoxigraph.serialize(
             (q.triple for q in store.quads_for_pattern(None, None, None, None)),
             format=pyoxigraph.RdfFormat.RDF_XML,
