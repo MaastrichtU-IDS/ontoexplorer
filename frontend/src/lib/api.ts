@@ -267,6 +267,11 @@ export interface OntologyVersion {
   reasoner_profile_id?: string | null
   /** Pipeline-stage status + timestamps (version detail only). */
   pipeline?: PipelineStatus
+  /** Input repairs the reasoner applied so horned-owl could parse this version
+   *  (work-arounds for non-conformant published content). Maps a repair kind to
+   *  a count, e.g. `{ injected_class_declarations: 13 }`. `{}` = nothing to
+   *  repair; `null`/absent = not yet reasoned on a build that records repairs. */
+  reason_repairs?: Record<string, number> | null
 }
 
 export interface Term {

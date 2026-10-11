@@ -578,6 +578,24 @@ function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid, resolv
               </span>
             </MetaRow>
           )}
+          {version.reason_repairs && Object.keys(version.reason_repairs).length > 0 && (
+            <MetaRow label="Repairs">
+              <span
+                title="This ontology's published source is non-conformant: the reasoner (horned-owl, strict) could not parse it as-is. These repairs were applied in-memory for classification only — the stored ontology is unchanged."
+                style={{
+                  fontSize: 11,
+                  background: 'rgba(230,160,30,0.14)',
+                  color: 'var(--text-muted)',
+                  border: '1px solid rgba(230,160,30,0.35)',
+                  borderRadius: 3, padding: '1px 7px',
+                }}
+              >
+                {Object.entries(version.reason_repairs)
+                  .map(([k, n]) => `${n} ${repairLabel(k, n)}`)
+                  .join(' · ')}
+              </span>
+            </MetaRow>
+          )}
           <MetaRow label="Ingested">{new Date(version.created_at).toLocaleString()}</MetaRow>
           {version.pipeline && (['indexed', 'profiled', 'reasoned', 'embedded'] as const).map(stage => {
             const s = version.pipeline![stage]
@@ -939,6 +957,17 @@ function MOSQueryPane({
 }
 
 type HierarchyMode = 'asserted' | 'inferred'
+
+/** Human-readable phrase for a reasoner input-repair kind (singular/plural). */
+function repairLabel(kind: string, count: number): string {
+  const map: Record<string, [string, string]> = {
+    injected_class_declarations: ['class declaration injected', 'class declarations injected'],
+    stripped_ontology_types: ['ontology-node type stripped', 'ontology-node types stripped'],
+  }
+  const pair = map[kind]
+  if (pair) return count === 1 ? pair[0] : pair[1]
+  return kind.replace(/_/g, ' ')
+}
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 

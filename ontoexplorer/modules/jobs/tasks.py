@@ -945,6 +945,13 @@ async def _reason_and_persist(db, version, version_id: str, ontology_id: str, jo
         resp.raise_for_status()
     classification = resp.json()
 
+    # Record the input repairs the reasoner applied to parse this version
+    # (stripped ontology-node types, injected class declarations, …) as version
+    # metadata, so the fact that the published ontology was patched to reason is
+    # visible to curators. {} = reasoned with nothing to repair. Flushed by the
+    # mark_done commit below. Older reasoner builds omit `repairs` → {}.
+    version.reason_repairs = classification.get("repairs") or {}
+
     # Build inferred N-Triples from superclasses index
     inferred_nt_lines = []
     for sub, supers in classification.get("superclasses", {}).items():
