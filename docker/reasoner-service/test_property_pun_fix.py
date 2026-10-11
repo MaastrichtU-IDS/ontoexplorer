@@ -75,6 +75,46 @@ def test_keeps_when_kinds_not_locally_visible():
     assert _has(store, EQ)
 
 
+def test_bare_rule_is_equivalentproperty_only_not_subpropertyof():
+    # The bare-rdf:Property heuristic must NOT fire on subPropertyOf: a bare property
+    # horned-owl may promote to an object property by usage carries a real role edge,
+    # and role hierarchy affects class subsumption. subPropertyOf with a bare operand
+    # is KEPT; the same shape as equivalentProperty is dropped.
+    nt_sub = f"<{A}> <{ppf._RDF}type> <{ppf._RDF}Property> .\n<{A}> <{SUB}> <{B}> .\n"
+    store = _load(nt_sub)
+    assert ppf.drop_mismatched_property_axioms(store) == 0
+    assert _has(store, SUB)
+
+    nt_eq = f"<{A}> <{ppf._RDF}type> <{ppf._RDF}Property> .\n<{A}> <{EQ}> <{B}> .\n"
+    store2 = _load(nt_eq)
+    assert ppf.drop_mismatched_property_axioms(store2) == 1
+
+
+def test_valid_subpropertyof_survives_alongside_dropped_mismatch():
+    # A valid same-kind subPropertyOf must survive even when a mismatched
+    # equivalentProperty elsewhere in the same store is dropped.
+    C, D = "http://ex/c", "http://ex/d"
+    nt = (
+        _decl(C, "ObjectProperty") + _decl(D, "ObjectProperty") + f"<{C}> <{SUB}> <{D}> .\n"
+        + _decl(A, "ObjectProperty") + _decl(B, "DatatypeProperty") + f"<{A}> <{EQ}> <{B}> .\n"
+    )
+    store = _load(nt)
+    assert ppf.drop_mismatched_property_axioms(store) == 1  # only the bad equivalentProperty
+    assert _has(store, SUB)  # the valid role edge is kept
+
+
+def test_doubly_typed_operand_is_a_false_negative():
+    # A property punned as BOTH object and annotation on one IRI: kind() returns the
+    # first (ObjectProperty), so a same-other-kind axiom is NOT dropped (documented
+    # under-drop — that ontology just isn't recovered here, left to upstream).
+    nt = (
+        _decl(A, "ObjectProperty") + _decl(A, "AnnotationProperty")
+        + _decl(B, "ObjectProperty") + f"<{A}> <{EQ}> <{B}> .\n"
+    )
+    store = _load(nt)
+    assert ppf.drop_mismatched_property_axioms(store) == 0
+
+
 # ── end-to-end ──────────────────────────────────────────────────────────────────
 
 def test_rustdl_classifies_after_dropping_pun():
