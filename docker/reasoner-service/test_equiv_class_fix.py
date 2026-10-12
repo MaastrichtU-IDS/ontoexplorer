@@ -46,16 +46,47 @@ def test_injects_declaration_for_undeclared_operand():
     assert ecf._OWL + "Class" in _types(store, EXT)
 
 
-def test_leaves_already_declared_operand_untouched():
-    # EXT already typed (as something else) -> must NOT be re-declared.
+def test_leaves_owl_class_operand_untouched():
+    # EXT is already an owl:Class -> horned-owl accepts it, nothing to inject.
     nt = (
         f"<{A}> <{ecf._RDF}type> <{ecf._OWL}Class> .\n"
-        f"<{EXT}> <{ecf._RDF}type> <{ecf._OWL}NamedIndividual> .\n"
+        f"<{EXT}> <{ecf._RDF}type> <{ecf._OWL}Class> .\n"
         f"<{A}> <{ecf._OWL}equivalentClass> <{EXT}> .\n"
     )
     store = _load(nt)
     assert ecf.inject_equivalent_class_declarations(store) == []
-    assert _types(store, EXT) == {ecf._OWL + "NamedIndividual"}
+    assert _types(store, EXT) == {ecf._OWL + "Class"}
+
+
+def test_injects_for_non_owl_class_typed_operand():
+    # The cwrc case: operand is typed, but NOT as owl:Class (owl:DeprecatedClass +
+    # skos:Concept). horned-owl rejects it as a class expression, so we add owl:Class
+    # ALONGSIDE the existing types (which are preserved).
+    SKOS_CONCEPT = "http://www.w3.org/2004/02/skos/core#Concept"
+    nt = (
+        f"<{A}> <{ecf._RDF}type> <{ecf._OWL}Class> .\n"
+        f"<{EXT}> <{ecf._RDF}type> <{ecf._OWL}DeprecatedClass> .\n"
+        f"<{EXT}> <{ecf._RDF}type> <{SKOS_CONCEPT}> .\n"
+        f"<{A}> <{ecf._OWL}equivalentClass> <{EXT}> .\n"
+    )
+    store = _load(nt)
+    assert ecf.inject_equivalent_class_declarations(store) == [EXT]
+    assert _types(store, EXT) == {
+        ecf._OWL + "Class", ecf._OWL + "DeprecatedClass", SKOS_CONCEPT,
+    }
+
+
+def test_skips_property_typed_operand():
+    # An operand already typed as an OWL property must NOT be punned as a class —
+    # that just swaps "Unknown entity" for a property/class-pun abort.
+    nt = (
+        f"<{A}> <{ecf._RDF}type> <{ecf._OWL}Class> .\n"
+        f"<{EXT}> <{ecf._RDF}type> <{ecf._OWL}ObjectProperty> .\n"
+        f"<{A}> <{ecf._OWL}equivalentClass> <{EXT}> .\n"
+    )
+    store = _load(nt)
+    assert ecf.inject_equivalent_class_declarations(store) == []
+    assert _types(store, EXT) == {ecf._OWL + "ObjectProperty"}
 
 
 def test_noop_without_equivalent_class():
