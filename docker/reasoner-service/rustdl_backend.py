@@ -248,6 +248,7 @@ class RustdlBackend:
             proof_traces={},
             duration_ms=round((time.monotonic() - t0) * 1000, 1),
             repairs=repairs,
+            complete=bool(cls.complete),
         )
 
     def justify(self, ntriples: str, sub: str, sup: str,

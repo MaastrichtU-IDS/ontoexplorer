@@ -933,17 +933,45 @@ async def _reason_and_persist(db, version, version_id: str, ontology_id: str, jo
 
     import httpx as _httpx
     from ontoexplorer.config import get_settings as _get_settings
-    await reasoning_client.classify_v2(
-        asserted_graph, version_id, reasoner=version.reasoner, params=params, force=True
-    )
 
-    # Fetch the full inferred graph from ELK classification result for Oxigraph persistence
-    async with _httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.get(
-            f"{_get_settings().reasoner_service_url}/classify/{version_id}?reasoner={version.reasoner}"
+    async def _classify(p: dict) -> dict:
+        await reasoning_client.classify_v2(
+            asserted_graph, version_id, reasoner=version.reasoner, params=p, force=True
         )
-        resp.raise_for_status()
-    classification = resp.json()
+        # Fetch the full classification result for Oxigraph persistence.
+        async with _httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.get(
+                f"{_get_settings().reasoner_service_url}/classify/{version_id}?reasoner={version.reasoner}"
+            )
+            resp.raise_for_status()
+        return resp.json()
+
+    el_fallback = False
+    try:
+        classification = await _classify(params)
+    except TimeoutError as exc:
+        # rustdl's full SROIQ tableau is super-polynomial in the hard-pair count and
+        # times out (reasoner_service_timeout, 3600s) on some ontologies — not simply
+        # the largest ones (ncit at 10.7M triples classifies fine; pcl/hra at ~2M do
+        # not). Retry once in EL saturation mode (sound; complete for EL ontologies)
+        # rather than leaving the version unclassified — rustdl only, and only if we
+        # weren't already in EL mode. A parse/backend crash (ReasoningFailed) is NOT
+        # retried: EL shares the same parser, so it would just fail again.
+        if version.reasoner != "rustdl" or params.get("saturation_only"):
+            raise
+        log.warning("reasoning_el_fallback", version_id=version_id, error=str(exc)[:200])
+        params = {**params, "saturation_only": True}
+        classification = await _classify(params)  # may raise again -> genuine failure
+        el_fallback = True
+
+    # When we fell back to EL because the full tableau failed, EL saturation is sound
+    # but only COMPLETE for EL ontologies; rustdl flags a partial closure (per-pair /
+    # global timeout) via complete=False. Don't trade a timeout for a silently-partial
+    # hierarchy — fail so the job is visibly unclassified instead. (Scoped to the
+    # fallback so it can't flip an existing EL-profile result that already persisted.)
+    if el_fallback and classification.get("complete") is False:
+        raise reasoning_client.ReasoningFailed(
+            f"EL saturation fallback did not complete for {version_id} (partial result)")
 
     # Record the input repairs the reasoner applied to parse this version
     # (stripped ontology-node types, injected class declarations, …) as version
@@ -951,6 +979,11 @@ async def _reason_and_persist(db, version, version_id: str, ontology_id: str, jo
     # visible to curators. {} = reasoned with nothing to repair. Flushed by the
     # mark_done commit below. Older reasoner builds omit `repairs` → {}.
     version.reason_repairs = classification.get("repairs") or {}
+    # Surface when the full SROIQ tableau timed out and we fell back to EL saturation
+    # (sound, complete for EL ontologies, may under-classify a non-EL axiom) — so
+    # curators know this hierarchy came from EL closure, not the full reasoner.
+    if el_fallback:
+        version.reason_repairs = {**version.reason_repairs, "el_saturation": 1}
 
     # Build inferred N-Triples from superclasses index
     inferred_nt_lines = []
