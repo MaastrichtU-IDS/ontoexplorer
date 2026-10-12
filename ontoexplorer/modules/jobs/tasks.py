@@ -839,6 +839,29 @@ def _version_is_el_profile(version_id: str) -> bool:
         return False
 
 
+def _is_timeout_failure(exc: Exception) -> bool:
+    """True if a reasoner-service failure denotes a TIMEOUT (the full tableau
+    exceeded a deadline) rather than a parse/backend crash.
+
+    The reasoner-service reports its own inner deadline as HTTP 500
+    'Classification failed: classification timed out after Ns', which surfaces to
+    the task as ``ReasoningFailed`` — indistinguishable *by type* from a crash
+    (also ReasoningFailed) — so we match the message. Kept deliberately narrow:
+    only a timeout signature qualifies. A real parse/backend crash
+    ('classifier process exited N', 'invalid annotation', punning/restriction
+    errors, …) does NOT — EL saturation shares the same parser and would just
+    fail again, so retrying it would waste a run and mask the real error.
+
+    Used to broaden the EL-saturation fallback beyond ``TimeoutError`` (the
+    client-side give-up at reasoner_service_timeout) to also cover the
+    service-internal deadline, which previously stranded ontologies the tableau
+    can't finish but EL closure can (e.g. intervals: 82 classes, full DL times
+    out at 3300s, EL completes in ~0.1s).
+    """
+    msg = str(exc).lower()
+    return "timed out" in msg or "timeout" in msg or "did not complete within" in msg
+
+
 def _named_classes_in_store(ontology_id: str, version_id: str) -> set[str]:
     """Every named class declared in a version's asserted graph.
 
@@ -949,15 +972,27 @@ async def _reason_and_persist(db, version, version_id: str, ontology_id: str, jo
     el_fallback = False
     try:
         classification = await _classify(params)
-    except TimeoutError as exc:
+    except (TimeoutError, reasoning_client.ReasoningFailed) as exc:
         # rustdl's full SROIQ tableau is super-polynomial in the hard-pair count and
-        # times out (reasoner_service_timeout, 3600s) on some ontologies — not simply
-        # the largest ones (ncit at 10.7M triples classifies fine; pcl/hra at ~2M do
+        # times out on some ontologies — not simply the largest ones (ncit at 10.7M
+        # triples classifies fine; pcl/hra at ~2M, and intervals at 82 classes, do
         # not). Retry once in EL saturation mode (sound; complete for EL ontologies)
         # rather than leaving the version unclassified — rustdl only, and only if we
-        # weren't already in EL mode. A parse/backend crash (ReasoningFailed) is NOT
-        # retried: EL shares the same parser, so it would just fail again.
+        # weren't already in EL mode.
+        #
+        # A timeout reaches us by EITHER of two surfaces and both must trigger the
+        # fallback: the client-poll give-up at reasoner_service_timeout (3600s) ->
+        # TimeoutError, and the reasoner-service's own inner deadline (3300s) ->
+        # HTTP 500 'Classification failed: classification timed out …' ->
+        # ReasoningFailed. The latter was previously uncaught (TimeoutError-only),
+        # stranding ontologies the tableau can't finish but EL closure can.
+        #
+        # A genuine parse/backend crash is also a ReasoningFailed but must NOT be
+        # retried (EL shares the same parser, so it would just fail again) — so we
+        # re-raise any ReasoningFailed that lacks a timeout signature.
         if version.reasoner != "rustdl" or params.get("saturation_only"):
+            raise
+        if isinstance(exc, reasoning_client.ReasoningFailed) and not _is_timeout_failure(exc):
             raise
         log.warning("reasoning_el_fallback", version_id=version_id, error=str(exc)[:200])
         params = {**params, "saturation_only": True}
