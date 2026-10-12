@@ -15,12 +15,27 @@ Switching parser does NOT help — pyhornedowl shares horned-owl's core and fail
 identically — so the fix is store-level input sanitization, like ontology_type_fix.
 
 Fix: before serializing the store to RDF/XML for the reasoner, declare every named
-operand of an ``owl:equivalentClass`` that has NO ``rdf:type`` at all as an
+operand of an ``owl:equivalentClass`` that is not already an ``owl:Class`` as an
 ``owl:Class``. An ``owl:equivalentClass`` axiom semantically requires both operands
-to be classes, so the declaration is entailed by the axiom and lossless. Operands
-that already carry *any* ``rdf:type`` are left untouched (never override an existing
-declaration — that would risk creating punning that itself breaks the parse), as are
-blank-node (anonymous class-expression) operands.
+to be classes, so the declaration is entailed by the axiom and lossless.
+
+Crucially this covers two cases horned-owl both rejects:
+
+* an operand with **no** ``rdf:type`` at all (the original case); and
+* an operand that **is** typed, but not as ``owl:Class`` — e.g. ``owl:DeprecatedClass``,
+  ``skos:Concept``/``skos:ConceptScheme``, or ``rdfs:Class``. horned-owl does not accept
+  those as a class expression, so it aborts even though a declaration is present. (A real
+  example: cwrc's ``SocialClassIdentity`` is ``owl:DeprecatedClass`` + ``skos:Concept``.)
+  Adding ``owl:Class`` *alongside* the existing types is what makes the operand a class
+  horned-owl recognises; the existing types are left in place.
+
+Two operands are deliberately NOT touched:
+
+* blank-node (anonymous class-expression) operands — not named entities; and
+* an operand already typed as an OWL **property** (``owl:ObjectProperty`` /
+  ``DatatypeProperty`` / ``AnnotationProperty``). Declaring such an entity ``owl:Class``
+  would create a class/property pun that simply swaps the "Unknown entity" abort for a
+  punning abort — net-no-gain, and the ontology is malformed anyway.
 
 The proper long-term fix is upstream in horned-owl's RDF reader (treat a used
 undeclared class as an implicit declaration rather than a fatal error); this keeps
@@ -41,13 +56,18 @@ _XSD = "http://www.w3.org/2001/XMLSchema#"
 # classes.
 _RESERVED_NS = (_OWL, _RDF, _RDFS, _XSD)
 
+# Property kinds: an equivalentClass operand already typed as one of these must not
+# be punned as a class (see module docstring).
+_OWL_PROPERTY_KINDS = ("ObjectProperty", "DatatypeProperty", "AnnotationProperty")
+
 
 def inject_equivalent_class_declarations(store) -> list[str]:
-    """Declare as ``owl:Class`` every named ``owl:equivalentClass`` operand that has
-    no ``rdf:type`` at all. Operands in a reserved vocabulary namespace
-    (owl:/rdf:/rdfs:/xsd:) are skipped — horned-owl knows those built-ins without a
-    declaration. Mutates ``store`` in place; returns the sorted list of IRIs
-    declared (empty if there was nothing to fix). Safe to call unconditionally.
+    """Declare as ``owl:Class`` every named ``owl:equivalentClass`` operand that is not
+    already typed ``owl:Class`` (whether it has no type at all, or only non-``owl:Class``
+    types such as ``owl:DeprecatedClass`` / ``skos:Concept`` / ``rdfs:Class``). Operands
+    in a reserved vocabulary namespace (owl:/rdf:/rdfs:/xsd:) and operands already typed
+    as an OWL property are skipped. Mutates ``store`` in place; returns the sorted list of
+    IRIs declared (empty if there was nothing to fix). Safe to call unconditionally.
     """
     import pyoxigraph
 
@@ -66,9 +86,15 @@ def inject_equivalent_class_declarations(store) -> list[str]:
         if iri.startswith(_RESERVED_NS):
             continue
         subj = pyoxigraph.NamedNode(iri)
-        has_type = any(True for _ in store.quads_for_pattern(subj, rdf_type, None, None))
-        if has_type:
-            continue
+        types = {
+            q.object.value
+            for q in store.quads_for_pattern(subj, rdf_type, None, None)
+            if isinstance(q.object, pyoxigraph.NamedNode)
+        }
+        if _OWL + "Class" in types:
+            continue  # already a class horned-owl accepts
+        if any(_OWL + k in types for k in _OWL_PROPERTY_KINDS):
+            continue  # don't pun a property as a class — swaps one abort for another
         store.add(pyoxigraph.Quad(subj, rdf_type, owl_class))
         injected.append(iri)
     return sorted(injected)
