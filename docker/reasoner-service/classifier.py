@@ -28,3 +28,8 @@ class ClassificationResult:
     # "injected_class_declarations": 13}. Empty when nothing was repaired.
     # Surfaced as version metadata so curators can see the ontology was patched.
     repairs: dict[str, Any] = field(default_factory=dict)
+    # Whether the classification is complete. rustdl's EL-saturation path sets this
+    # False when a per-pair/global timeout left the closure partial; the caller uses
+    # it to reject a silently-incomplete hierarchy. Defaults True so other backends
+    # (konclude/km) and older cached results are treated as complete.
+    complete: bool = True

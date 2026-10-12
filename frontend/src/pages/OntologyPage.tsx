@@ -581,7 +581,7 @@ function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid, resolv
           {version.reason_repairs && Object.keys(version.reason_repairs).length > 0 && (
             <MetaRow label="Repairs">
               <span
-                title="This ontology's published source is non-conformant: the reasoner (horned-owl, strict) could not parse it as-is. These repairs were applied in-memory for classification only — the stored ontology is unchanged."
+                title="Adjustments the reasoner made to classify this version. Input repairs work around non-conformant published source that horned-owl's strict reader cannot parse as-is (applied in-memory only — the stored ontology is unchanged). EL saturation means the hierarchy was computed by EL closure (sound, and complete for EL ontologies) because the full SROIQ tableau was intractable at this size."
                 style={{
                   fontSize: 11,
                   background: 'rgba(230,160,30,0.14)',
@@ -591,7 +591,9 @@ function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid, resolv
                 }}
               >
                 {Object.entries(version.reason_repairs)
-                  .map(([k, n]) => `${n} ${repairLabel(k, n)}`)
+                  .map(([k, n]) => (k === 'el_saturation'
+                    ? 'classified via EL saturation'
+                    : `${n} ${repairLabel(k, n)}`))
                   .join(' · ')}
               </span>
             </MetaRow>
