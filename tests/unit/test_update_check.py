@@ -76,10 +76,14 @@ def test_extract_none_when_absent():
 
 # ── check_for_update (stubbed HTTP) ─────────────────────────────────────────────
 
-def _stub_httpx(monkeypatch, body: bytes, status: int = 200):
-    """Replace httpx.AsyncClient with a fake returning *body*."""
+def _stub_httpx(monkeypatch, body: bytes, status: int = 200, headers: dict | None = None,
+                capture: dict | None = None):
+    """Replace httpx.AsyncClient with a fake returning *body* at *status*.
+    `capture` (if given) records the request headers for assertions."""
     class _Resp:
+        status_code = status
         content = body
+        def __init__(self): self.headers = uc.httpx.Headers(headers or {})  # case-insensitive, like real httpx
         def raise_for_status(self):
             if status >= 400:
                 import httpx
@@ -89,7 +93,10 @@ def _stub_httpx(monkeypatch, body: bytes, status: int = 200):
         def __init__(self, *a, **k): ...
         async def __aenter__(self): return self
         async def __aexit__(self, *a): return False
-        async def get(self, *a, **k): return _Resp()
+        async def get(self, url, headers=None, **k):
+            if capture is not None:
+                capture["headers"] = headers or {}
+            return _Resp()
     monkeypatch.setattr(uc.httpx, "AsyncClient", _Client)
 
 
@@ -130,3 +137,25 @@ async def test_fetch_error(monkeypatch):
     cur = _Ver(sha256="x", version_iri="http://x/sio/v1.61/sio.owl")
     r = await uc.check_for_update(_Ont(iri="http://x/o.owl"), cur)
     assert r["status"] == "fetch_error"
+
+
+# ── conditional GET (ETag / Last-Modified) ──────────────────────────────────────
+
+async def test_304_not_modified_is_up_to_date(monkeypatch):
+    _stub_httpx(monkeypatch, b"", status=304)
+    cur = _Ver(sha256="whatever", version_iri="http://x/sio/v1.62/sio.owl")
+    r = await uc.check_for_update(_Ont(iri="http://x/o.owl"), cur, etag='"abc"')
+    assert r["status"] == "up_to_date" and r.get("not_modified") is True
+    assert r["etag"] == '"abc"'   # preserved for next poll
+
+
+async def test_conditional_headers_sent(monkeypatch):
+    cap = {}
+    _stub_httpx(monkeypatch, SIO_162, headers={"ETag": '"v62"'}, capture=cap)
+    cur = _Ver(sha256="different", version_iri="http://x/sio/v1.61/sio.owl")
+    r = await uc.check_for_update(_Ont(iri="http://x/o.owl"), cur,
+                                  etag='"old"', last_modified="Mon, 01 Jan 2024 00:00:00 GMT")
+    assert cap["headers"].get("If-None-Match") == '"old"'
+    assert cap["headers"].get("If-Modified-Since") == "Mon, 01 Jan 2024 00:00:00 GMT"
+    # response validators are surfaced for persistence
+    assert r["status"] == "update_available" and r["etag"] == '"v62"'

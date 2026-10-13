@@ -3996,7 +3996,7 @@ def _owner_public_fields(owner: User | None) -> dict:
 
 def _ontology_dict(o: Ontology, owner: User | None = None) -> dict:
     _checked = getattr(o, "resolve_checked_at", None)
-    return {"id": o.id, "iri": o.iri, "shortname": o.shortname, "title": o.title, "groups": o.groups or [], "auto_sync": o.auto_sync, "current_version_id": o.current_version_id, "created_at": o.created_at.isoformat(), "resolvable": getattr(o, "resolvable", None), "resolve_checked_at": _checked.isoformat() if _checked else None, **_owner_public_fields(owner)}
+    return {"id": o.id, "iri": o.iri, "shortname": o.shortname, "title": o.title, "groups": o.groups or [], "auto_sync": o.auto_sync, "current_version_id": o.current_version_id, "created_at": o.created_at.isoformat(), "resolvable": getattr(o, "resolvable", None), "resolve_checked_at": _checked.isoformat() if _checked else None, "update_available": bool(getattr(o, "update_available", False)), "update_detail": getattr(o, "update_detail", None), **_owner_public_fields(owner)}
 
 
 def _version_dict(v: OntologyVersion) -> dict:

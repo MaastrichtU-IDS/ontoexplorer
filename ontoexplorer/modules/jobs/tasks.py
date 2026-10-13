@@ -69,9 +69,13 @@ celery_app.conf.update(
         "ontoexplorer.embed_ontology": {"queue": "embed"},
     },
     beat_schedule={
-        "poll-for-updates-hourly": {
+        # Catalogue-wide upstream-update poll: a capped, per-host-spaced batch every
+        # 30 min (oldest-polled first) sweeps the whole catalogue about daily.
+        # Notify-by-default; auto_sync ontologies auto-ingest. Conditional GETs keep
+        # unchanged upstreams to a 304.
+        "poll-for-updates-30min": {
             "task": "ontoexplorer.poll_for_updates",
-            "schedule": 3600.0,
+            "schedule": 1800.0,
         },
         "refresh-stale-inferred-diffs-15min": {
             "task": "ontoexplorer.refresh_stale_inferred_diffs",
@@ -1538,64 +1542,134 @@ def compute_justification(
         raise self.retry(exc=exc, countdown=30) from exc
 
 
-async def _run_poll(db) -> None:
-    """Async body of poll_for_updates: check each auto_sync ontology for a newer
-    upstream release and queue re-ingestion when one is found.
+async def _poll_one(db, ont) -> str:
+    """Poll one ontology's canonical IRI for a newer release and update its state.
 
-    Polls the ontology's canonical IRI (content-negotiated), not a past version's
-    frozen source_url, and compares against the version-aware default version —
-    see ingestion.update_check for why. auto_sync ontologies auto-ingest; the
-    whole-catalogue notify-only poll is Stage 2."""
+    Notify-by-default: a newer release sets ``update_available`` + ``update_detail``
+    (and broadcasts an event on the false->true edge); auto-ingest happens only when
+    ``auto_sync`` is set. A conditional GET (stored ETag/Last-Modified) makes an
+    unchanged upstream a ~0-byte 304. Compares against the *version-aware* default.
+    Returns the resulting status (for logging/tests). Does not commit."""
+    from datetime import datetime, timezone
+
     from sqlalchemy import select
-    from ontoexplorer.models.db import Ontology, OntologyVersion
+    from ontoexplorer.models.db import OntologyVersion
     from ontoexplorer.modules.ingestion.update_check import check_for_update
     from ontoexplorer.modules.search.versions import _choose
+    from ontoexplorer.modules.webhooks.delivery import broadcast_event
 
-    ontologies = (await db.execute(
-        select(Ontology).where(Ontology.auto_sync.is_(True))
+    versions = (await db.execute(
+        select(OntologyVersion).where(OntologyVersion.ontology_id == ont.id)
     )).scalars().all()
+    default = _choose(versions, ont.current_version_id)
+    if default is None and not ont.iri:
+        ont.last_polled_at = datetime.now(timezone.utc)
+        return "no_source"
 
-    for ont in ontologies:
-        versions = (await db.execute(
-            select(OntologyVersion).where(OntologyVersion.ontology_id == ont.id)
-        )).scalars().all()
-        default = _choose(versions, ont.current_version_id)
-        if default is None and not ont.iri:
-            continue
+    result = await check_for_update(
+        ont, default, etag=ont.upstream_etag, last_modified=ont.upstream_last_modified)
+    ont.last_polled_at = datetime.now(timezone.utc)
+    status = result["status"]
 
-        result = await check_for_update(ont, default)
-        status = result["status"]
-        if status == "fetch_error":
-            log.warning("poll_fetch_failed", ontology_id=ont.id,
-                        url=result.get("fetch_url"), error=result.get("detail"))
-            continue
-        if status in ("up_to_date", "no_source"):
-            log.info("poll_no_change", ontology_id=ont.id, status=status)
-            continue
-        if status == "older_skipped":
-            log.info("poll_older_skipped", ontology_id=ont.id,
-                     fetched=result.get("fetched_version"), current=result.get("current_version"))
-            continue
+    if status == "fetch_error":
+        log.warning("poll_fetch_failed", ontology_id=ont.id,
+                    url=result.get("fetch_url"), error=result.get("detail"))
+        return status  # leave update_available/validators untouched on a transient error
 
-        # update_available
-        log.info("poll_change_detected", ontology_id=ont.id, url=result["fetch_url"],
-                 fetched_version=result.get("fetched_version"))
+    # Persist conditional-GET validators for next time (absent -> cleared).
+    ont.upstream_etag = result.get("etag")
+    ont.upstream_last_modified = result.get("last_modified")
+
+    if status in ("up_to_date", "no_source", "older_skipped"):
+        # Current default already satisfies upstream -> no outstanding update.
+        ont.update_available = False
+        ont.update_detail = None
+        return status
+
+    # update_available
+    detail = {"detected_version": result.get("fetched_version"),
+              "current_version": result.get("current_version"),
+              "fetch_url": result["fetch_url"],
+              "detected_at": datetime.now(timezone.utc).isoformat()}
+    if ont.auto_sync:
+        # Opt-in auto-ingest: pull it now; the flag stays off (we're handling it).
+        log.info("poll_auto_ingest", ontology_id=ont.id, detected=result.get("fetched_version"))
         ingest_ontology.delay(
             iri=result["fetch_url"] if result["use_conneg"] else None,
             url=result["fetch_url"] if not result["use_conneg"] else None,
             owner_id=ont.owner_id, groups=list(ont.groups or []))
+        ont.update_available = False
+        ont.update_detail = {**detail, "action": "auto_ingesting"}
+        return "auto_ingesting"
+
+    # Notify: record the available update; announce on the false->true transition.
+    was = bool(ont.update_available)
+    ont.update_available = True
+    ont.update_detail = detail
+    if not was:
+        log.info("poll_update_available", ontology_id=ont.id, detected=result.get("fetched_version"))
+        try:
+            await broadcast_event(db, "ontology.update_available",
+                                  {"ontology_id": str(ont.id), **detail})
+        except Exception as exc:  # noqa: BLE001 — a webhook failure must not fail the poll
+            log.warning("poll_broadcast_failed", ontology_id=ont.id, error=str(exc))
+    return "update_available"
 
 
-@celery_app.task(name="ontoexplorer.poll_for_updates")
-def poll_for_updates() -> None:
-    """Periodic task: re-fetch all auto_sync ontologies and queue re-ingestion if changed."""
+async def _poll_catalogue_batch(db, *, limit, min_host_interval_s, sleep, clock=None) -> int:
+    """Poll a capped batch of the catalogue, oldest-polled first, spacing requests
+    to the same host by >= ``min_host_interval_s`` (never burst a shared host like
+    w3id.org / OBO PURLs). Sized with the beat cadence so every ontology is checked
+    about daily. ``sleep``/``clock`` are injected for testability. Returns the count
+    polled."""
+    import time as _t
+    from urllib.parse import urlparse
+
+    from sqlalchemy import select
+    from ontoexplorer.models.db import Ontology
+
+    clock = clock or _t.monotonic
+    ontologies = (await db.execute(
+        select(Ontology).order_by(Ontology.last_polled_at.asc().nulls_first()).limit(limit)
+    )).scalars().all()
+    if not ontologies:
+        return 0
+
+    last_hit: dict[str, float] = {}
+    for ont in ontologies:
+        host = (urlparse(ont.iri or "").hostname or "").lower()
+        if host and host in last_hit:
+            wait = min_host_interval_s - (clock() - last_hit[host])
+            if wait > 0:
+                sleep(wait)
+        try:
+            await _poll_one(db, ont)
+        except Exception as exc:  # noqa: BLE001 — one bad ontology must not abort the batch
+            log.warning("poll_one_error", ontology_id=ont.id, error=str(exc))
+        await db.commit()
+        if host:
+            last_hit[host] = clock()
+    return len(ontologies)
+
+
+@celery_app.task(name="ontoexplorer.poll_for_updates", time_limit=600)
+def poll_for_updates(limit: int = 80, min_host_interval_s: float = 2.0) -> dict:
+    """Beat task: poll a polite, capped batch of the catalogue for upstream updates.
+
+    Notify-by-default (records update_available); auto_sync ontologies auto-ingest.
+    A bounded batch per run, oldest-polled first, so the whole catalogue is swept
+    about daily without ever bursting a shared host."""
+    import time
+
     from ontoexplorer.database import make_celery_db_session
 
-    async def _run():
+    async def _run() -> int:
         async with make_celery_db_session()() as db:
-            await _run_poll(db)
+            return await _poll_catalogue_batch(
+                db, limit=limit, min_host_interval_s=min_host_interval_s, sleep=time.sleep)
 
-    asyncio.run(_run())
+    n = asyncio.run(_run())
+    return {"polled": n}
 
 
 def _filter_unchanged_records(records, existing: dict) -> list:

@@ -245,6 +245,12 @@ export interface Ontology {
   /** Whether the IRI dereferences to RDF via content negotiation (null = unchecked). */
   resolvable?: boolean | null
   resolve_checked_at?: string | null
+  /** Set by the catalogue update poll: a newer release is available upstream but
+   *  has not been ingested (auto-ingest is opt-in via auto_sync). */
+  update_available?: boolean | null
+  /** Details of the available update: { detected_version, current_version,
+   *  fetch_url, detected_at }. Present when update_available is true. */
+  update_detail?: { detected_version?: string | null; current_version?: string | null; fetch_url?: string; detected_at?: string } | null
   /** Public identity of the uploader ("Added by"). Never includes email. */
   owner_display_name?: string | null
   owner_orcid?: string | null
