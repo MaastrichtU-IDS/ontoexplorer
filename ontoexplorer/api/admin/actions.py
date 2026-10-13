@@ -6,9 +6,6 @@ take an explicit version_id.
 """
 from __future__ import annotations
 
-import hashlib
-
-import httpx
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select, text
@@ -17,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import User
 
-from ._common import _RDF_ACCEPT, _load_version, _require_admin
+from ._common import _load_version, _require_admin
 
 router = APIRouter()
 
@@ -30,64 +27,58 @@ async def admin_check_update(
     _: User = Depends(_require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Fetch the latest version and compare SHA-256.
+    """Poll the ontology's canonical IRI (content-negotiated) for a newer release
+    and compare against its *version-aware* default version.
 
-    Falls back to the ontology IRI (with RDF content negotiation) when no
-    source_url is stored (e.g. the version was uploaded as a file).
+    We poll the resolvable IRI, not a past version's ``source_url`` — for
+    aggregator ingests that source_url is a frozen snapshot that never changes
+    (see ingestion.update_check). source_url is used only when there is no IRI.
+    A newer release is queued for ingestion; an upstream that is byte-identical,
+    or carries a strictly OLDER version, is reported as up to date.
     """
     from sqlalchemy import select
     from ontoexplorer.models.db import Ontology, OntologyVersion
+    from ontoexplorer.modules.ingestion.update_check import check_for_update
     from ontoexplorer.modules.jobs.tasks import ingest_ontology
+    from ontoexplorer.modules.search.versions import _choose
 
-    version = (await db.execute(
-        select(OntologyVersion)
-        .where(OntologyVersion.ontology_id == ontology_id)
-        .where(OntologyVersion.status != "deprecated")
-        .order_by(OntologyVersion.created_at.desc())
-        .limit(1)
+    ont = (await db.execute(
+        select(Ontology).where(Ontology.id == ontology_id)
     )).scalar_one_or_none()
+    if ont is None:
+        raise HTTPException(status_code=404, detail="Ontology not found")
 
-    if not version:
-        raise HTTPException(status_code=404, detail="No version found for this ontology")
+    versions = (await db.execute(
+        select(OntologyVersion).where(OntologyVersion.ontology_id == ontology_id)
+    )).scalars().all()
+    # The version-aware default (highest version_iri, honouring a pin) — the right
+    # baseline to compare upstream against, not merely the newest-ingested row.
+    default = _choose(versions, ont.current_version_id)
+    if default is None and not ont.iri:
+        raise HTTPException(status_code=404, detail="No version or IRI for this ontology")
 
-    ont = (await db.execute(select(Ontology).where(Ontology.id == ontology_id))).scalar_one()
+    result = await check_for_update(ont, default)
 
-    fetch_url = version.source_url
-    use_iri_negotiation = False
-    if not fetch_url:
-        if not ont.iri:
-            return {"status": "no_source_url"}
-        fetch_url = ont.iri
-        use_iri_negotiation = True
+    if result["status"] == "no_source":
+        return {"status": "no_source_url"}
+    if result["status"] == "fetch_error":
+        raise HTTPException(status_code=502, detail=f"Failed to fetch source: {result.get('detail')}")
+    if result["status"] in ("up_to_date", "older_skipped"):
+        return {"status": "up_to_date", "detail": result.get("fetched_version")
+                if result["status"] == "older_skipped" else None}
 
-    headers = {"Accept": _RDF_ACCEPT} if use_iri_negotiation else {}
-
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0), follow_redirects=True) as client:
-            async with client.stream("GET", fetch_url, headers=headers) as resp:
-                resp.raise_for_status()
-                h = hashlib.sha256()
-                async for chunk in resp.aiter_bytes(65536):
-                    h.update(chunk)
-                new_sha256 = h.hexdigest()
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(status_code=502, detail=f"Source returned HTTP {exc.response.status_code}")
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch source: {exc}")
-
-    if new_sha256 == version.sha256:
-        return {"status": "up_to_date"}
-
+    # update_available -> queue ingestion from the same (canonical) location.
     task = ingest_ontology.delay(
-        iri=fetch_url if use_iri_negotiation else None,
-        url=fetch_url if not use_iri_negotiation else None,
+        iri=result["fetch_url"] if result["use_conneg"] else None,
+        url=result["fetch_url"] if not result["use_conneg"] else None,
         raw_bytes_hex=None,
         filename=None,
         content_type=None,
         owner_id=ont.owner_id,
         groups=list(ont.groups or []),
     )
-    return {"status": "update_queued", "task_id": task.id}
+    return {"status": "update_queued", "task_id": task.id,
+            "detected_version": result.get("fetched_version")}
 
 
 # ── Per-ontology: queue actions against the latest non-deprecated version ─────
@@ -98,31 +89,31 @@ async def admin_queue_ingest(
     _: User = Depends(_require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Directly queue re-ingestion using source_url (URL) or IRI (content negotiation).
+    """Directly queue re-ingestion from the ontology's canonical IRI (content
+    negotiation), falling back to the default version's source_url only when there
+    is no IRI. No SHA-256 comparison — always queues a new ingest job.
 
-    No SHA-256 comparison — always queues a new ingest job.
+    Prefers the IRI over source_url for the same reason as check-update: a past
+    version's source_url can be a frozen aggregator snapshot, so re-ingesting it
+    would just re-pull the old release (see ingestion.update_check.fetch_target).
     """
     from sqlalchemy import select
     from ontoexplorer.models.db import Ontology, OntologyVersion
+    from ontoexplorer.modules.ingestion.update_check import fetch_target
     from ontoexplorer.modules.jobs.tasks import ingest_ontology
+    from ontoexplorer.modules.search.versions import _choose
 
-    version = (await db.execute(
-        select(OntologyVersion)
-        .where(OntologyVersion.ontology_id == ontology_id)
-        .where(OntologyVersion.status != "deprecated")
-        .order_by(OntologyVersion.created_at.desc())
-        .limit(1)
-    )).scalar_one_or_none()
+    ont = (await db.execute(select(Ontology).where(Ontology.id == ontology_id))).scalar_one_or_none()
+    if ont is None:
+        raise HTTPException(status_code=404, detail="Ontology not found")
+    versions = (await db.execute(
+        select(OntologyVersion).where(OntologyVersion.ontology_id == ontology_id)
+    )).scalars().all()
+    default = _choose(versions, ont.current_version_id)
 
-    ont = (await db.execute(select(Ontology).where(Ontology.id == ontology_id))).scalar_one()
-
-    fetch_url = version.source_url if version else None
-    use_iri = False
+    fetch_url, use_iri = fetch_target(ont, default)
     if not fetch_url:
-        if not ont.iri:
-            raise HTTPException(status_code=422, detail="No source URL or IRI available for this ontology")
-        fetch_url = ont.iri
-        use_iri = True
+        raise HTTPException(status_code=422, detail="No source URL or IRI available for this ontology")
 
     task = ingest_ontology.delay(
         iri=fetch_url if use_iri else None,

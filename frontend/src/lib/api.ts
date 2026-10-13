@@ -272,6 +272,10 @@ export interface OntologyVersion {
    *  a count, e.g. `{ injected_class_declarations: 13 }`. `{}` = nothing to
    *  repair; `null`/absent = not yet reasoned on a build that records repairs. */
   reason_repairs?: Record<string, number> | null
+  /** True for the ontology's version-aware default version (pinned, else highest
+   *  version_iri) — only the /versions list endpoint sets it. Clients should show
+   *  this as "current" rather than assuming the first (newest-ingested) row. */
+  is_default?: boolean
 }
 
 export interface Term {
