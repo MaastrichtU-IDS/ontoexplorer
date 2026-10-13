@@ -28,6 +28,21 @@ async def _get_version_or_404(
     return version
 
 
+async def _predecessor_or_404(db: AsyncSession, ontology_id: str, version_id: str) -> OntologyVersion:
+    """The version-aware predecessor (highest version_iri strictly less than this
+    one), NOT the created_at-previous — else a stale snapshot ingested later would
+    be diffed against, producing a huge, slow, wrong diff. See
+    modules.search.versions.version_predecessor."""
+    from ontoexplorer.modules.search.versions import version_predecessor
+    versions = (await db.execute(
+        select(OntologyVersion).where(OntologyVersion.ontology_id == ontology_id)
+    )).scalars().all()
+    prev = version_predecessor(versions, version_id)
+    if prev is None:
+        raise HTTPException(status_code=404, detail="No previous version found")
+    return prev
+
+
 def _diff_response(diff: OntologyDiff) -> dict:
     return {
         "status": diff.status,
@@ -88,20 +103,8 @@ async def get_consecutive_diff(
     version_id: str,
     db: AsyncSession = Depends(get_db),
 ):
-    version = await _get_version_or_404(db, ontology_id, version_id)
-    prev = await db.scalar(
-        select(OntologyVersion)
-        .where(
-            OntologyVersion.ontology_id == ontology_id,
-            OntologyVersion.id != version_id,
-            OntologyVersion.status != "deprecated",
-            OntologyVersion.created_at < version.created_at,
-        )
-        .order_by(OntologyVersion.created_at.desc())
-        .limit(1)
-    )
-    if not prev:
-        raise HTTPException(status_code=404, detail="No previous version found")
+    await _get_version_or_404(db, ontology_id, version_id)
+    prev = await _predecessor_or_404(db, ontology_id, version_id)
     return await _get_or_enqueue(db, ontology_id, str(prev.id), version_id)
 
 
@@ -143,20 +146,7 @@ async def get_or_generate_narrative(
     _user: User = Depends(require_auth),
 ):
     version = await _get_version_or_404(db, ontology_id, version_id)
-
-    prev = await db.scalar(
-        select(OntologyVersion)
-        .where(
-            OntologyVersion.ontology_id == ontology_id,
-            OntologyVersion.id != version_id,
-            OntologyVersion.status != "deprecated",
-            OntologyVersion.created_at < version.created_at,
-        )
-        .order_by(OntologyVersion.created_at.desc())
-        .limit(1)
-    )
-    if not prev:
-        raise HTTPException(status_code=404, detail="No previous version found")
+    prev = await _predecessor_or_404(db, ontology_id, version_id)
 
     diff_row = await db.scalar(
         select(OntologyDiff).where(

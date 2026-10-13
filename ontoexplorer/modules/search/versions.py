@@ -56,6 +56,34 @@ def _choose(versions: list[OntologyVersion], current_version_id: str | None) -> 
     return max(ready, key=_version_key)
 
 
+def sort_versions(versions: list[OntologyVersion], *, descending: bool = True) -> list[OntologyVersion]:
+    """Version-aware order (highest version_iri first by default), so dropdowns
+    and the version list show releases newest-first by VERSION, not by ingest
+    time — a later-ingested older snapshot must not sort above a newer release."""
+    return sorted(versions, key=_version_key, reverse=descending)
+
+
+def version_predecessor(versions: list[OntologyVersion], version_id: str) -> OntologyVersion | None:
+    """The ready version immediately preceding *version_id* by VERSION order — the
+    highest version_iri strictly less than it — or None if there is no earlier
+    ready version.
+
+    This is the correct baseline for a "diff vs predecessor" and the auto-diff on
+    ingest: the real previous *release*, not whatever happened to be ingested last.
+    (SIO showed why: a stale 2016 snapshot ingested after v1.61 was the created_at-
+    previous of v1.62, making the diff a 6-year delta that timed out.)
+    """
+    cur = next((v for v in versions if v.id == version_id), None)
+    if cur is None:
+        return None
+    cur_key = _version_key(cur)
+    earlier = [v for v in versions
+               if v.status not in _NOT_READY and v.id != version_id and _version_key(v) < cur_key]
+    if not earlier:
+        return None
+    return max(earlier, key=_version_key)
+
+
 async def latest_versions_for(db: AsyncSession, ontology_ids: list[str]) -> dict[str, OntologyVersion]:
     """Default version per ontology id, honouring pins + version-aware ordering.
     Ontologies with no ready version are simply absent from the result."""

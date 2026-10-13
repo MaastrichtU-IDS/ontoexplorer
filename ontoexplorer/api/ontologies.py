@@ -1131,14 +1131,15 @@ async def list_versions(ontology_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(OntologyVersion)
         .where(OntologyVersion.ontology_id == ontology_id)
-        .order_by(OntologyVersion.created_at.desc())
     )
-    versions = result.scalars().all()
+    # Version-aware order (highest version_iri first), so version dropdowns and the
+    # history list are newest-by-VERSION, not newest-by-ingest — a later-ingested
+    # older snapshot must not sort first. Clients can still re-sort by created_at.
+    from ontoexplorer.modules.search.versions import _choose, sort_versions
+    versions = sort_versions(result.scalars().all())
     # Mark the version-aware DEFAULT version (the pinned one, else the highest
     # version_iri) so clients show the right "current" release instead of assuming
-    # the newest-ingested row [0] — a later ingest of an older aggregator snapshot
-    # must not hijack the displayed version. See modules.search.versions._choose.
-    from ontoexplorer.modules.search.versions import _choose
+    # the newest-ingested row [0].
     default = _choose(versions, ontology.current_version_id)
     default_id = default.id if default is not None else None
     # Attach per-version pipeline-stage status (ingested/indexed/profiled/reasoned/
