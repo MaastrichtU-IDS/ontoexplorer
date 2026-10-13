@@ -295,6 +295,14 @@ function versionLabel(v: OntologyVersion): string {
   return m ? m[0] : (seg || v.id.slice(0, 8))
 }
 
+// A clean version/date token from a versionIRI string (for the update badge).
+function shortVersion(versionIri?: string | null): string {
+  if (!versionIri) return ''
+  const seg = versionIri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? versionIri
+  const m = seg.match(/\d{4}-\d{2}-\d{2}/) ?? seg.match(/\d+(?:\.\d+)+/)
+  return m ? m[0] : seg
+}
+
 // Pick which version is the ontology's default ("latest"). Empty = automatic
 // (version-aware) selection; a specific version pins it. Reuses PATCH, so an
 // ontology owner/maintainer can set it (no admin needed).
@@ -448,6 +456,24 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
                 )
               ) : (
                 <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>—</span>
+              )}
+
+              {ontology.update_available && (
+                <>
+                  <span style={FIELD_LABEL}>update</span>
+                  <span
+                    title="A newer release is available at the ontology's IRI. Use Check update to ingest it (or enable auto-sync)."
+                    style={{
+                      display: 'inline-block', padding: '0.05rem 0.4rem', borderRadius: 4,
+                      background: 'rgba(230,160,30,0.14)', color: 'var(--text)',
+                      fontSize: 'var(--font-size-sm)', fontFamily: 'monospace', width: 'fit-content',
+                    }}
+                  >
+                    {'update available'}
+                    {shortVersion(ontology.update_detail?.detected_version) &&
+                      ` → ${shortVersion(ontology.update_detail?.detected_version)}`}
+                  </span>
+                </>
               )}
             </div>
 

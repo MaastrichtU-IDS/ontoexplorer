@@ -124,6 +124,19 @@ class Ontology(Base):
         JSON().with_variant(JSONB, "postgresql"), nullable=True
     )
 
+    # Upstream-update polling (Stage 2). The daily catalogue poll re-checks each
+    # ontology's canonical IRI and, when a newer release is found, records it here
+    # ("notify by default"); auto-ingest happens only when auto_sync is set.
+    # upstream_etag / upstream_last_modified enable conditional GETs so an
+    # unchanged upstream costs a ~0-byte 304. last_polled_at drives fair rotation.
+    update_available: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false")
+    update_detail: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True)
+    last_polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    upstream_etag: Mapped[str | None] = mapped_column(String(), nullable=True)
+    upstream_last_modified: Mapped[str | None] = mapped_column(String(), nullable=True)
+
     owner: Mapped[User | None] = relationship(back_populates="ontologies")
     # `foreign_keys` is explicit because there are now two FKs between ontologies
     # and versions (versions.ontology_id and ontologies.current_version_id); this

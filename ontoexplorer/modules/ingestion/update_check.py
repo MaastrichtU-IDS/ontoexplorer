@@ -76,27 +76,42 @@ def extract_upstream_version(body: bytes | str) -> str | None:
     return None
 
 
-async def check_for_update(ont, version, *, timeout: float = 120.0) -> dict:
+async def check_for_update(ont, version, *, timeout: float = 120.0,
+                           etag: str | None = None, last_modified: str | None = None) -> dict:
     """Poll *ont*'s canonical location and classify the result against *version*
     (its version-aware default version). Returns a dict with ``status`` one of:
 
     * ``no_source``       — no IRI and no source_url to poll
     * ``fetch_error``     — the poll request failed (``detail`` carries why)
-    * ``up_to_date``      — identical sha-256 to the current version
+    * ``up_to_date``      — unchanged: a 304 (conditional GET) or identical sha-256
     * ``older_skipped``   — content changed but its version is strictly OLDER
     * ``update_available``— changed and not older (``fetch_url``/``use_conneg``
                             say where/how to ingest it; ``fetched_version`` the
                             detected upstream version string if any)
+
+    ``etag`` / ``last_modified`` (from a previous poll) are sent as
+    ``If-None-Match`` / ``If-Modified-Since`` so an unchanged upstream answers 304
+    with no body. The result carries the response's ``etag`` / ``last_modified``
+    for the caller to persist for next time.
     """
     url, use_conneg = fetch_target(ont, version)
     if not url:
         return {"status": "no_source"}
     headers = {"Accept": RDF_ACCEPT} if use_conneg else {}
+    if etag:
+        headers["If-None-Match"] = etag
+    if last_modified:
+        headers["If-Modified-Since"] = last_modified
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout), follow_redirects=True) as client:
             resp = await client.get(url, headers=headers)
+            if resp.status_code == 304:
+                return {"status": "up_to_date", "fetch_url": url, "use_conneg": use_conneg,
+                        "not_modified": True, "etag": etag, "last_modified": last_modified}
             resp.raise_for_status()
             body = resp.content
+            resp_etag = resp.headers.get("etag")
+            resp_last_modified = resp.headers.get("last-modified")
     except httpx.HTTPStatusError as exc:
         return {"status": "fetch_error", "http_status": exc.response.status_code,
                 "detail": f"HTTP {exc.response.status_code}", "fetch_url": url}
@@ -104,17 +119,18 @@ async def check_for_update(ont, version, *, timeout: float = 120.0) -> dict:
         return {"status": "fetch_error", "detail": str(exc), "fetch_url": url}
 
     new_sha = hashlib.sha256(body).hexdigest()
+    validators = {"etag": resp_etag, "last_modified": resp_last_modified}
     cur_sha = getattr(version, "sha256", None) if version is not None else None
     if cur_sha and new_sha == cur_sha:
-        return {"status": "up_to_date", "fetch_url": url, "use_conneg": use_conneg}
+        return {"status": "up_to_date", "fetch_url": url, "use_conneg": use_conneg, **validators}
 
     fetched_version = extract_upstream_version(body)
     cur_version_iri = getattr(version, "version_iri", None) if version is not None else None
     fk, ck = version_key(fetched_version), version_key(cur_version_iri)
     if fk and ck and fk < ck:
         return {"status": "older_skipped", "fetch_url": url, "use_conneg": use_conneg,
-                "fetched_version": fetched_version, "current_version": cur_version_iri}
+                "fetched_version": fetched_version, "current_version": cur_version_iri, **validators}
 
     return {"status": "update_available", "fetch_url": url, "use_conneg": use_conneg,
             "new_sha256": new_sha, "fetched_version": fetched_version,
-            "current_version": cur_version_iri}
+            "current_version": cur_version_iri, **validators}
