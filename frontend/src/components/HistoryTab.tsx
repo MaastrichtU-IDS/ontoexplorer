@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { OntologyVersion } from '../lib/api'
+import { compareVersionsDesc, versionPredecessor } from '../lib/versions'
 import { useArbitraryDiff, useGenerateNarrative } from '../hooks/useDiff'
 import DiffResultView from './DiffResultView'
 
@@ -11,11 +12,10 @@ interface Props {
 }
 
 export default function HistoryTab({ ontologyId, shortname, currentVersionId, versions }: Props) {
-  const sorted = [...versions].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  )
-  const currentIdx = sorted.findIndex(v => v.id === currentVersionId)
-  const defaultFrom = currentIdx < sorted.length - 1 ? sorted[currentIdx + 1].id : ''
+  // Version-aware order (newest release first), not ingest order.
+  const sorted = [...versions].sort(compareVersionsDesc)
+  // Default the "from" to the real predecessor of the current version.
+  const defaultFrom = versionPredecessor(versions, currentVersionId)?.id ?? ''
 
   const [fromVid, setFromVid] = useState(defaultFrom)
   const [toVid, setToVid]     = useState(currentVersionId)

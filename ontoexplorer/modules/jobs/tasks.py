@@ -411,7 +411,7 @@ def detect_meta_profile(version_id: str, ontology_id: str = "") -> dict:
     return {"status": "done", "version_id": version_id}
 
 
-@celery_app.task(name="ontoexplorer.compute_diff", time_limit=300)
+@celery_app.task(name="ontoexplorer.compute_diff", time_limit=300, soft_time_limit=270)
 def compute_diff(version_from_id: str, version_to_id: str, ontology_id: str) -> dict:
     """Compute diff between two ontology versions and store results in the DB."""
     import uuid

@@ -9,6 +9,7 @@ import {
 } from './scopeUrls'
 import type { Ontology, OntologyVersion } from '../../lib/api'
 import { api } from '../../lib/api'
+import { compareVersionsDesc } from '../../lib/versions'
 
 const BASE_ENDPOINT = '/api/v1/sparql/content'
 
@@ -133,11 +134,10 @@ export function ScopeToolbar({ onScopeChange, onCopy, onOntologyAdded, onSelecti
     if (!fromOntologyId) { setFromVersions([]); return }
     api.ontologies.versions(fromOntologyId)
       .then(r => {
-        const sorted = [...r.versions].sort((a, b) =>
-          (b.created_at ?? '').localeCompare(a.created_at ?? '')
-        )
+        const sorted = [...r.versions].sort(compareVersionsDesc)
         setFromVersions(sorted)
         if (sorted.length > 0 && !fromVersionId) {
+          // Default From to the predecessor of the latest release (sorted[1]).
           setFromVersionId(sorted[1]?.id ?? sorted[0].id)
         }
       })
@@ -149,9 +149,7 @@ export function ScopeToolbar({ onScopeChange, onCopy, onOntologyAdded, onSelecti
     if (!toOntologyId) { setToVersions([]); return }
     api.ontologies.versions(toOntologyId)
       .then(r => {
-        const sorted = [...r.versions].sort((a, b) =>
-          (b.created_at ?? '').localeCompare(a.created_at ?? '')
-        )
+        const sorted = [...r.versions].sort(compareVersionsDesc)
         setToVersions(sorted)
         if (sorted.length > 0 && !toVersionId) {
           setToVersionId(sorted[0].id)

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, Ontology, OntologyVersion, slugFromIri } from '../lib/api'
+import { versionPredecessor } from '../lib/versions'
 import { useArbitraryComparison, useTriggerComparison } from '../hooks/useCompare'
 import DiffResultView from '../components/DiffResultView'
 
@@ -271,11 +272,11 @@ export default function Compare() {
       ['versions', fromOnt],
     )
     if (!data) return
-    const versions = data.versions.filter(v => v.status !== 'deprecated')
-    if (versions.length < 2) return
-    // versions are returned sorted by created_at DESC by the backend;
-    // versions[1] is the previous non-deprecated version.
-    setFromVid(versions[1].id)
+    // Demote From to the version-aware PREDECESSOR of the latest (the real
+    // previous release), not the created_at-previous — else a stale snapshot
+    // ingested later would be picked.
+    const prev = versionPredecessor(data.versions, toVid)
+    if (prev) setFromVid(prev.id)
   }, [fromOnt, toOnt, fromVid, toVid, queryClient])
 
   const canCompare = !!fromVid && !!toVid && fromVid !== toVid
