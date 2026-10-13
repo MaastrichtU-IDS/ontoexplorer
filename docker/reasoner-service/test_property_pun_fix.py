@@ -17,6 +17,8 @@ A = "http://ex/a"
 B = "http://ex/b"
 EQ = ppf._OWL + "equivalentProperty"
 SUB = ppf._RDFS + "subPropertyOf"
+DISJ = ppf._OWL + "propertyDisjointWith"
+SKOS_CONCEPT = "http://www.w3.org/2004/02/skos/core#Concept"
 
 
 def _load(nt: str):
@@ -113,6 +115,85 @@ def test_doubly_typed_operand_is_a_false_negative():
     )
     store = _load(nt)
     assert ppf.drop_mismatched_property_axioms(store) == 0
+
+
+# ── propertyDisjointWith + unusable-operand extension ────────────────────────────
+
+def test_drops_property_disjoint_with_over_bare_operands():
+    # owl:propertyDisjointWith over bare rdf:Property operands (frad/frbr shape):
+    # horned-owl can't reconcile the kind -> abort; drop it.
+    nt = (f"<{A}> <{ppf._RDF}type> <{ppf._RDF}Property> .\n"
+          f"<{B}> <{ppf._RDF}type> <{ppf._RDF}Property> .\n"
+          f"<{A}> <{DISJ}> <{B}> .\n")
+    store = _load(nt)
+    assert ppf.drop_mismatched_property_axioms(store) == 1
+    assert not _has(store, DISJ)
+
+
+def test_keeps_property_disjoint_with_over_valid_same_kind():
+    # Two well-typed data properties, disjoint: valid, keep it (inertness —
+    # tree-structure-brain shape, where FunctionalProperty must not read as object).
+    nt = (f"<{A}> <{ppf._RDF}type> <{ppf._OWL}DatatypeProperty> .\n"
+          f"<{A}> <{ppf._RDF}type> <{ppf._OWL}FunctionalProperty> .\n"
+          f"<{B}> <{ppf._RDF}type> <{ppf._OWL}DatatypeProperty> .\n"
+          f"<{B}> <{ppf._RDF}type> <{ppf._OWL}FunctionalProperty> .\n"
+          f"<{A}> <{DISJ}> <{B}> .\n")
+    store = _load(nt)
+    assert ppf.drop_mismatched_property_axioms(store) == 0
+    assert _has(store, DISJ)
+
+
+def test_drops_equivalent_property_to_individual():
+    # ldp shape: two owl:Individual (OWL 1 term) linked by equivalentProperty.
+    nt = (_decl(A, "Individual") + _decl(B, "Individual") + f"<{A}> <{EQ}> <{B}> .\n")
+    store = _load(nt)
+    assert ppf.drop_mismatched_property_axioms(store) == 1
+
+
+def test_drops_equivalent_property_to_skos_concept():
+    # military shape: a property equivalentProperty a skos:Concept.
+    nt = (_decl(A, "ObjectProperty")
+          + f"<{B}> <{ppf._RDF}type> <{SKOS_CONCEPT}> .\n"
+          + f"<{A}> <{EQ}> <{B}> .\n")
+    store = _load(nt)
+    assert ppf.drop_mismatched_property_axioms(store) == 1
+
+
+def test_drops_equivalent_property_with_deprecated_only_operand():
+    # cwrc shape: an owl:DeprecatedProperty (no real kind) equivalentProperty an
+    # untyped property.
+    nt = (_decl(A, "DeprecatedProperty") + f"<{A}> <{EQ}> <{B}> .\n")
+    store = _load(nt)
+    assert ppf.drop_mismatched_property_axioms(store) == 1
+
+
+def test_keeps_punned_class_and_datatype_property_operand():
+    # dcm shape: operand typed BOTH owl:Class and owl:DatatypeProperty — it HAS a real
+    # property kind, so it is NOT unusable; the axiom is kept (inertness).
+    nt = (_decl(A, "DatatypeProperty")
+          + _decl(B, "DatatypeProperty") + _decl(B, "Class")
+          + f"<{A}> <{EQ}> <{B}> .\n")
+    store = _load(nt)
+    assert ppf.drop_mismatched_property_axioms(store) == 0
+    assert _has(store, EQ)
+
+
+def test_subpropertyof_not_dropped_for_unusable_operand():
+    # The unusable-operand rule must NOT apply to subPropertyOf (role edges matter):
+    # a bare/individual operand on subPropertyOf is kept (only explicit mismatch drops).
+    nt = (_decl(A, "Individual") + _decl(B, "ObjectProperty") + f"<{A}> <{SUB}> <{B}> .\n")
+    store = _load(nt)
+    assert ppf.drop_mismatched_property_axioms(store) == 0
+    assert _has(store, SUB)
+
+
+def test_keeps_disjoint_both_untyped():
+    # Fully-untyped operands on propertyDisjointWith: kind not locally decidable, leave
+    # it (upstream territory).
+    nt = f"<{A}> <{DISJ}> <{B}> .\n"
+    store = _load(nt)
+    assert ppf.drop_mismatched_property_axioms(store) == 0
+    assert _has(store, DISJ)
 
 
 # ── end-to-end ──────────────────────────────────────────────────────────────────
