@@ -62,7 +62,7 @@ ENV KM_VERSION=${KM_REV}
 
 COPY main.py classify_worker.py consistency_worker.py justify_worker.py classifier.py cache.py \
      registry.py disjoint_fix.py ontology_type_fix.py equiv_class_fix.py property_pun_fix.py \
-     reserved_predicate_fix.py \
+     reserved_predicate_fix.py restriction_property_fix.py \
      rustdl_backend.py konclude_backend.py km_backend.py incremental_km.py ./
 
 EXPOSE 8001
