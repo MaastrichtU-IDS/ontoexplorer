@@ -8,7 +8,9 @@ Stores one named graph per ontology version:
 import asyncio
 import logging
 import re
+import threading
 import time
+from collections import OrderedDict
 from io import BytesIO
 from pathlib import Path
 
@@ -24,6 +26,21 @@ _store: pyoxigraph.Store | None = None
 _ro_store: pyoxigraph.Store | None = None
 _ro_store_opened_at: float = 0.0
 _RO_STORE_TTL: float = 60.0  # refresh read-only snapshot every 60 s
+
+# Per-graph blank-node adjacency index for the HTTP store proxy.
+#
+# A blank node has no SPARQL query syntax that references it: a `_:label` token
+# in a BGP is an existential *variable*, so the proxy cannot translate a
+# `quads_for_pattern(BlankNode, ...)` call into `GRAPH g { _:label ?p ?o }` —
+# that pattern matches EVERY subject (the whole graph) and yields wrong results.
+# Oxigraph does emit *stable* blank-node labels across queries, though, so we
+# build a `{bnode_label: [(predicate, object), ...]}` map per graph with one
+# scan and serve every blank-node-subject lookup from it. Cached (TTL + small
+# LRU) because the diff renderer walks thousands of bnodes per graph.
+_BNODE_IDX: "OrderedDict[tuple[str, str], tuple[float, dict]]" = OrderedDict()
+_BNODE_IDX_LOCK = threading.Lock()
+_BNODE_IDX_TTL: float = 120.0
+_BNODE_IDX_MAX: int = 16
 
 # Pooled, keep-alive HTTP clients for the oxigraph server (oxigraph-as-a-service).
 # A fresh client per request meant a new TCP+HTTP handshake on every /sparql
@@ -76,6 +93,31 @@ class _HttpStoreProxy:
         return _http_query(self._ep, query, dg, ng)
 
     def quads_for_pattern(self, subject=None, predicate=None, object=None, graph_name=None):
+        # A blank node cannot be inlined into a SPARQL BGP — `_:label` is an
+        # existential variable there, not a reference to that stored node — so a
+        # blank-node subject is served from a per-graph adjacency index instead
+        # (see `_bnode_index`). A blank-node *object* would have the same defect
+        # but no caller needs it; fail loudly rather than return wrong quads.
+        if isinstance(object, pyoxigraph.BlankNode):
+            raise NotImplementedError(
+                "quads_for_pattern cannot match a specific blank node in the object "
+                "position over the HTTP store proxy"
+            )
+        if isinstance(subject, pyoxigraph.BlankNode):
+            if graph_name is None:
+                raise NotImplementedError(
+                    "quads_for_pattern with a blank-node subject requires a graph_name "
+                    "over the HTTP store proxy"
+                )
+            idx = _bnode_index(self._ep, graph_name)
+            for p, o in idx.get(subject.value, ()):
+                if predicate is not None and p != predicate:
+                    continue
+                if object is not None and o != object:
+                    continue
+                yield pyoxigraph.Quad(subject, p, o, graph_name)
+            return
+
         # Rebuild the pattern as SPARQL (bound terms inlined via their N-Triples
         # form; unbound as vars), run it, and reconstruct native Quads from the
         # solution — so callers get the same Quad objects as the embedded store.
@@ -97,6 +139,48 @@ class _HttpStoreProxy:
 
     def __len__(self) -> int:
         return int(next(iter(self.query("SELECT (COUNT(*) AS ?n) WHERE { GRAPH ?g {?s ?p ?o} }")))["n"].value)
+
+
+def _bnode_index(endpoint: str, graph_name: "pyoxigraph.NamedNode") -> dict:
+    """Return `{bnode_label: [(predicate, object), ...]}` for every blank-node
+    subject in `graph_name`, built with one scan and cached per (endpoint, graph).
+
+    Enables correct, O(1) blank-node lookups over the HTTP store proxy, which
+    otherwise can't reference a stored blank node from SPARQL (see
+    `_HttpStoreProxy.quads_for_pattern`). The cache is TTL-bounded (graphs are
+    replaced on re-ingest, possibly by another process) and LRU-capped.
+    """
+    key = (endpoint, graph_name.value)
+    now = time.monotonic()
+    with _BNODE_IDX_LOCK:
+        hit = _BNODE_IDX.get(key)
+        if hit is not None and (now - hit[0]) <= _BNODE_IDX_TTL:
+            _BNODE_IDX.move_to_end(key)
+            return hit[1]
+
+    index: dict[str, list] = {}
+    for sol in _http_query(
+        endpoint,
+        f"SELECT ?s ?p ?o WHERE {{ GRAPH <{graph_name.value}> "
+        f"{{ ?s ?p ?o FILTER(isBlank(?s)) }} }}",
+    ):
+        index.setdefault(sol["s"].value, []).append((sol["p"], sol["o"]))
+
+    with _BNODE_IDX_LOCK:
+        _BNODE_IDX[key] = (time.monotonic(), index)
+        _BNODE_IDX.move_to_end(key)
+        while len(_BNODE_IDX) > _BNODE_IDX_MAX:
+            _BNODE_IDX.popitem(last=False)
+    return index
+
+
+def _invalidate_bnode_index(graph_iri: str) -> None:
+    """Drop any cached blank-node index for `graph_iri` (called on writes so a
+    same-process re-ingest is reflected immediately; cross-process staleness is
+    bounded by the TTL)."""
+    with _BNODE_IDX_LOCK:
+        for key in [k for k in _BNODE_IDX if k[1] == graph_iri]:
+            _BNODE_IDX.pop(key, None)
 
 
 def get_store():
@@ -193,6 +277,7 @@ def _http_load_graph(endpoint: str, iri: str, data: bytes, content_type: str, *,
         timeout=600.0,
     )
     r.raise_for_status()
+    _invalidate_bnode_index(iri)
 
 
 def load_graph(ontology_id: str, version_id: str, graph: rdflib.Graph) -> int:
@@ -333,6 +418,7 @@ def delete_graph(ontology_id: str, version_id: str, inferred: bool = False) -> N
         r.raise_for_status()
     else:
         get_store().remove_graph(pyoxigraph.NamedNode(iri))
+    _invalidate_bnode_index(iri)
 
 
 def sparql_update(update: str) -> None:
@@ -349,6 +435,11 @@ def sparql_update(update: str) -> None:
         r.raise_for_status()
     else:
         get_store().update(update)
+    # A free-form UPDATE may mutate any content graph's blank-node set; the
+    # affected graph isn't cheaply knowable from the text, so drop the whole
+    # index (rebuild is one scan, and content UPDATEs are rare — ingest-time).
+    with _BNODE_IDX_LOCK:
+        _BNODE_IDX.clear()
 
 
 def sparql_query(

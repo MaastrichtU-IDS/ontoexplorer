@@ -185,3 +185,118 @@ async def test_async_http_client_is_pooled(monkeypatch):
     a = ox._async_http_client()
     b = ox._async_http_client()
     assert a is b and len(made) == 1
+
+
+# --- Blank-node handling over the HTTP proxy -------------------------------
+# A blank node has no SPARQL syntax that references a specific stored node, so
+# the proxy serves blank-node-subject lookups from a per-graph adjacency index
+# instead of the (wrong) `GRAPH g { _:label ?p ?o }` translation, which matches
+# the whole graph. These tests pin that behaviour.
+
+def _restriction_backing():
+    """Embedded store: `urn:C subClassOf [a Restriction; onProperty p; someValuesFrom D]`
+    plus an unrelated blank node, so leakage is detectable."""
+    import pyoxigraph
+    _OWL = "http://www.w3.org/2002/07/owl#"
+    store = pyoxigraph.Store()
+    g = pyoxigraph.NamedNode("urn:g")
+    bn = pyoxigraph.BlankNode()
+    add = lambda s, p, o: store.add(pyoxigraph.Quad(s, pyoxigraph.NamedNode(p) if isinstance(p, str) else p,
+                                                    pyoxigraph.NamedNode(o) if isinstance(o, str) else o, g))
+    add(pyoxigraph.NamedNode("urn:C"), "http://www.w3.org/2000/01/rdf-schema#subClassOf", bn)
+    add(bn, "http://www.w3.org/1999/02/22-rdf-syntax-ns#type", _OWL + "Restriction")
+    add(bn, _OWL + "onProperty", "urn:p")
+    add(bn, _OWL + "someValuesFrom", "urn:D")
+    bn2 = pyoxigraph.BlankNode()
+    add(bn2, "urn:q", "urn:unrelated")
+    return store, g
+
+
+@pytest.fixture(autouse=True)
+def _clear_bnode_index():
+    from ontoexplorer.clients import oxigraph as ox
+    ox._BNODE_IDX.clear()
+    yield
+    ox._BNODE_IDX.clear()
+
+
+def test_blank_subject_served_from_index_not_wildcard(monkeypatch):
+    import pyoxigraph
+    from ontoexplorer.clients import oxigraph as ox
+    backing, g = _restriction_backing()
+    proxy = ox._HttpStoreProxy("http://unused")
+    monkeypatch.setattr(proxy, "query", lambda q, **k: backing.query(q))
+    monkeypatch.setattr(ox, "_http_query", lambda ep, q, **k: backing.query(q))
+
+    # Discover the restriction bnode as the object of subClassOf (NamedNode path).
+    sc = pyoxigraph.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
+    obj = next(proxy.quads_for_pattern(pyoxigraph.NamedNode("urn:C"), sc, None, g)).object
+    assert isinstance(obj, pyoxigraph.BlankNode)
+
+    # Its outgoing triples: exactly the restriction's three, never the whole graph.
+    preds = {q.predicate.value for q in proxy.quads_for_pattern(obj, None, None, g)}
+    assert preds == {
+        "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
+        "http://www.w3.org/2002/07/owl#onProperty",
+        "http://www.w3.org/2002/07/owl#someValuesFrom",
+    }
+    # No leakage from the unrelated bnode.
+    assert "urn:q" not in preds
+
+
+def test_blank_subject_predicate_filter(monkeypatch):
+    import pyoxigraph
+    from ontoexplorer.clients import oxigraph as ox
+    backing, g = _restriction_backing()
+    proxy = ox._HttpStoreProxy("http://unused")
+    monkeypatch.setattr(proxy, "query", lambda q, **k: backing.query(q))
+    monkeypatch.setattr(ox, "_http_query", lambda ep, q, **k: backing.query(q))
+    sc = pyoxigraph.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
+    obj = next(proxy.quads_for_pattern(pyoxigraph.NamedNode("urn:C"), sc, None, g)).object
+
+    on_prop = pyoxigraph.NamedNode("http://www.w3.org/2002/07/owl#onProperty")
+    quads = list(proxy.quads_for_pattern(obj, on_prop, None, g))
+    assert len(quads) == 1
+    assert quads[0].object.value == "urn:p"
+    assert quads[0].subject == obj and quads[0].graph_name == g
+
+
+def test_blank_object_raises(monkeypatch):
+    import pyoxigraph
+    from ontoexplorer.clients import oxigraph as ox
+    proxy = ox._HttpStoreProxy("http://unused")
+    with pytest.raises(NotImplementedError):
+        list(proxy.quads_for_pattern(None, None, pyoxigraph.BlankNode("x"), pyoxigraph.NamedNode("urn:g")))
+
+
+def test_blank_subject_requires_graph(monkeypatch):
+    import pyoxigraph
+    from ontoexplorer.clients import oxigraph as ox
+    proxy = ox._HttpStoreProxy("http://unused")
+    with pytest.raises(NotImplementedError):
+        list(proxy.quads_for_pattern(pyoxigraph.BlankNode("x"), None, None, None))
+
+
+def test_bnode_index_is_cached(monkeypatch):
+    import pyoxigraph
+    from ontoexplorer.clients import oxigraph as ox
+    backing, g = _restriction_backing()
+    calls = {"n": 0}
+
+    def _counting_http_query(ep, q, **k):
+        calls["n"] += 1
+        return backing.query(q)
+
+    proxy = ox._HttpStoreProxy("http://unused")
+    monkeypatch.setattr(proxy, "query", lambda q, **k: backing.query(q))
+    monkeypatch.setattr(ox, "_http_query", _counting_http_query)
+    sc = pyoxigraph.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
+    obj = next(proxy.quads_for_pattern(pyoxigraph.NamedNode("urn:C"), sc, None, g)).object
+
+    list(proxy.quads_for_pattern(obj, None, None, g))
+    list(proxy.quads_for_pattern(obj, None, None, g))
+    assert calls["n"] == 1  # index built once, reused
+
+    ox._invalidate_bnode_index(g.value)
+    list(proxy.quads_for_pattern(obj, None, None, g))
+    assert calls["n"] == 2  # rebuilt after invalidation
