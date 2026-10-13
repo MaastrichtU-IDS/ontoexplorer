@@ -1539,48 +1539,51 @@ def compute_justification(
 
 
 async def _run_poll(db) -> None:
-    """Async body of poll_for_updates: check each auto_sync ontology for changes."""
-    import hashlib
-    import httpx as _httpx
+    """Async body of poll_for_updates: check each auto_sync ontology for a newer
+    upstream release and queue re-ingestion when one is found.
 
+    Polls the ontology's canonical IRI (content-negotiated), not a past version's
+    frozen source_url, and compares against the version-aware default version —
+    see ingestion.update_check for why. auto_sync ontologies auto-ingest; the
+    whole-catalogue notify-only poll is Stage 2."""
     from sqlalchemy import select
     from ontoexplorer.models.db import Ontology, OntologyVersion
+    from ontoexplorer.modules.ingestion.update_check import check_for_update
+    from ontoexplorer.modules.search.versions import _choose
 
-    result = await db.execute(
+    ontologies = (await db.execute(
         select(Ontology).where(Ontology.auto_sync.is_(True))
-    )
-    ontologies = result.scalars().all()
+    )).scalars().all()
 
     for ont in ontologies:
-        ver_result = await db.execute(
-            select(OntologyVersion)
-            .where(OntologyVersion.ontology_id == ont.id)
-            .where(OntologyVersion.status != "deprecated")
-            .where(OntologyVersion.source_url.is_not(None))
-            .order_by(OntologyVersion.created_at.desc())
-            .limit(1)
-        )
-        version = ver_result.scalar_one_or_none()
-        if not version:
+        versions = (await db.execute(
+            select(OntologyVersion).where(OntologyVersion.ontology_id == ont.id)
+        )).scalars().all()
+        default = _choose(versions, ont.current_version_id)
+        if default is None and not ont.iri:
             continue
 
-        try:
-            with _httpx.Client(timeout=_httpx.Timeout(60.0), follow_redirects=True) as client:
-                resp = client.get(version.source_url)
-                resp.raise_for_status()
-                new_sha256 = hashlib.sha256(resp.content).hexdigest()
-        except Exception as exc:
+        result = await check_for_update(ont, default)
+        status = result["status"]
+        if status == "fetch_error":
             log.warning("poll_fetch_failed", ontology_id=ont.id,
-                        source_url=version.source_url, error=str(exc))
+                        url=result.get("fetch_url"), error=result.get("detail"))
+            continue
+        if status in ("up_to_date", "no_source"):
+            log.info("poll_no_change", ontology_id=ont.id, status=status)
+            continue
+        if status == "older_skipped":
+            log.info("poll_older_skipped", ontology_id=ont.id,
+                     fetched=result.get("fetched_version"), current=result.get("current_version"))
             continue
 
-        if new_sha256 == version.sha256:
-            log.info("poll_no_change", ontology_id=ont.id, source_url=version.source_url)
-            continue
-
-        log.info("poll_change_detected", ontology_id=ont.id,
-                 source_url=version.source_url, old_sha256=version.sha256, new_sha256=new_sha256)
-        ingest_ontology.delay(url=version.source_url, owner_id=ont.owner_id, groups=list(ont.groups or []))
+        # update_available
+        log.info("poll_change_detected", ontology_id=ont.id, url=result["fetch_url"],
+                 fetched_version=result.get("fetched_version"))
+        ingest_ontology.delay(
+            iri=result["fetch_url"] if result["use_conneg"] else None,
+            url=result["fetch_url"] if not result["use_conneg"] else None,
+            owner_id=ont.owner_id, groups=list(ont.groups or []))
 
 
 @celery_app.task(name="ontoexplorer.poll_for_updates")

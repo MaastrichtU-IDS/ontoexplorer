@@ -341,7 +341,12 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
     queryFn: () => api.ontologies.versions(ontology.id),
   })
 
-  const latest: OntologyVersion | undefined = versionsData?.versions[0]
+  // Show the version-aware DEFAULT version (highest version_iri / pinned), not the
+  // newest-ingested row — a later ingest of an older snapshot must not appear as
+  // "current". The backend marks it with is_default; fall back to [0] if absent.
+  const versions = versionsData?.versions
+  const latest: OntologyVersion | undefined =
+    versions?.find(v => v.is_default) ?? versions?.[0]
 
   const { data: statsData } = useQuery({
     queryKey: ['version-stats', ontology.id, latest?.id],

@@ -1127,13 +1127,20 @@ async def recheck_resolvable(
 
 @router.get("/{ontology_id}/versions", summary="All versions with provenance")
 async def list_versions(ontology_id: str, db: AsyncSession = Depends(get_db)):
-    await _get_ontology_or_404(db, ontology_id)
+    ontology = await _get_ontology_or_404(db, ontology_id)
     result = await db.execute(
         select(OntologyVersion)
         .where(OntologyVersion.ontology_id == ontology_id)
         .order_by(OntologyVersion.created_at.desc())
     )
     versions = result.scalars().all()
+    # Mark the version-aware DEFAULT version (the pinned one, else the highest
+    # version_iri) so clients show the right "current" release instead of assuming
+    # the newest-ingested row [0] — a later ingest of an older aggregator snapshot
+    # must not hijack the displayed version. See modules.search.versions._choose.
+    from ontoexplorer.modules.search.versions import _choose
+    default = _choose(versions, ontology.current_version_id)
+    default_id = default.id if default is not None else None
     # Attach per-version pipeline-stage status (ingested/indexed/profiled/reasoned/
     # embedded + timestamps) so the ontology info page's Repository Metadata panel
     # shows them — the frontend renders `version.pipeline`, which only the
@@ -1143,6 +1150,7 @@ async def list_versions(ontology_id: str, db: AsyncSession = Depends(get_db)):
     for v in versions:
         d = _version_dict(v)
         d["pipeline"] = await version_pipeline(db, str(v.id))
+        d["is_default"] = (v.id == default_id)
         out.append(d)
     return {"versions": out}
 
