@@ -110,6 +110,17 @@ class RustdlBackend:
             log.info("rustdl_dropped_reserved_syntax_predicates version_id=%s count=%s",
                      version_id, _dropped_reserved)
 
+        # (5) a restriction whose onProperty is a kind horned-owl can't use in a
+        # restriction (annotation / bare rdf:Property / undeclared) — "Unexpected
+        # property kind in restriction" aborts the parse. Reconcile the property's
+        # kind to what the restriction's filler requires. See restriction_property_fix.
+        import restriction_property_fix
+        _retyped = restriction_property_fix.reconcile_restriction_property_kinds(store)
+        if _retyped:
+            repairs["reconciled_restriction_properties"] = _retyped
+            log.info("rustdl_reconciled_restriction_properties version_id=%s count=%s",
+                     version_id, _retyped)
+
         rdfxml = pyoxigraph.serialize(
             (q.triple for q in store.quads_for_pattern(None, None, None, None)),
             format=pyoxigraph.RdfFormat.RDF_XML,
