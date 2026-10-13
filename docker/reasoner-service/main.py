@@ -282,10 +282,17 @@ def run_classify(req: ClassifyRequest):
                 tail = (proc.stderr or "").strip()[-600:]
                 log.error("classify_worker_failed version_id=%s reasoner=%s rc=%s stderr=%s",
                           version_id, reasoner, proc.returncode, tail)
+                # Distinguish a genuine crash/OOM from a deterministic error so the
+                # stored message doesn't mislabel one as the other: a negative
+                # return code (killed by a signal) or 137 (SIGKILL — the cgroup
+                # OOM-killer) is a crash/OOM; any other non-zero exit is the worker
+                # raising a deterministic error, and the real cause is in the tail.
+                kind = ("crash/OOM/abort" if proc.returncode < 0 or proc.returncode == 137
+                        else "deterministic error")
                 store_classification_error(
                     version_id,
                     f"classifier process exited {proc.returncode} "
-                    f"(crash/OOM/abort): {tail}"[:1000],
+                    f"({kind}): {tail}"[:1000],
                     reasoner,
                 )
             # returncode 0 → the child already stored input_axioms + classification.

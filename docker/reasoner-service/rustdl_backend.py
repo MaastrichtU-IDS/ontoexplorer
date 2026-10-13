@@ -98,6 +98,18 @@ class RustdlBackend:
             log.info("rustdl_dropped_property_axioms version_id=%s count=%s",
                      version_id, _dropped)
 
+        # (4) a triple whose PREDICATE is an RDF/XML reserved syntax term
+        # (rdf:about, rdf:resource, …) — leaked RDF/XML syntax that the serialize
+        # below cannot represent ("reserved syntax term is not allowed as a
+        # predicate"), which aborts classification before reasoning. Carries no
+        # OWL meaning, so dropping is lossless. See reserved_predicate_fix.
+        import reserved_predicate_fix
+        _dropped_reserved = reserved_predicate_fix.drop_reserved_syntax_predicate_triples(store)
+        if _dropped_reserved:
+            repairs["dropped_reserved_syntax_predicates"] = _dropped_reserved
+            log.info("rustdl_dropped_reserved_syntax_predicates version_id=%s count=%s",
+                     version_id, _dropped_reserved)
+
         rdfxml = pyoxigraph.serialize(
             (q.triple for q in store.quads_for_pattern(None, None, None, None)),
             format=pyoxigraph.RdfFormat.RDF_XML,
@@ -304,6 +316,8 @@ class RustdlBackend:
         store = pyoxigraph.Store()
         store.bulk_load(io.BytesIO(ntriples.encode("utf-8")),
                         format=pyoxigraph.RdfFormat.N_TRIPLES)
+        import reserved_predicate_fix
+        reserved_predicate_fix.drop_reserved_syntax_predicate_triples(store)
         rdfxml = pyoxigraph.serialize(
             (q.triple for q in store.quads_for_pattern(None, None, None, None)),
             format=pyoxigraph.RdfFormat.RDF_XML,
@@ -339,6 +353,8 @@ class RustdlBackend:
             store = pyoxigraph.Store()
             store.bulk_load(io.BytesIO(ntriples.encode("utf-8")),
                             format=pyoxigraph.RdfFormat.N_TRIPLES)
+            import reserved_predicate_fix
+            reserved_predicate_fix.drop_reserved_syntax_predicate_triples(store)
             rdfxml = pyoxigraph.serialize(
                 (q.triple for q in store.quads_for_pattern(None, None, None, None)),
                 format=pyoxigraph.RdfFormat.RDF_XML,
