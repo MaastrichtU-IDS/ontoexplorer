@@ -31,17 +31,27 @@ RDF_ACCEPT = ("text/turtle, application/rdf+xml;q=0.9, application/n-triples;q=0
 _OWL = "http://www.w3.org/2002/07/owl#"
 
 
+def _fetchable(url: str | None) -> bool:
+    """Only http(s) URLs can be polled. Many ontology IRIs are non-dereferenceable
+    (``urn:uuid:…``) or malformed by a bad export (an unexpanded XML entity like
+    ``&obo;miapa.owl``); handing those to httpx just errors every sweep."""
+    return bool(url) and url.lower().startswith(("http://", "https://"))
+
+
 def fetch_target(ont, version) -> tuple[str | None, bool]:
     """Where to poll for *ont*'s latest release: ``(url, use_conneg)``.
 
     The resolvable IRI first (content-negotiated), the default version's
-    ``source_url`` only as a fallback. ``(None, False)`` when neither exists.
+    ``source_url`` only as a fallback — and only when it is an http(s) URL we can
+    actually fetch. ``(None, False)`` when neither is fetchable, so the poll
+    reports no_source and skips rather than erroring on a urn:/garbage IRI every
+    cycle.
     """
     iri = getattr(ont, "iri", None)
-    if iri:
+    if _fetchable(iri):
         return iri, True
     src = getattr(version, "source_url", None) if version is not None else None
-    if src:
+    if _fetchable(src):
         return src, False
     return None, False
 
@@ -72,7 +82,12 @@ def extract_upstream_version(body: bytes | str) -> str | None:
     for pat in patterns:
         m = re.search(pat, text)
         if m:
-            return m.group(1).strip()
+            val = m.group(1).strip()
+            # A usable version carries a number (semver or date); a digitless capture
+            # (e.g. the bare word "version" from a loose versionInfo) is noise — skip
+            # it and try the next pattern, so the badge never shows a junk "version".
+            if any(ch.isdigit() for ch in val):
+                return val
     return None
 
 

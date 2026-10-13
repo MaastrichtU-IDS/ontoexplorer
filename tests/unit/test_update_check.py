@@ -159,3 +159,29 @@ async def test_conditional_headers_sent(monkeypatch):
     assert cap["headers"].get("If-Modified-Since") == "Mon, 01 Jan 2024 00:00:00 GMT"
     # response validators are surfaced for persistence
     assert r["status"] == "update_available" and r["etag"] == '"v62"'
+
+
+# ── hardening: non-http IRIs + digitless version captures ───────────────────────
+
+def test_fetch_target_skips_urn_iri_falls_back_to_http_source():
+    url, conneg = uc.fetch_target(_Ont(iri="urn:uuid:3e030348-43e9-4b44-ae72-444a834dd443"),
+                                  _Ver(source_url="http://host/download"))
+    assert url == "http://host/download" and conneg is False
+
+
+def test_fetch_target_skips_malformed_entity_iri():
+    # a bad export leaves an unexpanded XML entity as the IRI
+    assert uc.fetch_target(_Ont(iri="&obo;miapa.owl"), _Ver(source_url=None)) == (None, False)
+
+
+def test_fetch_target_none_when_neither_is_http():
+    assert uc.fetch_target(_Ont(iri="urn:x"), _Ver(source_url="ftp://h/f")) == (None, False)
+
+
+def test_extract_rejects_digitless_versioninfo():
+    assert uc.extract_upstream_version(b'<http://x/o> owl:versionInfo "version" .') is None
+    assert uc.extract_upstream_version(b'<owl:versionInfo>version</owl:versionInfo>') is None
+
+
+def test_extract_accepts_versioninfo_with_digit():
+    assert uc.extract_upstream_version(b'<http://x/o> owl:versionInfo "1.62" .') == "1.62"
