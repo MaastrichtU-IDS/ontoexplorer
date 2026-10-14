@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useAdminOverview } from '../hooks/useAdminOverview'
@@ -80,7 +80,10 @@ export default function AdminPage() {
   const [versionIndexStates, setVersionIndexStates] = useState<Record<string, UpdateState>>({})
   const [versionEmbedStates, setVersionEmbedStates] = useState<Record<string, UpdateState>>({})
   const [versionIngestStates, setVersionIngestStates] = useState<Record<string, UpdateState>>({})
+  const [versionDeprecateStates, setVersionDeprecateStates] = useState<Record<string, UpdateState>>({})
+  const [versionDeleteStates, setVersionDeleteStates] = useState<Record<string, UpdateState>>({})
   const [clearJobsState, setClearJobsState] = useState<'idle' | 'working' | 'error'>('idle')
+  const qc = useQueryClient()
 
   async function handleUpdate(ontologyId: string) {
     setUpdateStates(s => ({ ...s, [ontologyId]: 'queued' }))
@@ -182,6 +185,32 @@ export default function AdminPage() {
     setVersionIngestStates(s => ({ ...s, [versionId]: 'queued' }))
     try { await api.admin.queueIngestForVersion(versionId) }
     catch { setVersionIngestStates(s => ({ ...s, [versionId]: 'error' })) }
+  }
+
+  // Deprecate (soft) / delete (hard) a version. These hit the ontology-edit
+  // endpoint (admins pass can_edit), so they take the ontology id too. Invalidate
+  // the version list + overview + public list so the row updates immediately.
+  function invalidateVersionViews(ontologyId: string) {
+    qc.invalidateQueries({ queryKey: ['admin-versions', ontologyId] })
+    qc.invalidateQueries({ queryKey: ['admin', 'overview'] })
+    qc.invalidateQueries({ queryKey: ['ontologies'] })
+    refetch()
+  }
+  async function handleVersionDeprecate(ontologyId: string, versionId: string) {
+    setVersionDeprecateStates(s => ({ ...s, [versionId]: 'queued' }))
+    try {
+      await api.ontologies.deprecateVersion(ontologyId, versionId)
+      invalidateVersionViews(ontologyId)
+      setVersionDeprecateStates(s => { const n = { ...s }; delete n[versionId]; return n })
+    } catch { setVersionDeprecateStates(s => ({ ...s, [versionId]: 'error' })) }
+  }
+  async function handleVersionDelete(ontologyId: string, versionId: string) {
+    setVersionDeleteStates(s => ({ ...s, [versionId]: 'queued' }))
+    try {
+      await api.ontologies.deleteVersion(ontologyId, versionId)
+      invalidateVersionViews(ontologyId)
+      setVersionDeleteStates(s => { const n = { ...s }; delete n[versionId]; return n })
+    } catch { setVersionDeleteStates(s => ({ ...s, [versionId]: 'error' })) }
   }
 
   async function handleClearJobs() {
@@ -468,6 +497,10 @@ export default function AdminPage() {
             onVersionEmbed={handleVersionEmbed}
             versionIngestStates={versionIngestStates}
             onVersionIngest={handleVersionIngest}
+            versionDeprecateStates={versionDeprecateStates}
+            onVersionDeprecate={handleVersionDeprecate}
+            versionDeleteStates={versionDeleteStates}
+            onVersionDelete={handleVersionDelete}
           />
         </>
       )}
