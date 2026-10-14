@@ -316,7 +316,16 @@ export default function Compare() {
   const canCompare = !!fromVid && !!toVid && fromVid !== toVid
 
   function handleCompare() {
-    navigate(`/compare?from=${encodeURIComponent(fromVid)}&to=${encodeURIComponent(toVid)}`, { replace: true })
+    // Update from/to IN PLACE on the current route (Compare always renders inside
+    // `/ontologies?tab=compare`). Navigating to `/compare` instead bounced through
+    // CompareRedirect back to `/ontologies?...&tab=compare` — a route change that
+    // REMOUNTED the whole page (looked like a reload), dropped the picker state,
+    // and raced/lost the triggered comparison, so no results ever showed.
+    const next = new URLSearchParams(params)
+    next.set('tab', 'compare')
+    next.set('from', fromVid)
+    next.set('to', toVid)
+    navigate(`/ontologies?${next}`, { replace: true })
     trigger.mutate({ fromVid, toVid })
   }
 
