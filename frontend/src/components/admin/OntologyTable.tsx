@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AdminOntologyEntry, AdminVersionEntry, api, slugFromIri } from '../../lib/api'
+import { versionToken } from '../../lib/versions'
 import { usePagedTable } from '../../hooks/usePagedTable'
 import { TablePager } from '../TablePager'
 import ReindexWithReasoner from '../ReindexWithReasoner'
@@ -535,11 +536,10 @@ function VersionsSubRows({
   const others: AdminVersionEntry[] = data.versions.filter(v => v.version_id !== latestVersionId)
 
   const vlabel = (v: AdminVersionEntry): string => {
-    const seg = v.version_iri ? (v.version_iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? v.version_iri) : ''
-    // Prefer a clean version/date token (e.g. "0.2.14", "2024-05-01") over the
-    // filename; fall back to the filename, then the version-id prefix.
-    const m = seg.match(/\d{4}-\d{2}-\d{2}/) ?? seg.match(/\d+(?:\.\d+)+/)
-    return m ? m[0] : (seg || v.version_id.slice(0, 8))
+    // Prefer the version number parsed from the WHOLE version_iri (e.g. "v1.62"
+    // out of `…/sio/v1.62/sio-release.owl`, which a last-segment-only parse
+    // misses); fall back to the version IRI itself, then the version-id prefix.
+    return versionToken(v.version_iri) ?? v.version_iri ?? v.version_id.slice(0, 8)
   }
   const readyVersions = data.versions.filter(
     v => !['deprecated', 'pending', 'failed'].includes(v.ingestion_status))
