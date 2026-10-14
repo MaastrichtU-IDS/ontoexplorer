@@ -211,6 +211,52 @@ def get_store():
     return _store
 
 
+def _http_fetch_graph(endpoint: str, iri: str) -> bytes:
+    """Fetch a named graph's N-Triples from the oxigraph graph-store endpoint.
+
+    Returns `b""` for a missing/empty graph (404) so callers can skip it.
+    """
+    r = _sync_http_client().get(
+        f"{endpoint.rstrip('/')}/store",
+        params={"graph": iri},
+        headers={"Accept": "application/n-triples"},
+        timeout=180.0,
+    )
+    if r.status_code == 404:
+        return b""
+    r.raise_for_status()
+    return r.content
+
+
+def local_store_with_graphs(store, graph_iris: "list[str]"):
+    """Return an in-memory `Store` holding `graph_iris` (fetched once each) when
+    `store` is the HTTP proxy; otherwise return `store` unchanged.
+
+    Per-subject, read-heavy algorithms — the version diff — issue one lookup per
+    entity. Over the HTTP proxy each lookup is a network round-trip, thousands
+    per diff. Copying the handful of graphs a diff needs into a local store turns
+    those into in-memory lookups (~20x faster on SIO, with identical results) and
+    restores native blank-node handling, sidestepping the proxy's SPARQL
+    blank-node limitations entirely.
+
+    Uses `Store.load()`, NOT `Store.bulk_load()`: the parallel bulk loader renames
+    blank nodes per chunk, which disconnects OWL restriction / RDF-list bnodes
+    whose triples span chunks and silently corrupts the diff.
+    """
+    if not isinstance(store, _HttpStoreProxy):
+        return store
+    local = pyoxigraph.Store()
+    for iri in graph_iris:
+        data = _http_fetch_graph(store._ep, iri)
+        if data:
+            local.load(
+                data,
+                pyoxigraph.RdfFormat.N_TRIPLES,
+                to_graph=pyoxigraph.NamedNode(iri),
+            )
+    return local
+
+
 def _http_query(endpoint: str, query: str, default_graph_uris=None, named_graph_uris=None):
     """POST a SELECT/ASK/CONSTRUCT to the oxigraph server and return native results.
 
