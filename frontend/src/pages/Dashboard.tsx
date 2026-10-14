@@ -7,6 +7,7 @@ import ReindexWithReasoner from '../components/ReindexWithReasoner'
 import ResolvableBadge from '../components/ResolvableBadge'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useOntologiesInfinite } from '../hooks/useOntologiesInfinite'
+import { versionLabel, compareVersionsDesc } from '../lib/versions'
 
 const INGEST_POLL_MS = 1500
 const INGEST_TRACK_TIMEOUT_MS = 30 * 60_000
@@ -288,12 +289,9 @@ const FIELD_LABEL: React.CSSProperties = {
 
 type CheckState = 'idle' | 'checking' | 'up_to_date' | 'update_queued' | 'no_source_url' | 'error'
 
-function versionLabel(v: OntologyVersion): string {
-  const seg = v.version_iri ? (v.version_iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? v.version_iri) : ''
-  // Prefer a clean version/date token (e.g. "0.2.14", "2024-05-01").
-  const m = seg.match(/\d{4}-\d{2}-\d{2}/) ?? seg.match(/\d+(?:\.\d+)+/)
-  return m ? m[0] : (seg || v.id.slice(0, 8))
-}
+// `versionLabel` now lives in ../lib/versions (shared with the admin table and
+// cross-compare pickers) so a versionless IRI like `…/sio-release.owl` no longer
+// renders as the uninformative "sio-release.owl".
 
 // A clean version/date token from a versionIRI string (for the update badge).
 function shortVersion(versionIri?: string | null): string {
@@ -328,10 +326,101 @@ function DefaultVersionEditor({ ontology, versions }: { ontology: Ontology; vers
         style={{ fontSize: 'var(--font-size-sm)', background: 'var(--bg-secondary)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px', maxWidth: '100%' }}
       >
         <option value="">Automatic (latest by version)</option>
-        {ready.map(v => <option key={v.id} value={v.id}>{versionLabel(v)}</option>)}
+        {ready.map(v => (
+          <option key={v.id} value={v.id}>
+            {versionLabel(v, { isDefault: v.id === ontology.current_version_id })}
+          </option>
+        ))}
       </select>
       {value === '' && <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>auto</span>}
       {error && <span style={{ color: 'var(--error)', fontSize: 11 }}>{error}</span>}
+    </div>
+  )
+}
+
+// Collapsible per-version management: deprecate (soft, reversible) or delete
+// (hard, irreversible) each version. Gated server-side by ontology-edit rights
+// (owner/maintainer/admin). Delete is blocked for the only version — delete the
+// ontology instead.
+function VersionManager({ ontology, versions }: { ontology: Ontology; versions: OntologyVersion[] }) {
+  const qc = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['versions', ontology.id] })
+    qc.invalidateQueries({ queryKey: ['ontologies'] })
+  }
+  const deprecate = useMutation({
+    mutationFn: (vid: string) => api.ontologies.deprecateVersion(ontology.id, vid),
+    onSuccess: () => { invalidate(); setError(null) },
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Deprecate failed'),
+  })
+  const del = useMutation({
+    mutationFn: (vid: string) => api.ontologies.deleteVersion(ontology.id, vid),
+    onSuccess: () => { invalidate(); setConfirmId(null); setError(null) },
+    onError: (e: unknown) => { setConfirmId(null); setError(e instanceof Error ? e.message : 'Delete failed') },
+  })
+
+  if (versions.length === 0) {
+    return <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>—</span>
+  }
+  const onlyOne = versions.length <= 1
+  const sorted = [...versions].sort(compareVersionsDesc)
+  const linkBtn: React.CSSProperties = {
+    background: 'transparent', border: 'none', color: 'var(--text-dim)',
+    fontSize: 'var(--font-size-sm)', cursor: 'pointer', padding: 0, textAlign: 'left',
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', minWidth: 0 }}>
+      <button onClick={() => setOpen(o => !o)} style={linkBtn}>
+        {open ? '▾' : '▸'} {versions.length} version{versions.length === 1 ? '' : 's'}
+      </button>
+      {error && <span style={{ color: 'var(--red-soft)', fontSize: 11 }}>{error}</span>}
+      {open && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+          {sorted.map(v => (
+            <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', fontSize: 'var(--font-size-sm)' }}>
+              <StatusDot status={v.status} />
+              <span style={{ color: 'var(--text)' }}>{versionLabel(v, { isDefault: v.is_default })}</span>
+              {v.status !== 'deprecated' && (
+                <button
+                  onClick={() => deprecate.mutate(v.id)}
+                  disabled={deprecate.isPending}
+                  title="Hide this version from default selection and diffs (reversible)"
+                  style={{ ...linkBtn, color: 'var(--orange)' }}
+                >
+                  deprecate
+                </button>
+              )}
+              {confirmId === v.id ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+                  <button onClick={() => del.mutate(v.id)} disabled={del.isPending}
+                    style={{ color: '#fff', background: 'var(--red)', border: 'none', borderRadius: 20, padding: '1px 10px', fontSize: 'var(--font-size-sm)', fontWeight: 600, cursor: 'pointer' }}>
+                    {del.isPending ? '…' : 'delete permanently'}
+                  </button>
+                  <button onClick={() => setConfirmId(null)} disabled={del.isPending} style={linkBtn}>no</button>
+                </span>
+              ) : (
+                <button
+                  onClick={() => { setError(null); setConfirmId(v.id) }}
+                  disabled={onlyOne}
+                  title={onlyOne ? 'This is the only version — delete the ontology instead' : 'Permanently delete this version and all its data (irreversible)'}
+                  style={{
+                    color: 'var(--red)', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+                    borderRadius: 20, padding: '0 8px', fontSize: 'var(--font-size-sm)', fontWeight: 600,
+                    cursor: onlyOne ? 'not-allowed' : 'pointer', opacity: onlyOne ? 0.5 : 1,
+                  }}
+                >
+                  delete
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -431,6 +520,9 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
 
               <span style={FIELD_LABEL}>default version</span>
               <DefaultVersionEditor ontology={ontology} versions={versionsData?.versions ?? []} />
+
+              <span style={FIELD_LABEL}>versions</span>
+              <VersionManager ontology={ontology} versions={versionsData?.versions ?? []} />
 
               <span style={FIELD_LABEL}>version IRI</span>
               {latest?.version_iri ? (

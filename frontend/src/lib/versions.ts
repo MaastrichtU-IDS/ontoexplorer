@@ -13,6 +13,34 @@ export function versionNums(v: OntologyVersion): number[] {
   return m ? m.map(Number) : []
 }
 
+// Human-readable label for a version dropdown / list. The old Dashboard helper
+// took the last path segment of version_iri, so a versionless IRI like
+// `…/sio-release.owl` rendered as the uninformative "sio-release.owl". Instead:
+// prefer a parsed version token (date or dotted) from version_iri, else fall back
+// to the ingest date, and always disambiguate with the date + triple count (so
+// same-IRI versions differ), suffixing status / "current".
+export function versionLabel(
+  v: OntologyVersion,
+  opts: { isDefault?: boolean } = {},
+): string {
+  const seg = v.version_iri
+    ? (v.version_iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? '')
+    : ''
+  const token = seg.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? seg.match(/\d+(?:\.\d+)+/)?.[0] ?? ''
+
+  const date = v.created_at
+    ? new Date(v.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+    : ''
+  const primary = token || date || v.id.slice(0, 8)
+
+  const parts: string[] = [primary]
+  if (token && date) parts.push(date)   // show the date too when the token is a version
+  if (typeof v.triple_count === 'number') parts.push(`${v.triple_count.toLocaleString()} triples`)
+  if (opts.isDefault) parts.push('current')
+  else if (v.status && v.status !== 'ready') parts.push(v.status)
+  return parts.join(' · ')
+}
+
 // Compare two integer-group tuples like Python tuple comparison, where a missing
 // element counts as lower (so (1,61) < (1,61,0)). Returns <0 if a<b, >0 if a>b.
 function cmpNums(a: number[], b: number[]): number {

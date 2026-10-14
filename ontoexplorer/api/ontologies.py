@@ -3825,17 +3825,28 @@ async def get_justification_result(
 
 # ── Deprecate ──────────────────────────────────────────────────────────────────
 
-@router.delete("/{ontology_id}/{version_id}", summary="Deprecate a version (soft delete)")
+@router.delete("/{ontology_id}/{version_id}",
+               summary="Deprecate a version (soft delete), or purge it (hard delete)")
 async def deprecate_version(
     ontology_id: str,
     version_id: str,
+    purge: bool = Query(
+        False,
+        description="Hard-delete: permanently remove the version and all its artifacts "
+                    "(Postgres rows, Oxigraph graphs, MinIO object, caches). Irreversible. "
+                    "Default false = reversible soft deprecate.",
+    ),
     user: User = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
     version = await _get_version_or_404(db, ontology_id, version_id)
     from ontoexplorer.modules.auth.permissions import can_edit_ontology_id
     if not await can_edit_ontology_id(db, user, ontology_id):
-        raise HTTPException(status_code=403, detail="You are not allowed to deprecate this version")
+        raise HTTPException(status_code=403, detail="You are not allowed to modify this version")
+
+    if purge:
+        return await _purge_version(db, ontology_id, version)
+
     if version.status == "deprecated":
         raise HTTPException(status_code=409, detail="Version is already deprecated")
 
@@ -3890,6 +3901,68 @@ async def deprecate_version(
         pass
 
     return {"detail": f"Version {version_id} deprecated"}
+
+
+async def _purge_version(db: AsyncSession, ontology_id: str, version: OntologyVersion):
+    """Hard-delete a single version: queue its artifacts for removal, then drop the
+    row (every version-FK table is ondelete=CASCADE). Mirrors delete_ontology's
+    purge-before-row-drop ordering and its 503-on-enqueue-failure guard so we never
+    orphan Oxigraph graphs / MinIO objects. Disallows deleting the only version.
+    """
+    version_id = str(version.id)
+
+    all_versions = (await db.execute(
+        select(OntologyVersion).where(OntologyVersion.ontology_id == ontology_id)
+    )).scalars().all()
+    if len(all_versions) <= 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot delete the only version of an ontology. "
+                   "Delete the ontology instead.",
+        )
+
+    # Queue the per-version artifact purge BEFORE dropping the row (Postgres is only
+    # one of five stores). Refuse with 503 rather than orphan if the broker is down —
+    # once the row is gone nothing records which graph/object belonged to it.
+    from ontoexplorer.modules.jobs.tasks import purge_version_artifacts
+    try:
+        purge_version_artifacts.delay(ontology_id, version_id, version.minio_key)
+    except Exception as exc:
+        log.error("purge_dispatch_failed", ontology_id=ontology_id,
+                  version_id=version_id, error=str(exc))
+        raise HTTPException(
+            status_code=503,
+            detail="Cannot delete right now: the cleanup queue is unavailable. "
+                   "Nothing was removed; try again once it recovers.",
+        ) from exc
+
+    # Classification / ELK caches aren't covered by purge_version_artifacts.
+    try:
+        from ontoexplorer.clients.reasoning import invalidate_cache
+        await invalidate_cache(version_id)
+    except Exception:
+        pass  # Non-fatal — TTL will expire anyway
+
+    # If this was the pinned default, re-point to the real predecessor (nicer than
+    # the FK's SET NULL → "automatic"); None if there's no earlier ready version.
+    ontology = await _get_ontology_or_404(db, ontology_id)
+    if ontology.current_version_id == version_id:
+        from ontoexplorer.modules.search.versions import version_predecessor
+        pred = version_predecessor(all_versions, version_id)
+        ontology.current_version_id = str(pred.id) if pred else None
+
+    # Drop the row — imports/jobs/profiles/diffs/comparisons/term_embeddings/
+    # entity_index/hierarchy_edge/inferred_root all cascade.
+    await db.delete(version)
+    await db.commit()
+
+    try:
+        from ontoexplorer.modules.search.versions import invalidate_latest_ready_versions_cache
+        invalidate_latest_ready_versions_cache()
+    except Exception:
+        pass
+
+    return Response(status_code=204)
 
 
 @router.delete("/{ontology_id}", summary="Delete an ontology and all its versions")

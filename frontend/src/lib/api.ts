@@ -1445,6 +1445,12 @@ export const api = {
       }),
     delete: (id: string) =>
       request<void>(`/ontologies/${id}`, { method: 'DELETE' }),
+    // Soft-delete a single version (reversible): sets status="deprecated".
+    deprecateVersion: (oid: string, vid: string) =>
+      request<{ detail: string }>(`/ontologies/${oid}/${vid}`, { method: 'DELETE' }),
+    // Hard-delete a single version (irreversible): purges all its artifacts + rows.
+    deleteVersion: (oid: string, vid: string) =>
+      request<void>(`/ontologies/${oid}/${vid}?purge=true`, { method: 'DELETE' }),
 
     profile: {
       get: (ontologyId: string, versionId: string) =>

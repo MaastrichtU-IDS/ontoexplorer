@@ -67,6 +67,10 @@ export interface OntologyTableProps {
   onVersionEmbed: (versionId: string) => void
   versionIngestStates: Record<string, UpdateState>
   onVersionIngest: (versionId: string) => void
+  versionDeprecateStates: Record<string, UpdateState>
+  onVersionDeprecate: (ontologyId: string, versionId: string) => void
+  versionDeleteStates: Record<string, UpdateState>
+  onVersionDelete: (ontologyId: string, versionId: string) => void
 }
 
 export function OntologyTable({
@@ -83,6 +87,8 @@ export function OntologyTable({
   versionIndexStates, onVersionIndex,
   versionEmbedStates, onVersionEmbed,
   versionIngestStates, onVersionIngest,
+  versionDeprecateStates, onVersionDeprecate,
+  versionDeleteStates, onVersionDelete,
 }: OntologyTableProps) {
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<{ col: SortCol; dir: 'asc' | 'desc' }>({ col: 'ontology', dir: 'asc' })
@@ -334,7 +340,19 @@ export function OntologyTable({
                     />
                   </td>
                   <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
-                    {fmtAge(row.version_created_at)}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                      {fmtAge(row.version_created_at)}
+                      <VersionManageButtons
+                        ontologyId={row.id}
+                        versionId={row.version_id}
+                        isDeprecated={row.ingestion_status === 'deprecated'}
+                        canDelete={row.version_count > 1}
+                        deprecateState={versionDeprecateStates[row.version_id] ?? 'idle'}
+                        deleteState={versionDeleteStates[row.version_id] ?? 'idle'}
+                        onDeprecate={onVersionDeprecate}
+                        onDelete={onVersionDelete}
+                      />
+                    </div>
                   </td>
                 </tr>
                 {expanded.has(row.id) && (
@@ -355,6 +373,10 @@ export function OntologyTable({
                     onVersionDetectProfile={onVersionDetectProfile}
                     versionIngestStates={versionIngestStates}
                     onVersionIngest={onVersionIngest}
+                    versionDeprecateStates={versionDeprecateStates}
+                    onVersionDeprecate={onVersionDeprecate}
+                    versionDeleteStates={versionDeleteStates}
+                    onVersionDelete={onVersionDelete}
                   />
                 )}
                 </React.Fragment>
@@ -395,6 +417,73 @@ interface VersionsSubRowsProps {
   onVersionDetectProfile: (versionId: string) => void
   versionIngestStates: Record<string, UpdateState>
   onVersionIngest: (versionId: string) => void
+  versionDeprecateStates: Record<string, UpdateState>
+  onVersionDeprecate: (ontologyId: string, versionId: string) => void
+  versionDeleteStates: Record<string, UpdateState>
+  onVersionDelete: (ontologyId: string, versionId: string) => void
+}
+
+// Deprecate (soft) + delete (hard, confirm) buttons for a single version. Used on
+// both the parent row (latest version) and each older-version sub-row. Delete is
+// disabled for the only version (the backend 409s — delete the ontology instead).
+function VersionManageButtons({
+  ontologyId, versionId, isDeprecated, canDelete,
+  deprecateState, deleteState, onDeprecate, onDelete,
+}: {
+  ontologyId: string
+  versionId: string
+  isDeprecated: boolean
+  canDelete: boolean
+  deprecateState: UpdateState
+  deleteState: UpdateState
+  onDeprecate: (ontologyId: string, versionId: string) => void
+  onDelete: (ontologyId: string, versionId: string) => void
+}) {
+  const [confirm, setConfirm] = useState(false)
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, flexWrap: 'wrap' }}>
+      {!isDeprecated && (
+        <ActionButton
+          label="deprecate"
+          title="Soft-delete: hide this version from default selection & diffs (reversible)"
+          state={deprecateState}
+          onClick={() => onDeprecate(ontologyId, versionId)}
+        />
+      )}
+      {confirm ? (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+          <button
+            onClick={() => { onDelete(ontologyId, versionId); setConfirm(false) }}
+            style={{ color: '#fff', background: 'var(--red)', border: 'none', borderRadius: 4, padding: '2px 6px', fontSize: 10, cursor: 'pointer' }}
+          >
+            {deleteState === 'queued' ? '…' : 'delete!'}
+          </button>
+          <button
+            onClick={() => setConfirm(false)}
+            style={{ color: 'var(--text-dim)', background: 'none', border: 'none', fontSize: 10, cursor: 'pointer' }}
+          >
+            ✕
+          </button>
+        </span>
+      ) : (
+        <button
+          onClick={() => setConfirm(true)}
+          disabled={!canDelete}
+          title={canDelete
+            ? 'Permanently delete this version and all its data (irreversible)'
+            : 'Only version — delete the ontology instead'}
+          style={{
+            color: deleteState === 'error' ? 'var(--red)' : 'var(--red)',
+            background: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)',
+            borderRadius: 4, padding: '2px 6px', fontSize: 10,
+            cursor: canDelete ? 'pointer' : 'not-allowed', opacity: canDelete ? 1 : 0.4,
+          }}
+        >
+          {deleteState === 'error' ? '✕ retry' : '🗑 delete'}
+        </button>
+      )}
+    </div>
+  )
 }
 
 function VersionsSubRows({
@@ -405,6 +494,8 @@ function VersionsSubRows({
   onReasoned,
   versionProfileStates, onVersionDetectProfile,
   versionIngestStates, onVersionIngest,
+  versionDeprecateStates, onVersionDeprecate,
+  versionDeleteStates, onVersionDelete,
 }: VersionsSubRowsProps) {
   const qc = useQueryClient()
   const { data, isLoading, isError } = useQuery({
@@ -592,7 +683,19 @@ function VersionsSubRows({
             </div>
           </td>
           <td style={{ padding: '6px 10px', textAlign: 'center', color: 'var(--text-dim)', fontSize: 11 }}>
-            {fmtAge(v.version_created_at)}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+              {fmtAge(v.version_created_at)}
+              <VersionManageButtons
+                ontologyId={ontologyId}
+                versionId={v.version_id}
+                isDeprecated={v.ingestion_status === 'deprecated'}
+                canDelete
+                deprecateState={versionDeprecateStates[v.version_id] ?? 'idle'}
+                deleteState={versionDeleteStates[v.version_id] ?? 'idle'}
+                onDeprecate={onVersionDeprecate}
+                onDelete={onVersionDelete}
+              />
+            </div>
           </td>
         </tr>
       ))}
