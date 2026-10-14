@@ -47,17 +47,28 @@ export default function HistoryTab({ ontologyId, shortname, currentVersionId, ve
           onChange={e => setFromVid(e.target.value)}
           style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, padding: '3px 8px', color: 'var(--text)', fontSize: 11, fontFamily: 'monospace' }}
         >
-          {sorted.filter(v => v.id !== toVid).map(v => (
+          {sorted.map(v => (
             <option key={v.id} value={v.id}>{v.version_iri ?? v.id.slice(0, 8)}</option>
           ))}
         </select>
-        <span style={{ color: 'var(--text-dim)' }}>→</span>
+        <button
+          type="button"
+          onClick={() => { setFromVid(toVid); setToVid(fromVid) }}
+          title="Swap from / to"
+          aria-label="Swap from and to versions"
+          style={{
+            background: 'none', border: 'none', color: 'var(--text-dim)',
+            cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '2px 4px',
+          }}
+        >
+          ⇄
+        </button>
         <select
           value={toVid}
           onChange={e => setToVid(e.target.value)}
           style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, padding: '3px 8px', color: 'var(--text)', fontSize: 11, fontFamily: 'monospace' }}
         >
-          {sorted.filter(v => v.id !== fromVid).map(v => (
+          {sorted.map(v => (
             <option key={v.id} value={v.id}>{v.version_iri ?? v.id.slice(0, 8)}</option>
           ))}
         </select>
