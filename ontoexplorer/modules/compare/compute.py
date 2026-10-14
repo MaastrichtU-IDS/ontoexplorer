@@ -6,7 +6,7 @@ and delegates to the existing _run_diff_core helper. Identity is IRI-based.
 import pyoxigraph as ox
 
 from ontoexplorer.clients.oxigraph import graph_iri
-from ontoexplorer.modules.diff.compute import _run_diff_core
+from ontoexplorer.modules.diff.compute import _run_diff_core, materialize_diff_store
 
 
 def run_comparison(
@@ -30,7 +30,8 @@ def run_comparison(
     """
     from_graph = ox.NamedNode(graph_iri(from_ontology_id, from_vid))
     to_graph   = ox.NamedNode(graph_iri(to_ontology_id,   to_vid))
+    local = materialize_diff_store(store, from_graph, to_graph, inferred_status)
     return _run_diff_core(
-        store, from_graph, to_graph,
+        local, from_graph, to_graph,
         inferred_status=inferred_status,
     )

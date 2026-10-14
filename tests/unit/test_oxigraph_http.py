@@ -300,3 +300,75 @@ def test_bnode_index_is_cached(monkeypatch):
     ox._invalidate_bnode_index(g.value)
     list(proxy.quads_for_pattern(obj, None, None, g))
     assert calls["n"] == 2  # rebuilt after invalidation
+
+
+# --- local_store_with_graphs (diff materialization) ------------------------
+# The diff copies the few graphs it needs into a local in-memory store so its
+# per-entity lookups don't each cross the network. The load MUST use Store.load,
+# not bulk_load (the parallel loader renames blank nodes per chunk and
+# disconnects restriction/list bnodes).
+
+def test_local_store_embedded_returned_unchanged():
+    import pyoxigraph
+    from ontoexplorer.clients import oxigraph as ox
+    emb = pyoxigraph.Store()
+    assert ox.local_store_with_graphs(emb, ["urn:g"]) is emb
+
+
+def test_local_store_uses_load_not_bulk_load(monkeypatch):
+    from ontoexplorer.clients import oxigraph as ox
+    calls = {"load": 0, "bulk_load": 0, "to_graphs": []}
+
+    class _FakeStore:
+        def load(self, data, fmt, *, to_graph=None):
+            calls["load"] += 1
+            calls["to_graphs"].append(to_graph.value)
+        def bulk_load(self, *a, **k):
+            calls["bulk_load"] += 1
+
+    monkeypatch.setattr(ox.pyoxigraph, "Store", _FakeStore)
+    monkeypatch.setattr(ox, "_http_fetch_graph", lambda ep, iri: b"<urn:a> <urn:p> <urn:b> .")
+    out = ox.local_store_with_graphs(ox._HttpStoreProxy("http://unused"), ["urn:g1", "urn:g2"])
+    assert isinstance(out, _FakeStore)
+    assert calls["load"] == 2 and calls["bulk_load"] == 0
+    assert calls["to_graphs"] == ["urn:g1", "urn:g2"]
+
+
+def test_local_store_skips_missing_graph(monkeypatch):
+    from ontoexplorer.clients import oxigraph as ox
+    loaded = []
+
+    class _FakeStore:
+        def load(self, data, fmt, *, to_graph=None): loaded.append(to_graph.value)
+        def bulk_load(self, *a, **k): raise AssertionError("bulk_load must not be used")
+
+    monkeypatch.setattr(ox.pyoxigraph, "Store", _FakeStore)
+    monkeypatch.setattr(ox, "_http_fetch_graph", lambda ep, iri: b"" if iri == "urn:empty" else b"<urn:a> <urn:p> <urn:b> .")
+    ox.local_store_with_graphs(ox._HttpStoreProxy("http://unused"), ["urn:empty", "urn:g1"])
+    assert loaded == ["urn:g1"]  # empty graph skipped, no load call
+
+
+def test_local_store_preserves_restriction_bnode(monkeypatch):
+    """Real round-trip through load() keeps a restriction's bnode closure intact
+    (the regression the parallel bulk loader would silently break)."""
+    import pyoxigraph
+    from ontoexplorer.clients import oxigraph as ox
+    _OWL = "http://www.w3.org/2002/07/owl#"
+    nt = (
+        b"<urn:C> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:r .\n"
+        b"_:r <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <" + (_OWL + "Restriction").encode() + b"> .\n"
+        b"_:r <" + (_OWL + "onProperty").encode() + b"> <urn:p> .\n"
+        b"_:r <" + (_OWL + "someValuesFrom").encode() + b"> <urn:D> .\n"
+    )
+    monkeypatch.setattr(ox, "_http_fetch_graph", lambda ep, iri: nt)
+    g = "urn:g"
+    store = ox.local_store_with_graphs(ox._HttpStoreProxy("http://unused"), [g])
+    G = pyoxigraph.NamedNode(g)
+    sc = pyoxigraph.NamedNode("http://www.w3.org/2000/01/rdf-schema#subClassOf")
+    objs = [q.object for q in store.quads_for_pattern(pyoxigraph.NamedNode("urn:C"), sc, None, G)]
+    assert len(objs) == 1 and isinstance(objs[0], pyoxigraph.BlankNode)
+    preds = {q.predicate.value for q in store.quads_for_pattern(objs[0], None, None, G)}
+    assert {_OWL + "onProperty", _OWL + "someValuesFrom", _OWL + "Restriction"} <= (
+        preds | {q.object.value for q in store.quads_for_pattern(objs[0], None, None, G) if isinstance(q.object, pyoxigraph.NamedNode)}
+    )
+    assert _OWL + "onProperty" in preds and _OWL + "someValuesFrom" in preds

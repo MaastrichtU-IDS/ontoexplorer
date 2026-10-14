@@ -4,7 +4,7 @@ from typing import Literal
 
 import pyoxigraph as ox
 
-from ontoexplorer.clients.oxigraph import graph_iri
+from ontoexplorer.clients.oxigraph import graph_iri, local_store_with_graphs
 from ontoexplorer.modules.diff import manchester as _mos
 
 _RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
@@ -496,6 +496,34 @@ def _run_diff_core(
     return summary, diff_data
 
 
+def _inferred_pass_active(inferred_status: dict[str, ReasoningStatus] | None) -> bool:
+    """Whether the inferred-graph pass runs — both sides must be 'ready'.
+    Mirrors `_run_diff_core`'s `do_inferred`; used to decide which graphs to
+    materialize locally."""
+    return bool(
+        inferred_status
+        and inferred_status.get("from_version") == "ready"
+        and inferred_status.get("to_version") == "ready"
+    )
+
+
+def materialize_diff_store(
+    store: ox.Store,
+    from_graph: ox.NamedNode,
+    to_graph: ox.NamedNode,
+    inferred_status: dict[str, ReasoningStatus] | None,
+) -> ox.Store:
+    """Copy exactly the graphs a diff reads into a local in-memory store (when
+    `store` is the HTTP proxy), so `_run_diff_core`'s per-entity lookups don't
+    each cross the network. Includes the two `:inferred` graphs when the inferred
+    pass will run. A no-op for an embedded store. See `local_store_with_graphs`.
+    """
+    iris = [from_graph.value, to_graph.value]
+    if _inferred_pass_active(inferred_status):
+        iris += [f"{from_graph.value}:inferred", f"{to_graph.value}:inferred"]
+    return local_store_with_graphs(store, iris)
+
+
 def run_diff(
     store: ox.Store,
     ontology_id: str,
@@ -512,4 +540,5 @@ def run_diff(
     """
     from_graph = ox.NamedNode(graph_iri(ontology_id, from_vid))
     to_graph   = ox.NamedNode(graph_iri(ontology_id, to_vid))
-    return _run_diff_core(store, from_graph, to_graph, inferred_status=inferred_status)
+    local = materialize_diff_store(store, from_graph, to_graph, inferred_status)
+    return _run_diff_core(local, from_graph, to_graph, inferred_status=inferred_status)

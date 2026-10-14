@@ -772,3 +772,39 @@ async def test_reasoning_completion_requeues_stale_diffs(db_session, monkeypatch
     await _requeue_stale_diffs_for_version(db_session, v1.id)
     assert len(queued) == 1
     assert queued[0] == (v1.id, v2.id, ont.id)
+
+
+# --- diff materialization (local-store speedup) ----------------------------
+
+def test_inferred_pass_active():
+    from ontoexplorer.modules.diff.compute import _inferred_pass_active
+    assert _inferred_pass_active(None) is False
+    assert _inferred_pass_active({"from_version": "ready", "to_version": "ready"}) is True
+    assert _inferred_pass_active({"from_version": "ready", "to_version": "pending"}) is False
+    assert _inferred_pass_active({"from_version": "missing", "to_version": "ready"}) is False
+
+
+def test_materialize_diff_store_graph_selection(monkeypatch):
+    """Only from/to are materialized unless the inferred pass runs, in which case
+    the two :inferred graphs are added too."""
+    from ontoexplorer.modules.diff import compute as c
+    seen = {}
+    sentinel = object()
+
+    def _capture(store, iris):
+        seen["iris"] = iris
+        return sentinel
+
+    monkeypatch.setattr(c, "local_store_with_graphs", _capture)
+    fg = ox.NamedNode("urn:ontology:o:a")
+    tg = ox.NamedNode("urn:ontology:o:b")
+
+    out = c.materialize_diff_store("STORE", fg, tg, None)
+    assert out is sentinel
+    assert seen["iris"] == ["urn:ontology:o:a", "urn:ontology:o:b"]
+
+    c.materialize_diff_store("STORE", fg, tg, {"from_version": "ready", "to_version": "ready"})
+    assert seen["iris"] == [
+        "urn:ontology:o:a", "urn:ontology:o:b",
+        "urn:ontology:o:a:inferred", "urn:ontology:o:b:inferred",
+    ]
