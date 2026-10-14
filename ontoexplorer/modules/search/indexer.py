@@ -5,6 +5,7 @@ import json
 import os
 import re
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import redis
@@ -182,6 +183,34 @@ class _NoopPipe:
     def execute(self): return []
 
 
+_INDEX_QUERY_WORKERS = int(os.getenv("INDEX_QUERY_WORKERS", "8"))
+
+
+def _run_queries(queries: dict[str, str]) -> dict[str, list]:
+    """Run independent SPARQL reads concurrently, each materialized to a list.
+
+    ``build_index`` issues ~a dozen independent per-version graph scans (the
+    entity-type lookups, the individual count, labels, synonyms, definitions,
+    deprecated). Run sequentially they SUM — ~13 s on a large ontology (GO,
+    62k classes) — because each waits for the last. oxigraph-content is
+    many-cored with no CPU limit, so firing them together collapses the
+    wall-clock to the slowest single scan (~2.9x faster, measured on dev, #185).
+
+    Thread-based is the right tool: the work is HTTP round-trip + Rust-side
+    query execution, and both release the GIL, so the Python threads genuinely
+    overlap. Each result is materialized to a list here so the caller's
+    aggregation runs on the main thread, unchanged.
+    """
+    if not queries:
+        return {}
+    workers = min(_INDEX_QUERY_WORKERS, len(queries))
+    if workers <= 1:
+        return {k: list(sparql_query(q)) for k, q in queries.items()}
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="idx-q") as ex:
+        futures = {k: ex.submit(lambda q=q: list(sparql_query(q))) for k, q in queries.items()}
+        return {k: f.result() for k, f in futures.items()}
+
+
 def build_index(version_id: str, ontology_id: str = "", profile: dict | None = None) -> IndexStats:
     """Extract all entities and labels from Oxigraph and write the Redis entity index."""
     from datetime import datetime, timezone
@@ -283,7 +312,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
     # OWL types are checked first; RDFS fallbacks only fill gaps for non-OWL
     # vocabularies (e.g. Schema.org uses rdfs:Class / rdf:Property).
     entities: dict[str, str] = {}  # iri -> "class" | "object_property" | "data_property" | "annotation_property"
-    for entity_type, rdf_type in [
+    _entity_types: list[tuple[str, str]] = [
         ("class",               "http://www.w3.org/2002/07/owl#Class"),
         ("object_property",     "http://www.w3.org/2002/07/owl#ObjectProperty"),
         ("data_property",       "http://www.w3.org/2002/07/owl#DatatypeProperty"),
@@ -298,8 +327,16 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         # it those ontologies index to zero entities and vanish from search (e.g.
         # dpv-pd: 206 skos:Concept, 0 owl terms). Labels already union skos:prefLabel.
         ("concept",             "http://www.w3.org/2004/02/skos/core#Concept"),
-    ]:
-        q = f"""
+    ]
+
+    # #185: the entity-type scans, the individual count, labels, synonyms,
+    # definitions and deprecated are independent scans of this one named graph.
+    # Build every query string once, fetch them all CONCURRENTLY (_run_queries),
+    # then run the (unchanged) aggregation below on the main thread. The per-prop
+    # definition/deprecated queries and the batched label/synonym VALUES queries
+    # are byte-identical to the sequential versions — only the dispatch changed.
+    _entity_qs = [
+        f"""
             SELECT DISTINCT ?entity WHERE {{
                 GRAPH <{named_graph}> {{
                     ?entity a <{rdf_type}> .
@@ -307,20 +344,83 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
                 }}
             }}
         """
-        for sol in sparql_query(q):
-            iri = sol["entity"].value
-            if iri not in entities:
-                entities[iri] = entity_type
-
-    # Collect individuals — gated by threshold to prevent OOM on large ontologies
-    individual_count = 0
+        for _etype, rdf_type in _entity_types
+    ]
     ind_total_q = f"""
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
         SELECT (COUNT(DISTINCT ?entity) AS ?n) WHERE {{
             GRAPH <{named_graph}> {{ ?entity a owl:NamedIndividual . FILTER(isIRI(?entity)) }}
         }}
     """
-    ind_total_rows = list(sparql_query(ind_total_q))
+    label_q: str | None = None
+    if label_props:
+        label_pred_filter = " ".join(f"<{p}>" for p in label_props)
+        label_q = f"""
+            SELECT ?entity ?label (lang(?label) AS ?lang) WHERE {{
+                GRAPH <{named_graph}> {{
+                    VALUES ?pred {{ {label_pred_filter} }}
+                    ?entity ?pred ?label .
+                    FILTER(isIRI(?entity) && isLiteral(?label))
+                }}
+            }}
+        """
+    syn_q: str | None = None
+    if synonym_props:
+        syn_pred_filter = " ".join(f"<{p}>" for p in synonym_props)
+        syn_q = f"""
+            SELECT ?entity ?syn (lang(?syn) AS ?lang) WHERE {{
+                GRAPH <{named_graph}> {{
+                    VALUES ?pred {{ {syn_pred_filter} }}
+                    ?entity ?pred ?syn .
+                    FILTER(isIRI(?entity) && isLiteral(?syn))
+                }}
+            }}
+        """
+    _def_qs = [
+        f"""
+            SELECT ?entity ?def (lang(?def) AS ?lang) WHERE {{
+                GRAPH <{named_graph}> {{
+                    ?entity <{def_prop}> ?def .
+                    FILTER(isIRI(?entity) && isLiteral(?def))
+                }}
+            }}
+        """
+        for def_prop in definition_props
+    ]
+    _dep_qs = [
+        f"""
+            SELECT ?entity WHERE {{
+                GRAPH <{named_graph}> {{
+                    ?entity <{dep_prop}> "true"^^<http://www.w3.org/2001/XMLSchema#boolean> .
+                    FILTER(isIRI(?entity))
+                }}
+            }}
+        """
+        for dep_prop in deprecated_props
+    ]
+
+    _batch: dict[str, str] = {f"ent:{_i}": _q for _i, _q in enumerate(_entity_qs)}
+    _batch["ind_total"] = ind_total_q
+    if label_q is not None:
+        _batch["labels"] = label_q
+    if syn_q is not None:
+        _batch["synonyms"] = syn_q
+    _batch.update({f"def:{_i}": _q for _i, _q in enumerate(_def_qs)})
+    _batch.update({f"dep:{_i}": _q for _i, _q in enumerate(_dep_qs)})
+    _res = _run_queries(_batch)
+
+    # Aggregate entity types — first-wins in _entity_types order (so an OWL type
+    # beats an RDFS/SKOS one for a punned term), identical to the old sequential
+    # loop regardless of the concurrent fetch order.
+    for _i, (entity_type, _rt) in enumerate(_entity_types):
+        for sol in _res[f"ent:{_i}"]:
+            iri = sol["entity"].value
+            if iri not in entities:
+                entities[iri] = entity_type
+
+    # Collect individuals — gated by threshold to prevent OOM on large ontologies
+    individual_count = 0
+    ind_total_rows = _res["ind_total"]
     ind_total = int(ind_total_rows[0]["n"].value) if ind_total_rows else 0
     individual_iris: set[str] = set()
     if ind_total <= IND_INDEX_THRESHOLD:
@@ -424,18 +524,10 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
             if cls_iri not in bucket:
                 bucket.append(cls_iri)
 
-    # Collect deprecated entities
+    # Collect deprecated entities (queries fetched in the concurrent batch above)
     deprecated_iris: set[str] = set()
-    for dep_prop in deprecated_props:
-        dep_q = f"""
-            SELECT ?entity WHERE {{
-                GRAPH <{named_graph}> {{
-                    ?entity <{dep_prop}> "true"^^<http://www.w3.org/2001/XMLSchema#boolean> .
-                    FILTER(isIRI(?entity))
-                }}
-            }}
-        """
-        for sol in sparql_query(dep_q):
+    for _i in range(len(deprecated_props)):
+        for sol in _res[f"dep:{_i}"]:
             deprecated_iris.add(sol["entity"].value)
 
     # Collect labels per entity
@@ -443,17 +535,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
     label_seen: dict[str, set[str]] = {iri: set() for iri in entities}
     lang_counts: dict[str, int] = {}
     if label_props:
-        label_pred_filter = " ".join(f"<{p}>" for p in label_props)
-        label_q = f"""
-            SELECT ?entity ?label (lang(?label) AS ?lang) WHERE {{
-                GRAPH <{named_graph}> {{
-                    VALUES ?pred {{ {label_pred_filter} }}
-                    ?entity ?pred ?label .
-                    FILTER(isIRI(?entity) && isLiteral(?label))
-                }}
-            }}
-        """
-        for sol in sparql_query(label_q):
+        for sol in _res["labels"]:
             iri = sol["entity"].value
             if iri in labels_by_iri:
                 val = sol["label"].value
@@ -470,17 +552,7 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
     synonyms_by_iri: dict[str, list[dict]] = {iri: [] for iri in entities}
     syn_seen: dict[str, set[str]] = {iri: set() for iri in entities}
     if synonym_props:
-        syn_pred_filter = " ".join(f"<{p}>" for p in synonym_props)
-        syn_q = f"""
-            SELECT ?entity ?syn (lang(?syn) AS ?lang) WHERE {{
-                GRAPH <{named_graph}> {{
-                    VALUES ?pred {{ {syn_pred_filter} }}
-                    ?entity ?pred ?syn .
-                    FILTER(isIRI(?entity) && isLiteral(?syn))
-                }}
-            }}
-        """
-        for sol in sparql_query(syn_q):
+        for sol in _res["synonyms"]:
             iri = sol["entity"].value
             if iri in synonyms_by_iri:
                 val = sol["syn"].value
@@ -492,18 +564,10 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
                     synonyms_by_iri[iri].append(entry)
                 lang_counts[lang_tag] = lang_counts.get(lang_tag, 0) + 1
 
-    # Collect definitions per entity (first-match across definition_props)
+    # Collect definitions per entity (first-match across definition_props, in order)
     defs_by_iri: dict[str, list[dict]] = {}
-    for def_prop in definition_props:
-        def_q = f"""
-            SELECT ?entity ?def (lang(?def) AS ?lang) WHERE {{
-                GRAPH <{named_graph}> {{
-                    ?entity <{def_prop}> ?def .
-                    FILTER(isIRI(?entity) && isLiteral(?def))
-                }}
-            }}
-        """
-        for sol in sparql_query(def_q):
+    for _i in range(len(definition_props)):
+        for sol in _res[f"def:{_i}"]:
             iri = sol["entity"].value
             if iri in entities and iri not in defs_by_iri:
                 val = sol["def"].value
@@ -731,6 +795,8 @@ def _build_tree_cache(
     named_graph = graph_iri(ontology_id, version_id)
     _OWL_THING = "http://www.w3.org/2002/07/owl#Thing"
 
+    _RDF_PROPERTY_IRI = "http://www.w3.org/1999/02/22-rdf-syntax-ns#Property"
+
     # Deprecated entities — excluded from tree views
     deprecated_q = f"""
         SELECT DISTINCT ?c WHERE {{
@@ -740,8 +806,6 @@ def _build_tree_cache(
             }}
         }}
     """
-    deprecated_iris = {sol["c"].value for sol in sparql_query(deprecated_q)}
-
     # Classes with a named-class parent — these are NOT roots
     # Includes rdfs:Class for RDFS-only vocabularies (e.g. Schema.org)
     non_root_class_q = f"""
@@ -756,8 +820,6 @@ def _build_tree_cache(
             }}
         }}
     """
-    non_root_classes = {sol["child"].value for sol in sparql_query(non_root_class_q)}
-
     # Classes that have at least one direct subclass
     has_children_class_q = f"""
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -771,9 +833,6 @@ def _build_tree_cache(
             }}
         }}
     """
-    has_children_classes = {sol["parent"].value for sol in sparql_query(has_children_class_q)}
-
-    _RDF_PROPERTY_IRI = "http://www.w3.org/1999/02/22-rdf-syntax-ns#Property"
     # Properties with a named parent — not roots
     # Includes rdf:Property for RDFS-only vocabularies (e.g. Schema.org)
     non_root_prop_q = f"""
@@ -790,8 +849,6 @@ def _build_tree_cache(
             }}
         }}
     """
-    non_root_props = {sol["child"].value for sol in sparql_query(non_root_prop_q)}
-
     # Properties with children
     has_children_prop_q = f"""
         PREFIX owl: <http://www.w3.org/2002/07/owl#>
@@ -807,7 +864,22 @@ def _build_tree_cache(
             }}
         }}
     """
-    has_children_props = {sol["parent"].value for sol in sparql_query(has_children_prop_q)}
+
+    # #185: these five tree-cache scans are independent; fetch them concurrently
+    # (each a full subClass/subProperty scan — ~1.2 s apiece on GO) so they
+    # overlap instead of summing.
+    _tc = _run_queries({
+        "deprecated":    deprecated_q,
+        "non_root_cls":  non_root_class_q,
+        "has_kids_cls":  has_children_class_q,
+        "non_root_prop": non_root_prop_q,
+        "has_kids_prop": has_children_prop_q,
+    })
+    deprecated_iris = {sol["c"].value for sol in _tc["deprecated"]}
+    non_root_classes = {sol["child"].value for sol in _tc["non_root_cls"]}
+    has_children_classes = {sol["parent"].value for sol in _tc["has_kids_cls"]}
+    non_root_props = {sol["child"].value for sol in _tc["non_root_prop"]}
+    has_children_props = {sol["parent"].value for sol in _tc["has_kids_prop"]}
 
     def _primary_label(iri: str) -> str | None:
         labels = labels_by_iri.get(iri, [])
