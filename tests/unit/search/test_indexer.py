@@ -289,3 +289,89 @@ def test_build_index_skips_redis_search_writes_when_gate_off(monkeypatch):
     assert stats.entities and "http://ex.org/Cell" in stats.entities
     # ...but nothing was written to the Redis search index.
     assert r.keys("search:*") == []
+
+
+def test_build_index_concurrent_batch_aggregates_all_arms():
+    """#185: build_index now fetches its independent per-version graph scans
+    (entity types, individual count, labels, synonyms, definitions, deprecated)
+    CONCURRENTLY via _run_queries, then aggregates on the main thread. This
+    asserts the aggregation is unchanged end-to-end: labels attach, synonyms
+    dedupe against labels, definitions attach (first-match), and deprecated
+    entities are dropped from the index but reported in stats — regardless of
+    which concurrent query returns first.
+    """
+    import json
+    r = _make_redis()
+
+    entity_rows = _make_sparql_rows([
+        {"entity": "http://ex.org/Cell"},
+        {"entity": "http://ex.org/Nucleus"},
+        {"entity": "http://ex.org/OldTerm"},
+    ])
+    label_rows = _make_sparql_rows([
+        {"entity": "http://ex.org/Cell", "label": "cell", "lang": "en"},
+        {"entity": "http://ex.org/Nucleus", "label": "nucleus", "lang": "en"},
+    ])
+    syn_rows = _make_sparql_rows([
+        # "cell" duplicates the label -> must be deduped out; "cyton" is kept.
+        {"entity": "http://ex.org/Cell", "syn": "cell", "lang": "en"},
+        {"entity": "http://ex.org/Cell", "syn": "cyton", "lang": "en"},
+    ])
+    def_rows = _make_sparql_rows([
+        {"entity": "http://ex.org/Cell", "def": "the basic unit of life", "lang": "en"},
+    ])
+    dep_rows = _make_sparql_rows([{"entity": "http://ex.org/OldTerm"}])
+
+    def fake_sparql(q):
+        # The build_index deprecated query carries the "true"^^xsd:boolean object
+        # (distinct from the tree-cache deprecated query, which uses str(?d)).
+        if '"true"^^' in q:
+            return dep_rows
+        if "owl#Class" in q:
+            return entity_rows
+        if "?label" in q:
+            return label_rows
+        if "?syn" in q:
+            return syn_rows
+        if "?def" in q:
+            return def_rows
+        return []
+
+    with patch("ontoexplorer.modules.search.indexer._get_redis", return_value=r), \
+         patch("ontoexplorer.modules.search.indexer.sparql_query", side_effect=fake_sparql), \
+         patch("ontoexplorer.modules.search.indexer.graph_iri", return_value="urn:test"), \
+         patch("ontoexplorer.modules.search.indexer._populate_reuse_cache", return_value=None):
+        stats = build_index("v1", "o1")
+
+    # Deprecated OldTerm is dropped from the index but reported in stats.
+    assert stats.class_count == 2
+    assert "http://ex.org/OldTerm" in stats.deprecated
+    assert "http://ex.org/OldTerm" not in stats.entities
+    assert r.hgetall(_iri_key("v1", "http://ex.org/OldTerm")) == {}
+
+    # Cell carries its label, the deduped synonym, and its definition.
+    cell = r.hgetall(_iri_key("v1", "http://ex.org/Cell"))
+    assert cell["primary_label"] == "cell"
+    assert [s["value"] for s in json.loads(cell["synonyms"])] == ["cyton"]
+    assert [d["value"] for d in json.loads(cell["definitions"])] == ["the basic unit of life"]
+
+
+def test_run_queries_returns_keyed_materialized_lists():
+    """_run_queries runs each query and returns results keyed, materialized to
+    lists so the caller aggregates on the main thread (#185)."""
+    from ontoexplorer.modules.search.indexer import _run_queries
+
+    seen = []
+    def fake_sparql(q):
+        seen.append(q)
+        return _make_sparql_rows([{"entity": q}])
+
+    with patch("ontoexplorer.modules.search.indexer.sparql_query", side_effect=fake_sparql):
+        out = _run_queries({"a": "QA", "b": "QB", "c": "QC"})
+
+    assert set(out) == {"a", "b", "c"}
+    assert isinstance(out["a"], list)
+    assert out["a"][0]["entity"].value == "QA"
+    assert sorted(seen) == ["QA", "QB", "QC"]
+    # Empty batch is a no-op (no worker pool spun up).
+    assert _run_queries({}) == {}
