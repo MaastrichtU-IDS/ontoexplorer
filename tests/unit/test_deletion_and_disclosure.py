@@ -110,3 +110,45 @@ async def test_delete_refuses_when_the_cleanup_queue_is_unavailable(
     from sqlalchemy import select
     still_there = await db_session.scalar(select(Ontology).where(Ontology.id == o.id))
     assert still_there is not None, "rows were deleted despite the purge not being queued"
+
+
+def test_purge_removes_per_version_response_caches(monkeypatch):
+    """`purge_version_artifacts` must free every per-version Redis key, including
+    the response-cache families (owl_profile / coverage / reuse / terms_root) that
+    live outside the per-entity search index — and must not touch another
+    version's keys."""
+    import fakeredis
+
+    from ontoexplorer.modules.jobs import tasks
+    from ontoexplorer.modules.owl_profile.cache import owl_profile_cache_key
+    from ontoexplorer.modules.reuse.cache import reuse_cache_key
+    from ontoexplorer.modules.search import indexer
+    from ontoexplorer.modules.search.coverage import coverage_cache_key
+
+    vid, other = "v-doomed", "v-keep"
+    fake = fakeredis.FakeStrictRedis(decode_responses=True)
+
+    def _keys(v):
+        return [
+            owl_profile_cache_key(v), coverage_cache_key(v), reuse_cache_key(v),
+            f"terms_root:{v}:9.9.9:class:200:1:", indexer._stats_cache_key(v),
+            indexer._prefix_key(v),
+        ]
+    for k in _keys(vid) + _keys(other):
+        fake.set(k, "1")
+
+    # Stub the non-Redis stores so the task runs offline; drive the real _drop_redis.
+    monkeypatch.setattr(indexer, "_get_redis", lambda: fake, raising=False)
+    import ontoexplorer.clients.oxigraph as oxi
+    monkeypatch.setattr(oxi, "delete_graph", lambda *a, **k: None, raising=False)
+    import ontoexplorer.modules.metadata.metadata_writer as mw
+
+    async def _noop_meta(*_a, **_k):
+        return None
+    monkeypatch.setattr(mw, "delete_version_metadata", _noop_meta, raising=False)
+
+    result = tasks.purge_version_artifacts("o1", vid, None)
+
+    assert result["redis_index"] == "ok", result
+    assert [fake.exists(k) for k in _keys(vid)] == [0] * 6, "all of the version's caches must be gone"
+    assert all(fake.exists(k) for k in _keys(other)), "another version's caches must survive"
