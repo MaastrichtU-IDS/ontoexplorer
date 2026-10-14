@@ -20,8 +20,14 @@ export default function HistoryTab({ ontologyId, shortname, currentVersionId, ve
   const [fromVid, setFromVid] = useState(defaultFrom)
   const [toVid, setToVid]     = useState(currentVersionId)
 
+  // Both dropdowns list every version, so the two sides can end up equal
+  // (e.g. pick the current version on the left too). A version diffed against
+  // itself is empty and the backend never produces a result, so don't fire the
+  // diff — show a hint instead.
+  const samePair = !!fromVid && fromVid === toVid
+
   const { data: diff, isLoading } = useArbitraryDiff(
-    ontologyId, fromVid || null, toVid || null
+    ontologyId, samePair ? null : (fromVid || null), samePair ? null : (toVid || null)
   )
   const { mutate: generateNarrative, isPending: generatingNarrative } =
     useGenerateNarrative(ontologyId, toVid)
@@ -102,7 +108,11 @@ export default function HistoryTab({ ontologyId, shortname, currentVersionId, ve
         </div>
       )}
 
-      {diff?.status === 'failed' ? (
+      {samePair ? (
+        <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 12 }}>
+          Select two different versions to compare.
+        </div>
+      ) : diff?.status === 'failed' ? (
         <div style={{
           padding: '0.75rem 1rem', margin: '0 14px 10px 14px',
           color: 'var(--red)', fontSize: 12,

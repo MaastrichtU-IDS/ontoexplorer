@@ -21,6 +21,28 @@ function ontologySubtitle(o: Ontology): string {
   return o.title ?? o.label ?? ''
 }
 
+// Relevance rank for a query against one ontology (lower = better). Without this
+// the client-side filter returns matches in raw catalogue order, so an exact hit
+// like "sio" is buried among the hundreds of rows that merely *contain* "sio"
+// (ddsio, …) or match on IRI — i.e. the one you want never shows near the top.
+function ontologyMatchRank(o: Ontology, q: string): number {
+  const name = ontologyDisplayName(o).toLowerCase()
+  const sub = ontologySubtitle(o).toLowerCase()
+  const iri = o.iri.toLowerCase()
+  if (name === q) return 0
+  if (name.startsWith(q)) return 1
+  if (sub.startsWith(q)) return 2
+  if (name.includes(q)) return 3
+  if (sub.includes(q)) return 4
+  if (iri.includes(q)) return 5
+  return 99
+}
+
+// Cap the rendered list: the full catalogue is ~1900 rows, so without a query we
+// show a bounded slice (still scrollable to refine by typing), and with a query
+// we show the top-ranked matches.
+const PICKER_MAX_ROWS = 50
+
 /**
  * "Computing comparison…" banner with an elapsed-time counter so the user
  * gets feedback while the Celery task runs (which can take a minute or more
@@ -64,12 +86,16 @@ function OntologyPicker({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return ontologies
-    return ontologies.filter(o =>
-      ontologyDisplayName(o).toLowerCase().includes(q) ||
-      o.iri.toLowerCase().includes(q) ||
-      ontologySubtitle(o).toLowerCase().includes(q)
-    )
+    if (!q) return ontologies.slice(0, PICKER_MAX_ROWS)
+    return ontologies
+      .map(o => [o, ontologyMatchRank(o, q)] as const)
+      .filter(([, r]) => r < 99)
+      .sort((a, b) =>
+        a[1] - b[1] ||
+        ontologyDisplayName(a[0]).localeCompare(ontologyDisplayName(b[0])),
+      )
+      .slice(0, PICKER_MAX_ROWS)
+      .map(([o]) => o)
   }, [ontologies, query])
 
   // Close when clicking outside.
