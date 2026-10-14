@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, Ontology, OntologyVersion, slugFromIri } from '../lib/api'
-import { versionPredecessor } from '../lib/versions'
+import { versionPredecessor, versionToken } from '../lib/versions'
 import { useArbitraryComparison, useTriggerComparison } from '../hooks/useCompare'
 import { useOntologySearch } from '../hooks/useOntologySearch'
 import DiffResultView from '../components/DiffResultView'
+import CopyLinkButton from '../components/CopyLinkButton'
 
 function ontologyDisplayName(o: Ontology): string {
   return (
@@ -293,6 +294,17 @@ export default function Compare() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // On a shared URL (?from=&to= version ids) the ontology pickers start empty —
+  // the result renders but the controls look blank, which reads as broken. Once
+  // the comparison resolves it carries the two ontology ids, so seed the pickers
+  // from it. The version pickers keep the URL-provided vids (they're valid for
+  // these ontologies, so VersionPicker's reset leaves them alone).
+  useEffect(() => {
+    if (comparison?.status !== 'ready') return
+    if (!fromOnt && comparison.from_ontology_id) setFromOnt(comparison.from_ontology_id)
+    if (!toOnt && comparison.to_ontology_id) setToOnt(comparison.to_ontology_id)
+  }, [comparison, fromOnt, toOnt])
+
   // Smart default: when the user picks the same ontology on both sides and
   // both VersionPickers default to the latest version (so fromVid === toVid),
   // demote the From side to the previous version so the comparison is
@@ -361,6 +373,12 @@ export default function Compare() {
 
   function shortVersionLabel(versionId: string, versions: OntologyVersion[] | undefined): string {
     const v = versions?.find(x => x.id === versionId)
+    // Prefer the version number parsed from the whole IRI (e.g. "v1.62") so the
+    // two sides are distinguishable; a last-segment parse yields the shared
+    // filename ("sio-release.owl") for every SIO version. Fall back to the IRI's
+    // last segment, then the id prefix.
+    const token = versionToken(v?.version_iri)
+    if (token) return token
     if (v?.version_iri) {
       const seg = v.version_iri.replace(/[/#]+$/, '').split(/[/#]/).pop()
       if (seg) return seg
@@ -444,6 +462,17 @@ export default function Compare() {
         >
           {trigger.isPending ? 'Queuing…' : 'Compare'}
         </button>
+        {effectiveFromVid && effectiveToVid && effectiveFromVid !== effectiveToVid && (
+          <CopyLinkButton
+            getUrl={() => {
+              const u = new URL(window.location.href)
+              u.searchParams.set('tab', 'compare')
+              u.searchParams.set('from', effectiveFromVid)
+              u.searchParams.set('to', effectiveToVid)
+              return u.toString()
+            }}
+          />
+        )}
         {fromVid && toVid && fromVid === toVid && (
           <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>
             Pick a different version on each side to compare.

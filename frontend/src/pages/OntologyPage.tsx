@@ -1007,6 +1007,9 @@ export default function OntologyPage() {
   const oid = ontology?.id
 
   const selectedTermIri = searchParams.get('term')
+  // Permalink for the History-tab comparison: ?from=&to= version ids.
+  const comparePairFrom = searchParams.get('from') ?? undefined
+  const comparePairTo = searchParams.get('to') ?? undefined
   const { data: versionStats } = useQuery({
     queryKey: ['version-stats', oid, activeVid],
     queryFn: () => api.ontologies.stats(oid!, activeVid!),
@@ -1036,8 +1039,18 @@ export default function OntologyPage() {
       setDetailTab('coverage')
     } else if (location.hash === '#reuse') {
       setDetailTab('reuse')
+    } else if (location.hash === '#history') {
+      setDetailTab('history')
     }
   }, [location.hash])
+  // A shared compare link (?from=&to=) opens the History tab even without the
+  // #history anchor, so the recipient lands on the diff they were sent.
+  useEffect(() => {
+    if (comparePairFrom && comparePairTo && comparePairFrom !== comparePairTo) {
+      setDetailTab('history')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [leftTab, setLeftTab] = useState<'browse' | 'query'>('browse')
 
   const [hideInverseProps, setHideInverseProps] = useState(true)
@@ -1392,6 +1405,20 @@ export default function OntologyPage() {
                     shortname={ontology?.shortname ?? slug ?? ''}
                     currentVersionId={activeVid}
                     versions={versions}
+                    initialFromVid={comparePairFrom}
+                    initialToVid={comparePairTo}
+                    onPairChange={(f, t) => {
+                      // Merge into the URL (don't clobber other params) and
+                      // replace history so each dropdown change isn't a back-stack
+                      // entry. Only write when actually changed, to avoid loops.
+                      setSearchParams(prev => {
+                        if (prev.get('from') === f && prev.get('to') === t) return prev
+                        const next = new URLSearchParams(prev)
+                        next.set('from', f)
+                        next.set('to', t)
+                        return next
+                      }, { replace: true })
+                    }}
                   />
                 : <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 12 }}>
                     Only one version available — no diff to show.
