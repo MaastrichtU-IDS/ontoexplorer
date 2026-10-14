@@ -53,7 +53,6 @@ export default function CopyLinkButton({
       type="button"
       onClick={copy}
       title={title}
-      aria-label={title}
       style={{
         background: 'var(--bg-secondary)', border: '1px solid var(--border)',
         borderRadius: 4, padding: compact ? '3px 8px' : '6px 12px',
