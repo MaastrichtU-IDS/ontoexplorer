@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, Ontology, OntologyVersion, slugFromIri } from '../lib/api'
 import { versionPredecessor } from '../lib/versions'
 import { useArbitraryComparison, useTriggerComparison } from '../hooks/useCompare'
+import { useOntologySearch } from '../hooks/useOntologySearch'
 import DiffResultView from '../components/DiffResultView'
 
 function ontologyDisplayName(o: Ontology): string {
@@ -12,6 +13,12 @@ function ontologyDisplayName(o: Ontology): string {
     || o.iri.replace(/[/#]+$/, '').split(/[/#]/).pop()?.replace(/\.(owl|ttl|rdf|obo|json|xml|nt)$/i, '')
     || o.iri
   )
+}
+
+// The lean `view=list` projection carries `label` but not `title`; prefer whichever
+// human title is present for the picker's secondary line and filter.
+function ontologySubtitle(o: Ontology): string {
+  return o.title ?? o.label ?? ''
 }
 
 /**
@@ -61,7 +68,7 @@ function OntologyPicker({
     return ontologies.filter(o =>
       ontologyDisplayName(o).toLowerCase().includes(q) ||
       o.iri.toLowerCase().includes(q) ||
-      (o.title ?? '').toLowerCase().includes(q)
+      ontologySubtitle(o).toLowerCase().includes(q)
     )
   }, [ontologies, query])
 
@@ -107,7 +114,7 @@ function OntologyPicker({
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {selected
-            ? `${ontologyDisplayName(selected)}${selected.title ? ` — ${selected.title}` : ''}`
+            ? `${ontologyDisplayName(selected)}${ontologySubtitle(selected) ? ` — ${ontologySubtitle(selected)}` : ''}`
             : 'Select an ontology…'}
         </span>
         <span style={{ color: 'var(--text-dim)', fontSize: 10 }}>{open ? '▴' : '▾'}</span>
@@ -160,8 +167,8 @@ function OntologyPicker({
                   title={isDisabled ? 'Already selected on the other side' : o.iri}
                 >
                   <div style={{ fontFamily: 'monospace' }}>{ontologyDisplayName(o)}</div>
-                  {o.title && (
-                    <div style={{ color: 'var(--text-dim)', fontSize: 10, marginTop: 1 }}>{o.title}</div>
+                  {ontologySubtitle(o) && (
+                    <div style={{ color: 'var(--text-dim)', fontSize: 10, marginTop: 1 }}>{ontologySubtitle(o)}</div>
                   )}
                 </button>
               )
@@ -241,10 +248,11 @@ export default function Compare() {
   const [fromVid, setFromVid] = useState(urlFrom ?? '')
   const [toVid,   setToVid]   = useState(urlTo ?? '')
 
-  const { data: onts } = useQuery({
-    queryKey: ['ontologies', 'all'],
-    queryFn: () => api.ontologies.list(),
-  })
+  // Load the WHOLE catalogue (lean projection, up to 2000) so the picker can
+  // find any ontology — not just the first 50-row page that `api.ontologies.list()`
+  // returns by default (which is why SIO and other later-paged ontologies never
+  // showed up). The OntologyPicker filters this set client-side.
+  const { data: onts } = useOntologySearch('')
   const ontologies: Ontology[] = onts?.ontologies ?? []
 
   const trigger = useTriggerComparison()
