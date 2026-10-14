@@ -49,9 +49,11 @@ test.describe('cross-ontology compare', () => {
     await expect(page.getByRole('button', { name: /semanticscience integrated ontology/i }).first())
       .toBeVisible()
 
-    // The diff labels must carry the version number, not the shared filename.
-    await expect(page.getByText(/sio-release\.owl/i)).toHaveCount(0)
-    await expect(page.getByText(/v1\.6[12]/).first()).toBeVisible()
+    // The diff labels (e.g. "Only in sio@v1.62") must carry the version number,
+    // not the shared filename. The version IRI still appears in the dropdowns, so
+    // scope to the "sio@…" label form the diff output uses.
+    await expect(page.getByText(/sio@sio-release/i)).toHaveCount(0)
+    await expect(page.getByText(/sio@v1\.6[12]/).first()).toBeVisible()
   })
 
   test('manual flow: same ontology twice auto-demotes From, yields a result, and offers a permalink', async ({ page }) => {
