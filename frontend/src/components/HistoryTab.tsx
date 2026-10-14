@@ -1,24 +1,45 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { OntologyVersion } from '../lib/api'
 import { compareVersionsDesc, versionPredecessor } from '../lib/versions'
 import { useArbitraryDiff, useGenerateNarrative } from '../hooks/useDiff'
 import DiffResultView from './DiffResultView'
+import CopyLinkButton from './CopyLinkButton'
 
 interface Props {
   ontologyId: string
   shortname: string
   currentVersionId: string
   versions: OntologyVersion[]
+  // Permalink support: seed the pair from the URL (?from=&to=) and report changes
+  // back so the page can keep the URL in sync for sharing / reload.
+  initialFromVid?: string
+  initialToVid?: string
+  onPairChange?: (fromVid: string, toVid: string) => void
 }
 
-export default function HistoryTab({ ontologyId, shortname, currentVersionId, versions }: Props) {
+export default function HistoryTab({
+  ontologyId, shortname, currentVersionId, versions,
+  initialFromVid, initialToVid, onPairChange,
+}: Props) {
   // Version-aware order (newest release first), not ingest order.
   const sorted = [...versions].sort(compareVersionsDesc)
   // Default the "from" to the real predecessor of the current version.
   const defaultFrom = versionPredecessor(versions, currentVersionId)?.id ?? ''
 
-  const [fromVid, setFromVid] = useState(defaultFrom)
-  const [toVid, setToVid]     = useState(currentVersionId)
+  // Seed from the URL-provided pair when both are valid versions of this
+  // ontology; otherwise fall back to the predecessor-vs-current default.
+  const isValid = (id?: string) => !!id && versions.some(v => v.id === id)
+  const seededFrom = isValid(initialFromVid) ? initialFromVid! : defaultFrom
+  const seededTo   = isValid(initialToVid) ? initialToVid! : currentVersionId
+
+  const [fromVid, setFromVid] = useState(seededFrom)
+  const [toVid, setToVid]     = useState(seededTo)
+
+  // Keep the URL in sync so the current pair is shareable and survives reload.
+  useEffect(() => {
+    if (fromVid && toVid) onPairChange?.(fromVid, toVid)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromVid, toVid])
 
   // Both dropdowns list every version, so the two sides can end up equal
   // (e.g. pick the current version on the left too). A version diffed against
@@ -78,6 +99,20 @@ export default function HistoryTab({ ontologyId, shortname, currentVersionId, ve
             <option key={v.id} value={v.id}>{v.version_iri ?? v.id.slice(0, 8)}</option>
           ))}
         </select>
+        {!samePair && (
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <CopyLinkButton
+              compact
+              getUrl={() => {
+                const u = new URL(window.location.href)
+                u.searchParams.set('from', fromVid)
+                u.searchParams.set('to', toVid)
+                u.hash = 'history'
+                return u.toString()
+              }}
+            />
+          </div>
+        )}
         <button
           onClick={() => generateNarrative()}
           disabled={!isConsecutivePair || !diff?.diff_data || generatingNarrative}
@@ -89,7 +124,9 @@ export default function HistoryTab({ ontologyId, shortname, currentVersionId, ve
                 : ''
           }
           style={{
-            marginLeft: 'auto',
+            // The copy-link group already carries marginLeft:auto when shown
+            // (not a self-diff); only take the auto margin when it isn't there.
+            marginLeft: samePair ? 'auto' : 0,
             background: 'var(--bg-secondary)', border: '1px solid var(--border)',
             borderRadius: 4, padding: '4px 12px',
             color: (!isConsecutivePair || !diff?.diff_data) ? 'var(--text-dim)' : 'var(--text)',
