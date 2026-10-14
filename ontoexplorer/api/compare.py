@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.database import get_db
@@ -68,8 +69,8 @@ async def trigger_compute(
             status_code=400,
             detail="from_version_id and to_version_id must differ",
         )
-    await _get_version_or_404(db, from_version_id)
-    await _get_version_or_404(db, to_version_id)
+    from_version = await _get_version_or_404(db, from_version_id)
+    to_version = await _get_version_or_404(db, to_version_id)
 
     existing = await db.scalar(
         select(OntologyComparison).where(
@@ -95,7 +96,13 @@ async def trigger_compute(
         # here was idempotent: this endpoint has no auth dependency, and N
         # concurrent requests for the same pair queued N comparison tasks onto a
         # single-concurrency worker. The unique constraint collapses the race.
+        # from_ontology_id / to_ontology_id are NOT NULL with no default, so they
+        # MUST be set here — omitting them raised an IntegrityError that the old
+        # bare `except` swallowed, so the row was never inserted AND the dispatch
+        # below was skipped (early return), leaving the comparison stuck at 404.
         row = OntologyComparison(
+            from_ontology_id=from_version.ontology_id,
+            to_ontology_id=to_version.ontology_id,
             version_from_id=from_version_id,
             version_to_id=to_version_id,
             status="pending",
@@ -103,7 +110,9 @@ async def trigger_compute(
         try:
             db.add(row)
             await db.commit()
-        except Exception:
+        except IntegrityError:
+            # Unique-pair race: a concurrent request already claimed this pair and
+            # dispatched its own task, so just report pending (don't double-queue).
             await db.rollback()
             return JSONResponse(status_code=202, content={"status": "pending"})
 
