@@ -343,10 +343,15 @@ def purge_version_artifacts(ontology_id: str, version_id: str, minio_key: str | 
         # (which hold the IRIs), plus owl:Thing and the handful of fixed keys. Keys
         # carry a 30-day TTL, so a miss self-heals eventually — but NOTE: any NEW
         # per-version Redis key builder MUST be added here to free it promptly.
+        # The one exception is terms_root (below), whose key embeds the running app
+        # version and so is cleared by its per-version prefix scan, not reconstructed.
         from ontoexplorer.modules.search.indexer import (
             _get_redis, _iri_key, _type_key, _prefix_key, _individuals_key,
             _meta_key, _deprecated_key, _langs_key, _stats_cache_key,
         )
+        from ontoexplorer.modules.owl_profile.cache import owl_profile_cache_key
+        from ontoexplorer.modules.reuse.cache import reuse_cache_key
+        from ontoexplorer.modules.search.coverage import coverage_cache_key
         _OWL_THING_IRI = "http://www.w3.org/2002/07/owl#Thing"
         _TYPES = ("class", "object_property", "data_property", "annotation_property", "individual", "concept")
         r = _get_redis()
@@ -360,6 +365,9 @@ def purge_version_artifacts(ontology_id: str, version_id: str, minio_key: str | 
             _deprecated_key(version_id), _langs_key(version_id), _stats_cache_key(version_id),
             *(_type_key(version_id, _t) for _t in _TYPES),
             f"embed:attempts:{version_id}",
+            # Per-version API response caches (exact-key builders).
+            owl_profile_cache_key(version_id), coverage_cache_key(version_id),
+            reuse_cache_key(version_id),
         ]
         # UNLINK (non-blocking reclaim) in batches so one version-delete can't issue
         # a single multi-hundred-thousand-arg command.
@@ -367,6 +375,12 @@ def purge_version_artifacts(ontology_id: str, version_id: str, minio_key: str | 
             _batch = keys[_i:_i + 1000]
             if _batch:
                 r.unlink(*_batch)
+        # terms_root cache is the one family we cannot reconstruct by key: its key
+        # embeds the running app version and pagination variant
+        # (`terms_root:{vid}:{app_version}:{type}:{limit}:…`). Drop every variant via
+        # the canonical per-version prefix scan — the same one re-index already runs.
+        from ontoexplorer.modules.hierarchy.roots import invalidate_root_cache
+        invalidate_root_cache(r, version_id)
 
     _step("redis_index", _drop_redis)
 
