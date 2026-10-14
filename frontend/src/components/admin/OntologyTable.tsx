@@ -19,6 +19,23 @@ import {
 
 const REASONING_ORDER: Record<string, number> = { not_started: 0, running: 1, ready: 2 }
 
+// Relevance rank for an active search (lower = better). Used as the PRIMARY sort
+// key while searching, so an exact hit like "sio" floats to the top instead of
+// landing wherever it falls under the column sort (alphabetical by default).
+function searchRank(r: AdminOntologyEntry, q: string): number {
+  const name = ontologyDisplayName(r).toLowerCase()
+  const short = (r.shortname ?? '').toLowerCase()
+  const label = (r.label ?? '').toLowerCase()
+  const iri = r.iri.toLowerCase()
+  if (short === q || name === q) return 0
+  if (name.startsWith(q) || short.startsWith(q)) return 1
+  if (label.startsWith(q)) return 2
+  if (name.includes(q) || short.includes(q)) return 3
+  if (label.includes(q)) return 4
+  if (iri.includes(q)) return 5
+  return 9
+}
+
 type SortCol = 'ontology' | 'triples' | 'ingestion' | 'indexed' | 'embeddings' | 'reasoning' | 'updated'
 
 export interface OntologyTableProps {
@@ -109,6 +126,13 @@ export function OntologyTable({
   const someSelected = selectedInFiltered > 0 && !allSelected
 
   const sorted = [...filtered].sort((a, b) => {
+    // While searching, relevance wins over the column sort so the best match is
+    // first; the chosen column still orders rows within the same relevance tier.
+    if (search) {
+      const q = search.toLowerCase()
+      const rd = searchRank(a, q) - searchRank(b, q)
+      if (rd !== 0) return rd
+    }
     let cmp = 0
     switch (sort.col) {
       case 'ontology':   cmp = ontologyDisplayName(a).localeCompare(ontologyDisplayName(b)); break
