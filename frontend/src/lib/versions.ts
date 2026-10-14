@@ -13,28 +13,38 @@ export function versionNums(v: OntologyVersion): number[] {
   return m ? m.map(Number) : []
 }
 
-// Human-readable label for a version dropdown / list. The old Dashboard helper
-// took the last path segment of version_iri, so a versionless IRI like
-// `…/sio-release.owl` rendered as the uninformative "sio-release.owl". Instead:
-// prefer a parsed version token (date or dotted) from version_iri, else fall back
-// to the ingest date, and always disambiguate with the date + triple count (so
-// same-IRI versions differ), suffixing status / "current".
+// Extract a version number from a version_iri, scanning the WHOLE IRI — not just
+// the last path segment. SIO's version_iri is
+// `…/sio/v1.62/sio-release.owl`: the number lives in the path, so looking only at
+// the trailing `sio-release.owl` misses it. Prefer a release date
+// (`2024-05-01`), then a dotted version with an optional `v` prefix (`v1.62`,
+// `1.34.0`). Returns null when the IRI carries no version token at all.
+export function versionToken(versionIri: string | null | undefined): string | null {
+  if (!versionIri) return null
+  const iri = versionIri.replace(/[/#]+$/, '')
+  return iri.match(/\d{4}-\d{2}-\d{2}/)?.[0]
+    ?? iri.match(/v?\d+(?:\.\d+)+/i)?.[0]
+    ?? null
+}
+
+// Human-readable label for a version dropdown / list. Prefer the version number
+// parsed from version_iri (e.g. "v1.62"); when the IRI carries none, fall back to
+// the version IRI itself rather than an uninformative filename. Then disambiguate
+// with the ingest date + triple count (so same-number versions still differ),
+// suffixing status / "current".
 export function versionLabel(
   v: OntologyVersion,
   opts: { isDefault?: boolean } = {},
 ): string {
-  const seg = v.version_iri
-    ? (v.version_iri.replace(/[/#]+$/, '').split(/[/#]/).pop() ?? '')
-    : ''
-  const token = seg.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? seg.match(/\d+(?:\.\d+)+/)?.[0] ?? ''
+  const token = versionToken(v.version_iri)
+  const primary = token || v.version_iri || v.id.slice(0, 8)
 
   const date = v.created_at
     ? new Date(v.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
     : ''
-  const primary = token || date || v.id.slice(0, 8)
 
   const parts: string[] = [primary]
-  if (token && date) parts.push(date)   // show the date too when the token is a version
+  if (token && date) parts.push(date)   // show the date too when the primary is a version number
   if (typeof v.triple_count === 'number') parts.push(`${v.triple_count.toLocaleString()} triples`)
   if (opts.isDefault) parts.push('current')
   else if (v.status && v.status !== 'ready') parts.push(v.status)
