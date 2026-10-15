@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { api, CoverageEntityType, CoverageRecord } from '../lib/api'
+import { formatTimestamp } from '../lib/versions'
 
 const TYPE_LABELS: Record<CoverageEntityType, string> = {
   class:               'Classes',
@@ -92,7 +93,7 @@ export default function CoverageSection({ ontologyId, versionId }: {
       )}
 
       <p style={{ marginTop: '0.75rem', color: 'var(--text-muted)', fontSize: 11 }}>
-        Last computed: {new Date(record.indexed_at).toLocaleString()}
+        Last computed: {formatTimestamp(record.indexed_at) ?? 'unknown'}
       </p>
     </section>
   )
