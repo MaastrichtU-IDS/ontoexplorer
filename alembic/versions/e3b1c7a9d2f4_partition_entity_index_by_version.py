@@ -105,9 +105,9 @@ def _swap_into_place(staging: str) -> None:
     constraints and indexes from the temp names to canonical. Sub-second; run last."""
     op.execute("DROP TABLE entity_index")
     op.execute(f"ALTER TABLE {staging} RENAME TO entity_index")
-    # PK: constraint and its backing index are separate catalog entries — rename both.
+    # Renaming a PRIMARY KEY constraint also renames its backing index (Postgres), so
+    # this single statement gives both the constraint and its index the canonical name.
     op.execute(f"ALTER TABLE entity_index RENAME CONSTRAINT {staging}_pkey TO entity_index_pkey")
-    op.execute(f"ALTER INDEX {staging}_pkey RENAME TO entity_index_pkey")
     op.execute(f"ALTER TABLE entity_index RENAME CONSTRAINT {staging}_version_fk TO entity_index_version_id_fkey")
     op.execute(f"ALTER TABLE entity_index RENAME CONSTRAINT {staging}_ontology_fk TO entity_index_ontology_id_fkey")
     for canonical, _ in _INDEXES:
