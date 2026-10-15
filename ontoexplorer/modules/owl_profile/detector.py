@@ -53,32 +53,70 @@ _IRI_RE = re.compile(r"<(https?://[^>]+)>")
 # Shorten `<http://…/Local>` / `<http://…#Local>` to `Local` for readable details.
 _SHORTEN_RE = re.compile(r"<[^>]*[/#]([^/#>]+)>")
 
+# horned-profile Violation subclasses expose the offending thing on different
+# attributes depending on the violation kind. Each str()s usefully: an entity
+# attribute (iri / ope / ap / dp / datatype) to a bare IRI, and an expression
+# attribute (axiom / ce / dr) to OWL functional syntax (e.g.
+# `SubClassOf(<A> ObjectUnionOf(<B> <C>))`). We prefer the bare entity IRI (the
+# `UseOfUndeclared*` / reserved / punning violations carry only `iri`, which the
+# old code — reading only `axiom` — missed, so they all rendered as the generic
+# message), then the full axiom for the context-bearing kinds.
+_COMPONENT_ATTRS = ("iri", "axiom", "ce", "ope", "dr", "ap", "dp", "datatype")
+
 
 def _shorten(text: str) -> str:
     return _SHORTEN_RE.sub(r"\1", text)
+
+
+def _local_name(iri: str) -> str:
+    """`http://purl.obolibrary.org/obo/GO_0008150` -> `GO_0008150`."""
+    s = iri.rstrip("/#")
+    for sep in ("#", "/"):
+        if sep in s:
+            s = s.rsplit(sep, 1)[-1]
+    return s or iri
 
 
 def _serialize_violation(v: object) -> dict:
     """Map a horned-profile Violation to the payload shape the UI expects
     ({axiom_type, subject_iri, details, manchester}). `manchester` is left empty
     — the horned-owl model isn't rendered to Manchester tokens here — so the UI
-    falls back to `details` (the offending axiom, IRIs shortened to local names).
+    shows `details`: the specific offending entity (local name) or axiom
+    (functional syntax, IRIs shortened), not just the generic violation message.
     """
     axiom_type = type(v).__name__
-    axiom_str = ""
+    message = ""
     try:
-        axiom = getattr(v, "axiom", None)
-        axiom_str = str(axiom) if axiom is not None else str(v)
+        message = str(getattr(v, "message", "") or "")
     except Exception:
-        axiom_str = str(v)
-    subject_iri = ""
-    m = _IRI_RE.search(axiom_str)
-    if m:
-        subject_iri = m.group(1)
+        message = ""
+
+    focus = ""
+    for attr in _COMPONENT_ATTRS:
+        comp = getattr(v, attr, None)
+        if comp is None:
+            continue
+        try:
+            focus = str(comp).strip()
+        except Exception:
+            focus = ""
+        if focus:
+            break
+
+    is_bare_iri = focus.startswith(("http://", "https://")) and " " not in focus
+    if is_bare_iri:
+        subject_iri = focus
+        details = _local_name(focus)
+    else:
+        m = _IRI_RE.search(focus)
+        subject_iri = m.group(1) if m else ""
+        details = _shorten(focus)[:300]
+    if not details:
+        details = message
     return {
         "axiom_type": axiom_type,
         "subject_iri": subject_iri,
-        "details": _shorten(axiom_str)[:300],
+        "details": details,
         "manchester": [],
     }
 
