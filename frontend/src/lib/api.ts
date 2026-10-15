@@ -813,7 +813,9 @@ export interface ProfileResult {
   in_profile: boolean
   total_violations: number
   violations_by_axiom_type: Record<string, number>
-  sample_violations: ProfileSampleViolation[]
+  // Removed from the cached payload (issue #359): the per-instance list could be
+  // tens of thousands of rows. Full detail now via the maintainer detect CLI.
+  sample_violations?: ProfileSampleViolation[]
 }
 
 /** Language/expressivity tier — a coarser axis than the OWL 2 profile. */

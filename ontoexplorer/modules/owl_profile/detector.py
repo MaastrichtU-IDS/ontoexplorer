@@ -43,43 +43,69 @@ _FORMAT_MAP: dict[str, str | None] = {
     "owl": "rdf", "rdf": "rdf", "rdfxml": "rdf", "rdf-xml": "rdf", "xml": "rdf",
 }
 
-# Per profile, keep a bounded sample of full violation objects (the histogram
-# below counts them all, so `total_violations` and the per-type breakdown stay
-# exact). Without this a profile with tens of thousands of violations — MONDO's
-# RL check finds ~40k — would bloat the Redis payload. The UI shows the first 10.
-_SAMPLE_LIMIT = 25
-
 _IRI_RE = re.compile(r"<(https?://[^>]+)>")
 # Shorten `<http://…/Local>` / `<http://…#Local>` to `Local` for readable details.
 _SHORTEN_RE = re.compile(r"<[^>]*[/#]([^/#>]+)>")
+
+# horned-profile Violation subclasses expose the offending thing on different
+# attributes. Each str()s usefully: an entity attribute (iri / ope / ap / dp /
+# datatype) to a bare IRI, an expression attribute (axiom / ce / dr) to OWL
+# functional syntax (e.g. `SubClassOf(<A> ObjectUnionOf(<B> <C>))`). We prefer the
+# bare entity IRI (the `UseOfUndeclared*` / reserved / punning violations carry
+# only `iri`), then the full axiom for the context-bearing kinds.
+_COMPONENT_ATTRS = ("iri", "axiom", "ce", "ope", "dr", "ap", "dp", "datatype")
 
 
 def _shorten(text: str) -> str:
     return _SHORTEN_RE.sub(r"\1", text)
 
 
+def _local_name(iri: str) -> str:
+    """`http://purl.obolibrary.org/obo/GO_0008150` -> `GO_0008150`."""
+    s = iri.rstrip("/#")
+    for sep in ("#", "/"):
+        if sep in s:
+            s = s.rsplit(sep, 1)[-1]
+    return s or iri
+
+
 def _serialize_violation(v: object) -> dict:
-    """Map a horned-profile Violation to the payload shape the UI expects
-    ({axiom_type, subject_iri, details, manchester}). `manchester` is left empty
-    — the horned-owl model isn't rendered to Manchester tokens here — so the UI
-    falls back to `details` (the offending axiom, IRIs shortened to local names).
+    """Map a horned-profile Violation to {axiom_type, subject_iri, details}, naming
+    the SPECIFIC offending entity (local name) or axiom (functional syntax, IRIs
+    shortened) — not just the generic violation message. Used by the full-report
+    CLI (`python -m ontoexplorer.modules.owl_profile.detect`); the cached payload
+    keeps only counts (see detect_profiles).
     """
     axiom_type = type(v).__name__
-    axiom_str = ""
+    message = ""
     try:
-        axiom = getattr(v, "axiom", None)
-        axiom_str = str(axiom) if axiom is not None else str(v)
+        message = str(getattr(v, "message", "") or "")
     except Exception:
-        axiom_str = str(v)
-    subject_iri = ""
-    m = _IRI_RE.search(axiom_str)
-    if m:
-        subject_iri = m.group(1)
+        message = ""
+
+    focus = ""
+    for attr in _COMPONENT_ATTRS:
+        comp = getattr(v, attr, None)
+        if comp is None:
+            continue
+        try:
+            focus = str(comp).strip()
+        except Exception:
+            focus = ""
+        if focus:
+            break
+
+    if focus.startswith(("http://", "https://")) and " " not in focus:
+        subject_iri = focus
+        details = _local_name(focus)
+    else:
+        m = _IRI_RE.search(focus)
+        subject_iri = m.group(1) if m else ""
+        details = _shorten(focus)[:300]
     return {
         "axiom_type": axiom_type,
         "subject_iri": subject_iri,
-        "details": _shorten(axiom_str)[:300],
-        "manchester": [],
+        "details": details or message,
     }
 
 
@@ -98,31 +124,57 @@ def _load_ontology(content: str | bytes, fmt: str | None):
     return pyhornedowl.open_ontology_from_string(text)
 
 
+def _by_type(violations) -> dict[str, int]:
+    by_type: dict[str, int] = {}
+    for v in violations:
+        t = type(v).__name__
+        by_type[t] = by_type.get(t, 0) + 1
+    return by_type
+
+
 def detect_profiles(content: str | bytes, fmt: str | None = None) -> dict:
-    """Classify *content* against OWL 2 EL/QL/RL/DL.
+    """Classify *content* against OWL 2 EL/QL/RL/DL (cached summary).
 
     Returns `{ "el": {...}, "rl": {...}, "ql": {...}, "dl": {...} }` where each
-    entry is `{in_profile, total_violations, violations_by_axiom_type, sample_violations}`.
+    entry is `{in_profile, total_violations, violations_by_axiom_type}`. The
+    per-instance violation list is intentionally NOT included — it can be tens of
+    thousands of rows (MONDO's RL check ≈ 40k) and would bloat the Redis payload
+    read on every page load; the UI shows the type histogram, and the full
+    per-entity list is available via `full_violations` / the detect CLI.
     Raises on a load/parse failure so the caller can log and skip caching.
     """
     from pyhornedowl import profile as P
 
     ont = _load_ontology(content, fmt)
-
     payload: dict = {}
     for key in PROFILE_NAMES:
         report = P.check_profile(ont, _CHECK[key])
-        violations = report.violations
-        by_type: dict[str, int] = {}
-        for v in violations:
-            t = type(v).__name__
-            by_type[t] = by_type.get(t, 0) + 1
         payload[key] = {
             "in_profile": bool(report.conformant),
-            "total_violations": len(violations),
-            "violations_by_axiom_type": by_type,
-            "sample_violations": [
-                _serialize_violation(v) for v in violations[:_SAMPLE_LIMIT]
-            ],
+            "total_violations": len(report.violations),
+            "violations_by_axiom_type": _by_type(report.violations),
         }
     return payload
+
+
+def full_violations(
+    content: str | bytes, fmt: str | None = None,
+    profiles: tuple[str, ...] = PROFILE_NAMES,
+) -> dict:
+    """Like detect_profiles but with EVERY violation serialized (uncapped), for the
+    full-report CLI. Not cached. Each entry adds `violations: [...]` naming the
+    specific entity/axiom of each violation.
+    """
+    from pyhornedowl import profile as P
+
+    ont = _load_ontology(content, fmt)
+    out: dict = {}
+    for key in profiles:
+        report = P.check_profile(ont, _CHECK[key])
+        out[key] = {
+            "in_profile": bool(report.conformant),
+            "total_violations": len(report.violations),
+            "violations_by_axiom_type": _by_type(report.violations),
+            "violations": [_serialize_violation(v) for v in report.violations],
+        }
+    return out
