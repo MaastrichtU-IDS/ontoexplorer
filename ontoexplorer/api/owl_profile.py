@@ -21,7 +21,9 @@ router = APIRouter(prefix="/api/v1", tags=["owl-profile"])
     "/ontologies/{ontology_id}/{version_id}/owl-profile",
     summary="Per-version OWL 2 profile classification",
 )
-async def get_version_profile(ontology_id: str, version_id: str):
+async def get_version_profile(
+    ontology_id: str, version_id: str, db: AsyncSession = Depends(get_db)
+):
     r = _get_redis()
     raw = await asyncio.to_thread(r.get, owl_profile_cache_key(version_id))
     if raw is None:
@@ -29,7 +31,18 @@ async def get_version_profile(ontology_id: str, version_id: str):
             status_code=404,
             detail="OWL profile not computed — reindex pending",
         )
-    return json.loads(raw)
+    payload = json.loads(raw)
+    # Profile payloads written before the indexed_at fix lack the key; the UI's
+    # "Last computed" caption would otherwise read "unknown" for every existing
+    # ontology. Fall back to when the version was indexed (its profile is computed
+    # during indexing, so this is the right timestamp) rather than mass-reindexing.
+    if not payload.get("indexed_at"):
+        indexed_at = await db.scalar(
+            select(OntologyVersion.indexed_at).where(OntologyVersion.id == version_id)
+        )
+        if indexed_at is not None:
+            payload["indexed_at"] = indexed_at.isoformat()
+    return payload
 
 
 @router.get("/owl-profile/public", summary="Fleet OWL profile rollup (no auth)")
