@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, ManchesterToken, OwlProfileRecord, ProfileResult } from '../lib/api'
+import { formatTimestamp } from '../lib/versions'
 
 // ---------------------------------------------------------------------------
 // Inline Manchester renderer (lighter-weight than the full ManchesterFrame)
@@ -407,7 +408,7 @@ export default function OwlProfileSection({
         data-testid="last-computed"
         style={{ marginTop: '0.75rem', color: 'var(--text-muted)', fontSize: 11 }}
       >
-        Last computed: {new Date(record.indexed_at).toLocaleString()}
+        Last computed: {formatTimestamp(record.indexed_at) ?? 'unknown'}
       </p>
     </section>
   )

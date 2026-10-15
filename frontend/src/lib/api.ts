@@ -832,7 +832,9 @@ export interface OwlProfileRecord {
   ql: ProfileResult
   dl: ProfileResult
   language?: LanguageResult
-  indexed_at: string
+  // Older cached profile payloads were written without this; the UI formats it
+  // defensively (formatTimestamp) and shows "unknown" when absent.
+  indexed_at?: string | null
 }
 
 export interface OwlProfileFleetEntry {

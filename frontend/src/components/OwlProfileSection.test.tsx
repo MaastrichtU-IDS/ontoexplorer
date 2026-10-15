@@ -115,6 +115,18 @@ test('last computed footer renders formatted indexed_at', async () => {
   expect(footer).toMatch(/2026/)
 })
 
+test('last computed footer shows "unknown" (not "Invalid Date") when indexed_at is missing', async () => {
+  // Older cached owl_profile payloads were written without indexed_at.
+  const { indexed_at: _omit, ...noDate } = RECORD
+  // Cast: at runtime the payload genuinely lacks indexed_at (the bug under test);
+  // the mock's inferred type still expects the full record.
+  versionFn.mockImplementation(() => Promise.resolve(noDate as typeof RECORD))
+  wrap(<OwlProfileSection ontologyId="o1" versionId="v1" />)
+  const footer = await screen.findByTestId('last-computed')
+  expect(footer.textContent || '').toMatch(/unknown/)
+  expect(footer.textContent || '').not.toMatch(/Invalid Date/)
+})
+
 test('renders Manchester tokens when manchester field is present', async () => {
   const user = userEvent.setup()
   wrap(<OwlProfileSection ontologyId="o1" versionId="v1" />)

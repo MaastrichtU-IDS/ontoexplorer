@@ -8,6 +8,17 @@ import type { OntologyVersion } from './api'
 
 const NOT_READY = ['pending', 'failed', 'deprecated']
 
+// Safe timestamp formatter for "Last computed" captions. Returns a localized
+// date-time string, or null when the value is missing or unparseable — older
+// cached payloads (e.g. the owl_profile cache) omit `indexed_at`, and
+// `new Date(undefined).toLocaleString()` renders the literal "Invalid Date".
+// Callers show a fallback instead.
+export function formatTimestamp(value: string | null | undefined): string | null {
+  if (!value) return null
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? null : d.toLocaleString()
+}
+
 export function versionNums(v: OntologyVersion): number[] {
   const m = (v.version_iri ?? '').match(/\d+/g)
   return m ? m.map(Number) : []

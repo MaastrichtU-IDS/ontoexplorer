@@ -1384,6 +1384,10 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                 _payload["language"] = detect_language(
                     _gstore(), graph_iri=_giri(ontology_id, version_id)
                 )
+                # Stamp when the profile was computed so the UI's "Last computed"
+                # caption has a date (coverage already carries indexed_at).
+                from datetime import datetime as _pdt, timezone as _ptz
+                _payload["indexed_at"] = _pdt.now(_ptz.utc).isoformat()
                 _get_redis().setex(
                     owl_profile_cache_key(version_id), _SEARCH_TTL, _json.dumps(_payload)
                 )
@@ -2141,6 +2145,8 @@ def refresh_owl_profile(version_id: str, ontology_id: str) -> dict:
     payload = detect_profiles(store, graph_iri=g,
                               ontology_id=ontology_id, version_id=version_id)
     payload["language"] = detect_language(store, graph_iri=g)
+    from datetime import datetime as _pdt, timezone as _ptz
+    payload["indexed_at"] = _pdt.now(_ptz.utc).isoformat()
     _get_redis().setex(owl_profile_cache_key(version_id), _SEARCH_TTL, _json.dumps(payload))
     log.info("owl_profile_refresh_done", version_id=version_id)
     return {"status": "done", "version_id": version_id,
