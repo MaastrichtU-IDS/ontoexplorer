@@ -245,6 +245,9 @@ export interface Ontology {
   /** Whether the IRI dereferences to RDF via content negotiation (null = unchecked). */
   resolvable?: boolean | null
   resolve_checked_at?: string | null
+  /** Whether the current viewer may edit this ontology (owner / maintainer / admin).
+   *  Drives maintainer-only UI (e.g. the OWL-profile full-report command). */
+  can_edit?: boolean
   /** Set by the catalogue update poll: a newer release is available upstream but
    *  has not been ingested (auto-ingest is opt-in via auto_sync). */
   update_available?: boolean | null

@@ -1081,7 +1081,11 @@ async def list_ontologies(
 # ── Single ontology metadata ───────────────────────────────────────────────────
 
 @router.get("/{ontology_id}", summary="Ontology metadata (by id or shortname)")
-async def get_ontology(ontology_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+async def get_ontology(
+    ontology_id: str, request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: User | None = Depends(get_current_user),
+):
     # Accept either a UUID or a shortname slug so the ontology page resolves
     # server-side (the SPA links by shortname; a large catalogue no longer needs
     # to be fully client-side loaded to open a page).
@@ -1092,6 +1096,14 @@ async def get_ontology(ontology_id: str, request: Request, db: AsyncSession = De
             select(User).where(User.id == ontology.owner_id).options(selectinload(User.oauth_accounts))
         )).scalar_one_or_none()
     data = _ontology_dict(ontology, owner)
+    # Whether the current viewer may edit this ontology (owner / maintainer / admin).
+    # Used by the SPA to show maintainer-only affordances (e.g. the OWL-profile full
+    # report command). Transient per-viewer field — excluded from the RDF conneg.
+    can_edit = False
+    if user is not None:
+        from ontoexplorer.modules.auth.permissions import can_edit_ontology
+        can_edit = await can_edit_ontology(db, user, ontology)
+    data["can_edit"] = can_edit
     return _negotiate_response(request, data, subject_iri=ontology.iri)
 
 
@@ -4101,7 +4113,8 @@ def _negotiate_response(request: Request, data: dict, subject_iri: str | None = 
         g = rdflib.Graph()
         subj = URIRef(subject_iri or data.get("iri", "urn:unknown"))
         for k, v in data.items():
-            if v is not None:
+            # can_edit is a per-viewer UI flag, not ontology metadata — keep it out of RDF.
+            if v is not None and k != "can_edit":
                 g.add((subj, DCTERMS[k], Literal(str(v))))
         fmt = "turtle" if "text/turtle" in accept else "xml"
         ct = "text/turtle" if fmt == "turtle" else "application/rdf+xml"

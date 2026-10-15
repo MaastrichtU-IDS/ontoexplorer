@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, within, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import OwlProfileSection from './OwlProfileSection'
@@ -130,4 +130,21 @@ test('last computed footer shows "unknown" (not "Invalid Date") when indexed_at 
 // The per-instance "sample violations" table was removed (issue #359): it was
 // noisy and only a capped sample. The violations-by-axiom-type histogram remains
 // (asserted above); full per-entity detail moves to the maintainer full-report
-// command.
+// command (below).
+
+test('full-report command is hidden for non-maintainers', async () => {
+  wrap(<OwlProfileSection ontologyId="o1" versionId="v1" />)
+  await screen.findByTestId('last-computed')
+  expect(screen.queryByTestId('full-report-command')).toBeNull()
+})
+
+test('full-report command is shown to maintainers with the pinned image tag', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    ok: true, json: () => Promise.resolve({ git_ref: '0.4.153', version: '0.3.97' }),
+  }))
+  wrap(<OwlProfileSection ontologyId="o1" versionId="v1" canEdit />)
+  const block = await screen.findByTestId('full-report-command')
+  await waitFor(() => expect(block.textContent).toMatch(/ontoexplorer-api:0\.4\.153/))
+  expect(block.textContent).toMatch(/owl_profile\.detect/)
+  vi.restoreAllMocks()
+})
