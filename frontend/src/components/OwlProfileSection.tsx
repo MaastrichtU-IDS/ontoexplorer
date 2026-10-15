@@ -1,34 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api, ManchesterToken, OwlProfileRecord, ProfileResult } from '../lib/api'
+import { api, OwlProfileRecord, ProfileResult } from '../lib/api'
 import { formatTimestamp } from '../lib/versions'
-
-// ---------------------------------------------------------------------------
-// Inline Manchester renderer (lighter-weight than the full ManchesterFrame)
-// ---------------------------------------------------------------------------
-
-function ManchesterInline({ tokens }: { tokens: ManchesterToken[] }) {
-  return (
-    <code style={{ fontSize: 10, wordBreak: 'break-all', fontFamily: 'monospace' }}>
-      {tokens.map((t, i) => {
-        if (t.t === 'text') {
-          return <span key={i}>{t.v}</span>
-        }
-        if (t.t === 'iri') {
-          return (
-            <span
-              key={i}
-              style={{ color: 'var(--accent)', fontWeight: 500 }}
-            >
-              {t.label ?? t.iri}
-            </span>
-          )
-        }
-        return null
-      })}
-    </code>
-  )
-}
 
 const PROFILE_LABELS: Record<string, string> = {
   el: 'OWL 2 EL',
@@ -207,93 +180,6 @@ function ProfileCard({
                 ))}
               </ul>
 
-              {result.sample_violations.length > 0 && (
-                <div style={{ marginTop: 8 }}>
-                  <div
-                    style={{
-                      fontSize: 10,
-                      textTransform: 'uppercase',
-                      letterSpacing: 1,
-                      color: 'var(--text-dim)',
-                      marginBottom: 4,
-                    }}
-                  >
-                    Sample violations
-                  </div>
-                  <table
-                    style={{
-                      width: '100%',
-                      borderCollapse: 'collapse',
-                      fontSize: 11,
-                    }}
-                  >
-                    <thead>
-                      <tr>
-                        <th
-                          style={{
-                            textAlign: 'left',
-                            padding: '2px 4px',
-                            color: 'var(--text-dim)',
-                            fontWeight: 500,
-                          }}
-                        >
-                          Axiom type
-                        </th>
-                        <th
-                          style={{
-                            textAlign: 'left',
-                            padding: '2px 4px',
-                            color: 'var(--text-dim)',
-                            fontWeight: 500,
-                          }}
-                        >
-                          Subject / Details
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.sample_violations.slice(0, 10).map((v, i) => (
-                        <tr
-                          key={i}
-                          style={{
-                            borderTop: '1px solid var(--overlay)',
-                          }}
-                        >
-                          <td
-                            style={{
-                              padding: '2px 4px',
-                              color: 'var(--text)',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            <code>{v.axiom_type}</code>
-                          </td>
-                          <td
-                            style={{
-                              padding: '2px 4px',
-                              color: 'var(--text-muted)',
-                              wordBreak: 'break-all',
-                              fontSize: 10,
-                            }}
-                          >
-                            {v.manchester && v.manchester.length > 0 ? (
-                              <ManchesterInline tokens={v.manchester} />
-                            ) : v.details ? (
-                              v.details
-                            ) : v.subject_iri ? (
-                              v.subject_iri.length > 80
-                                ? `…${v.subject_iri.slice(-70)}`
-                                : v.subject_iri
-                            ) : (
-                              '—'
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
             </div>
           )}
         </div>
