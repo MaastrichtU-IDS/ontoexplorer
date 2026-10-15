@@ -2130,22 +2130,42 @@ def refresh_owl_profile(version_id: str, ontology_id: str) -> dict:
     """Rebuild ONLY the owl_profile:{version_id} Redis cache.
 
     Cheaper alternative to a full index_ontology when the only thing that
-    needs updating is the OWL profile classification (e.g. after fixing a
-    detector bug). Does NOT touch the search index or queue embeddings.
+    needs updating is the OWL profile classification (e.g. after a detector
+    change). Does NOT touch the search index or queue embeddings.
+
+    Mirrors the index path's profile step: load the stored ontology FILE and run
+    the content-based horned-profile detector (`detect_profiles(content, fmt)`);
+    the language tier comes from cheap ASKs against the store. (The previous
+    `detect_profiles(store, graph_iri=…)` call never matched the detector's
+    signature after the horned-profile rewrite — this task was a no-op/raise.)
     """
     import json as _json
+    from datetime import datetime as _pdt, timezone as _ptz
+    from sqlalchemy import select as _sel
+    from ontoexplorer.database import make_celery_db_session
+    from ontoexplorer.clients.minio import download_bytes as _dl
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
+    from ontoexplorer.config import get_settings as _gs
+    from ontoexplorer.models.db import OntologyVersion as _OV
     from ontoexplorer.modules.owl_profile.detector import detect_profiles
     from ontoexplorer.modules.owl_profile.language import detect_language
     from ontoexplorer.modules.owl_profile.cache import owl_profile_cache_key
     from ontoexplorer.modules.search.indexer import _get_redis, _SEARCH_TTL
 
-    g = graph_iri(ontology_id, version_id)
-    store = get_store()
-    payload = detect_profiles(store, graph_iri=g,
-                              ontology_id=ontology_id, version_id=version_id)
-    payload["language"] = detect_language(store, graph_iri=g)
-    from datetime import datetime as _pdt, timezone as _ptz
+    async def _fetch_key_fmt():
+        async with make_celery_db_session()() as db:
+            return (await db.execute(
+                _sel(_OV.minio_key, _OV.format).where(_OV.id == version_id)
+            )).first()
+
+    row = asyncio.run(_fetch_key_fmt())
+    if not row or not row.minio_key:
+        log.warning("owl_profile_refresh_skipped_no_file", version_id=version_id)
+        return {"status": "skipped", "version_id": version_id, "reason": "no stored file"}
+
+    content = _dl(_gs().minio_ontologies_bucket, row.minio_key)
+    payload = detect_profiles(content, row.format)
+    payload["language"] = detect_language(get_store(), graph_iri=graph_iri(ontology_id, version_id))
     payload["indexed_at"] = _pdt.now(_ptz.utc).isoformat()
     _get_redis().setex(owl_profile_cache_key(version_id), _SEARCH_TTL, _json.dumps(payload))
     log.info("owl_profile_refresh_done", version_id=version_id)
