@@ -191,15 +191,27 @@ function ProfileCard({
 export default function OwlProfileSection({
   ontologyId,
   versionId,
+  canEdit = false,
 }: {
   ontologyId: string
   versionId: string
+  /** Viewer may edit this ontology → show the maintainer full-report command. */
+  canEdit?: boolean
 }) {
   const { data, isLoading, error } = useQuery({
     queryKey: ['owl-profile', ontologyId, versionId],
     queryFn: () => api.owl_profile.version(ontologyId, versionId),
     retry: false,
   })
+  // Only maintainers see the full-report command, and only they need the image tag.
+  const { data: ver } = useQuery({
+    queryKey: ['app-version'],
+    queryFn: () =>
+      fetch('/api/v1/version').then(r => r.json() as Promise<{ git_ref: string | null; version: string }>),
+    enabled: canEdit,
+    staleTime: Infinity,
+  })
+  const [copied, setCopied] = useState(false)
 
   if (isLoading) {
     return (
@@ -289,6 +301,53 @@ export default function OwlProfileSection({
           <ProfileCard key={p} name={p} result={record[p]} />
         ))}
       </div>
+
+      {canEdit && (() => {
+        const tag = ver?.git_ref || ver?.version || 'latest'
+        const cmd =
+          `docker run --rm -v "$PWD:/data" ghcr.io/maastrichtu-ids/ontoexplorer-api:${tag} ` +
+          `python -m ontoexplorer.modules.owl_profile.detect /data/<your-ontology-file> all`
+        return (
+          <div
+            data-testid="full-report-command"
+            style={{
+              marginBottom: '1rem', padding: '0.75rem',
+              border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+              background: 'var(--bg-secondary)',
+            }}
+          >
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
+              <strong>Full violation report</strong> (maintainers) — the page shows counts by type;
+              run this against your ontology file to list every violation with its specific entity:
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <code
+                style={{
+                  flex: 1, fontSize: 10, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                  color: 'var(--text)', fontFamily: 'monospace',
+                }}
+              >
+                {cmd}
+              </code>
+              <button
+                onClick={() => {
+                  navigator.clipboard?.writeText(cmd).then(
+                    () => { setCopied(true); setTimeout(() => setCopied(false), 1500) },
+                    () => {},
+                  )
+                }}
+                style={{
+                  flexShrink: 0, padding: '2px 8px', fontSize: 10, cursor: 'pointer',
+                  border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+                  background: 'var(--bg)', color: 'var(--text)',
+                }}
+              >
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          </div>
+        )
+      })()}
 
       <p
         data-testid="last-computed"

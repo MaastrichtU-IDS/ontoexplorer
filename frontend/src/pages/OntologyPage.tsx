@@ -1431,7 +1431,7 @@ export default function OntologyPage() {
                   </div>
             ) : detailTab === 'owl-profile' ? (
               oid && activeVid
-                ? <OwlProfileSection ontologyId={oid} versionId={activeVid} />
+                ? <OwlProfileSection ontologyId={oid} versionId={activeVid} canEdit={ontology?.can_edit} />
                 : <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 12 }}>
                     No version available.
                   </div>
