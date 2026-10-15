@@ -70,6 +70,42 @@ async def test_get_version_profile_returns_cache(client, db_session):
 
 
 # ---------------------------------------------------------------------------
+# Test 1b: payload without indexed_at falls back to the version's indexed_at
+# ---------------------------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_get_version_profile_backfills_indexed_at_from_version(client, db_session):
+    """Older cached payloads lack indexed_at; the endpoint must fall back to the
+    version's indexed_at so every OWL Profile page shows a real date, not 'unknown'."""
+    from datetime import datetime, timezone
+
+    ont = Ontology(iri="http://example.org/owlp-noix.owl", shortname="owlpnoix")
+    db_session.add(ont)
+    await db_session.flush()
+    stamp = datetime(2026, 10, 4, 20, 44, 58, tzinfo=timezone.utc)
+    ver = OntologyVersion(
+        ontology_id=ont.id, minio_key="owlp/noix.ttl", sha256="owlp_noix_001",
+        format="turtle", status="ready", indexed_at=stamp,
+    )
+    db_session.add(ver)
+    await db_session.commit()
+
+    payload = _profile_payload(str(ver.id))
+    del payload["indexed_at"]  # simulate a pre-fix cached payload
+    r = fakeredis.FakeRedis(decode_responses=True)
+    r.set(owl_profile_cache_key(str(ver.id)), json.dumps(payload))
+
+    with patch("ontoexplorer.api.owl_profile._get_redis", return_value=r):
+        resp = await client.get(f"/api/v1/ontologies/{ont.id}/{ver.id}/owl-profile")
+
+    assert resp.status_code == 200
+    # startswith, not ==: SQLite's DateTime(timezone=True) drops the tzinfo on
+    # round-trip (naive '…58'), while Postgres keeps '…58+00:00'. Either is a
+    # valid date (the point is it is no longer absent → no "Invalid Date").
+    assert resp.json()["indexed_at"].startswith("2026-10-04T20:44:58")
+
+
+# ---------------------------------------------------------------------------
 # Test 2: 404 when cache missing
 # ---------------------------------------------------------------------------
 
