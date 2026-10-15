@@ -127,43 +127,7 @@ test('last computed footer shows "unknown" (not "Invalid Date") when indexed_at 
   expect(footer.textContent || '').not.toMatch(/Invalid Date/)
 })
 
-test('renders Manchester tokens when manchester field is present', async () => {
-  const user = userEvent.setup()
-  wrap(<OwlProfileSection ontologyId="o1" versionId="v1" />)
-  await screen.findByTestId('profile-card-rl')
-
-  // Expand RL profile
-  await user.click(screen.getByTestId('expander-rl'))
-
-  // The sample for A has manchester tokens — "A hasSelf true"
-  const violationsSection = screen.getByTestId('violations-rl')
-  // The IRI token should render as the label "A"
-  expect(violationsSection.textContent).toMatch(/hasSelf/)
-  expect(violationsSection.textContent).toMatch(/true/)
-})
-
-test('falls back to details when manchester is absent', async () => {
-  const user = userEvent.setup()
-  wrap(<OwlProfileSection ontologyId="o1" versionId="v1" />)
-  await screen.findByTestId('profile-card-ql')
-
-  // Expand QL profile
-  await user.click(screen.getByTestId('expander-ql'))
-
-  // The QL sample has details but no manchester — should show details
-  const violationsSection = screen.getByTestId('violations-ql')
-  expect(violationsSection.textContent).toMatch(/Uses only restriction/)
-})
-
-test('falls back to subject_iri when manchester is null and no details', async () => {
-  const user = userEvent.setup()
-  wrap(<OwlProfileSection ontologyId="o1" versionId="v1" />)
-  await screen.findByTestId('profile-card-rl')
-
-  await user.click(screen.getByTestId('expander-rl'))
-
-  // The second RL sample (owl:hasSelf for B) has no manchester and no details
-  // — should fall back to the subject_iri
-  const violationsSection = screen.getByTestId('violations-rl')
-  expect(violationsSection.textContent).toMatch(/http:\/\/example\.org\/B/)
-})
+// The per-instance "sample violations" table was removed (issue #359): it was
+// noisy and only a capped sample. The violations-by-axiom-type histogram remains
+// (asserted above); full per-entity detail moves to the maintainer full-report
+// command.
