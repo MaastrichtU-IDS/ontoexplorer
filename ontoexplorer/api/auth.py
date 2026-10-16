@@ -313,6 +313,7 @@ async def me(user: User = Depends(require_auth), db: AsyncSession = Depends(get_
         "created_at": user.created_at.isoformat(),
         "is_admin": is_admin(user),
         "is_uploader": can_upload(user),
+        "email_verified": user.email_verified,
         "connected_providers": [a.provider for a in accounts],
         "preferred_lang": user.preferred_lang,
         "lang_fallback_strategy": user.lang_fallback_strategy,

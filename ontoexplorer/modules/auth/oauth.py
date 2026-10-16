@@ -122,4 +122,24 @@ def extract_user_info(provider: str, userinfo: dict) -> tuple[str, str | None, s
     if provider == "google":
         return userinfo["sub"], userinfo.get("email"), userinfo.get("name")
 
+    if provider == "keycloak":
+        # OIDC userinfo / id-token claims from the ids3 realm (#368). A brokered
+        # ORCID login surfaces the iD as a mapped claim (see claim_orcid).
+        sub = userinfo.get("sub")
+        name = userinfo.get("name") or userinfo.get("preferred_username")
+        return (str(sub) if sub else None), userinfo.get("email"), name
+
     raise ValueError(f"Unknown provider: {provider}")
+
+
+def claim_email_verified(provider: str, userinfo: dict) -> bool:
+    """Whether the provider asserts the email is verified. Keycloak and Google set
+    the OIDC ``email_verified`` claim; the others don't assert it here (→ False)."""
+    if provider in ("keycloak", "google"):
+        return bool(userinfo.get("email_verified"))
+    return False
+
+
+def claim_orcid(userinfo: dict) -> str | None:
+    """A brokered ORCID iD from a Keycloak claim, if the realm maps one."""
+    return userinfo.get("orcid") or userinfo.get("orcid_id") or None

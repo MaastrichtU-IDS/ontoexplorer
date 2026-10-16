@@ -108,6 +108,13 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
 
+    # OIDC — platform Keycloak (ids3 realm). Inert until KEYCLOAK_ISSUER is set
+    # (#368). Issuer is the realm URL, e.g.
+    # https://keycloak.k8s.semanticscience.org/realms/ids3
+    keycloak_issuer: str = ""
+    keycloak_client_id: str = "ontoexplorer"
+    keycloak_client_secret: str = ""
+
     # Inbound GitHub webhook — set to the secret configured in the GitHub repo's webhook settings
     github_webhook_secret: str = ""
 

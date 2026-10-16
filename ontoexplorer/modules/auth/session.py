@@ -182,8 +182,14 @@ async def get_or_create_user(
     access_token: str | None,
     refresh_token: str | None,
     expires_at: datetime | None,
+    email_verified: bool = False,
 ) -> User:
-    """Find existing user by OAuth account, or create a new one."""
+    """Find existing user by OAuth account, or create a new one.
+
+    `email_verified` comes from the provider's claim (Keycloak/Google); it only
+    ever upgrades a user to verified, never downgrades. NOTE: identities are still
+    matched ONLY by (provider, provider_user_id) — email is deliberately not used
+    to link accounts (account-takeover vector; see below)."""
     if not provider_user_id or provider_user_id == "None":
         raise ValueError(f"Refusing to resolve a {provider} account with an empty provider_user_id")
     result = await db.execute(
@@ -199,9 +205,11 @@ async def get_or_create_user(
         oauth_account.access_token = access_token
         oauth_account.refresh_token = refresh_token
         oauth_account.expires_at = expires_at
+        existing = (await db.execute(select(User).where(User.id == oauth_account.user_id))).scalar_one()
+        if email_verified and not existing.email_verified:
+            existing.email_verified = True
         await db.commit()
-        result2 = await db.execute(select(User).where(User.id == oauth_account.user_id))
-        return result2.scalar_one()
+        return existing
 
     # This identity is not linked to any account. Before creating one, check
     # whether the email is already taken — users.email is unique, so inserting a
@@ -232,6 +240,7 @@ async def get_or_create_user(
         id=str(uuid.uuid4()),
         email=email,
         display_name=display_name,
+        email_verified=email_verified,
     )
     db.add(user)
     await db.flush()
