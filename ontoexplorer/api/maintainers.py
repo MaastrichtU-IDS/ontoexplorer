@@ -5,7 +5,7 @@ ontology_maintainers (per-ontology) or users.is_uploader (global upload)."""
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +19,10 @@ from ontoexplorer.models.db import (
     User,
 )
 from ontoexplorer.modules.auth.dependencies import require_admin, require_auth
+from ontoexplorer.modules.notifications.email import (
+    notify_admins_new_request,
+    notify_requester_decision,
+)
 
 router = APIRouter(prefix="/api/v1/maintainer-requests", tags=["maintainers"])
 admin_router = APIRouter(prefix="/api/v1/admin/maintainer-requests", tags=["maintainers-admin"])
@@ -87,18 +91,21 @@ async def _decorate(db: AsyncSession, rows: list[MaintainerRequest]) -> list[dic
 @router.post("", summary="Request a maintainer role")
 async def create_request(
     body: MaintainerRequestCreate,
+    background: BackgroundTasks,
     user: User = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
     if body.request_type not in _TYPES:
         raise HTTPException(422, f"request_type must be one of {sorted(_TYPES)}")
 
+    onto_label: str | None = None
     if body.request_type == "ontology":
         if not body.ontology_id:
             raise HTTPException(422, "ontology_id is required for an 'ontology' request")
         onto = (await db.execute(select(Ontology).where(Ontology.id == body.ontology_id))).scalar_one_or_none()
         if onto is None:
             raise HTTPException(404, "Ontology not found")
+        onto_label = onto.shortname or onto.iri
         already = (await db.execute(
             select(OntologyMaintainer).where(
                 OntologyMaintainer.user_id == user.id,
@@ -132,6 +139,14 @@ async def create_request(
     db.add(r)
     await db.commit()
     await db.refresh(r)
+
+    # Notify the admin allowlist that a request is waiting (best-effort, after the
+    # response — a mail failure never affects the request).
+    background.add_task(
+        notify_admins_new_request,
+        requester_email=user.email, requester_name=user.display_name,
+        request_type=body.request_type, ontology=onto_label, note=body.note,
+    )
     return _req_dict(r)
 
 
@@ -176,10 +191,28 @@ def _finalize(r: MaintainerRequest, status: str, admin_id: str, note: str | None
     r.reviewed_at = datetime.now(UTC)
 
 
+async def _notify_decision(
+    db: AsyncSession, background: BackgroundTasks, r: MaintainerRequest,
+    approved: bool, note: str | None,
+) -> None:
+    """Queue a best-effort email to the requester with the decision outcome."""
+    req_user = (await db.execute(select(User).where(User.id == r.user_id))).scalar_one_or_none()
+    onto_label = None
+    if r.ontology_id:
+        o = (await db.execute(select(Ontology).where(Ontology.id == r.ontology_id))).scalar_one_or_none()
+        onto_label = (o.shortname or o.iri) if o else None
+    background.add_task(
+        notify_requester_decision,
+        requester_email=req_user.email if req_user else None,
+        request_type=r.request_type, ontology=onto_label, approved=approved, note=note,
+    )
+
+
 @admin_router.post("/{request_id}/approve", summary="Approve a maintainer request")
 async def approve(
     request_id: str,
     body: DecisionBody,
+    background: BackgroundTasks,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -205,6 +238,7 @@ async def approve(
     _finalize(r, "approved", admin.id, body.note)
     await db.commit()
     await db.refresh(r)
+    await _notify_decision(db, background, r, approved=True, note=body.note)
     return _req_dict(r)
 
 
@@ -212,6 +246,7 @@ async def approve(
 async def deny(
     request_id: str,
     body: DecisionBody,
+    background: BackgroundTasks,
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -219,4 +254,5 @@ async def deny(
     _finalize(r, "denied", admin.id, body.note)
     await db.commit()
     await db.refresh(r)
+    await _notify_decision(db, background, r, approved=False, note=body.note)
     return _req_dict(r)
