@@ -383,6 +383,16 @@ async def submit_ontology(
     owner_id = user.id   # require_uploader guarantees an authorized user; ontologies are always owned
     loop = asyncio.get_event_loop()
 
+    # Size cap on EVERY submission mode (IRI/URL fetches are already capped in the
+    # worker's source_resolver; file-upload and inline `content` were not). Reject
+    # early on a declared Content-Length, then again on the true received size,
+    # before anything is staged to MinIO or queued. (The full receipt-time defence
+    # is the ingress `client_max_body_size`; this prevents staging + worker work.)
+    _cap = _get_settings().ingest_max_source_bytes
+    _clen = request.headers.get("content-length")
+    if _clen and _clen.isdigit() and int(_clen) > _cap:
+        raise HTTPException(status_code=413, detail=f"Submission exceeds the {_cap}-byte limit")
+
     is_multipart = "multipart/form-data" in content_type and file
 
     # Read the request body exactly once (the ASGI stream can't be re-read),
@@ -436,8 +446,16 @@ async def submit_ontology(
         # it (~2x) as a Celery arg through Redis, which OOMs on large files.
         from ontoexplorer.modules.storage.minio_client import stage_upload
 
+        # True received size from the spooled file (file.size can be absent/wrong),
+        # checked before staging so an oversize upload never reaches MinIO.
+        file.file.seek(0, 2)
+        length = file.file.tell()
         file.file.seek(0)
-        length = file.size if file.size is not None else -1
+        if length > _cap:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Uploaded file ({length} bytes) exceeds the {_cap}-byte limit",
+            )
         upload_key = await loop.run_in_executor(
             None,
             lambda: stage_upload(
@@ -473,6 +491,11 @@ async def submit_ontology(
         )
     elif "content" in body:
         raw = body["content"].encode()
+        if len(raw) > _cap:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Inline content ({len(raw)} bytes) exceeds the {_cap}-byte limit",
+            )
         task = await loop.run_in_executor(
             None,
             lambda: ingest_ontology.delay(
