@@ -5,7 +5,25 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from ontoexplorer.config import get_settings
 from ontoexplorer.models.db import MaintainerRequest, Ontology, OntologyMaintainer, User
+from ontoexplorer.modules.notifications import email as email_mod
+
+
+@pytest.fixture()
+def _capture_email(monkeypatch):
+    sent = []
+
+    async def _cap(msg):
+        sent.append(msg)
+
+    monkeypatch.setattr("ontoexplorer.modules.notifications.email.send_email", _cap)
+    return sent
+
+
+@pytest.fixture()
+def _admin_emails(monkeypatch):
+    monkeypatch.setattr(get_settings(), "admin_emails", "admin@x.org", raising=False)
 
 
 async def _make_ontology(db) -> Ontology:
@@ -174,6 +192,59 @@ async def test_admin_approve_already_decided_409(client, user_and_key, db_sessio
     assert first.status_code == 200
     second = await client.post(f"/api/v1/admin/maintainer-requests/{req.id}/approve", json={}, headers=_auth(key))
     assert second.status_code == 409
+
+
+# ── Email notifications ──────────────────────────────────────────────────────────
+
+@pytest.mark.anyio
+async def test_create_request_emails_admins(client, user_and_key, _capture_email, _admin_emails):
+    _, key = user_and_key
+    r = await client.post("/api/v1/maintainer-requests",
+                          json={"request_type": "uploader", "note": "curate OBO"}, headers=_auth(key))
+    assert r.status_code == 200
+    assert len(_capture_email) == 1
+    msg = _capture_email[0]
+    assert msg.to == ["admin@x.org"]
+    assert "upload" in msg.body.lower()
+    assert "curate OBO" in msg.body
+
+
+@pytest.mark.anyio
+async def test_approve_emails_requester(client, user_and_key, db_session, _as_admin, _capture_email):
+    _, key = user_and_key
+    requester = await _make_user(db_session)
+    req = MaintainerRequest(user_id=requester.id, request_type="uploader")
+    db_session.add(req)
+    await db_session.commit()
+    r = await client.post(f"/api/v1/admin/maintainer-requests/{req.id}/approve",
+                          json={"note": "welcome aboard"}, headers=_auth(key))
+    assert r.status_code == 200
+    assert len(_capture_email) == 1
+    msg = _capture_email[0]
+    assert msg.to == [requester.email]
+    assert "approved" in msg.subject.lower()
+    assert "welcome aboard" in msg.body
+
+
+@pytest.mark.anyio
+async def test_deny_emails_requester(client, user_and_key, db_session, _as_admin, _capture_email):
+    _, key = user_and_key
+    requester = await _make_user(db_session)
+    req = MaintainerRequest(user_id=requester.id, request_type="uploader")
+    db_session.add(req)
+    await db_session.commit()
+    r = await client.post(f"/api/v1/admin/maintainer-requests/{req.id}/deny", json={}, headers=_auth(key))
+    assert r.status_code == 200
+    assert len(_capture_email) == 1
+    assert _capture_email[0].to == [requester.email]
+    assert "declined" in _capture_email[0].subject.lower()
+
+
+def test_email_logs_not_sends_without_smtp(monkeypatch):
+    # No SMTP configured → log, never connect/raise. Empty recipients → no-op.
+    monkeypatch.setattr(get_settings(), "smtp_host", "", raising=False)
+    email_mod._send_sync(email_mod.Email(to=["x@y.z"], subject="s", body="b"))
+    email_mod._send_sync(email_mod.Email(to=[], subject="s", body="b"))
 
 
 # ── Per-ontology edit permission (owner / admin / maintainer) ────────────────────

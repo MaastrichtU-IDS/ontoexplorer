@@ -157,6 +157,16 @@ class Settings(BaseSettings):
     justification_max_inflight: int = 2
     justification_daily_limit: int = 200
 
+    # Email (platform notifications + verification). With SMTP_HOST empty, messages
+    # are LOGGED not sent (dev/test default — nothing leaves the cluster). Prod sets
+    # the SMTP creds to actually send, from EMAIL_FROM.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = True
+    email_from: str = "info-ids@maastrichtuniversity.nl"
+
     @field_validator("database_url")
     @classmethod
     def validate_database_url(cls, v: str) -> str:
