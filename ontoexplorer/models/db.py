@@ -39,6 +39,10 @@ class User(Base):
     # UPLOAD_ALLOWED_EMAILS env allowlist). Set when an "uploader" maintainer
     # request is approved. See can_upload().
     is_uploader: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # Whether the user's email is verified (from the identity provider's
+    # email_verified claim — Keycloak, once auth routes through it, #368). Will
+    # gate granting upload rights; informational until Keycloak populates it.
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     oauth_accounts: Mapped[list["OAuthAccount"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     sessions: Mapped[list["Session"]] = relationship(back_populates="user", cascade="all, delete-orphan")

@@ -26,12 +26,44 @@ _PROVIDERS: dict[str, dict] = {
         "userinfo_url": "https://www.googleapis.com/oauth2/v3/userinfo",
         "scope": "openid email profile",
     },
+    # Keycloak endpoints are not fixed URLs: they derive from the realm issuer
+    # (keycloak_issuer), resolved at call time by _keycloak_cfg(). The static
+    # entry here only carries the scope and marks the provider as known so
+    # _check_provider / get_provider_config accept it.
+    "keycloak": {
+        "scope": "openid email profile",
+        "issuer_derived": True,
+    },
 }
+
+
+def _keycloak_cfg() -> dict:
+    """Resolve the ids3-realm OIDC endpoints from the configured issuer (#368).
+
+    Standard OIDC discovery paths off the issuer; no network discovery call so
+    the config stays self-contained and testable.
+    """
+    s = get_settings()
+    issuer = str(s.keycloak_issuer).rstrip("/")
+    if not issuer:
+        raise ValueError(
+            "KEYCLOAK_ISSUER is not configured; cannot use the keycloak provider."
+        )
+    base = f"{issuer}/protocol/openid-connect"
+    return {
+        "authorize_url": f"{base}/auth",
+        "token_url": f"{base}/token",
+        "userinfo_url": f"{base}/userinfo",
+        "end_session_url": f"{base}/logout",
+        "scope": _PROVIDERS["keycloak"]["scope"],
+    }
 
 
 def get_provider_config(provider: str) -> dict:
     if provider not in _PROVIDERS:
         raise ValueError(f"Unknown OAuth provider: {provider}. Supported: {list(_PROVIDERS)}")
+    if provider == "keycloak":
+        return _keycloak_cfg()
     return _PROVIDERS[provider]
 
 
@@ -48,6 +80,9 @@ def make_oauth_client(provider: str) -> AsyncOAuth2Client:
     elif provider == "google":
         client_id = s.google_client_id
         client_secret = s.google_client_secret
+    elif provider == "keycloak":
+        client_id = s.keycloak_client_id
+        client_secret = s.keycloak_client_secret
     else:
         raise ValueError(f"Unknown provider: {provider}")
 
@@ -122,4 +157,24 @@ def extract_user_info(provider: str, userinfo: dict) -> tuple[str, str | None, s
     if provider == "google":
         return userinfo["sub"], userinfo.get("email"), userinfo.get("name")
 
+    if provider == "keycloak":
+        # OIDC userinfo / id-token claims from the ids3 realm (#368). A brokered
+        # ORCID login surfaces the iD as a mapped claim (see claim_orcid).
+        sub = userinfo.get("sub")
+        name = userinfo.get("name") or userinfo.get("preferred_username")
+        return (str(sub) if sub else None), userinfo.get("email"), name
+
     raise ValueError(f"Unknown provider: {provider}")
+
+
+def claim_email_verified(provider: str, userinfo: dict) -> bool:
+    """Whether the provider asserts the email is verified. Keycloak and Google set
+    the OIDC ``email_verified`` claim; the others don't assert it here (→ False)."""
+    if provider in ("keycloak", "google"):
+        return bool(userinfo.get("email_verified"))
+    return False
+
+
+def claim_orcid(userinfo: dict) -> str | None:
+    """A brokered ORCID iD from a Keycloak claim, if the realm maps one."""
+    return userinfo.get("orcid") or userinfo.get("orcid_id") or None

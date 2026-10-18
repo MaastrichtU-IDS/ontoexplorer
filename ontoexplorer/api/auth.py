@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ontoexplorer.database import get_db
 from ontoexplorer.modules.auth.dependencies import require_auth
 from ontoexplorer.modules.auth.oauth import (
+    claim_email_verified,
     extract_user_info,
     fetch_userinfo,
     get_authorize_url,
@@ -43,7 +44,7 @@ log = get_logger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-_SUPPORTED_PROVIDERS = {"orcid", "github", "google"}
+_SUPPORTED_PROVIDERS = {"orcid", "github", "google", "keycloak"}
 
 
 @router.get("/{provider}/login", summary="Redirect to OAuth provider")
@@ -253,6 +254,12 @@ async def oauth_callback(
         return resp
 
     # ── LOGIN MODE ───────────────────────────────────────────────────────────
+    # Carry the provider's email-verification assertion through to the user row.
+    # Keycloak (the ids3 realm) and Google set the OIDC email_verified claim; the
+    # others don't assert it (→ False). get_or_create_user only ever UPGRADES this
+    # flag (never clears a previously-verified user), so a provider that omits the
+    # claim can't downgrade a verified account.
+    email_verified = claim_email_verified(provider, userinfo)
     try:
         user = await get_or_create_user(
             db,
@@ -260,6 +267,7 @@ async def oauth_callback(
             provider_user_id=provider_user_id,
             email=email,
             display_name=display_name,
+            email_verified=email_verified,
             access_token=access_token,
             refresh_token=token.get("refresh_token"),
             expires_at=expires_at,
@@ -313,6 +321,7 @@ async def me(user: User = Depends(require_auth), db: AsyncSession = Depends(get_
         "created_at": user.created_at.isoformat(),
         "is_admin": is_admin(user),
         "is_uploader": can_upload(user),
+        "email_verified": user.email_verified,
         "connected_providers": [a.provider for a in accounts],
         "preferred_lang": user.preferred_lang,
         "lang_fallback_strategy": user.lang_fallback_strategy,
