@@ -117,6 +117,15 @@ class Settings(BaseSettings):
     # ontologies (in ADDITION to admins). Empty => admins only.
     upload_allowed_emails: str = ""
 
+    # Licenses the platform is cleared to host/redistribute (SPDX ids, comma-separated).
+    # A submitted/declared ontology license is canonicalized to SPDX and must be in this
+    # set to be published (#364). Excludes NonCommercial/NoDerivatives by default (they
+    # restrict reuse). Empty => the compliance gate is OFF (any license allowed). Policy
+    # call — adjust to the platform's actual compliance.
+    compliant_licenses: str = (
+        "CC0-1.0,CC-BY-4.0,CC-BY-3.0,CC-BY-SA-4.0,CC-BY-SA-3.0,MIT,Apache-2.0,BSD-3-Clause"
+    )
+
     # Development auth bypass — set AUTH_BYPASS=true to skip OAuth for local dev
     auth_bypass: bool = False
 
