@@ -4,6 +4,7 @@ import pytest
 from ontoexplorer.config import get_settings
 from ontoexplorer.modules.ingestion.license import (
     canonicalize_license,
+    decide_publish_status,
     is_compliant,
 )
 
@@ -46,3 +47,46 @@ def test_empty_allowlist_disables_gate(monkeypatch):
     monkeypatch.setattr(get_settings(), "compliant_licenses", "", raising=False)
     assert is_compliant("anything at all") is True
     assert is_compliant(None) is True
+
+
+# ── decide_publish_status (the pre-publish quality gate) ──────────────────────────
+
+def _ok(**over):
+    kw = dict(license_compliant=True, triple_count=100, title="GO", min_triples=1)
+    kw.update(over)
+    return kw
+
+
+def test_gate_never_demotes_a_ready_version():
+    # Re-index of an already-public version: everything "bad" but stays ready.
+    status, reasons = decide_publish_status(
+        "ready", license_compliant=False, triple_count=0, title=None, min_triples=1)
+    assert status == "ready"
+    assert reasons == []
+
+
+def test_gate_publishes_a_good_first_ingest():
+    status, reasons = decide_publish_status("ingested", **_ok())
+    assert status == "ready"
+    assert reasons == []
+
+
+def test_gate_holds_non_compliant_license():
+    status, reasons = decide_publish_status("ingested", **_ok(license_compliant=False))
+    assert status == "needs_review"
+    assert any("license" in r for r in reasons)
+
+
+def test_gate_holds_empty_and_untitled():
+    status, reasons = decide_publish_status(
+        "ingested", **_ok(triple_count=0, title="  "))
+    assert status == "needs_review"
+    assert any("triple" in r for r in reasons)
+    assert any("title" in r for r in reasons)
+
+
+def test_gate_promotes_fixed_needs_review_on_reindex():
+    # Held item, re-indexed after the license is fixed → publishes.
+    status, reasons = decide_publish_status("needs_review", **_ok())
+    assert status == "ready"
+    assert reasons == []
