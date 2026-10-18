@@ -1,5 +1,14 @@
 import { loginWithProvider } from '../lib/auth'
 
+// Keycloak (the platform ids3 realm) is the preferred path (#368): it owns
+// registration + email verification and brokers ORCID/GitHub/Google, so it
+// covers users who have no academic email or ORCID iD. The direct ORCID/GitHub
+// buttons remain during the migration for existing accounts.
+const primaryProvider = {
+  id: 'keycloak' as const,
+  label: 'Sign in with your platform account',
+  color: 'var(--accent)',
+}
 const providers = [
   { id: 'orcid' as const, label: 'Sign in with ORCID', color: '#a6ce39' },
   { id: 'github' as const, label: 'Sign in with GitHub', color: 'var(--gray)' },
@@ -20,6 +29,27 @@ export default function Login() {
       <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: '1.5rem' }}>
         Choose a provider to continue
       </p>
+      <button
+        key={primaryProvider.id}
+        onClick={() => loginWithProvider(primaryProvider.id)}
+        style={{
+          background: 'var(--accent)', border: `1px solid ${primaryProvider.color}`,
+          color: 'var(--accent-contrast, #fff)', borderRadius: 'var(--radius)',
+          padding: '10px 24px', width: 260, fontSize: 'var(--font-size-base)',
+          fontWeight: 600, display: 'flex', alignItems: 'center',
+          justifyContent: 'center', gap: 10, cursor: 'pointer',
+        }}
+      >
+        {primaryProvider.label}
+      </button>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, width: 260,
+        color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', margin: '0.25rem 0',
+      }}>
+        <span style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+        or
+        <span style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+      </div>
       {providers.map(({ id, label, color }) => (
         <button
           key={id}

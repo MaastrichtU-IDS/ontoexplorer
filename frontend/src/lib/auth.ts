@@ -28,7 +28,7 @@ export function clearAccessToken(): void {
   _accessToken = null
 }
 
-export function loginWithProvider(provider: 'orcid' | 'github' | 'google'): void {
+export function loginWithProvider(provider: 'orcid' | 'github' | 'google' | 'keycloak'): void {
   window.location.href = `/auth/${provider}/login`
 }
 

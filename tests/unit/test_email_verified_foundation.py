@@ -4,13 +4,58 @@ maps through to the User, upgrade-only."""
 import pytest
 from sqlalchemy import select
 
+from ontoexplorer.config import get_settings
 from ontoexplorer.models.db import User
 from ontoexplorer.modules.auth.oauth import (
     claim_email_verified,
     claim_orcid,
     extract_user_info,
+    get_authorize_url,
+    get_provider_config,
+    get_redirect_uri,
+    get_token_url,
+    make_oauth_client,
 )
 from ontoexplorer.modules.auth.session import get_or_create_user
+
+
+ISSUER = "https://keycloak.k8s.semanticscience.org/realms/ids3"
+
+
+def test_keycloak_endpoints_derive_from_issuer(monkeypatch):
+    s = get_settings()
+    monkeypatch.setattr(s, "keycloak_issuer", ISSUER, raising=False)
+    monkeypatch.setattr(s, "app_url", "https://ontoexplorer.dev.k8s.semanticscience.org", raising=False)
+
+    cfg = get_provider_config("keycloak")
+    base = f"{ISSUER}/protocol/openid-connect"
+    assert cfg["authorize_url"] == f"{base}/auth"
+    assert cfg["token_url"] == f"{base}/token"
+    assert cfg["userinfo_url"] == f"{base}/userinfo"
+    assert cfg["scope"] == "openid email profile"
+
+    assert get_authorize_url("keycloak") == f"{base}/auth"
+    assert get_token_url("keycloak") == f"{base}/token"
+    # Must match EXACTLY what the ids3 client has registered.
+    assert get_redirect_uri("keycloak") == (
+        "https://ontoexplorer.dev.k8s.semanticscience.org/auth/keycloak/callback"
+    )
+
+
+def test_keycloak_client_uses_keycloak_creds(monkeypatch):
+    s = get_settings()
+    monkeypatch.setattr(s, "keycloak_issuer", ISSUER, raising=False)
+    monkeypatch.setattr(s, "keycloak_client_id", "ontoexplorer", raising=False)
+    monkeypatch.setattr(s, "keycloak_client_secret", "shh", raising=False)
+    client = make_oauth_client("keycloak")
+    assert client.client_id == "ontoexplorer"
+    assert client.client_secret == "shh"
+
+
+def test_keycloak_without_issuer_raises(monkeypatch):
+    monkeypatch.setattr(get_settings(), "keycloak_issuer", "", raising=False)
+    with pytest.raises(ValueError, match="KEYCLOAK_ISSUER"):
+        get_provider_config("keycloak")
 
 
 def test_extract_keycloak_claims():
