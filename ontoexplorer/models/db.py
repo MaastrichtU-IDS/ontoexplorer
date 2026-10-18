@@ -157,7 +157,12 @@ class OntologyVersion(Base):
     minio_key: Mapped[str] = mapped_column(String)           # path in MinIO
     sha256: Mapped[str] = mapped_column(String, unique=True) # content hash for dedup
     format: Mapped[str] = mapped_column(String)              # "owl", "turtle", "obo", etc.
-    status: Mapped[str] = mapped_column(String, default="ingested")  # ingested | reasoning | ready | deprecated
+    status: Mapped[str] = mapped_column(String, default="ingested")  # ingested | reasoning | ready | needs_review | deprecated
+    # Declared license, canonicalized to an SPDX id (#364); null = none detected /
+    # unrecognized. license_compliant = is it on the platform allowlist; feeds the
+    # pre-publish quality gate (ingested->ready).
+    license: Mapped[str | None] = mapped_column(String, nullable=True)
+    license_compliant: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     reasoner: Mapped[str] = mapped_column(String, nullable=False, server_default="rustdl")
     # Reference-binding to the reasoner profile chosen at add/reindex time; each
     # (re)reason resolves the profile's current params. `reasoner` stays the

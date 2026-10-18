@@ -80,3 +80,29 @@ def is_compliant(raw: str | None) -> bool:
     if not allow:
         return True
     return canonicalize_license(raw) in allow
+
+
+def decide_publish_status(
+    current_status: str, *,
+    license_compliant: bool, triple_count: int | None, title: str | None,
+    min_triples: int,
+) -> tuple[str, list[str]]:
+    """Pre-publish quality gate (#364). Decide the status at the index task's
+    ingested->ready transition. Returns (new_status, reasons-it-was-held).
+
+    - An already-`ready` version is NEVER demoted (re-index is a no-op here) — this
+      protects the existing catalogue; the gate only judges first publication (from
+      `ingested`/`needs_review`).
+    - Otherwise: publish (`ready`) only if license-compliant, above the triple floor,
+      and titled; else hold for review (`needs_review`).
+    """
+    if current_status == "ready":
+        return "ready", []
+    reasons: list[str] = []
+    if not license_compliant:
+        reasons.append("license missing or not on the platform compliance allowlist")
+    if (triple_count or 0) < min_triples:
+        reasons.append(f"fewer than {min_triples} triple(s)")
+    if not (title or "").strip():
+        reasons.append("no title")
+    return ("ready" if not reasons else "needs_review"), reasons

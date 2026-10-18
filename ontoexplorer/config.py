@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     compliant_licenses: str = (
         "CC0-1.0,CC-BY-4.0,CC-BY-3.0,CC-BY-SA-4.0,CC-BY-SA-3.0,MIT,Apache-2.0,BSD-3-Clause"
     )
+    # Pre-publish quality gate (#364): a newly-ingested version with fewer than this
+    # many triples is held for review instead of auto-published. Only applies at the
+    # first ingested->ready transition, never to an already-public version.
+    min_triples_for_publish: int = 1
 
     # Development auth bypass — set AUTH_BYPASS=true to skip OAuth for local dev
     auth_bypass: bool = False

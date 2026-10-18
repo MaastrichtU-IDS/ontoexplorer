@@ -1404,16 +1404,50 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
 
         async def _mark_ready():
             from datetime import datetime as _dt, timezone as _tz
+            from sqlalchemy import select as _sa_select
             from ontoexplorer.api.ols._entity_source import version_lang_counts
+            from ontoexplorer.config import get_settings as _gs2
+            from ontoexplorer.models.db import Ontology as _Ont
+            from ontoexplorer.modules.ingestion.license import (
+                canonicalize_license as _canon,
+                decide_publish_status as _decide,
+                is_compliant as _is_comp,
+            )
             async with make_celery_db_session()() as db:
-                # Materialize the per-version language counts (#286) from the rows we
-                # just wrote, so the catalogue reads them O(1) instead of aggregating
-                # per request. Same value version_lang_counts produces on read.
+                ver = (await db.execute(_sa_select(_OV).where(_OV.id == version_id))).scalar_one_or_none()
+                if ver is None or ver.status == "deprecated":
+                    return
+                ont = (await db.execute(_sa_select(_Ont).where(_Ont.id == ontology_id))).scalar_one_or_none()
+
+                # Declared license -> SPDX + platform compliance (#364).
+                _spdx = None
+                _lic_ok = False
+                try:
+                    from ontoexplorer.modules.metadata.dcat import extract_ontology_annotations
+                    _ann = extract_ontology_annotations(ontology_id, version_id, ont.iri if ont else "")
+                    _spdx = _canon(_ann.get("license"))
+                    _lic_ok = _is_comp(_ann.get("license"))
+                except Exception as _e:
+                    log.warning("license_detect_failed", version_id=version_id, error=str(_e))
+
+                # Pre-publish quality gate. NEVER demotes an already-ready version
+                # (re-index): only first publication (ingested/needs_review) is judged.
+                _new_status, _reasons = _decide(
+                    ver.status,
+                    license_compliant=_lic_ok,
+                    triple_count=ver.triple_count,
+                    title=(ont.title if ont else None),
+                    min_triples=_gs2().min_triples_for_publish,
+                )
+                if _new_status == "needs_review":
+                    log.info("version_held_for_review", version_id=version_id, reasons=_reasons)
+
                 try:
                     _lc = await version_lang_counts(db, version_id)
                 except Exception:
                     _lc = None
-                _vals = {"status": "ready", "indexed_at": _dt.now(_tz.utc)}
+                _vals = {"status": _new_status, "indexed_at": _dt.now(_tz.utc),
+                         "license": _spdx, "license_compliant": _lic_ok}
                 if _lc is not None:
                     _vals["lang_counts"] = _lc
                 await db.execute(
