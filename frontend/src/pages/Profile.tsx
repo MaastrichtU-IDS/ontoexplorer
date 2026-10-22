@@ -10,11 +10,14 @@ const PROVIDER_LABELS: Record<string, string> = {
   github: 'GitHub',
   google: 'Google',
   orcid: 'ORCID',
+  keycloak: 'Platform account',
 }
 
 // Providers offered for linking — mirror the enabled providers on the Login page
 // (Google is disabled for now; the backend still supports it if re-enabled there).
-const LINKABLE_PROVIDERS = ['orcid', 'github'] as const
+// Keycloak (the platform ids3-era realm, #368) is linkable so existing direct
+// ORCID/GitHub accounts can attach their platform identity and consolidate.
+const LINKABLE_PROVIDERS = ['orcid', 'github', 'keycloak'] as const
 
 export default function Profile() {
   const { user } = useAuth()
