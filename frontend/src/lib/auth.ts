@@ -38,7 +38,7 @@ export function loginWithProvider(provider: 'orcid' | 'github' | 'google' | 'key
  * the signed oauth_link cookie) and then navigate to it. The /callback attaches
  * the provider and bounces back to /profile.
  */
-export async function linkProvider(provider: 'orcid' | 'github' | 'google'): Promise<void> {
+export async function linkProvider(provider: 'orcid' | 'github' | 'google' | 'keycloak'): Promise<void> {
   const { api } = await import('./api')
   const { authorize_url } = await api.auth.linkStart(provider)
   window.location.href = authorize_url

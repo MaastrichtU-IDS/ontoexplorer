@@ -1265,9 +1265,9 @@ export const api = {
       }),
     // Start linking a provider to the current account — returns the OAuth
     // authorize URL to redirect the browser to (see loginWithProvider/linkProvider).
-    linkStart: (provider: 'orcid' | 'github' | 'google') =>
+    linkStart: (provider: 'orcid' | 'github' | 'google' | 'keycloak') =>
       authRequest<{ authorize_url: string }>(`/auth/${provider}/link`),
-    unlink: (provider: 'orcid' | 'github' | 'google') =>
+    unlink: (provider: 'orcid' | 'github' | 'google' | 'keycloak') =>
       authRequest<{ connected_providers: string[] }>(`/auth/${provider}/unlink`, { method: 'POST' }),
     // Confirm merging another account (identified by the signed token that
     // /callback handed back via ?merge_available) into the current one.
