@@ -66,6 +66,10 @@ async def admin_ontology_versions(
     )).scalars().all()
     indexed_vids = {str(x) for x in _indexed_rows}
 
+    from ontoexplorer.config import get_settings as _gs
+    from ontoexplorer.modules.ingestion.license import held_reasons
+    _min_triples = _gs().min_triples_for_publish
+
     search_r = await asyncio.to_thread(_search_redis)
     # Pin-aware, version-aware default (not merely the newest by created_at), so
     # the admin "latest" marker matches the rest of the app.
@@ -98,6 +102,20 @@ async def admin_ontology_versions(
             "version_iri": v.version_iri,
             "triple_count": v.triple_count,
             "ingestion_status": v.status,
+            "license": v.license,
+            "license_compliant": v.license_compliant,
+            # Why a held version is held (empty unless needs_review) — the quality
+            # gate only logs these at ingest, so recompute from stored signals for
+            # the admin review surface (#364).
+            "review_reasons": (
+                held_reasons(
+                    license_compliant=v.license_compliant,
+                    triple_count=v.triple_count,
+                    title=ont.title,
+                    min_triples=_min_triples,
+                )
+                if v.status == "needs_review" else []
+            ),
             "indexed": indexed,
             "profile_computed": profile_computed,
             "embed_count": embed_counts.get(vid, 0),

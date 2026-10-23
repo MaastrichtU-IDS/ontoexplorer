@@ -1009,6 +1009,10 @@ export interface AdminOntologyEntry {
   version_count: number
   triple_count: number | null
   ingestion_status: string
+  license?: string | null
+  license_compliant?: boolean
+  // Why the latest version is held (empty otherwise) — #364 quality gate.
+  review_reasons?: string[]
   indexed: boolean
   profile_computed: boolean
   embed_count: number
@@ -1064,6 +1068,10 @@ export interface AdminVersionEntry {
   version_iri: string | null
   triple_count: number | null
   ingestion_status: string
+  license?: string | null
+  license_compliant?: boolean
+  // Why a needs_review version is held (empty otherwise) — #364 quality gate.
+  review_reasons?: string[]
   indexed: boolean
   profile_computed: boolean
   embed_count: number
@@ -1762,6 +1770,13 @@ export const api = {
     queueIngestForVersion: (versionId: string) =>
       request<{ status: string; task_id: string; method: 'iri' | 'url' }>(
         `/admin/versions/${versionId}/ingest`,
+        { method: 'POST' }
+      ),
+
+    // Clear the #364 quality gate for a held (needs_review) version → public.
+    publishVersion: (versionId: string) =>
+      request<{ status: string; version_id: string }>(
+        `/admin/versions/${versionId}/publish`,
         { method: 'POST' }
       ),
 
