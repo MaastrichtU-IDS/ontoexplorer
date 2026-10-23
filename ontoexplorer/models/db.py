@@ -167,6 +167,15 @@ class OntologyVersion(Base):
     # pre-publish quality gate (ingested->ready).
     license: Mapped[str | None] = mapped_column(String, nullable=True)
     license_compliant: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # Contributor-asserted license overlay (#364 "Add Ontology" flow): an SPDX id a
+    # contributor picks when the content declares NO license, so they can clear the
+    # quality gate without rewriting triples. Fills an ABSENCE only — it never
+    # overrides a license the content DOES declare (anti-laundering), so a declared
+    # non-compliant content license still holds. declared_by/at carry provenance.
+    declared_license: Mapped[str | None] = mapped_column(String, nullable=True)
+    declared_by: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    declared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reasoner: Mapped[str] = mapped_column(String, nullable=False, server_default="rustdl")
     # Reference-binding to the reasoner profile chosen at add/reindex time; each
     # (re)reason resolves the profile's current params. `reasoner` stays the

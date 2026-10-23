@@ -1101,6 +1101,28 @@ async def list_ontologies(
     return {"ontologies": rows, "offset": offset, "limit": limit, "total": total}
 
 
+# ── Compliant-license allowlist (for the Add-Ontology selector) ──────────────────
+# Defined BEFORE the /{ontology_id} route so the literal path isn't captured as an id.
+
+_SPDX_LABELS: dict[str, str] = {
+    "CC0-1.0": "CC0 1.0 (public domain dedication)",
+    "CC-BY-4.0": "CC BY 4.0 (attribution)",
+    "CC-BY-3.0": "CC BY 3.0 (attribution)",
+    "CC-BY-SA-4.0": "CC BY-SA 4.0 (attribution, share-alike)",
+    "CC-BY-SA-3.0": "CC BY-SA 3.0 (attribution, share-alike)",
+    "MIT": "MIT License",
+    "Apache-2.0": "Apache License 2.0",
+    "BSD-3-Clause": "BSD 3-Clause",
+}
+
+
+@router.get("/compliant-licenses", summary="Licenses the platform accepts (for upload)")
+async def compliant_licenses():
+    from ontoexplorer.modules.ingestion.license import compliant_license_set
+    allow = compliant_license_set()
+    return {"licenses": [{"spdx": s, "label": _SPDX_LABELS.get(s, s)} for s in sorted(allow)]}
+
+
 # ── Single ontology metadata ───────────────────────────────────────────────────
 
 @router.get("/{ontology_id}", summary="Ontology metadata (by id or shortname)")
@@ -1182,11 +1204,21 @@ async def list_versions(ontology_id: str, db: AsyncSession = Depends(get_db)):
     # shows them — the frontend renders `version.pipeline`, which only the
     # single-version endpoint carried before.
     from ontoexplorer.modules.pipeline.status import version_pipeline
+    from ontoexplorer.config import get_settings as _gs_lv
+    from ontoexplorer.modules.ingestion.license import held_reasons as _held
+    _min_tri = _gs_lv().min_triples_for_publish
     out = []
     for v in versions:
         d = _version_dict(v)
         d["pipeline"] = await version_pipeline(db, str(v.id))
         d["is_default"] = (v.id == default_id)
+        # Why a held version is held (empty unless needs_review), so the owner's
+        # dashboard can show it and offer the fix — #364 Add-Ontology flow.
+        d["review_reasons"] = (
+            _held(license_compliant=v.license_compliant, triple_count=v.triple_count,
+                  title=ontology.title, min_triples=_min_tri)
+            if v.status == "needs_review" else []
+        )
         out.append(d)
     return {"versions": out}
 
@@ -1199,6 +1231,82 @@ async def get_version(ontology_id: str, version_id: str, request: Request, db: A
     from ontoexplorer.modules.pipeline.status import version_pipeline
     data["pipeline"] = await version_pipeline(db, version_id)
     return _negotiate_response(request, data)
+
+
+# ── Quality-gate re-evaluation (owner self-serve) ───────────────────────────────
+
+class ReevaluateRequest(BaseModel):
+    # Optional contributor-asserted license (SPDX id or recognizable label/URL).
+    # Applies only when the content declares no recognized license.
+    declared_license: str | None = None
+
+
+@router.post("/{ontology_id}/{version_id}/reevaluate",
+             summary="Re-run the quality gate on a held version (owner/maintainer)")
+async def reevaluate_version(
+    ontology_id: str,
+    version_id: str,
+    body: ReevaluateRequest,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Owner-callable door out of `needs_review` (#364 Add-Ontology flow). Optionally
+    records a contributor-asserted license, then re-runs `decide_publish_status`
+    from the stored signals (no re-index). Publishes if it now passes; otherwise
+    returns the remaining reasons. Only a held version is re-evaluable (409 else).
+    The already-ready guard still stands — this never demotes a public version."""
+    import asyncio
+    from datetime import UTC, datetime
+
+    from ontoexplorer.config import get_settings
+    from ontoexplorer.modules.auth.permissions import can_edit_ontology
+    from ontoexplorer.modules.ingestion.license import (
+        canonicalize_license, compliant_license_set, decide_publish_status, effective_license,
+    )
+    from ontoexplorer.modules.metadata.dcat import extract_ontology_annotations
+
+    version = await _get_version_or_404(db, ontology_id, version_id)
+    ontology = await _get_ontology_or_404(db, ontology_id)
+    if not await can_edit_ontology(db, user, ontology):
+        raise HTTPException(status_code=403, detail="You are not allowed to edit this ontology")
+    if version.status != "needs_review":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Version is '{version.status}', not held for review.",
+        )
+
+    if body.declared_license is not None:
+        spdx = canonicalize_license(body.declared_license)
+        allow = compliant_license_set()
+        if not spdx or spdx not in allow:
+            raise HTTPException(
+                status_code=422,
+                detail=f"'{body.declared_license}' is not an accepted license. "
+                       f"Choose one of: {sorted(allow)}",
+            )
+        version.declared_license = spdx
+        version.declared_by = user.id
+        version.declared_at = datetime.now(UTC)
+
+    ann = await asyncio.to_thread(
+        extract_ontology_annotations, ontology_id, version_id, ontology.iri or "")
+    content_spdx, _, lic_ok = effective_license(ann.get("license"), version.declared_license)
+    version.license = content_spdx
+    version.license_compliant = lic_ok
+    new_status, reasons = decide_publish_status(
+        "needs_review", license_compliant=lic_ok, triple_count=version.triple_count,
+        title=ontology.title, min_triples=get_settings().min_triples_for_publish,
+    )
+    if new_status == "ready":
+        version.status = "ready"
+    await db.commit()
+    if new_status == "ready":
+        from ontoexplorer.modules.search.versions import invalidate_latest_ready_versions_cache
+        invalidate_latest_ready_versions_cache()
+    log.info("version_reevaluated", version_id=version_id, ontology_id=ontology_id,
+             new_status=new_status, reasons=reasons)
+    return {"status": version.status, "review_reasons": reasons,
+            "declared_license": version.declared_license}
 
 
 # ── Download ───────────────────────────────────────────────────────────────────
@@ -4119,6 +4227,9 @@ def _version_dict(v: OntologyVersion) -> dict:
         "triple_count": v.triple_count,
         "download_url": f"/api/v1/ontologies/{v.ontology_id}/{v.id}/download",
         "created_at": v.created_at.isoformat(),
+        "license": v.license,
+        "license_compliant": v.license_compliant,
+        "declared_license": v.declared_license,
         "reasoner": v.reasoner,
         # Input repairs the reasoner applied so horned-owl could parse this
         # version (e.g. {"injected_class_declarations": 13}). {} = nothing to

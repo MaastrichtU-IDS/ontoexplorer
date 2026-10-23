@@ -73,6 +73,29 @@ def compliant_license_set() -> set[str]:
     return {x.strip() for x in get_settings().compliant_licenses.split(",") if x.strip()}
 
 
+def effective_license(
+    content_license: str | None, declared_license: str | None,
+) -> tuple[str | None, str | None, bool]:
+    """Resolve compliance from the content license plus a contributor's declared
+    overlay (#364 Add-Ontology flow). Returns (content_spdx, declared_spdx,
+    license_compliant).
+
+    The overlay fills an ABSENCE only: a RECOGNIZED content license decides on its
+    own, so a declared non-compliant license (e.g. CC-BY-NC, which the canonicalizer
+    recognizes) still fails the gate and a contributor cannot launder it. Only when
+    the content declares no recognized license does the contributor's
+    `declared_license` apply. An empty allowlist disables the gate.
+    """
+    allow = compliant_license_set()
+    content_spdx = canonicalize_license(content_license)
+    declared_spdx = canonicalize_license(declared_license)
+    if not allow:
+        return content_spdx, declared_spdx, True
+    if content_spdx is not None:
+        return content_spdx, declared_spdx, content_spdx in allow
+    return content_spdx, declared_spdx, bool(declared_spdx and declared_spdx in allow)
+
+
 def is_compliant(raw: str | None) -> bool:
     """True if the declared license canonicalizes to an SPDX id on the platform
     allowlist. An empty allowlist disables the gate (everything compliant)."""
