@@ -4,8 +4,8 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from jose import JWTError
-from sqlalchemy import select
-from fastapi.responses import RedirectResponse
+from sqlalchemy import delete, select, update
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.database import get_db
@@ -34,9 +34,18 @@ from ontoexplorer.modules.auth.session import (
     revoke_session,
     unlink_oauth_account,
 )
+from ontoexplorer.modules.auth.ssf import (
+    EVT_ACCOUNT_DISABLED,
+    EVT_ACCOUNT_PURGED,
+    EVT_SESSION_REVOKED,
+    SETError,
+    iter_events,
+    subject_sub,
+    verify_set,
+)
 from pydantic import BaseModel
 from ontoexplorer.config import can_upload, get_settings, is_admin
-from ontoexplorer.models.db import User
+from ontoexplorer.models.db import ApiKey, OAuthAccount, Session, User
 
 from ontoexplorer.logging_config import get_logger
 
@@ -306,6 +315,105 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
         await revoke_session(db, token)
     response.delete_cookie("refresh_token")
     return {"detail": "Logged out"}
+
+
+async def _handle_ssf_event(db: AsyncSession, event_type: str, sub: str | None) -> str:
+    """Apply one SSF event. Returns a short outcome string for logging.
+
+    Every path is idempotent: an already-purged user is `unmatched`, a replayed
+    revoke re-deletes nothing. An unmatched subject is informational, not an error
+    (the event may be for a Keycloak user who never signed in here).
+    """
+    from datetime import UTC, datetime
+
+    if event_type not in (EVT_ACCOUNT_PURGED, EVT_ACCOUNT_DISABLED, EVT_SESSION_REVOKED):
+        return "ignored"
+    if not sub:
+        return "no_subject"
+
+    owner_id = await find_oauth_owner(db, "keycloak", sub)
+    if owner_id is None:
+        return "unmatched"
+
+    if event_type == EVT_ACCOUNT_PURGED:
+        # If the account still has another working login (direct GitHub/ORCID),
+        # remove only the Keycloak identity and keep the account + its ontologies.
+        # Delete the whole user only when Keycloak was its sole identity.
+        providers = (
+            await db.execute(select(OAuthAccount.provider).where(OAuthAccount.user_id == owner_id))
+        ).scalars().all()
+        if any(p != "keycloak" for p in providers):
+            await db.execute(
+                delete(OAuthAccount).where(
+                    OAuthAccount.user_id == owner_id, OAuthAccount.provider == "keycloak"
+                )
+            )
+            # The Keycloak login is gone; drop sessions so an active one can't ride on.
+            await db.execute(delete(Session).where(Session.user_id == owner_id))
+            await db.commit()
+            return "unlinked_keycloak"
+        # Keycloak was the sole identity: remove the account. Delete the
+        # auth-critical child rows explicitly (deterministic regardless of the DB's
+        # FK-cascade config, matching how merge_users tears a user down), then the
+        # user; the remaining FKs cascade or NULL (ontologies.owner_id -> NULL, so
+        # owned ontologies are orphaned, not destroyed).
+        await db.execute(delete(Session).where(Session.user_id == owner_id))
+        await db.execute(delete(OAuthAccount).where(OAuthAccount.user_id == owner_id))
+        await db.execute(delete(User).where(User.id == owner_id))
+        await db.commit()
+        return "deleted_user"
+
+    if event_type == EVT_ACCOUNT_DISABLED:
+        # Reversible lockout: revoke sessions + API keys, keep the account.
+        await db.execute(delete(Session).where(Session.user_id == owner_id))
+        await db.execute(
+            update(ApiKey)
+            .where(ApiKey.user_id == owner_id, ApiKey.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(UTC))
+        )
+        await db.commit()
+        return "disabled_revoked"
+
+    # EVT_SESSION_REVOKED (CAEP). We don't persist Keycloak's session id, so we
+    # can only act on the user subject: revoke all of that user's app sessions.
+    await db.execute(delete(Session).where(Session.user_id == owner_id))
+    await db.commit()
+    return "sessions_revoked"
+
+
+@router.post("/keycloak/ssf", summary="Receive Keycloak Shared Signals (SSF) security events")
+async def keycloak_ssf(request: Request, db: AsyncSession = Depends(get_db)):
+    """Push-delivery endpoint (RFC 8935) for Keycloak-signed Security Event Tokens.
+
+    Unauthenticated by design — trust comes from the SET's RS256 signature against
+    the realm JWKS plus iss/aud/typ checks (see modules/auth/ssf.verify_set). An
+    optional shared secret adds a bearer check when configured. Idempotent; returns
+    202 so Keycloak's durable outbox stops retrying.
+    """
+    s = get_settings()
+    secret = getattr(s, "keycloak_ssf_shared_secret", "") or ""
+    if secret:
+        provided = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+        if provided != secret:
+            return JSONResponse(status_code=401, content={"err": "authentication_failed",
+                                                          "description": "Bad or missing bearer token"})
+
+    body = (await request.body()).decode("utf-8", "replace")
+    try:
+        claims = await verify_set(body)
+    except SETError as exc:
+        log.warning("ssf_rejected", err=exc.err, detail=exc.description)
+        return JSONResponse(status_code=400, content={"err": exc.err, "description": exc.description})
+
+    jti = claims.get("jti")
+    handled = []
+    for event_type, payload in iter_events(claims):
+        sub = subject_sub(claims, payload)
+        outcome = await _handle_ssf_event(db, event_type, sub)
+        handled.append({"event": event_type, "outcome": outcome})
+        log.info("ssf_event", jti=jti, event_type=event_type,
+                 sub=((sub or "")[:12] or None), outcome=outcome)
+    return JSONResponse(status_code=202, content={"received": True, "handled": handled})
 
 
 @router.get("/me", summary="Current user profile")
