@@ -190,6 +190,16 @@ async def test_wrong_audience_rejected(client, db_session):
 
 
 @pytest.mark.anyio
+async def test_keycloak_stream_audience_accepted(client, db_session):
+    # Keycloak stamps aud as "<clientId>/<streamId>" per stream (observed on dev).
+    u, subs = await _make_user(db_session, providers=["keycloak"])
+    aud = f"{CLIENT}/ceb94fdb-6004-46a6-aad1-f56a68b26833"
+    r = await _post(client, _set(ssf.EVT_ACCOUNT_PURGED, subs["keycloak"], aud=aud))
+    assert r.status_code == 202
+    assert r.json()["handled"][0]["outcome"] == "deleted_user"
+
+
+@pytest.mark.anyio
 async def test_wrong_typ_rejected(client, db_session):
     u, subs = await _make_user(db_session, providers=["keycloak"])
     r = await _post(client, _set(ssf.EVT_ACCOUNT_PURGED, subs["keycloak"], typ="jwt"))

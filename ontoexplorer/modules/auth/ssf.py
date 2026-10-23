@@ -131,10 +131,19 @@ async def verify_set(token: str) -> dict:
     token_auds = claims.get("aud")
     token_auds = [token_auds] if isinstance(token_auds, str) else list(token_auds or [])
     app_url = str(s.app_url).rstrip("/")
-    accepted = {a for a in (audience, app_url, f"{app_url}/auth/keycloak/ssf") if a}
-    if not set(token_auds) & accepted:
-        raise SETError("invalid_request",
-                       f"Invalid audience {token_auds!r}; accepted {sorted(accepted)}")
+    url_auds = {u for u in (app_url, f"{app_url}/auth/keycloak/ssf") if u}
+
+    def _accepted(a: str) -> bool:
+        # Keycloak stamps the SET aud as the client id or, per stream,
+        # "<clientId>/<streamId>" (observed on dev). Accept both forms for our
+        # client, plus the app/push URL. The stream id is dynamic, so match the
+        # "<clientId>/" prefix rather than any fixed value.
+        if audience and (a == audience or a.startswith(f"{audience}/")):
+            return True
+        return a in url_auds
+
+    if not any(_accepted(a) for a in token_auds):
+        raise SETError("invalid_request", f"Invalid audience {token_auds!r}")
 
     if not isinstance(claims.get("events"), dict) or not claims["events"]:
         raise SETError("invalid_request", "SET carries no events")
