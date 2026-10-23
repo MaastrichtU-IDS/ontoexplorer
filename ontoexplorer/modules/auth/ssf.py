@@ -118,14 +118,23 @@ async def verify_set(token: str) -> dict:
             token,
             key,
             algorithms=[alg],
-            audience=audience,
             issuer=issuer,
             # SETs are not ID tokens: no at_hash, and they may legitimately carry
-            # no exp. We still enforce iss + aud + signature, which is the point.
-            options={"verify_at_hash": False, "verify_exp": False},
+            # no exp. Signature + iss are enforced here; aud is checked below
+            # against a set of accepted values (Keycloak stamps the SET's aud
+            # itself — observed to be the stream/push identity, not the client id).
+            options={"verify_at_hash": False, "verify_exp": False, "verify_aud": False},
         )
     except Exception as exc:
         raise SETError("invalid_request", f"SET verification failed: {exc}") from exc
+
+    token_auds = claims.get("aud")
+    token_auds = [token_auds] if isinstance(token_auds, str) else list(token_auds or [])
+    app_url = str(s.app_url).rstrip("/")
+    accepted = {a for a in (audience, app_url, f"{app_url}/auth/keycloak/ssf") if a}
+    if not set(token_auds) & accepted:
+        raise SETError("invalid_request",
+                       f"Invalid audience {token_auds!r}; accepted {sorted(accepted)}")
 
     if not isinstance(claims.get("events"), dict) or not claims["events"]:
         raise SETError("invalid_request", "SET carries no events")
