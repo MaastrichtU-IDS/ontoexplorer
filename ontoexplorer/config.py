@@ -114,6 +114,10 @@ class Settings(BaseSettings):
     keycloak_issuer: str = ""
     keycloak_client_id: str = "ontoexplorer"
     keycloak_client_secret: str = ""
+    # Optional shared secret for the SSF push endpoint (/auth/keycloak/ssf, #372).
+    # When set, the endpoint also requires `Authorization: Bearer <secret>` on top
+    # of the SET signature check. Empty = rely on the signature alone.
+    keycloak_ssf_shared_secret: str = ""
 
     # Inbound GitHub webhook — set to the secret configured in the GitHub repo's webhook settings
     github_webhook_secret: str = ""
