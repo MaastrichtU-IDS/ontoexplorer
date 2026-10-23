@@ -98,6 +98,21 @@ def decide_publish_status(
     """
     if current_status == "ready":
         return "ready", []
+    reasons = held_reasons(
+        license_compliant=license_compliant, triple_count=triple_count,
+        title=title, min_triples=min_triples,
+    )
+    return ("ready" if not reasons else "needs_review"), reasons
+
+
+def held_reasons(
+    *, license_compliant: bool, triple_count: int | None, title: str | None,
+    min_triples: int,
+) -> list[str]:
+    """The quality-gate reasons a version is (or would be) held for review — empty
+    means it passes. Shared by `decide_publish_status` and by the admin review
+    surface to show WHY a held version is held (recomputed from stored signals, so
+    it also reflects fixes made since the original ingest)."""
     reasons: list[str] = []
     if not license_compliant:
         reasons.append("license missing or not on the platform compliance allowlist")
@@ -105,4 +120,4 @@ def decide_publish_status(
         reasons.append(f"fewer than {min_triples} triple(s)")
     if not (title or "").strip():
         reasons.append("no title")
-    return ("ready" if not reasons else "needs_review"), reasons
+    return reasons

@@ -12,11 +12,13 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.database import get_db
+from ontoexplorer.logging_config import get_logger
 from ontoexplorer.models.db import User
 
 from ._common import _load_version, _require_admin
 
 router = APIRouter()
+log = get_logger(__name__)
 
 
 # ── Per-ontology: check for upstream change (compares SHA-256) ────────────────
@@ -475,6 +477,43 @@ async def admin_queue_ingest_for_version(
         groups=list(ont.groups or []),
     )
     return {"status": "queued", "task_id": task.id, "method": "iri" if use_iri else "url"}
+
+
+@router.post(
+    "/versions/{version_id}/publish",
+    summary="Publish a held (needs_review) version — admin override of the quality gate",
+)
+async def admin_publish_version(
+    version_id: str,
+    _: User = Depends(_require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Clear the #364 quality gate for one version: flip `needs_review` -> `ready`
+    so it enters the public catalogue. Admin override — use after reviewing the
+    held version's reasons; to reject instead, delete the version. Idempotent-ish:
+    only a held version is publishable (409 otherwise)."""
+    from sqlalchemy import update as _update
+    from ontoexplorer.models.db import OntologyVersion
+
+    v = await _load_version(db, version_id)
+    if v.status != "needs_review":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Version is '{v.status}', not 'needs_review'; nothing to publish.",
+        )
+    await db.execute(
+        _update(OntologyVersion).where(OntologyVersion.id == v.id).values(status="ready")
+    )
+    await db.commit()
+    # A newly-ready version can become the ontology's default; drop the cache so
+    # the catalogue/default picks it up without waiting for the TTL.
+    try:
+        from ontoexplorer.modules.search.versions import invalidate_latest_ready_versions_cache
+        invalidate_latest_ready_versions_cache()
+    except Exception:
+        pass
+    log.info("version_published_from_review", version_id=v.id, ontology_id=v.ontology_id)
+    return {"status": "ready", "version_id": v.id}
 
 
 # ── Bulk: re-index everything ────────────────────────────────────────────────
