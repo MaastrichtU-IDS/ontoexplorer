@@ -15,18 +15,30 @@ const INGEST_TRACK_TIMEOUT_MS = 30 * 60_000
 // ── Status dot ────────────────────────────────────────────────────────────────
 
 const STATUS_COLOR: Record<string, string> = {
-  ready:      'var(--accent)',
-  ingested:   'var(--text-muted)',
-  reasoning:  'var(--accent-purple)',
-  indexing:   'var(--accent-purple)',
-  deprecated: 'var(--text-dim)',
-  failed:     'var(--red-soft)',
+  ready:         'var(--accent)',
+  ingested:      'var(--text-muted)',
+  reasoning:     'var(--accent-purple)',
+  indexing:      'var(--accent-purple)',
+  needs_review:  'var(--orange)',
+  deprecated:    'var(--text-dim)',
+  failed:        'var(--red-soft)',
+}
+
+// Contributor-facing vocabulary — the pipeline statuses are internal (#364).
+const STATUS_LABEL: Record<string, string> = {
+  ready:        'Published',
+  ingested:     'Processing',
+  reasoning:    'Processing',
+  indexing:     'Processing',
+  needs_review: 'Needs your attention',
+  deprecated:   'Deprecated',
+  failed:       'Failed',
 }
 
 function StatusDot({ status }: { status: string }) {
   return (
     <span style={{ color: STATUS_COLOR[status] ?? 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
-      ● {status}
+      ● {STATUS_LABEL[status] ?? status}
     </span>
   )
 }
@@ -342,6 +354,74 @@ function DefaultVersionEditor({ ontology, versions }: { ontology: Ontology; vers
 // (hard, irreversible) each version. Gated server-side by ontology-edit rights
 // (owner/maintainer/admin). Delete is blocked for the only version — delete the
 // ontology instead.
+// #364: inline "fix a held version" panel. A version held by the quality gate
+// isn't public; the contributor sees why and self-serves the common fixes
+// (declare a compliant license; set a title) → re-run the gate via reevaluate.
+function HeldFixPanel(
+  { ontologyId, version, onDone }:
+  { ontologyId: string; version: OntologyVersion; onDone: () => void },
+) {
+  const active = version.review_reasons ?? []
+  const [remaining, setRemaining] = useState<string[] | null>(null)
+  const shown = remaining ?? active
+  const needsLicense = shown.some(r => r.toLowerCase().includes('license'))
+  const needsTitle = shown.some(r => r.toLowerCase().includes('title'))
+  const [license, setLicense] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+
+  const { data: lic } = useQuery({
+    queryKey: ['compliant-licenses'],
+    queryFn: () => api.ontologies.compliantLicenses(),
+    enabled: needsLicense,
+    staleTime: 5 * 60_000,
+  })
+  const publish = useMutation({
+    mutationFn: () => api.ontologies.reevaluateVersion(ontologyId, version.id, license || undefined),
+    onSuccess: (res) => {
+      setErr(null)
+      if (res.status === 'ready') onDone()        // row refetches → "Published"
+      else setRemaining(res.review_reasons)
+    },
+    onError: (e: unknown) => setErr(e instanceof Error ? e.message : 'Could not publish'),
+  })
+
+  if (shown.length === 0) return null
+
+  return (
+    <div style={{
+      background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)',
+      borderRadius: 8, padding: '8px 10px', display: 'flex', flexDirection: 'column',
+      gap: 6, fontSize: 'var(--font-size-sm)', maxWidth: 540,
+    }}>
+      <div style={{ color: 'var(--orange)', fontWeight: 600 }}>⚠ Not public yet — one more step</div>
+      <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-muted)' }}>
+        {shown.map((r, i) => <li key={i}>{r}</li>)}
+      </ul>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {needsLicense && (
+          <select
+            value={license}
+            onChange={e => setLicense(e.target.value)}
+            style={{ fontSize: 'var(--font-size-sm)', background: 'var(--bg-secondary)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px' }}
+          >
+            <option value="">Choose a license…</option>
+            {(lic?.licenses ?? []).map(l => <option key={l.spdx} value={l.spdx}>{l.label}</option>)}
+          </select>
+        )}
+        <button
+          onClick={() => publish.mutate()}
+          disabled={publish.isPending || (needsLicense && !license)}
+          style={{ color: '#fff', background: 'var(--accent)', border: 'none', borderRadius: 20, padding: '2px 14px', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--font-size-sm)', opacity: (needsLicense && !license) ? 0.5 : 1 }}
+        >
+          {publish.isPending ? '…' : 'Publish'}
+        </button>
+      </div>
+      {needsTitle && <span style={{ color: 'var(--text-dim)' }}>Set a title in the Title field above, then Publish.</span>}
+      {err && <span style={{ color: 'var(--red-soft)' }}>{err}</span>}
+    </div>
+  )
+}
+
 function VersionManager({ ontology, versions }: { ontology: Ontology; versions: OntologyVersion[] }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
@@ -382,7 +462,8 @@ function VersionManager({ ontology, versions }: { ontology: Ontology; versions: 
       {open && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
           {sorted.map(v => (
-            <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', fontSize: 'var(--font-size-sm)' }}>
+            <div key={v.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', fontSize: 'var(--font-size-sm)' }}>
               <StatusDot status={v.status} />
               <span style={{ color: 'var(--text)' }}>{versionLabel(v, { isDefault: v.is_default })}</span>
               {v.status !== 'deprecated' && (
@@ -417,6 +498,10 @@ function VersionManager({ ontology, versions }: { ontology: Ontology; versions: 
                   delete
                 </button>
               )}
+            </div>
+            {v.status === 'needs_review' && (
+              <HeldFixPanel ontologyId={ontology.id} version={v} onDone={invalidate} />
+            )}
             </div>
           ))}
         </div>
