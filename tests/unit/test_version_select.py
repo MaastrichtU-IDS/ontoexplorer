@@ -57,6 +57,41 @@ def test_predecessor_skips_non_ready():
     assert V.version_predecessor(vs, "new").id == "old"
 
 
+def test_choose_excludes_needs_review():
+    # A version held by the quality gate (#364) must never win the default, even
+    # when it is the highest version — the public ontology page / search scope
+    # resolve the default via _choose.
+    vs = [
+        _V("held", "http://x/v2.0/o", status="needs_review"),
+        _V("ok", "http://x/v1.0/o"),
+    ]
+    assert V._choose(vs, None).id == "ok"
+
+
+def test_choose_none_when_only_needs_review():
+    vs = [_V("held", "http://x/v1.0/o", status="needs_review")]
+    assert V._choose(vs, None) is None
+
+
+def test_pinned_needs_review_is_not_honored():
+    # Even an explicit pin cannot surface a held version as the public default.
+    vs = [
+        _V("held", "http://x/v2.0/o", status="needs_review"),
+        _V("ok", "http://x/v1.0/o"),
+    ]
+    assert V._choose(vs, "held").id == "ok"
+
+
+def test_predecessor_skips_needs_review():
+    vs = [
+        _V("new", "http://x/v2.0/o"),
+        _V("mid", "http://x/v1.5/o", status="needs_review"),
+        _V("old", "http://x/v1.0/o"),
+    ]
+    # a held v1.5 is not a valid diff baseline -> predecessor of v2.0 is v1.0
+    assert V.version_predecessor(vs, "new").id == "old"
+
+
 def test_date_versioned_iris():
     vs = [
         _V("x", "http://x/2024-05-01/o"),
