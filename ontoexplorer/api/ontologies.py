@@ -1101,6 +1101,76 @@ async def list_ontologies(
     return {"ontologies": rows, "offset": offset, "limit": limit, "total": total}
 
 
+# ── Submissions (durable ingest-job records) ─────────────────────────────────────
+
+def _submission_dict(job, version, ont) -> dict:
+    """A contributor-facing submission record: the ingest Job enriched with the
+    ontology/version it produced. Durable + deep-linkable, so tracking survives
+    navigating away from the upload form (the in-component poll did not). `job.id`
+    is the Celery task id the submitter was handed. `version.status` ("ready" /
+    "needs_review" / …) drives the outcome shown and the click-through to the fix."""
+    return {
+        "task_id": job.id,
+        "job_status": job.status,          # pending | running | done | failed
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+        # `error` is a raw exception string (can name internal hosts) — only ever
+        # returned here to the submitter, whose own submission it is.
+        "error": job.error,
+        "ontology": (
+            {"id": ont.id, "shortname": ont.shortname, "title": ont.title}
+            if ont is not None else None
+        ),
+        "version": (
+            {"id": version.id, "status": version.status}
+            if version is not None else None
+        ),
+    }
+
+
+@router.get("/submissions", summary="The caller's recent ontology submissions")
+async def list_submissions(
+    limit: int = Query(50, ge=1, le=200),
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """The caller's own ingestion jobs (newest first), each enriched with the
+    ontology/version it produced — the durable backing for the dashboard
+    Submissions view. Defined before /{ontology_id} so the literal path wins."""
+    from ontoexplorer.models.db import Job
+    rows = (await db.execute(
+        select(Job, OntologyVersion, Ontology)
+        .outerjoin(OntologyVersion, OntologyVersion.id == Job.version_id)
+        .outerjoin(Ontology, Ontology.id == OntologyVersion.ontology_id)
+        .where(Job.user_id == user.id, Job.type == "ingestion")
+        .order_by(Job.created_at.desc())
+        .limit(limit)
+    )).all()
+    return {"submissions": [_submission_dict(j, v, o) for (j, v, o) in rows]}
+
+
+@router.get("/submissions/{task_id}", summary="One submission by its task id")
+async def get_submission(
+    task_id: str,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """A single submission (the add form hands off to this deep link). 404 for a
+    task that is not the caller's, is unknown, or whose worker row doesn't exist
+    yet — the id is a Celery task id, so a 403 would confirm its existence."""
+    from ontoexplorer.models.db import Job
+    row = (await db.execute(
+        select(Job, OntologyVersion, Ontology)
+        .outerjoin(OntologyVersion, OntologyVersion.id == Job.version_id)
+        .outerjoin(Ontology, Ontology.id == OntologyVersion.ontology_id)
+        .where(Job.id == task_id, Job.type == "ingestion")
+    )).first()
+    if row is None or row[0].user_id != user.id:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    j, v, o = row
+    return _submission_dict(j, v, o)
+
+
 # ── Single ontology metadata ───────────────────────────────────────────────────
 
 @router.get("/{ontology_id}", summary="Ontology metadata (by id or shortname)")
