@@ -90,6 +90,40 @@ async def notify_admins_new_request(
                            body="\n".join(lines)))
 
 
+# ── Quality-gate hold notification (#364 Add-Ontology) ───────────────────────────
+
+async def notify_owner_version_held(
+    *, owner_email: str | None, owner_name: str | None,
+    ontology_label: str, reasons: list[str],
+) -> None:
+    """Email a contributor that their uploaded version was held by the quality gate
+    (status needs_review) and needs their attention before it publishes. Best-effort
+    and never raised into the ingest task; a no-op when the owner has no email."""
+    if not owner_email:
+        log.info("version_held_no_owner_email", ontology=ontology_label)
+        return
+    who = owner_name or "there"
+    bullets = "\n".join(f"  • {r}" for r in reasons) or "  • (see the dashboard)"
+    dash = get_settings().frontend_url.rstrip("/") + "/dashboard"
+    lines = [
+        f"Hi {who},",
+        "",
+        f"Your submission “{ontology_label}” was received but needs a quick fix "
+        "before it can be published:",
+        "",
+        bullets,
+        "",
+        "Open your dashboard to resolve it (assert a license, add a title) and "
+        "publish — no re-upload needed in most cases:",
+        dash,
+    ]
+    await send_email(Email(
+        to=[owner_email],
+        subject=f"[OntoExplorer] Action needed: “{ontology_label}” is held for review",
+        body="\n".join(lines),
+    ))
+
+
 async def notify_requester_decision(
     *, requester_email: str | None, request_type: str, ontology: str | None,
     approved: bool, note: str | None,

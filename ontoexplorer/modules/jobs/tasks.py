@@ -1441,8 +1441,25 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                     title=(ont.title if ont else None),
                     min_triples=_gs2().min_triples_for_publish,
                 )
+                # Fire the owner "held for review" email only on the TRANSITION into
+                # needs_review (first publication), not on a re-index of an already-
+                # held version — otherwise every re-index re-nags the contributor.
+                _newly_held = _new_status == "needs_review" and ver.status != "needs_review"
                 if _new_status == "needs_review":
                     log.info("version_held_for_review", version_id=version_id, reasons=_reasons)
+
+                # Capture owner contact + a human label inside the session, before it
+                # closes, so the best-effort email can be sent after commit.
+                _owner_email = _owner_name = None
+                _ont_label = (ont.title if ont and ont.title else None) or (
+                    ont.shortname if ont else None) or ontology_id
+                if _newly_held and ont and ont.owner_id:
+                    from ontoexplorer.models.db import User as _User
+                    _owner = (await db.execute(
+                        _sa_select(_User).where(_User.id == ont.owner_id)
+                    )).scalar_one_or_none()
+                    if _owner is not None:
+                        _owner_email, _owner_name = _owner.email, _owner.display_name
 
                 try:
                     _lc = await version_lang_counts(db, version_id)
@@ -1458,6 +1475,15 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                     .values(**_vals)
                 )
                 await db.commit()
+
+                if _newly_held:
+                    from ontoexplorer.modules.notifications.email import (
+                        notify_owner_version_held,
+                    )
+                    await notify_owner_version_held(
+                        owner_email=_owner_email, owner_name=_owner_name,
+                        ontology_label=_ont_label, reasons=_reasons,
+                    )
 
         asyncio.run(_mark_ready())
         # The Celery worker invalidates only its own in-process cache; the API
