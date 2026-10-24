@@ -49,6 +49,13 @@ describe('SubmissionDetail', () => {
     expect(screen.queryByText('Submission not found')).toBeNull()
   })
 
+  it('surfaces a non-404 error instead of masking it as processing', async () => {
+    mockSub.mockRejectedValue(new ApiError('Internal error', 500, null))
+    wrap('t-err')
+    expect(await screen.findByText('Internal error')).toBeInTheDocument()
+    expect(screen.queryByText('Processing')).toBeNull()
+  })
+
   it('links to the published ontology when ready', async () => {
     mockSub.mockResolvedValue({
       task_id: 't1', job_status: 'done', created_at: '2026-10-24T10:00:00Z', finished_at: '2026-10-24T10:05:00Z',

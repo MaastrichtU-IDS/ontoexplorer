@@ -518,6 +518,11 @@ import re as _re
 
 _SHORTNAME_RE = _re.compile(r'^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$')
 
+# Literal first-segment routes under /ontologies/ — a shortname equal to one of
+# these is matched by the literal route (registered first), making that ontology
+# unreachable by shortname. Reserve them so the PATCH can't create the collision.
+_RESERVED_SHORTNAMES = {"submissions", "compliant-licenses", "attention-count"}
+
 
 @router.patch("/{ontology_id}", summary="Update ontology metadata (shortname)")
 async def patch_ontology(
@@ -540,6 +545,11 @@ async def patch_ontology(
                 raise HTTPException(
                     status_code=422,
                     detail="Shortname must be 2–64 characters: lowercase letters, digits, hyphens, underscores; must start and end with a letter or digit",
+                )
+            if shortname in _RESERVED_SHORTNAMES:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"'{shortname}' is reserved and cannot be used as a shortname",
                 )
             conflict = await db.execute(
                 select(Ontology).where(Ontology.shortname == shortname, Ontology.id != ontology_id)
@@ -1157,7 +1167,9 @@ async def get_submission(
 ):
     """A single submission (the add form hands off to this deep link). 404 for a
     task that is not the caller's, is unknown, or whose worker row doesn't exist
-    yet — the id is a Celery task id, so a 403 would confirm its existence."""
+    yet — uniform so this endpoint never confirms another user's task exists (note
+    the raw job error, which can name internal hosts, is only returned to its own
+    submitter here)."""
     from ontoexplorer.models.db import Job
     row = (await db.execute(
         select(Job, OntologyVersion, Ontology)

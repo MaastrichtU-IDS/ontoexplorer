@@ -1,6 +1,6 @@
 """GET /ontologies/submissions[/{task_id}] — durable, owner-scoped records of a
-contributor's ingest jobs, enriched with the ontology/version they produced and
-any hold reasons (#364 Phase 2b). Replaces the ephemeral in-component poll."""
+contributor's ingest jobs, enriched with the ontology/version they produced
+(#364 Phase 2b). Replaces the ephemeral in-component poll."""
 import uuid
 
 import pytest
@@ -99,6 +99,33 @@ async def test_unknown_task_is_404(client, user_and_key):
 
 
 @pytest.mark.anyio
+async def test_system_job_null_user_is_404(client, user_and_key, db_session):
+    # A beat-scheduled ingestion has user_id=NULL; the owner-scoped detail endpoint
+    # must not expose it (NULL != caller), same 404 as any other non-match.
+    _, raw = user_and_key
+    job = Job(id=str(uuid.uuid4()), user_id=None, type="ingestion", status="done")
+    db_session.add(job)
+    await db_session.commit()
+    r = await client.get(f"/api/v1/ontologies/submissions/{job.id}", headers=_hdr(raw))
+    assert r.status_code == 404
+
+
+@pytest.mark.anyio
 async def test_requires_auth(client):
+    # require_auth with no credentials → 401 (not 403).
     r = await client.get("/api/v1/ontologies/submissions")
-    assert r.status_code in (401, 403)
+    assert r.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_cannot_rename_ontology_to_reserved_submissions(client, user_and_key, db_session):
+    # A shortname equal to the literal /ontologies/submissions route would make the
+    # ontology unreachable by shortname — reject the rename.
+    user, raw = user_and_key
+    o = Ontology(id=str(uuid.uuid4()), iri=f"http://ex/{uuid.uuid4()}",
+                 title="T", owner_id=user.id, shortname=f"ok-{uuid.uuid4().hex[:8]}")
+    db_session.add(o)
+    await db_session.commit()
+    r = await client.patch(f"/api/v1/ontologies/{o.id}",
+                           json={"shortname": "submissions"}, headers=_hdr(raw))
+    assert r.status_code == 422

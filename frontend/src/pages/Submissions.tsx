@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
@@ -22,12 +23,18 @@ function Chip({ label, color }: { label: string; color: string }) {
   )
 }
 
+// Stop the live poll after this long so a single permanently-unsettled submission
+// (e.g. a stuck pipeline) can't make the list poll forever.
+const MAX_POLL_MS = 5 * 60_000
+
 export default function Submissions() {
+  const startedAt = useRef(Date.now())
   const { data, isLoading } = useQuery({
     queryKey: ['submissions'],
     queryFn: () => api.ontologies.submissions(),
-    // Keep the list live while anything is still processing.
+    // Keep the list live while anything is still processing, but bounded.
     refetchInterval: (q) => {
+      if (Date.now() - startedAt.current > MAX_POLL_MS) return false
       const subs = q.state.data?.submissions ?? []
       return subs.some((s) => !submissionOutcome(s).done) ? 4000 : false
     },
@@ -82,12 +89,14 @@ export default function Submissions() {
                     {fmtDate(s.created_at)}
                   </td>
                   <td style={{ padding: '0.5rem 0.75rem' }}>
-                    {s.ontology ? (
+                    {/* Only a published (ready) version has a usable public page; a
+                        held/processing one would resolve to no default version. */}
+                    {s.ontology && s.version?.status === 'ready' ? (
                       <Link to={`/ontologies/${s.ontology.shortname}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>
                         {name}
                       </Link>
                     ) : (
-                      <span style={{ color: 'var(--text-dim)' }}>{name}</span>
+                      <span style={{ color: s.ontology ? 'var(--text)' : 'var(--text-dim)' }}>{name}</span>
                     )}
                   </td>
                   <td style={{ padding: '0.5rem 0.75rem' }}>

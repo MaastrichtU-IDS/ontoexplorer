@@ -1,7 +1,13 @@
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError, api, type Submission } from '../lib/api'
 import { submissionOutcome } from '../lib/submissions'
+
+// Stop polling after this long even if the pipeline never settles — a task whose
+// job row never appears (e.g. a held version was deleted, cascading its Job away)
+// would otherwise poll forever showing a fake "Processing".
+const MAX_POLL_MS = 5 * 60_000
 
 function fmtDate(iso: string | null): string {
   if (!iso) return '—'
@@ -10,6 +16,13 @@ function fmtDate(iso: string | null): string {
 
 export default function SubmissionDetail() {
   const { taskId = '' } = useParams()
+  // A hard deadline from first render, so polling is always bounded.
+  const startedAt = useRef(Date.now())
+  const [stalled, setStalled] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setStalled(true), MAX_POLL_MS)
+    return () => clearTimeout(t)
+  }, [])
 
   const { data, isLoading, error } = useQuery<Submission>({
     queryKey: ['submission', taskId],
@@ -27,7 +40,12 @@ export default function SubmissionDetail() {
         throw e
       }
     },
-    refetchInterval: (q) => (q.state.data && submissionOutcome(q.state.data).done ? false : 2500),
+    refetchInterval: (q) => {
+      if (q.state.status === 'error') return false           // real failure → stop
+      if (q.state.data && submissionOutcome(q.state.data).done) return false
+      if (Date.now() - startedAt.current > MAX_POLL_MS) return false  // deadline
+      return 2500
+    },
   })
 
   const back = (
@@ -52,6 +70,9 @@ export default function SubmissionDetail() {
 
   const o = submissionOutcome(data)
   const held = data.version?.status === 'needs_review'
+  // Still unsettled after the deadline: polling has stopped, so tell the viewer
+  // rather than leave a perpetual "refreshing…".
+  const timedOut = stalled && !o.done
 
   return (
     <div style={{ maxWidth: 640 }}>
@@ -66,10 +87,18 @@ export default function SubmissionDetail() {
         }}>
           {o.label}
         </span>
-        {!o.done && (
+        {!o.done && !timedOut && (
           <span style={{ color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>· refreshing…</span>
         )}
       </div>
+
+      {timedOut && (
+        <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginTop: '0.5rem' }}>
+          {data.ontology
+            ? 'Still processing — this is taking longer than usual. Check back later.'
+            : 'We can’t find this submission — it may still be queued, or it no longer exists.'}
+        </p>
+      )}
 
       <dl style={{
         display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.35rem 1rem',
