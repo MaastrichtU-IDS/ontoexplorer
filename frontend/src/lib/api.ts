@@ -285,6 +285,18 @@ export interface OntologyVersion {
    *  version_iri) — only the /versions list endpoint sets it. Clients should show
    *  this as "current" rather than assuming the first (newest-ingested) row. */
   is_default?: boolean
+  /** #364 quality gate. `review_reasons` is non-empty only when `status` is
+   *  `needs_review` — the fixes a held version needs before it can be published.
+   *  `license` is the SPDX from the content; `declared_license` is a
+   *  contributor-asserted one (fills an absence only). */
+  license?: string | null
+  /** The license as declared in the content (pre-canonicalization), or null if the
+   *  content declares none. Set but with `license_compliant:false` means the file's
+   *  own license can't be hosted — the contributor must change it in the source. */
+  license_raw?: string | null
+  license_compliant?: boolean
+  declared_license?: string | null
+  review_reasons?: string[]
 }
 
 export interface Term {
@@ -1466,6 +1478,16 @@ export const api = {
     // Hard-delete a single version (irreversible): purges all its artifacts + rows.
     deleteVersion: (oid: string, vid: string) =>
       request<void>(`/ontologies/${oid}/${vid}?purge=true`, { method: 'DELETE' }),
+    // #364: re-run the quality gate on a held (needs_review) version, optionally
+    // asserting a license. Publishes if it now passes, else returns the reasons.
+    reevaluateVersion: (oid: string, vid: string, declaredLicense?: string) =>
+      request<{ status: string; review_reasons: string[]; declared_license: string | null }>(
+        `/ontologies/${oid}/${vid}/reevaluate`,
+        { method: 'POST', body: JSON.stringify({ declared_license: declaredLicense ?? null }) },
+      ),
+    // The licenses the platform accepts, for the held-version fix selector.
+    compliantLicenses: () =>
+      request<{ licenses: { spdx: string; label: string }[] }>(`/ontologies/compliant-licenses`),
 
     profile: {
       get: (ontologyId: string, versionId: string) =>
