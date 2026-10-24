@@ -12,6 +12,7 @@ const Home = lazy(() => import('./pages/Home'))
 const Search = lazy(() => import('./pages/Search'))
 const Ontologies = lazy(() => import('./pages/Ontologies'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
+const AddOntology = lazy(() => import('./pages/AddOntology'))
 const Submissions = lazy(() => import('./pages/Submissions'))
 const SubmissionDetail = lazy(() => import('./pages/SubmissionDetail'))
 const ApiKeys = lazy(() => import('./pages/ApiKeys'))
@@ -138,6 +139,7 @@ export default function App() {
       <Route element={<Shell><AuthGuard /></Shell>}>
         <Route element={<DashboardLayout />}>
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/dashboard/add" element={<AddOntology />} />
           <Route path="/dashboard/submissions" element={<Submissions />} />
           <Route path="/dashboard/submissions/:taskId" element={<SubmissionDetail />} />
           <Route path="/dashboard/keys" element={<ApiKeys />} />

@@ -3,6 +3,7 @@ import { useIsMobile } from '../hooks/useIsMobile'
 
 const sidebarLinks = [
   { to: '/dashboard', label: 'Ontologies', end: true },
+  { to: '/dashboard/add', label: 'Add Ontology', end: false },
   { to: '/dashboard/submissions', label: 'Submissions', end: false },
   { to: '/dashboard/keys', label: 'API Keys', end: false },
   { to: '/dashboard/webhooks', label: 'Webhooks', end: false },
