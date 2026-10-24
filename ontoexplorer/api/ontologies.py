@@ -518,6 +518,11 @@ import re as _re
 
 _SHORTNAME_RE = _re.compile(r'^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$')
 
+# Literal first-segment routes under /ontologies/ — a shortname equal to one of
+# these is matched by the literal route (registered first), making that ontology
+# unreachable by shortname. Reserve them so the PATCH can't create the collision.
+_RESERVED_SHORTNAMES = {"submissions", "compliant-licenses", "attention-count"}
+
 
 @router.patch("/{ontology_id}", summary="Update ontology metadata (shortname)")
 async def patch_ontology(
@@ -540,6 +545,11 @@ async def patch_ontology(
                 raise HTTPException(
                     status_code=422,
                     detail="Shortname must be 2–64 characters: lowercase letters, digits, hyphens, underscores; must start and end with a letter or digit",
+                )
+            if shortname in _RESERVED_SHORTNAMES:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"'{shortname}' is reserved and cannot be used as a shortname",
                 )
             conflict = await db.execute(
                 select(Ontology).where(Ontology.shortname == shortname, Ontology.id != ontology_id)
@@ -1099,6 +1109,78 @@ async def list_ontologies(
         rows = [_leanify_list_row(r) for r in rows]
 
     return {"ontologies": rows, "offset": offset, "limit": limit, "total": total}
+
+
+# ── Submissions (durable ingest-job records) ─────────────────────────────────────
+
+def _submission_dict(job, version, ont) -> dict:
+    """A contributor-facing submission record: the ingest Job enriched with the
+    ontology/version it produced. Durable + deep-linkable, so tracking survives
+    navigating away from the upload form (the in-component poll did not). `job.id`
+    is the Celery task id the submitter was handed. `version.status` ("ready" /
+    "needs_review" / …) drives the outcome shown and the click-through to the fix."""
+    return {
+        "task_id": job.id,
+        "job_status": job.status,          # pending | running | done | failed
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+        # `error` is a raw exception string (can name internal hosts) — only ever
+        # returned here to the submitter, whose own submission it is.
+        "error": job.error,
+        "ontology": (
+            {"id": ont.id, "shortname": ont.shortname, "title": ont.title}
+            if ont is not None else None
+        ),
+        "version": (
+            {"id": version.id, "status": version.status}
+            if version is not None else None
+        ),
+    }
+
+
+@router.get("/submissions", summary="The caller's recent ontology submissions")
+async def list_submissions(
+    limit: int = Query(50, ge=1, le=200),
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """The caller's own ingestion jobs (newest first), each enriched with the
+    ontology/version it produced — the durable backing for the dashboard
+    Submissions view. Defined before /{ontology_id} so the literal path wins."""
+    from ontoexplorer.models.db import Job
+    rows = (await db.execute(
+        select(Job, OntologyVersion, Ontology)
+        .outerjoin(OntologyVersion, OntologyVersion.id == Job.version_id)
+        .outerjoin(Ontology, Ontology.id == OntologyVersion.ontology_id)
+        .where(Job.user_id == user.id, Job.type == "ingestion")
+        .order_by(Job.created_at.desc())
+        .limit(limit)
+    )).all()
+    return {"submissions": [_submission_dict(j, v, o) for (j, v, o) in rows]}
+
+
+@router.get("/submissions/{task_id}", summary="One submission by its task id")
+async def get_submission(
+    task_id: str,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """A single submission (the add form hands off to this deep link). 404 for a
+    task that is not the caller's, is unknown, or whose worker row doesn't exist
+    yet — uniform so this endpoint never confirms another user's task exists (note
+    the raw job error, which can name internal hosts, is only returned to its own
+    submitter here)."""
+    from ontoexplorer.models.db import Job
+    row = (await db.execute(
+        select(Job, OntologyVersion, Ontology)
+        .outerjoin(OntologyVersion, OntologyVersion.id == Job.version_id)
+        .outerjoin(Ontology, Ontology.id == OntologyVersion.ontology_id)
+        .where(Job.id == task_id, Job.type == "ingestion")
+    )).first()
+    if row is None or row[0].user_id != user.id:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    j, v, o = row
+    return _submission_dict(j, v, o)
 
 
 # ── Single ontology metadata ───────────────────────────────────────────────────
