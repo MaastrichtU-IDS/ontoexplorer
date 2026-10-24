@@ -32,6 +32,13 @@ def admin_recipients() -> list[str]:
     return [e.strip() for e in get_settings().admin_emails.split(",") if e.strip()]
 
 
+def _header_safe(text: str, *, max_len: int = 150) -> str:
+    """Collapse whitespace (incl. CR/LF) and cap length for use in a Subject.
+    A raw newline in a user-controlled title would make EmailMessage reject the
+    header, and send_email would silently swallow it — so the mail never goes out."""
+    return " ".join(text.split())[:max_len]
+
+
 def _send_sync(msg: Email) -> None:
     s = get_settings()
     recipients = [r for r in msg.to if r]
@@ -88,6 +95,42 @@ async def notify_admins_new_request(
               f"Review: {get_settings().frontend_url.rstrip('/')}/admin"]
     await send_email(Email(to=admins, subject=f"[OntoExplorer] Maintainer request: {request_type}",
                            body="\n".join(lines)))
+
+
+# ── Quality-gate hold notification (#364 Add-Ontology) ───────────────────────────
+
+async def notify_owner_version_held(
+    *, owner_email: str | None, owner_name: str | None,
+    ontology_label: str, reasons: list[str],
+) -> None:
+    """Email a contributor that their uploaded version was held by the quality gate
+    (status needs_review) and needs their attention before it publishes. Best-effort
+    and never raised into the ingest task; a no-op when the owner has no email."""
+    if not owner_email:
+        log.info("version_held_no_owner_email", ontology=ontology_label)
+        return
+    who = owner_name or "there"
+    # Title is contributor-controlled; sanitize before it reaches the Subject header.
+    label = _header_safe(ontology_label)
+    bullets = "\n".join(f"  • {r}" for r in reasons) or "  • (see the dashboard)"
+    dash = get_settings().frontend_url.rstrip("/") + "/dashboard"
+    lines = [
+        f"Hi {who},",
+        "",
+        f"An ontology you own, “{label}”, was received but needs a quick fix "
+        "before it can be published:",
+        "",
+        bullets,
+        "",
+        "Open your dashboard to resolve it (assert a license, add a title) and "
+        "publish — no re-upload needed in most cases:",
+        dash,
+    ]
+    await send_email(Email(
+        to=[owner_email],
+        subject=f"[OntoExplorer] Action needed: “{label}” is held for review",
+        body="\n".join(lines),
+    ))
 
 
 async def notify_requester_decision(

@@ -462,6 +462,8 @@ function VersionManager({ ontology, versions }: { ontology: Ontology; versions: 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['versions', ontology.id] })
     qc.invalidateQueries({ queryKey: ['ontologies'] })
+    // A publish/deprecate can clear a held version → refresh the nav badge count.
+    qc.invalidateQueries({ queryKey: ['attention-count'] })
   }
   const deprecate = useMutation({
     mutationFn: (vid: string) => api.ontologies.deprecateVersion(ontology.id, vid),

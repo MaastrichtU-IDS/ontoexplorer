@@ -131,6 +131,17 @@ def decide_publish_status(
     return ("ready" if not reasons else "needs_review"), reasons
 
 
+def is_newly_held(prev_status: str, new_status: str) -> bool:
+    """True iff this index run is the FIRST time a version is held for review — the
+    transition ``* -> needs_review`` where it was not already ``needs_review``.
+
+    The owner "action needed" email keys off this so a re-index of an already-held
+    version does not re-nag the contributor. It is a standalone predicate (not
+    inlined at the call site) so the re-index-doesn't-re-email invariant is testable
+    without standing up the Celery task."""
+    return new_status == "needs_review" and prev_status != "needs_review"
+
+
 def held_reasons(
     *, license_compliant: bool, triple_count: int | None, title: str | None,
     min_triples: int,

@@ -1488,6 +1488,10 @@ export const api = {
     // The licenses the platform accepts, for the held-version fix selector.
     compliantLicenses: () =>
       request<{ licenses: { spdx: string; label: string }[] }>(`/ontologies/compliant-licenses`),
+    // How many of the caller's versions are held for review — the dashboard
+    // "Needs your attention" nav badge.
+    attentionCount: () =>
+      request<{ needs_review: number }>(`/ontologies/attention-count`),
 
     profile: {
       get: (ontologyId: string, versionId: string) =>
