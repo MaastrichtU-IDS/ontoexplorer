@@ -31,6 +31,12 @@ async def test_counts_only_my_needs_review(client, user_and_key, db_session):
     await _version(db_session, user.id, "needs_review")
     await _version(db_session, user.id, "ready")       # not held → excluded
     await _version(db_session, user.id, "pending")     # not held → excluded
+    # A foreign user's hold exercises the ownership WHERE: the caller already owns
+    # rows here, so my_ids is non-empty and the filter actually runs.
+    other = User(id=str(uuid.uuid4()), email=f"other-{uuid.uuid4()}@ex.com")
+    db_session.add(other)
+    await db_session.commit()
+    await _version(db_session, other.id, "needs_review")
     r = await client.get("/api/v1/ontologies/attention-count", headers=_hdr(raw))
     assert r.status_code == 200
     assert r.json() == {"needs_review": 2}
@@ -39,6 +45,9 @@ async def test_counts_only_my_needs_review(client, user_and_key, db_session):
 @pytest.mark.anyio
 async def test_excludes_other_users_held_versions(client, user_and_key, db_session):
     user, raw = user_and_key
+    # The caller owns a (non-held) ontology so my_ids is non-empty and the scoping
+    # WHERE runs — otherwise the endpoint short-circuits and the filter is untested.
+    await _version(db_session, user.id, "ready")
     other = User(id=str(uuid.uuid4()), email=f"other-{uuid.uuid4()}@ex.com")
     db_session.add(other)
     await db_session.commit()

@@ -37,3 +37,23 @@ async def test_no_email_is_noop(monkeypatch):
         owner_email=None, owner_name=None, ontology_label="X", reasons=["no title"],
     )
     assert called is False
+
+
+@pytest.mark.anyio
+async def test_crlf_in_title_is_sanitized_out_of_subject(monkeypatch):
+    # A contributor-controlled title with CR/LF would make EmailMessage reject the
+    # Subject header and send_email swallow it → the mail silently never sends.
+    sent = {}
+    async def _capture(msg):
+        sent["msg"] = msg
+    monkeypatch.setattr(email_mod, "send_email", _capture)
+
+    await email_mod.notify_owner_version_held(
+        owner_email="o@example.com", owner_name=None,
+        ontology_label="Evil\r\nBcc: victim@example.com", reasons=["no title"],
+    )
+    assert "\n" not in sent["msg"].subject and "\r" not in sent["msg"].subject
+    # Still constructs a valid MIME message (would raise if the header were bad).
+    from email.message import EmailMessage
+    em = EmailMessage()
+    em["Subject"] = sent["msg"].subject  # must not raise

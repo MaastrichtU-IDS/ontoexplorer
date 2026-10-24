@@ -25,12 +25,13 @@ function AttentionBadge() {
   if (n <= 0) return null
   return (
     <span
+      role="status"
       aria-label={`${n} version${n === 1 ? '' : 's'} need your attention`}
       style={{
         marginLeft: '0.4rem',
         padding: '0.05rem 0.4rem',
         borderRadius: 999,
-        fontSize: 'var(--font-size-xs, 0.7rem)',
+        fontSize: '0.7rem',
         fontWeight: 700,
         lineHeight: 1.4,
         color: 'var(--bg)',
