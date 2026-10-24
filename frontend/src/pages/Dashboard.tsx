@@ -170,7 +170,13 @@ function TitleEditor({ ontology }: { ontology: Ontology }) {
 
   const save = useMutation({
     mutationFn: (t: string) => api.ontologies.patch(ontology.id, { title: t || null }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['ontologies'] }); setEditing(false); setError(null) },
+    onSuccess: () => {
+      // Title feeds the quality gate, so refresh the version list too — a held
+      // version's "no title" reason clears once the title is set.
+      qc.invalidateQueries({ queryKey: ['ontologies'] })
+      qc.invalidateQueries({ queryKey: ['versions', ontology.id] })
+      setEditing(false); setError(null)
+    },
     onError: (err: unknown) => { setError(err instanceof Error ? err.message : 'Failed to save') },
   })
 
@@ -361,11 +367,18 @@ function HeldFixPanel(
   { ontologyId, version, onDone }:
   { ontologyId: string; version: OntologyVersion; onDone: () => void },
 ) {
-  const active = version.review_reasons ?? []
-  const [remaining, setRemaining] = useState<string[] | null>(null)
-  const shown = remaining ?? active
-  const needsLicense = shown.some(r => r.toLowerCase().includes('license'))
-  const needsTitle = shown.some(r => r.toLowerCase().includes('title'))
+  // Rendered only while the version is needs_review (the parent gates on status),
+  // so always show a door even when the signals already look fixed — the only way
+  // out of needs_review is a reevaluate, and recomputed reasons can be empty while
+  // the status lingers.
+  const reasons = version.review_reasons ?? []
+  // The file's OWN license is non-compliant/unrecognized when it declared one
+  // (license_raw) that isn't compliant. No overlay can override that — the
+  // contributor must change the source, not pick a platform license.
+  const contentLicenseBlocks = !!version.license_raw && version.license_compliant === false
+  const needsLicense = !contentLicenseBlocks &&
+    reasons.some(r => r.toLowerCase().includes('license'))
+  const needsTitle = reasons.some(r => r.toLowerCase().includes('title'))
   const [license, setLicense] = useState('')
   const [err, setErr] = useState<string | null>(null)
 
@@ -377,26 +390,42 @@ function HeldFixPanel(
   })
   const publish = useMutation({
     mutationFn: () => api.ontologies.reevaluateVersion(ontologyId, version.id, license || undefined),
-    onSuccess: (res) => {
-      setErr(null)
-      if (res.status === 'ready') onDone()        // row refetches → "Published"
-      else setRemaining(res.review_reasons)
-    },
+    // Refetch the version list on every outcome: if it published, the parent
+    // unmounts this panel; if it's still held, the panel re-renders with the
+    // freshly-recomputed reasons. No local reason state to drift.
+    onSuccess: () => { setErr(null); onDone() },
     onError: (e: unknown) => setErr(e instanceof Error ? e.message : 'Could not publish'),
   })
 
-  if (shown.length === 0) return null
+  const box: React.CSSProperties = {
+    background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)',
+    borderRadius: 8, padding: '8px 10px', display: 'flex', flexDirection: 'column',
+    gap: 6, fontSize: 'var(--font-size-sm)', maxWidth: 540,
+  }
+
+  if (contentLicenseBlocks) {
+    return (
+      <div style={box}>
+        <div style={{ color: 'var(--orange)', fontWeight: 600 }}>⚠ This file's license can't be hosted</div>
+        <span style={{ color: 'var(--text-muted)' }}>
+          Your ontology declares <code>{version.license_raw}</code>, which isn't on the
+          platform's accepted list. To publish, change the license in the source file
+          and upload a new version, or ask an admin to review it.
+        </span>
+      </div>
+    )
+  }
 
   return (
-    <div style={{
-      background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)',
-      borderRadius: 8, padding: '8px 10px', display: 'flex', flexDirection: 'column',
-      gap: 6, fontSize: 'var(--font-size-sm)', maxWidth: 540,
-    }}>
+    <div style={box}>
       <div style={{ color: 'var(--orange)', fontWeight: 600 }}>⚠ Not public yet — one more step</div>
-      <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-muted)' }}>
-        {shown.map((r, i) => <li key={i}>{r}</li>)}
-      </ul>
+      {reasons.length > 0 ? (
+        <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-muted)' }}>
+          {reasons.map((r, i) => <li key={i}>{r}</li>)}
+        </ul>
+      ) : (
+        <span style={{ color: 'var(--text-muted)' }}>Everything looks fixed — publish to go live.</span>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         {needsLicense && (
           <select
@@ -424,7 +453,9 @@ function HeldFixPanel(
 
 function VersionManager({ ontology, versions }: { ontology: Ontology; versions: OntologyVersion[] }) {
   const qc = useQueryClient()
-  const [open, setOpen] = useState(false)
+  // Auto-expand when a version needs the contributor's attention, so the fix panel
+  // isn't hidden behind the collapsed "▸ N versions" toggle.
+  const [open, setOpen] = useState(() => versions.some(v => v.status === 'needs_review'))
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 

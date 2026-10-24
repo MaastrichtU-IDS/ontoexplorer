@@ -103,6 +103,7 @@ async def admin_ontology_versions(
             "triple_count": v.triple_count,
             "ingestion_status": v.status,
             "license": v.license,
+            "license_raw": v.license_raw,
             "license_compliant": v.license_compliant,
             # Why a held version is held (empty unless needs_review) — the quality
             # gate only logs these at ingest, so recompute from stored signals for

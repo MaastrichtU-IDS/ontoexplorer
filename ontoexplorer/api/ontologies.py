@@ -1255,7 +1255,6 @@ async def reevaluate_version(
     from the stored signals (no re-index). Publishes if it now passes; otherwise
     returns the remaining reasons. Only a held version is re-evaluable (409 else).
     The already-ready guard still stands — this never demotes a public version."""
-    import asyncio
     from datetime import UTC, datetime
 
     from ontoexplorer.config import get_settings
@@ -1263,7 +1262,6 @@ async def reevaluate_version(
     from ontoexplorer.modules.ingestion.license import (
         canonicalize_license, compliant_license_set, decide_publish_status, effective_license,
     )
-    from ontoexplorer.modules.metadata.dcat import extract_ontology_annotations
 
     version = await _get_version_or_404(db, ontology_id, version_id)
     ontology = await _get_ontology_or_404(db, ontology_id)
@@ -1288,9 +1286,10 @@ async def reevaluate_version(
         version.declared_by = user.id
         version.declared_at = datetime.now(UTC)
 
-    ann = await asyncio.to_thread(
-        extract_ontology_annotations, ontology_id, version_id, ontology.iri or "")
-    content_spdx, _, lic_ok = effective_license(ann.get("license"), version.declared_license)
+    # Content is immutable (SHA-256 addressed), so trust the license captured at
+    # ingest (`license_raw`) rather than re-reading the store — a momentarily
+    # unreachable store must not read as "no license" and let the overlay publish.
+    content_spdx, _, lic_ok = effective_license(version.license_raw, version.declared_license)
     version.license = content_spdx
     version.license_compliant = lic_ok
     new_status, reasons = decide_publish_status(
@@ -4228,6 +4227,7 @@ def _version_dict(v: OntologyVersion) -> dict:
         "download_url": f"/api/v1/ontologies/{v.ontology_id}/{v.id}/download",
         "created_at": v.created_at.isoformat(),
         "license": v.license,
+        "license_raw": v.license_raw,
         "license_compliant": v.license_compliant,
         "declared_license": v.declared_license,
         "reasoner": v.reasoner,

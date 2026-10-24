@@ -80,18 +80,21 @@ def effective_license(
     overlay (#364 Add-Ontology flow). Returns (content_spdx, declared_spdx,
     license_compliant).
 
-    The overlay fills an ABSENCE only: a RECOGNIZED content license decides on its
-    own, so a declared non-compliant license (e.g. CC-BY-NC, which the canonicalizer
-    recognizes) still fails the gate and a contributor cannot launder it. Only when
-    the content declares no recognized license does the contributor's
-    `declared_license` apply. An empty allowlist disables the gate.
+    The overlay fills an ABSENCE only: if the content declares ANY license — whether
+    recognized-and-non-compliant (e.g. CC-BY-NC) OR present-but-unrecognized
+    (a proprietary URL, "All rights reserved", an unmapped label) — that license
+    decides on its own and the contributor's overlay cannot launder it; only such a
+    license canonicalizing into the allowlist passes. The overlay applies solely
+    when the content declares NO license at all. An empty allowlist disables the gate.
     """
     allow = compliant_license_set()
     content_spdx = canonicalize_license(content_license)
     declared_spdx = canonicalize_license(declared_license)
     if not allow:
         return content_spdx, declared_spdx, True
-    if content_spdx is not None:
+    # A license declared in the content (even one we can't map to SPDX) is "present",
+    # not an absence — so an unrecognized string holds and can't be overridden.
+    if content_license and content_license.strip():
         return content_spdx, declared_spdx, content_spdx in allow
     return content_spdx, declared_spdx, bool(declared_spdx and declared_spdx in allow)
 

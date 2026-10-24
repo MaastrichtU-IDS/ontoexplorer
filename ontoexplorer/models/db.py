@@ -167,6 +167,13 @@ class OntologyVersion(Base):
     # pre-publish quality gate (ingested->ready).
     license: Mapped[str | None] = mapped_column(String, nullable=True)
     license_compliant: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # The license exactly as the CONTENT declares it (pre-canonicalization), or null
+    # if the content declares none. `license` above is its SPDX form (null when the
+    # raw value is unrecognized). Keeping the raw value lets the gate treat a
+    # present-but-unrecognized license as "present" (not an absence the overlay may
+    # fill), lets the UI say "we can't host <X>", and lets reevaluate trust the
+    # immutable content license without a store re-read.
+    license_raw: Mapped[str | None] = mapped_column(String, nullable=True)
     # Contributor-asserted license overlay (#364 "Add Ontology" flow): an SPDX id a
     # contributor picks when the content declares NO license, so they can clear the
     # quality gate without rewriting triples. Fills an ABSENCE only — it never

@@ -1423,10 +1423,12 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                 # only, so a declared non-compliant content license still holds.
                 _spdx = None
                 _lic_ok = False
+                _lic_raw = None
                 try:
                     from ontoexplorer.modules.metadata.dcat import extract_ontology_annotations
                     _ann = extract_ontology_annotations(ontology_id, version_id, ont.iri if ont else "")
-                    _spdx, _, _lic_ok = _eff_lic(_ann.get("license"), ver.declared_license)
+                    _lic_raw = _ann.get("license") or None
+                    _spdx, _, _lic_ok = _eff_lic(_lic_raw, ver.declared_license)
                 except Exception as _e:
                     log.warning("license_detect_failed", version_id=version_id, error=str(_e))
 
@@ -1447,7 +1449,7 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                 except Exception:
                     _lc = None
                 _vals = {"status": _new_status, "indexed_at": _dt.now(_tz.utc),
-                         "license": _spdx, "license_compliant": _lic_ok}
+                         "license": _spdx, "license_raw": _lic_raw, "license_compliant": _lic_ok}
                 if _lc is not None:
                     _vals["lang_counts"] = _lc
                 await db.execute(

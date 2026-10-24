@@ -20,6 +20,10 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Raw license string as declared IN the content (pre-canonicalization). Lets us
+    # tell "no license" from "a license we don't recognize / can't host" without a
+    # store re-read, and trust it at reevaluate (content is immutable).
+    op.add_column("versions", sa.Column("license_raw", sa.String(), nullable=True))
     op.add_column("versions", sa.Column("declared_license", sa.String(), nullable=True))
     op.add_column("versions", sa.Column("declared_by", sa.String(), nullable=True))
     op.add_column("versions", sa.Column("declared_at", sa.DateTime(timezone=True), nullable=True))
@@ -34,3 +38,4 @@ def downgrade() -> None:
     op.drop_column("versions", "declared_at")
     op.drop_column("versions", "declared_by")
     op.drop_column("versions", "declared_license")
+    op.drop_column("versions", "license_raw")

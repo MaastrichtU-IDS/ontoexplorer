@@ -290,6 +290,10 @@ export interface OntologyVersion {
    *  `license` is the SPDX from the content; `declared_license` is a
    *  contributor-asserted one (fills an absence only). */
   license?: string | null
+  /** The license as declared in the content (pre-canonicalization), or null if the
+   *  content declares none. Set but with `license_compliant:false` means the file's
+   *  own license can't be hosted — the contributor must change it in the source. */
+  license_raw?: string | null
   license_compliant?: boolean
   declared_license?: string | null
   review_reasons?: string[]
