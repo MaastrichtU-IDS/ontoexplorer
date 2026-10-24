@@ -33,11 +33,16 @@ const mockSubmitByContent = api.ontologies.submitByContent as ReturnType<typeof 
 const mockSubmitFile = api.ontologies.submitFile as ReturnType<typeof vi.fn>
 const mockProfilesList = api.reasonerProfiles.list as ReturnType<typeof vi.fn>
 
+// Reset call history before each test so cross-test order can't contaminate
+// assertions like not.toHaveBeenCalled(). clearAllMocks resets calls/results only;
+// the mockResolvedValue defaults set in the factory survive.
+beforeEach(() => vi.clearAllMocks())
+
 function wrap(props: Partial<React.ComponentProps<typeof AddOntologyForm>> = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <AddOntologyForm onSuccess={props.onSuccess ?? (() => {})} onQueued={props.onQueued} />
+      <AddOntologyForm onSuccess={props.onSuccess} onQueued={props.onQueued} />
     </QueryClientProvider>
   )
 }
@@ -200,7 +205,6 @@ test('calls onSuccess once the job poll reports the ingestion is done', async ()
 })
 
 test('hands off to onQueued (no inline poll) when provided', async () => {
-  mockJobGet.mockClear()  // call count is cumulative across tests in this file
   const onQueued = vi.fn()
   wrap({ onQueued })
   fireEvent.change(screen.getByLabelText(/ontology iri or url/i), {

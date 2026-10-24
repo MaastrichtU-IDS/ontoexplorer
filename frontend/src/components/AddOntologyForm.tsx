@@ -24,14 +24,15 @@ const FORMATS = [
 ]
 
 /**
- * The add-ontology form. `onSuccess` fires once ingestion completes (the inline
- * poll path). `onQueued` is optional: when provided, it fires the moment the
- * submission is accepted (with its task id), so a caller can hand off to the
- * durable submission record instead of polling inline — the dedicated /dashboard/add
- * page does this.
+ * The add-ontology form. Exactly one completion path runs per submit:
+ * - `onQueued` (if given) fires the instant the submission is accepted, so the
+ *   caller can hand off to the durable submission record (the /dashboard/add page);
+ *   the inline poll is skipped.
+ * - otherwise the form polls inline and calls `onSuccess` when ingestion completes.
+ * Both are optional, so neither path is implied when the other is in use.
  */
 export default function AddOntologyForm(
-  { onSuccess, onQueued }: { onSuccess: () => void; onQueued?: (taskId: string) => void },
+  { onSuccess, onQueued }: { onSuccess?: () => void; onQueued?: (taskId: string) => void },
 ) {
   const [tab, setTab] = useState<AddTab>('iri')
   const [value, setValue] = useState('')
@@ -96,7 +97,7 @@ export default function AddOntologyForm(
         }
         if (job.status === 'done') {
           say('Ingested — refreshing…')
-          onSuccess()
+          onSuccess?.()
           return
         }
         say(`Ingesting… (task ${taskId})`)

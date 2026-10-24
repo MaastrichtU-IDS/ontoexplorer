@@ -17,10 +17,7 @@ export default function AddOntology() {
       </p>
       {/* On submit, hand off to the durable submission record rather than polling
           inline — tracking then survives navigating away. */}
-      <AddOntologyForm
-        onSuccess={() => navigate('/dashboard')}
-        onQueued={(taskId) => navigate(`/dashboard/submissions/${taskId}`)}
-      />
+      <AddOntologyForm onQueued={(taskId) => navigate(`/dashboard/submissions/${taskId}`)} />
     </div>
   )
 }
