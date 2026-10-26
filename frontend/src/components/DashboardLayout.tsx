@@ -5,6 +5,7 @@ import { api } from '../lib/api'
 
 const sidebarLinks = [
   { to: '/dashboard', label: 'Ontologies', end: true },
+  { to: '/dashboard/submissions', label: 'Submissions', end: false },
   { to: '/dashboard/keys', label: 'API Keys', end: false },
   { to: '/dashboard/webhooks', label: 'Webhooks', end: false },
   { to: '/dashboard/stats', label: 'Stats', end: false },

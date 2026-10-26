@@ -12,6 +12,8 @@ const Home = lazy(() => import('./pages/Home'))
 const Search = lazy(() => import('./pages/Search'))
 const Ontologies = lazy(() => import('./pages/Ontologies'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Submissions = lazy(() => import('./pages/Submissions'))
+const SubmissionDetail = lazy(() => import('./pages/SubmissionDetail'))
 const ApiKeys = lazy(() => import('./pages/ApiKeys'))
 const Webhooks = lazy(() => import('./pages/Webhooks'))
 const Stats = lazy(() => import('./pages/Stats'))
@@ -136,6 +138,8 @@ export default function App() {
       <Route element={<Shell><AuthGuard /></Shell>}>
         <Route element={<DashboardLayout />}>
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/dashboard/submissions" element={<Submissions />} />
+          <Route path="/dashboard/submissions/:taskId" element={<SubmissionDetail />} />
           <Route path="/dashboard/keys" element={<ApiKeys />} />
           <Route path="/dashboard/webhooks" element={<Webhooks />} />
           <Route path="/dashboard/stats" element={<Stats />} />

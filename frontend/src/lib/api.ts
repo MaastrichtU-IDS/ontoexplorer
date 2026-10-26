@@ -202,6 +202,18 @@ export interface UserProfile {
   lang_fallback_strategy?: string
 }
 
+// A durable record of one ontology submission (an ingestion job), enriched with
+// the ontology/version it produced. `version.status` drives the outcome shown.
+export interface Submission {
+  task_id: string
+  job_status: 'pending' | 'running' | 'done' | 'failed'
+  created_at: string | null
+  finished_at: string | null
+  error: string | null
+  ontology: { id: string; shortname: string; title: string | null } | null
+  version: { id: string; status: string } | null
+}
+
 export interface MaintainerRequest {
   id: string
   user_id: string
@@ -1478,6 +1490,12 @@ export const api = {
     // Hard-delete a single version (irreversible): purges all its artifacts + rows.
     deleteVersion: (oid: string, vid: string) =>
       request<void>(`/ontologies/${oid}/${vid}?purge=true`, { method: 'DELETE' }),
+    // Durable submission records (the caller's ingest jobs) — survive navigation,
+    // unlike the in-form poll. Deep-linkable by task id.
+    submissions: () =>
+      request<{ submissions: Submission[] }>(`/ontologies/submissions`),
+    submission: (taskId: string) =>
+      request<Submission>(`/ontologies/submissions/${taskId}`),
     // #364: re-run the quality gate on a held (needs_review) version, optionally
     // asserting a license. Publishes if it now passes, else returns the reasons.
     reevaluateVersion: (oid: string, vid: string, declaredLicense?: string) =>
