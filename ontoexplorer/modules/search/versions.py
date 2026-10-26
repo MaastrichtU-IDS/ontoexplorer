@@ -25,7 +25,11 @@ from ontoexplorer.models.db import Ontology, OntologyVersion
 _LATEST_TTL = 30.0
 _latest_cache: tuple[float, list[OntologyVersion]] | None = None
 
-_NOT_READY = ("pending", "failed", "deprecated")
+# Statuses that disqualify a version from being an ontology's public default.
+# "needs_review" is held by the quality gate (#364): it failed license/title/
+# triple checks and must never be surfaced as the default on the ontology page,
+# in search scope, or as a diff baseline until an owner/admin publishes it.
+_NOT_READY = ("pending", "needs_review", "failed", "deprecated")
 
 
 def invalidate_latest_ready_versions_cache() -> None:
