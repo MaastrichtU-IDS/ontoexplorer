@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError, api, type Submission } from '../lib/api'
 import { submissionOutcome } from '../lib/submissions'
@@ -47,6 +47,17 @@ export default function SubmissionDetail() {
       return 2500
     },
   })
+
+  // Once the submission settles, the owned-ontology list / stats may now include it.
+  // Adding moved off the dashboard (which used to invalidate), so refresh here.
+  const qc = useQueryClient()
+  const settled = !!data && submissionOutcome(data).done
+  useEffect(() => {
+    if (settled) {
+      qc.invalidateQueries({ queryKey: ['ontologies'] })
+      qc.invalidateQueries({ queryKey: ['stats'] })
+    }
+  }, [settled, qc])
 
   const back = (
     <Link to="/dashboard/submissions" style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)' }}>

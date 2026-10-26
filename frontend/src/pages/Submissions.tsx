@@ -46,7 +46,7 @@ export default function Submissions() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
         <h1 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Submissions</h1>
         <Link
-          to="/dashboard"
+          to="/dashboard/add"
           style={{
             padding: '0.35rem 0.8rem', background: 'var(--accent)', color: 'var(--bg)',
             borderRadius: 'var(--radius-sm)', fontWeight: 600, fontSize: 'var(--font-size-sm)',
