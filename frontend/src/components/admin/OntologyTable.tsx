@@ -20,6 +20,24 @@ import {
 
 const REASONING_ORDER: Record<string, number> = { not_started: 0, running: 1, ready: 2 }
 
+// #364 quality gate: a held (needs_review) version shows why it's held and a
+// "publish anyway" admin override. Shared between the parent row (latest version)
+// and the version sub-rows.
+function HeldReview({ reasons }: { reasons?: string[] }) {
+  return (
+    <span
+      title={`Held by the quality gate: ${(reasons ?? []).join('; ') || 'quality gate'}`}
+      style={{ color: 'var(--amber, #c8860d)', fontSize: 10, fontWeight: 600, cursor: 'help' }}
+    >
+      ⚠ review
+    </span>
+  )
+}
+function publishTitle(reasons?: string[]): string {
+  return `Publish anyway — clears the quality gate and makes this version public.${
+    reasons?.length ? ' Held for: ' + reasons.join('; ') : ''}`
+}
+
 // Relevance rank for an active search (lower = better). Used as the PRIMARY sort
 // key while searching, so an exact hit like "sio" floats to the top instead of
 // landing wherever it falls under the column sort (alphabetical by default).
@@ -64,6 +82,8 @@ export interface OntologyTableProps {
   onPairDiff: (fromVid: string, toVid: string) => void
   versionIndexStates: Record<string, UpdateState>
   onVersionIndex: (versionId: string) => void
+  versionPublishStates: Record<string, UpdateState>
+  onVersionPublish: (ontologyId: string, versionId: string) => void
   versionEmbedStates: Record<string, UpdateState>
   onVersionEmbed: (versionId: string) => void
   versionIngestStates: Record<string, UpdateState>
@@ -86,6 +106,7 @@ export function OntologyTable({
   recomputeStates, onRecomputeAll,
   pairDiffStates, onPairDiff,
   versionIndexStates, onVersionIndex,
+  versionPublishStates, onVersionPublish,
   versionEmbedStates, onVersionEmbed,
   versionIngestStates, onVersionIngest,
   versionDeprecateStates, onVersionDeprecate,
@@ -266,6 +287,17 @@ export function OntologyTable({
                   <td style={{ padding: '6px 10px', textAlign: 'center' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
                       <StatusDot status={row.ingestion_status} />
+                      {row.ingestion_status === 'needs_review' && (
+                        <>
+                          <HeldReview reasons={row.review_reasons} />
+                          <ActionButton
+                            label="✓ publish"
+                            title={publishTitle(row.review_reasons)}
+                            state={versionPublishStates[row.version_id] ?? 'idle'}
+                            onClick={() => onVersionPublish(row.id, row.version_id)}
+                          />
+                        </>
+                      )}
                       {(row.source_url || row.iri) && (
                         <ActionButton
                           label={`↑ ${ingestMethod}`}
@@ -367,6 +399,8 @@ export function OntologyTable({
                     onPairDiff={onPairDiff}
                     versionIndexStates={versionIndexStates}
                     onVersionIndex={onVersionIndex}
+                    versionPublishStates={versionPublishStates}
+                    onVersionPublish={onVersionPublish}
                     versionEmbedStates={versionEmbedStates}
                     onVersionEmbed={onVersionEmbed}
                     onReasoned={onReasoned}
@@ -411,6 +445,8 @@ interface VersionsSubRowsProps {
   onPairDiff: (fromVid: string, toVid: string) => void
   versionIndexStates: Record<string, UpdateState>
   onVersionIndex: (versionId: string) => void
+  versionPublishStates: Record<string, UpdateState>
+  onVersionPublish: (ontologyId: string, versionId: string) => void
   versionEmbedStates: Record<string, UpdateState>
   onVersionEmbed: (versionId: string) => void
   onReasoned?: () => void
@@ -491,6 +527,7 @@ function VersionsSubRows({
   ontologyId, slug, colSpan, latestVersionId, currentVersionId,
   pairDiffStates, onPairDiff,
   versionIndexStates, onVersionIndex,
+  versionPublishStates, onVersionPublish,
   versionEmbedStates, onVersionEmbed,
   onReasoned,
   versionProfileStates, onVersionDetectProfile,
@@ -513,6 +550,7 @@ function VersionsSubRows({
       qc.invalidateQueries({ queryKey: ['ontologies'] })
     },
   })
+
 
   if (isLoading) {
     return (
@@ -611,6 +649,17 @@ function VersionsSubRows({
           <td style={{ padding: '6px 10px', textAlign: 'center' }}>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
               <StatusDot status={v.ingestion_status} />
+              {v.ingestion_status === 'needs_review' && (
+                <>
+                  <HeldReview reasons={v.review_reasons} />
+                  <ActionButton
+                    label="✓ publish"
+                    title={publishTitle(v.review_reasons)}
+                    state={versionPublishStates[v.version_id] ?? 'idle'}
+                    onClick={() => onVersionPublish(ontologyId, v.version_id)}
+                  />
+                </>
+              )}
               <ActionButton
                 label={v.source_url ? '↑ url' : '↑ iri'}
                 title={v.source_url

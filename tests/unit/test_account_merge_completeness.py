@@ -108,8 +108,10 @@ def test_every_user_fk_is_either_reassigned_or_deliberately_excluded():
     reassigned = {m.__tablename__ for m, _ in _MERGE_REASSIGN}
     # Sessions are dropped on purpose; a hashed token cannot be moved meaningfully.
     # The audit columns record who acted, and that person still existed at the time.
+    # declared_by is the same shape: it records which account asserted a version's
+    # license overlay (#364), SET NULL provenance that is not reassigned on merge.
     excluded = {"sessions", "users"}
-    audit_only = {"granted_by", "reviewed_by", "created_by"}
+    audit_only = {"granted_by", "reviewed_by", "created_by", "declared_by"}
 
     missing = []
     for mapper in models.Base.registry.mappers:

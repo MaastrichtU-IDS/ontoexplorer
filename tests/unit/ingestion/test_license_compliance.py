@@ -5,8 +5,57 @@ from ontoexplorer.config import get_settings
 from ontoexplorer.modules.ingestion.license import (
     canonicalize_license,
     decide_publish_status,
+    effective_license,
     is_compliant,
+    is_newly_held,
 )
+
+
+class TestIsNewlyHeld:
+    """The owner "action needed" email fires only on the first hold — this predicate
+    is what keeps a re-index of an already-held version from re-nagging (#364 2a)."""
+
+    def test_first_hold_from_ingested(self):
+        assert is_newly_held("ingested", "needs_review") is True
+
+    def test_reindex_of_already_held_does_not_refire(self):
+        assert is_newly_held("needs_review", "needs_review") is False
+
+    def test_passing_is_not_a_hold(self):
+        assert is_newly_held("ingested", "ready") is False
+
+    def test_ready_version_never_newly_held(self):
+        assert is_newly_held("ready", "ready") is False
+
+
+class TestEffectiveLicenseOverlay:
+    """The contributor overlay fills an ABSENCE only (#364 anti-laundering)."""
+
+    def test_no_content_license_overlay_applies(self):
+        _, _, ok = effective_license(None, "CC-BY-4.0")
+        assert ok is True
+
+    def test_no_content_no_declared_not_compliant(self):
+        _, _, ok = effective_license(None, None)
+        assert ok is False
+
+    def test_recognized_compliant_content_passes(self):
+        _, _, ok = effective_license("https://creativecommons.org/licenses/by/4.0/", None)
+        assert ok is True
+
+    def test_recognized_noncompliant_content_cannot_be_laundered(self):
+        _, _, ok = effective_license(
+            "http://creativecommons.org/licenses/by-nc/4.0/", "CC-BY-4.0")
+        assert ok is False
+
+    def test_present_but_unrecognized_content_cannot_be_laundered(self):
+        # Present (not an absence) yet unmappable → holds; the overlay must not fill.
+        _, _, ok = effective_license("All rights reserved (proprietary)", "CC-BY-4.0")
+        assert ok is False
+
+    def test_whitespace_only_content_is_absence(self):
+        _, _, ok = effective_license("   ", "MIT")
+        assert ok is True
 
 
 @pytest.mark.parametrize("raw,spdx", [

@@ -1409,24 +1409,30 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
             from ontoexplorer.config import get_settings as _gs2
             from ontoexplorer.models.db import Ontology as _Ont
             from ontoexplorer.modules.ingestion.license import (
-                canonicalize_license as _canon,
                 decide_publish_status as _decide,
-                is_compliant as _is_comp,
+                effective_license as _eff_lic,
+                is_newly_held as _is_newly_held,
             )
+            # Set inside the session when a version is newly held; the owner email is
+            # sent AFTER the session closes so SMTP's timeout can't pin the DB conn.
+            _held_email: dict | None = None
             async with make_celery_db_session()() as db:
                 ver = (await db.execute(_sa_select(_OV).where(_OV.id == version_id))).scalar_one_or_none()
                 if ver is None or ver.status == "deprecated":
                     return
                 ont = (await db.execute(_sa_select(_Ont).where(_Ont.id == ontology_id))).scalar_one_or_none()
 
-                # Declared license -> SPDX + platform compliance (#364).
+                # Content license -> SPDX + platform compliance, applying the
+                # contributor-asserted overlay (#364). The overlay fills an absence
+                # only, so a declared non-compliant content license still holds.
                 _spdx = None
                 _lic_ok = False
+                _lic_raw = None
                 try:
                     from ontoexplorer.modules.metadata.dcat import extract_ontology_annotations
                     _ann = extract_ontology_annotations(ontology_id, version_id, ont.iri if ont else "")
-                    _spdx = _canon(_ann.get("license"))
-                    _lic_ok = _is_comp(_ann.get("license"))
+                    _lic_raw = _ann.get("license") or None
+                    _spdx, _, _lic_ok = _eff_lic(_lic_raw, ver.declared_license)
                 except Exception as _e:
                     log.warning("license_detect_failed", version_id=version_id, error=str(_e))
 
@@ -1439,15 +1445,33 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                     title=(ont.title if ont else None),
                     min_triples=_gs2().min_triples_for_publish,
                 )
+                # Email the owner only on the TRANSITION into needs_review (first
+                # publication), never on a re-index of an already-held version.
+                _newly_held = _is_newly_held(ver.status, _new_status)
                 if _new_status == "needs_review":
                     log.info("version_held_for_review", version_id=version_id, reasons=_reasons)
+
+                # Capture the email payload inside the session (the row objects don't
+                # survive it); the send itself happens after the block.
+                if _newly_held and ont and ont.owner_id:
+                    from ontoexplorer.models.db import User as _User
+                    _owner = (await db.execute(
+                        _sa_select(_User).where(_User.id == ont.owner_id)
+                    )).scalar_one_or_none()
+                    if _owner is not None and _owner.email:
+                        _held_email = {
+                            "owner_email": _owner.email,
+                            "owner_name": _owner.display_name,
+                            "ontology_label": (ont.title or ont.shortname or ontology_id),
+                            "reasons": _reasons,
+                        }
 
                 try:
                     _lc = await version_lang_counts(db, version_id)
                 except Exception:
                     _lc = None
                 _vals = {"status": _new_status, "indexed_at": _dt.now(_tz.utc),
-                         "license": _spdx, "license_compliant": _lic_ok}
+                         "license": _spdx, "license_raw": _lic_raw, "license_compliant": _lic_ok}
                 if _lc is not None:
                     _vals["lang_counts"] = _lc
                 await db.execute(
@@ -1456,6 +1480,13 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                     .values(**_vals)
                 )
                 await db.commit()
+
+            # Outside the session: best-effort owner notification (never raises).
+            if _held_email is not None:
+                from ontoexplorer.modules.notifications.email import (
+                    notify_owner_version_held,
+                )
+                await notify_owner_version_held(**_held_email)
 
         asyncio.run(_mark_ready())
         # The Celery worker invalidates only its own in-process cache; the API
