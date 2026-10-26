@@ -80,6 +80,7 @@ export default function AdminPage() {
   const [versionIndexStates, setVersionIndexStates] = useState<Record<string, UpdateState>>({})
   const [versionEmbedStates, setVersionEmbedStates] = useState<Record<string, UpdateState>>({})
   const [versionIngestStates, setVersionIngestStates] = useState<Record<string, UpdateState>>({})
+  const [versionPublishStates, setVersionPublishStates] = useState<Record<string, UpdateState>>({})
   const [versionDeprecateStates, setVersionDeprecateStates] = useState<Record<string, UpdateState>>({})
   const [versionDeleteStates, setVersionDeleteStates] = useState<Record<string, UpdateState>>({})
   const [clearJobsState, setClearJobsState] = useState<'idle' | 'working' | 'error'>('idle')
@@ -185,6 +186,16 @@ export default function AdminPage() {
     setVersionIngestStates(s => ({ ...s, [versionId]: 'queued' }))
     try { await api.admin.queueIngestForVersion(versionId) }
     catch { setVersionIngestStates(s => ({ ...s, [versionId]: 'error' })) }
+  }
+  // Clear the #364 quality gate for a held version → public. Synchronous, so
+  // refresh the version list + catalogue on success (invalidateVersionViews is
+  // hoisted below).
+  async function handleVersionPublish(ontologyId: string, versionId: string) {
+    setVersionPublishStates(s => ({ ...s, [versionId]: 'queued' }))
+    try {
+      await api.admin.publishVersion(versionId)
+      invalidateVersionViews(ontologyId)
+    } catch { setVersionPublishStates(s => ({ ...s, [versionId]: 'error' })) }
   }
 
   // Deprecate (soft) / delete (hard) a version. These hit the ontology-edit
@@ -493,6 +504,8 @@ export default function AdminPage() {
             onPairDiff={handlePairDiff}
             versionIndexStates={versionIndexStates}
             onVersionIndex={handleVersionIndex}
+            versionPublishStates={versionPublishStates}
+            onVersionPublish={handleVersionPublish}
             versionEmbedStates={versionEmbedStates}
             onVersionEmbed={handleVersionEmbed}
             versionIngestStates={versionIngestStates}
