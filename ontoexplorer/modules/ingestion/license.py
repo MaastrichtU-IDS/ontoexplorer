@@ -73,6 +73,32 @@ def compliant_license_set() -> set[str]:
     return {x.strip() for x in get_settings().compliant_licenses.split(",") if x.strip()}
 
 
+def effective_license(
+    content_license: str | None, declared_license: str | None,
+) -> tuple[str | None, str | None, bool]:
+    """Resolve compliance from the content license plus a contributor's declared
+    overlay (#364 Add-Ontology flow). Returns (content_spdx, declared_spdx,
+    license_compliant).
+
+    The overlay fills an ABSENCE only: if the content declares ANY license — whether
+    recognized-and-non-compliant (e.g. CC-BY-NC) OR present-but-unrecognized
+    (a proprietary URL, "All rights reserved", an unmapped label) — that license
+    decides on its own and the contributor's overlay cannot launder it; only such a
+    license canonicalizing into the allowlist passes. The overlay applies solely
+    when the content declares NO license at all. An empty allowlist disables the gate.
+    """
+    allow = compliant_license_set()
+    content_spdx = canonicalize_license(content_license)
+    declared_spdx = canonicalize_license(declared_license)
+    if not allow:
+        return content_spdx, declared_spdx, True
+    # A license declared in the content (even one we can't map to SPDX) is "present",
+    # not an absence — so an unrecognized string holds and can't be overridden.
+    if content_license and content_license.strip():
+        return content_spdx, declared_spdx, content_spdx in allow
+    return content_spdx, declared_spdx, bool(declared_spdx and declared_spdx in allow)
+
+
 def is_compliant(raw: str | None) -> bool:
     """True if the declared license canonicalizes to an SPDX id on the platform
     allowlist. An empty allowlist disables the gate (everything compliant)."""

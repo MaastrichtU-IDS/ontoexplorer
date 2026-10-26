@@ -1409,9 +1409,8 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
             from ontoexplorer.config import get_settings as _gs2
             from ontoexplorer.models.db import Ontology as _Ont
             from ontoexplorer.modules.ingestion.license import (
-                canonicalize_license as _canon,
                 decide_publish_status as _decide,
-                is_compliant as _is_comp,
+                effective_license as _eff_lic,
             )
             async with make_celery_db_session()() as db:
                 ver = (await db.execute(_sa_select(_OV).where(_OV.id == version_id))).scalar_one_or_none()
@@ -1419,14 +1418,17 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                     return
                 ont = (await db.execute(_sa_select(_Ont).where(_Ont.id == ontology_id))).scalar_one_or_none()
 
-                # Declared license -> SPDX + platform compliance (#364).
+                # Content license -> SPDX + platform compliance, applying the
+                # contributor-asserted overlay (#364). The overlay fills an absence
+                # only, so a declared non-compliant content license still holds.
                 _spdx = None
                 _lic_ok = False
+                _lic_raw = None
                 try:
                     from ontoexplorer.modules.metadata.dcat import extract_ontology_annotations
                     _ann = extract_ontology_annotations(ontology_id, version_id, ont.iri if ont else "")
-                    _spdx = _canon(_ann.get("license"))
-                    _lic_ok = _is_comp(_ann.get("license"))
+                    _lic_raw = _ann.get("license") or None
+                    _spdx, _, _lic_ok = _eff_lic(_lic_raw, ver.declared_license)
                 except Exception as _e:
                     log.warning("license_detect_failed", version_id=version_id, error=str(_e))
 
@@ -1447,7 +1449,7 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                 except Exception:
                     _lc = None
                 _vals = {"status": _new_status, "indexed_at": _dt.now(_tz.utc),
-                         "license": _spdx, "license_compliant": _lic_ok}
+                         "license": _spdx, "license_raw": _lic_raw, "license_compliant": _lic_ok}
                 if _lc is not None:
                     _vals["lang_counts"] = _lc
                 await db.execute(

@@ -15,18 +15,30 @@ const INGEST_TRACK_TIMEOUT_MS = 30 * 60_000
 // ── Status dot ────────────────────────────────────────────────────────────────
 
 const STATUS_COLOR: Record<string, string> = {
-  ready:      'var(--accent)',
-  ingested:   'var(--text-muted)',
-  reasoning:  'var(--accent-purple)',
-  indexing:   'var(--accent-purple)',
-  deprecated: 'var(--text-dim)',
-  failed:     'var(--red-soft)',
+  ready:         'var(--accent)',
+  ingested:      'var(--text-muted)',
+  reasoning:     'var(--accent-purple)',
+  indexing:      'var(--accent-purple)',
+  needs_review:  'var(--orange)',
+  deprecated:    'var(--text-dim)',
+  failed:        'var(--red-soft)',
+}
+
+// Contributor-facing vocabulary — the pipeline statuses are internal (#364).
+const STATUS_LABEL: Record<string, string> = {
+  ready:        'Published',
+  ingested:     'Processing',
+  reasoning:    'Processing',
+  indexing:     'Processing',
+  needs_review: 'Needs your attention',
+  deprecated:   'Deprecated',
+  failed:       'Failed',
 }
 
 function StatusDot({ status }: { status: string }) {
   return (
     <span style={{ color: STATUS_COLOR[status] ?? 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
-      ● {status}
+      ● {STATUS_LABEL[status] ?? status}
     </span>
   )
 }
@@ -158,7 +170,13 @@ function TitleEditor({ ontology }: { ontology: Ontology }) {
 
   const save = useMutation({
     mutationFn: (t: string) => api.ontologies.patch(ontology.id, { title: t || null }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['ontologies'] }); setEditing(false); setError(null) },
+    onSuccess: () => {
+      // Title feeds the quality gate, so refresh the version list too — a held
+      // version's "no title" reason clears once the title is set.
+      qc.invalidateQueries({ queryKey: ['ontologies'] })
+      qc.invalidateQueries({ queryKey: ['versions', ontology.id] })
+      setEditing(false); setError(null)
+    },
     onError: (err: unknown) => { setError(err instanceof Error ? err.message : 'Failed to save') },
   })
 
@@ -342,9 +360,102 @@ function DefaultVersionEditor({ ontology, versions }: { ontology: Ontology; vers
 // (hard, irreversible) each version. Gated server-side by ontology-edit rights
 // (owner/maintainer/admin). Delete is blocked for the only version — delete the
 // ontology instead.
+// #364: inline "fix a held version" panel. A version held by the quality gate
+// isn't public; the contributor sees why and self-serves the common fixes
+// (declare a compliant license; set a title) → re-run the gate via reevaluate.
+function HeldFixPanel(
+  { ontologyId, version, onDone }:
+  { ontologyId: string; version: OntologyVersion; onDone: () => void },
+) {
+  // Rendered only while the version is needs_review (the parent gates on status),
+  // so always show a door even when the signals already look fixed — the only way
+  // out of needs_review is a reevaluate, and recomputed reasons can be empty while
+  // the status lingers.
+  const reasons = version.review_reasons ?? []
+  // The file's OWN license is non-compliant/unrecognized when it declared one
+  // (license_raw) that isn't compliant. No overlay can override that — the
+  // contributor must change the source, not pick a platform license.
+  const contentLicenseBlocks = !!version.license_raw && version.license_compliant === false
+  const needsLicense = !contentLicenseBlocks &&
+    reasons.some(r => r.toLowerCase().includes('license'))
+  const needsTitle = reasons.some(r => r.toLowerCase().includes('title'))
+  const [license, setLicense] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+
+  const { data: lic } = useQuery({
+    queryKey: ['compliant-licenses'],
+    queryFn: () => api.ontologies.compliantLicenses(),
+    enabled: needsLicense,
+    staleTime: 5 * 60_000,
+  })
+  const publish = useMutation({
+    mutationFn: () => api.ontologies.reevaluateVersion(ontologyId, version.id, license || undefined),
+    // Refetch the version list on every outcome: if it published, the parent
+    // unmounts this panel; if it's still held, the panel re-renders with the
+    // freshly-recomputed reasons. No local reason state to drift.
+    onSuccess: () => { setErr(null); onDone() },
+    onError: (e: unknown) => setErr(e instanceof Error ? e.message : 'Could not publish'),
+  })
+
+  const box: React.CSSProperties = {
+    background: 'rgba(249,115,22,0.08)', border: '1px solid rgba(249,115,22,0.3)',
+    borderRadius: 8, padding: '8px 10px', display: 'flex', flexDirection: 'column',
+    gap: 6, fontSize: 'var(--font-size-sm)', maxWidth: 540,
+  }
+
+  if (contentLicenseBlocks) {
+    return (
+      <div style={box}>
+        <div style={{ color: 'var(--orange)', fontWeight: 600 }}>⚠ This file's license can't be hosted</div>
+        <span style={{ color: 'var(--text-muted)' }}>
+          Your ontology declares <code>{version.license_raw}</code>, which isn't on the
+          platform's accepted list. To publish, change the license in the source file
+          and upload a new version, or ask an admin to review it.
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <div style={box}>
+      <div style={{ color: 'var(--orange)', fontWeight: 600 }}>⚠ Not public yet — one more step</div>
+      {reasons.length > 0 ? (
+        <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-muted)' }}>
+          {reasons.map((r, i) => <li key={i}>{r}</li>)}
+        </ul>
+      ) : (
+        <span style={{ color: 'var(--text-muted)' }}>Everything looks fixed — publish to go live.</span>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {needsLicense && (
+          <select
+            value={license}
+            onChange={e => setLicense(e.target.value)}
+            style={{ fontSize: 'var(--font-size-sm)', background: 'var(--bg-secondary)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px' }}
+          >
+            <option value="">Choose a license…</option>
+            {(lic?.licenses ?? []).map(l => <option key={l.spdx} value={l.spdx}>{l.label}</option>)}
+          </select>
+        )}
+        <button
+          onClick={() => publish.mutate()}
+          disabled={publish.isPending || (needsLicense && !license)}
+          style={{ color: '#fff', background: 'var(--accent)', border: 'none', borderRadius: 20, padding: '2px 14px', fontWeight: 600, cursor: 'pointer', fontSize: 'var(--font-size-sm)', opacity: (needsLicense && !license) ? 0.5 : 1 }}
+        >
+          {publish.isPending ? '…' : 'Publish'}
+        </button>
+      </div>
+      {needsTitle && <span style={{ color: 'var(--text-dim)' }}>Set a title in the Title field above, then Publish.</span>}
+      {err && <span style={{ color: 'var(--red-soft)' }}>{err}</span>}
+    </div>
+  )
+}
+
 function VersionManager({ ontology, versions }: { ontology: Ontology; versions: OntologyVersion[] }) {
   const qc = useQueryClient()
-  const [open, setOpen] = useState(false)
+  // Auto-expand when a version needs the contributor's attention, so the fix panel
+  // isn't hidden behind the collapsed "▸ N versions" toggle.
+  const [open, setOpen] = useState(() => versions.some(v => v.status === 'needs_review'))
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -382,7 +493,8 @@ function VersionManager({ ontology, versions }: { ontology: Ontology; versions: 
       {open && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
           {sorted.map(v => (
-            <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', fontSize: 'var(--font-size-sm)' }}>
+            <div key={v.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', fontSize: 'var(--font-size-sm)' }}>
               <StatusDot status={v.status} />
               <span style={{ color: 'var(--text)' }}>{versionLabel(v, { isDefault: v.is_default })}</span>
               {v.status !== 'deprecated' && (
@@ -417,6 +529,10 @@ function VersionManager({ ontology, versions }: { ontology: Ontology; versions: 
                   delete
                 </button>
               )}
+            </div>
+            {v.status === 'needs_review' && (
+              <HeldFixPanel ontologyId={ontology.id} version={v} onDone={invalidate} />
+            )}
             </div>
           ))}
         </div>
