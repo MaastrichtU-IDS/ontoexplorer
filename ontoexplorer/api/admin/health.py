@@ -184,6 +184,9 @@ async def admin_overview(
     _: User = Depends(_require_admin),
     db: AsyncSession = Depends(get_db),
 ):
+    from ontoexplorer.config import get_settings as _gs
+    from ontoexplorer.modules.ingestion.license import held_reasons as _held_reasons
+    _min_triples_overview = _gs().min_triples_for_publish
     (
         postgres_status,
         redis_status,
@@ -217,6 +220,7 @@ async def admin_overview(
         text("""
             WITH ranked AS (
                 SELECT v.id, v.ontology_id, v.version_iri, v.triple_count, v.status,
+                       v.license, v.license_compliant,
                        v.created_at, v.source_url, v.reasoner, v.embed_count,
                        row_number() OVER (PARTITION BY v.ontology_id ORDER BY v.created_at DESC) AS rn,
                        count(*)     OVER (PARTITION BY v.ontology_id)                            AS version_count
@@ -225,7 +229,7 @@ async def admin_overview(
             SELECT o.id, o.iri, o.shortname, o.title AS ont_title,
                    o.current_version_id,
                    r.id AS version_id, r.version_iri, r.triple_count,
-                   r.status AS ingestion_status,
+                   r.status AS ingestion_status, r.license, r.license_compliant,
                    r.created_at AS version_created_at, r.source_url, r.reasoner,
                    mp.resolved AS meta_resolved,
                    r.version_count, r.embed_count
@@ -332,6 +336,18 @@ async def admin_overview(
             "version_count": int(row["version_count"]),
             "triple_count": row["triple_count"],
             "ingestion_status": row["ingestion_status"],
+            "license": row.get("license"),
+            "license_compliant": row.get("license_compliant"),
+            # Why the latest version is held (empty unless needs_review) — #364.
+            "review_reasons": (
+                _held_reasons(
+                    license_compliant=bool(row.get("license_compliant")),
+                    triple_count=row["triple_count"],
+                    title=row["ont_title"],
+                    min_triples=_min_triples_overview,
+                )
+                if row["ingestion_status"] == "needs_review" else []
+            ),
             "indexed": indexed,
             "profile_computed": profile_computed,
             "embed_count": int(row["embed_count"] or 0),
