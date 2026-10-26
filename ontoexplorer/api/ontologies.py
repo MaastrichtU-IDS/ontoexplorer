@@ -1123,6 +1123,37 @@ async def compliant_licenses():
     return {"licenses": [{"spdx": s, "label": _SPDX_LABELS.get(s, s)} for s in sorted(allow)]}
 
 
+@router.get(
+    "/attention-count",
+    summary="How many of the caller's versions are held for review (dashboard badge)",
+)
+async def attention_count(
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Count of versions held by the quality gate (status ``needs_review``) across
+    the caller's owned/maintained ontologies — the number behind the dashboard's
+    "Needs your attention" nav badge. 0 for a user who maintains nothing held.
+
+    Defined before ``/{ontology_id}`` so the literal path is not shadowed by the
+    id matcher."""
+    from sqlalchemy import func
+    from ontoexplorer.modules.auth.permissions import owned_or_maintained_ontology_ids
+
+    my_ids = await owned_or_maintained_ontology_ids(db, user.id)
+    if not my_ids:
+        return {"needs_review": 0}
+    count = (await db.execute(
+        select(func.count())
+        .select_from(OntologyVersion)
+        .where(
+            OntologyVersion.ontology_id.in_(my_ids),
+            OntologyVersion.status == "needs_review",
+        )
+    )).scalar_one()
+    return {"needs_review": int(count)}
+
+
 # ── Single ontology metadata ───────────────────────────────────────────────────
 
 @router.get("/{ontology_id}", summary="Ontology metadata (by id or shortname)")

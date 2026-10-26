@@ -7,7 +7,25 @@ from ontoexplorer.modules.ingestion.license import (
     decide_publish_status,
     effective_license,
     is_compliant,
+    is_newly_held,
 )
+
+
+class TestIsNewlyHeld:
+    """The owner "action needed" email fires only on the first hold — this predicate
+    is what keeps a re-index of an already-held version from re-nagging (#364 2a)."""
+
+    def test_first_hold_from_ingested(self):
+        assert is_newly_held("ingested", "needs_review") is True
+
+    def test_reindex_of_already_held_does_not_refire(self):
+        assert is_newly_held("needs_review", "needs_review") is False
+
+    def test_passing_is_not_a_hold(self):
+        assert is_newly_held("ingested", "ready") is False
+
+    def test_ready_version_never_newly_held(self):
+        assert is_newly_held("ready", "ready") is False
 
 
 class TestEffectiveLicenseOverlay:

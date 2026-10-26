@@ -1411,7 +1411,11 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
             from ontoexplorer.modules.ingestion.license import (
                 decide_publish_status as _decide,
                 effective_license as _eff_lic,
+                is_newly_held as _is_newly_held,
             )
+            # Set inside the session when a version is newly held; the owner email is
+            # sent AFTER the session closes so SMTP's timeout can't pin the DB conn.
+            _held_email: dict | None = None
             async with make_celery_db_session()() as db:
                 ver = (await db.execute(_sa_select(_OV).where(_OV.id == version_id))).scalar_one_or_none()
                 if ver is None or ver.status == "deprecated":
@@ -1441,8 +1445,26 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                     title=(ont.title if ont else None),
                     min_triples=_gs2().min_triples_for_publish,
                 )
+                # Email the owner only on the TRANSITION into needs_review (first
+                # publication), never on a re-index of an already-held version.
+                _newly_held = _is_newly_held(ver.status, _new_status)
                 if _new_status == "needs_review":
                     log.info("version_held_for_review", version_id=version_id, reasons=_reasons)
+
+                # Capture the email payload inside the session (the row objects don't
+                # survive it); the send itself happens after the block.
+                if _newly_held and ont and ont.owner_id:
+                    from ontoexplorer.models.db import User as _User
+                    _owner = (await db.execute(
+                        _sa_select(_User).where(_User.id == ont.owner_id)
+                    )).scalar_one_or_none()
+                    if _owner is not None and _owner.email:
+                        _held_email = {
+                            "owner_email": _owner.email,
+                            "owner_name": _owner.display_name,
+                            "ontology_label": (ont.title or ont.shortname or ontology_id),
+                            "reasons": _reasons,
+                        }
 
                 try:
                     _lc = await version_lang_counts(db, version_id)
@@ -1458,6 +1480,13 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                     .values(**_vals)
                 )
                 await db.commit()
+
+            # Outside the session: best-effort owner notification (never raises).
+            if _held_email is not None:
+                from ontoexplorer.modules.notifications.email import (
+                    notify_owner_version_held,
+                )
+                await notify_owner_version_held(**_held_email)
 
         asyncio.run(_mark_ready())
         # The Celery worker invalidates only its own in-process cache; the API

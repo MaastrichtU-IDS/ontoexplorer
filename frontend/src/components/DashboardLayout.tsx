@@ -1,5 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { useIsMobile } from '../hooks/useIsMobile'
+import { api } from '../lib/api'
 
 const sidebarLinks = [
   { to: '/dashboard', label: 'Ontologies', end: true },
@@ -8,6 +10,38 @@ const sidebarLinks = [
   { to: '/dashboard/stats', label: 'Stats', end: false },
   { to: '/dashboard/profile', label: 'Profile', end: false },
 ]
+
+// Amber pill showing how many of the caller's versions are held for review. The
+// held-version inbox lives on the Ontologies page, so the badge sits on that link.
+function AttentionBadge() {
+  const { data } = useQuery({
+    queryKey: ['attention-count'],
+    queryFn: () => api.ontologies.attentionCount(),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+  })
+  const n = data?.needs_review ?? 0
+  if (n <= 0) return null
+  return (
+    <span
+      role="status"
+      aria-label={`${n} version${n === 1 ? '' : 's'} need your attention`}
+      style={{
+        marginLeft: '0.4rem',
+        padding: '0.05rem 0.4rem',
+        borderRadius: 999,
+        fontSize: '0.7rem',
+        fontWeight: 700,
+        lineHeight: 1.4,
+        color: 'var(--bg)',
+        background: 'var(--orange)',
+      }}
+    >
+      {n}
+    </span>
+  )
+}
 
 export default function DashboardLayout() {
   const isMobile = useIsMobile()
@@ -18,6 +52,8 @@ export default function DashboardLayout() {
       to={to}
       end={end}
       style={({ isActive }) => ({
+        display: 'flex',
+        alignItems: 'center',
         padding: isMobile ? '0.5rem 0.9rem' : '0.4rem 1rem',
         fontSize: 'var(--font-size-base)',
         color: isActive ? 'var(--accent)' : 'var(--text-muted)',
@@ -30,6 +66,7 @@ export default function DashboardLayout() {
       })}
     >
       {label}
+      {to === '/dashboard' && <AttentionBadge />}
     </NavLink>
   ))
 
