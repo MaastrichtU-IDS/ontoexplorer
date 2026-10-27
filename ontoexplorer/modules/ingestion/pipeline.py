@@ -22,6 +22,7 @@ import io
 import re
 import time
 import uuid
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 
 import pyoxigraph
@@ -85,6 +86,12 @@ class IngestionRequest:
     groups: list[str] = None  # type: ignore[assignment]
     reasoner: str = "rustdl"
     reasoner_profile_id: str | None = None
+    # Contributor-asserted license overlay supplied at submit time by an automated
+    # ingest (#364 Phase 3): the API counterpart of the dashboard fix panel's
+    # declared_license. Stored on the version so the gate's effective_license() can
+    # fill a content-license ABSENCE — it never overrides a license the content
+    # declares (anti-laundering), exactly like the UI path. Attributed to owner_id.
+    declared_license: str | None = None
 
     def __post_init__(self):
         if self.groups is None:
@@ -349,6 +356,12 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
         source_url=source.final_url or request.url or request.iri,
         reasoner=request.reasoner,
         reasoner_profile_id=request.reasoner_profile_id,
+        # Automation-supplied license overlay (#364 Phase 3). Set only when the
+        # submitter asserted one; the gate's effective_license() uses it to fill a
+        # content-license ABSENCE. Attributed to the submitting account + ingest time.
+        declared_license=request.declared_license,
+        declared_by=request.owner_id if request.declared_license else None,
+        declared_at=datetime.now(timezone.utc) if request.declared_license else None,
     )
     db.add(version)
 
