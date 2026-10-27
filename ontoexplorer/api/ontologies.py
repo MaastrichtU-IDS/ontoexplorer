@@ -1373,7 +1373,7 @@ async def reevaluate_version(
     from ontoexplorer.config import get_settings
     from ontoexplorer.modules.auth.permissions import can_edit_ontology
     from ontoexplorer.modules.ingestion.license import (
-        canonicalize_license, compliant_license_set, decide_publish_status, effective_license,
+        canonicalize_license, compliant_license_set, reevaluate_from_signals,
     )
 
     version = await _get_version_or_404(db, ontology_id, version_id)
@@ -1402,13 +1402,14 @@ async def reevaluate_version(
     # Content is immutable (SHA-256 addressed), so trust the license captured at
     # ingest (`license_raw`) rather than re-reading the store — a momentarily
     # unreachable store must not read as "no license" and let the overlay publish.
-    content_spdx, _, lic_ok = effective_license(version.license_raw, version.declared_license)
+    # Same honest re-check the admin bulk queue uses (reevaluate_from_signals).
+    content_spdx, lic_ok, new_status, reasons = reevaluate_from_signals(
+        license_raw=version.license_raw, declared_license=version.declared_license,
+        triple_count=version.triple_count, title=ontology.title,
+        min_triples=get_settings().min_triples_for_publish,
+    )
     version.license = content_spdx
     version.license_compliant = lic_ok
-    new_status, reasons = decide_publish_status(
-        "needs_review", license_compliant=lic_ok, triple_count=version.triple_count,
-        title=ontology.title, min_triples=get_settings().min_triples_for_publish,
-    )
     if new_status == "ready":
         version.status = "ready"
     await db.commit()
