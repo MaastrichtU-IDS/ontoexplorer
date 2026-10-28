@@ -448,11 +448,11 @@ function HeldFixPanel(
   )
 }
 
-function VersionManager({ ontology, versions }: { ontology: Ontology; versions: OntologyVersion[] }) {
+export function VersionManager({ ontology, versions }: { ontology: Ontology; versions: OntologyVersion[] }) {
   const qc = useQueryClient()
   // Auto-expand when a version needs the contributor's attention, so the fix panel
   // isn't hidden behind the collapsed "▸ N versions" toggle.
-  const [open, setOpen] = useState(() => versions.some(v => v.status === 'needs_review'))
+  const [open, setOpen] = useState(() => versions.some(v => v.status === 'needs_review' || v.auto_retired_held))
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -471,6 +471,11 @@ function VersionManager({ ontology, versions }: { ontology: Ontology; versions: 
     mutationFn: (vid: string) => api.ontologies.deleteVersion(ontology.id, vid),
     onSuccess: () => { invalidate(); setConfirmId(null); setError(null) },
     onError: (e: unknown) => { setConfirmId(null); setError(e instanceof Error ? e.message : 'Delete failed') },
+  })
+  const reactivate = useMutation({
+    mutationFn: (vid: string) => api.ontologies.reactivateVersion(ontology.id, vid),
+    onSuccess: () => { invalidate(); setError(null) },
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Reactivate failed'),
   })
 
   if (versions.length === 0) {
@@ -496,6 +501,19 @@ function VersionManager({ ontology, versions }: { ontology: Ontology; versions: 
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', fontSize: 'var(--font-size-sm)' }}>
               <StatusDot status={v.status} />
               <span style={{ color: 'var(--text)' }}>{versionLabel(v, { isDefault: v.is_default })}</span>
+              {v.auto_retired_held && (
+                <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>· set aside after inactivity</span>
+              )}
+              {v.auto_retired_held && (
+                <button
+                  onClick={() => reactivate.mutate(v.id)}
+                  disabled={reactivate.isPending}
+                  title="Bring this set-aside draft back to your review queue so you can fix and publish it"
+                  style={{ ...linkBtn, color: 'var(--accent)' }}
+                >
+                  reactivate
+                </button>
+              )}
               {v.status !== 'deprecated' && (
                 <button
                   onClick={() => deprecate.mutate(v.id)}

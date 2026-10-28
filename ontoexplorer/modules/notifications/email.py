@@ -133,6 +133,67 @@ async def notify_owner_version_held(
     ))
 
 
+async def notify_owner_held_nudge(
+    *, owner_email: str | None, owner_name: str | None,
+    ontology_label: str, days_held: int, retire_days: int,
+) -> None:
+    """One reminder that a version has been held for review a while and will be set
+    aside if left (#364 Phase 3 lifecycle). Best-effort; no-op without an email."""
+    if not owner_email:
+        return
+    who = owner_name or "there"
+    label = _header_safe(ontology_label)
+    dash = get_settings().frontend_url.rstrip("/") + "/dashboard"
+    retire_note = (
+        f"If it's left for {retire_days} days we'll set it aside to keep your "
+        "dashboard tidy — you can reactivate it any time after that."
+        if retire_days else
+        "It will stay in your queue until you resolve it."
+    )
+    lines = [
+        f"Hi {who},",
+        "",
+        f"“{label}” has been waiting for review for {days_held} days. It only needs a "
+        "quick fix (assert a license, add a title) before it publishes — no re-upload "
+        "needed in most cases:",
+        dash,
+        "",
+        retire_note,
+    ]
+    await send_email(Email(
+        to=[owner_email],
+        subject=f"[OntoExplorer] Reminder: “{label}” is still held for review",
+        body="\n".join(lines),
+    ))
+
+
+async def notify_owner_held_retired(
+    *, owner_email: str | None, owner_name: str | None,
+    ontology_label: str, days_held: int,
+) -> None:
+    """Tell the owner a long-held version was set aside (auto-deprecated) and how to
+    bring it back (#364 Phase 3 lifecycle). Reversible — hence 'set aside', not
+    'deleted'. Best-effort; no-op without an email."""
+    if not owner_email:
+        return
+    who = owner_name or "there"
+    label = _header_safe(ontology_label)
+    dash = get_settings().frontend_url.rstrip("/") + "/dashboard"
+    lines = [
+        f"Hi {who},",
+        "",
+        f"“{label}” sat in review for {days_held} days, so we've set it aside to keep "
+        "your dashboard tidy. Nothing was deleted — you can reactivate it from your "
+        "dashboard to pick up where you left off, then fix and publish it:",
+        dash,
+    ]
+    await send_email(Email(
+        to=[owner_email],
+        subject=f"[OntoExplorer] “{label}” was set aside after {days_held} days",
+        body="\n".join(lines),
+    ))
+
+
 async def notify_requester_decision(
     *, requester_email: str | None, request_type: str, ontology: str | None,
     approved: bool, note: str | None,

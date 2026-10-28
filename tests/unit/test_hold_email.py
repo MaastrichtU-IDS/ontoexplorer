@@ -57,3 +57,55 @@ async def test_crlf_in_title_is_sanitized_out_of_subject(monkeypatch):
     from email.message import EmailMessage
     em = EmailMessage()
     em["Subject"] = sent["msg"].subject  # must not raise
+
+
+# ── Held-draft lifecycle emails (#364 Phase 3) ───────────────────────────────────
+
+@pytest.mark.anyio
+async def test_nudge_email_mentions_age_and_retire_window(monkeypatch):
+    sent = {}
+    async def _capture(msg):
+        sent["msg"] = msg
+    monkeypatch.setattr(email_mod, "send_email", _capture)
+
+    await email_mod.notify_owner_held_nudge(
+        owner_email="o@example.com", owner_name="Ada",
+        ontology_label="My Ontology", days_held=14, retire_days=60,
+    )
+    msg = sent["msg"]
+    assert msg.to == ["o@example.com"]
+    assert "My Ontology" in msg.subject
+    assert "14 days" in msg.body and "60 days" in msg.body
+    assert "/dashboard" in msg.body
+
+
+@pytest.mark.anyio
+async def test_retired_email_says_set_aside_not_deleted(monkeypatch):
+    sent = {}
+    async def _capture(msg):
+        sent["msg"] = msg
+    monkeypatch.setattr(email_mod, "send_email", _capture)
+
+    await email_mod.notify_owner_held_retired(
+        owner_email="o@example.com", owner_name=None,
+        ontology_label="My Ontology", days_held=60,
+    )
+    msg = sent["msg"]
+    assert "aside" in msg.body.lower()
+    assert "deleted" in msg.body.lower()   # reassures it was NOT deleted
+    assert "/dashboard" in msg.body
+
+
+@pytest.mark.anyio
+async def test_lifecycle_emails_are_noop_without_address(monkeypatch):
+    called = False
+    async def _capture(msg):
+        nonlocal called
+        called = True
+    monkeypatch.setattr(email_mod, "send_email", _capture)
+
+    await email_mod.notify_owner_held_nudge(
+        owner_email=None, owner_name=None, ontology_label="X", days_held=14, retire_days=60)
+    await email_mod.notify_owner_held_retired(
+        owner_email=None, owner_name=None, ontology_label="X", days_held=60)
+    assert called is False

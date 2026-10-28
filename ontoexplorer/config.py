@@ -140,6 +140,12 @@ class Settings(BaseSettings):
     # many triples is held for review instead of auto-published. Only applies at the
     # first ingested->ready transition, never to an already-public version.
     min_triples_for_publish: int = 1
+    # Held-draft lifecycle (#364 Phase 3). A version left in needs_review is nudged
+    # (one reminder email to the owner) once it has been held this many days, and
+    # auto-deprecated (reversibly — the owner can reactivate it) once held this many
+    # days. Set either to 0 to disable that stage.
+    held_nudge_days: int = 14
+    held_retire_days: int = 60
 
     # Development auth bypass — set AUTH_BYPASS=true to skip OAuth for local dev
     auth_bypass: bool = False
