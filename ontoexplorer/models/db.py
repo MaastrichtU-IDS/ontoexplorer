@@ -183,6 +183,12 @@ class OntologyVersion(Base):
     declared_by: Mapped[str | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     declared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Held-draft lifecycle marker (#364 Phase 3): set when a needs_review version is
+    # first nudged (keeps the one-time reminder from re-firing) and retained when it
+    # is auto-deprecated past the retire window, so an auto-retired held draft is
+    # distinguishable (and reactivatable) from an ordinary deprecate. NULL = never
+    # entered the lifecycle.
+    held_nudged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reasoner: Mapped[str] = mapped_column(String, nullable=False, server_default="rustdl")
     # Reference-binding to the reasoner profile chosen at add/reindex time; each
     # (re)reason resolves the profile's current params. `reasoner` stays the

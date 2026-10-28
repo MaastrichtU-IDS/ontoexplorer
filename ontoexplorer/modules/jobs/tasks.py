@@ -117,6 +117,13 @@ celery_app.conf.update(
             "task": "ontoexplorer.backup_usage_daily",
             "schedule": crontab(hour=3, minute=30, day_of_week="sun"),
         },
+        # Held-draft lifecycle (#364 Phase 3): once daily, nudge owners of versions
+        # held past the nudge window and auto-deprecate (reversibly) those past the
+        # retire window. Daily cadence is ample for day-granularity windows.
+        "sweep-held-drafts-daily": {
+            "task": "ontoexplorer.sweep_held_drafts",
+            "schedule": crontab(hour=4, minute=0),
+        },
     },
 )
 
@@ -2033,6 +2040,40 @@ def reconcile_embeddings(limit: int = 50) -> dict:
     n = asyncio.run(_run())
     log.info("reconcile_embeddings", dispatched=n)
     return {"dispatched": n}
+
+
+@celery_app.task(name="ontoexplorer.sweep_held_drafts")
+def sweep_held_drafts() -> dict:
+    """Beat task (#364 Phase 3): nudge owners of long-held needs_review versions once,
+    and auto-deprecate (reversibly) those held past the retire window. Emails are sent
+    AFTER the DB session closes so an SMTP timeout can't pin the connection."""
+    import asyncio
+    from ontoexplorer.config import get_settings
+    from ontoexplorer.database import make_celery_db_session
+    from ontoexplorer.modules.ingestion.held_lifecycle import sweep_held_drafts as _sweep
+    from ontoexplorer.modules.notifications.email import (
+        notify_owner_held_nudge,
+        notify_owner_held_retired,
+    )
+
+    s = get_settings()
+
+    async def _run() -> dict:
+        async with make_celery_db_session()() as db:
+            result = await _sweep(
+                db, nudge_days=s.held_nudge_days, retire_days=s.held_retire_days
+            )
+        for p in result["nudged"]:
+            await notify_owner_held_nudge(**p)
+        for p in result["retired"]:
+            await notify_owner_held_retired(**p)
+        return result
+
+    result = asyncio.run(_run())
+    log.info("sweep_held_drafts", nudged=len(result["nudged"]),
+             retired=len(result["retired"]), scanned=result["scanned"])
+    return {"nudged": len(result["nudged"]), "retired": len(result["retired"]),
+            "scanned": result["scanned"]}
 
 
 async def _apply_resolvability(db, ontology_id: str, *, client_factory=None) -> None:

@@ -309,6 +309,9 @@ export interface OntologyVersion {
   license_compliant?: boolean
   declared_license?: string | null
   review_reasons?: string[]
+  /** True when the held-draft lifecycle set this version aside (auto-deprecated past
+   *  the retire window); the owner can reactivate it back to needs_review. */
+  auto_retired_held?: boolean
 }
 
 export interface Term {
@@ -1532,6 +1535,9 @@ export const api = {
     // Hard-delete a single version (irreversible): purges all its artifacts + rows.
     deleteVersion: (oid: string, vid: string) =>
       request<void>(`/ontologies/${oid}/${vid}?purge=true`, { method: 'DELETE' }),
+    // Reactivate a held draft the lifecycle set aside (#364 Phase 3) → needs_review.
+    reactivateVersion: (oid: string, vid: string) =>
+      request<{ status: string }>(`/ontologies/${oid}/${vid}/reactivate`, { method: 'POST' }),
     // Durable submission records (the caller's ingest jobs) — survive navigation,
     // unlike the in-form poll. Deep-linkable by task id.
     submissions: () =>

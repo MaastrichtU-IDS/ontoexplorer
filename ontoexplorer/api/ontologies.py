@@ -1356,6 +1356,10 @@ async def list_versions(ontology_id: str, db: AsyncSession = Depends(get_db)):
                   title=ontology.title, min_triples=_min_tri)
             if v.status == "needs_review" else []
         )
+        # An auto-retired held draft (the lifecycle set it aside past the retire
+        # window) can be reactivated by the owner back to needs_review — surface the
+        # flag so the dashboard offers that instead of a dead "deprecated" row (#364).
+        d["auto_retired_held"] = (v.status == "deprecated" and v.held_nudged_at is not None)
         out.append(d)
     return {"versions": out}
 
@@ -1444,6 +1448,37 @@ async def reevaluate_version(
              new_status=new_status, reasons=reasons)
     return {"status": version.status, "review_reasons": reasons,
             "declared_license": version.declared_license}
+
+
+@router.post("/{ontology_id}/{version_id}/reactivate",
+             summary="Reactivate an auto-retired held draft (owner/maintainer)")
+async def reactivate_version(
+    ontology_id: str,
+    version_id: str,
+    user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bring a held draft that the lifecycle set aside (auto-deprecated past the
+    retire window, #364 Phase 3) back to needs_review so the owner can resume fixing
+    it. Only a currently-deprecated version WITH held provenance (held_nudged_at set)
+    is reactivatable — 409 otherwise, so this never resurrects an ordinary deprecate.
+    Clearing held_nudged_at makes it eligible for a fresh nudge if it stalls again."""
+    from ontoexplorer.modules.auth.permissions import can_edit_ontology
+
+    version = await _get_version_or_404(db, ontology_id, version_id)
+    ontology = await _get_ontology_or_404(db, ontology_id)
+    if not await can_edit_ontology(db, user, ontology):
+        raise HTTPException(status_code=403, detail="You are not allowed to edit this ontology")
+    if version.status != "deprecated" or version.held_nudged_at is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Only a held draft that was set aside by the lifecycle can be reactivated.",
+        )
+    version.status = "needs_review"
+    version.held_nudged_at = None
+    await db.commit()
+    log.info("held_draft_reactivated", version_id=version_id, ontology_id=ontology_id)
+    return {"status": version.status}
 
 
 # ── Download ───────────────────────────────────────────────────────────────────
