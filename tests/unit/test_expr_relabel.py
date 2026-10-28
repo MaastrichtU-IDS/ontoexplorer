@@ -67,6 +67,24 @@ def test_collect_gathers_named_ast_nodes_and_iri_tokens_nested():
     assert acc == {"urn:p", "urn:a", "urn:b", "urn:c", "urn:d"}
 
 
+def test_collect_and_apply_handle_sibling_iri_label_pairs():
+    # The domain-of / usage table row shape: "<x>_iri" + "<x>_label" plain fields
+    # (not expression nodes). The overlay must relabel these too.
+    rows = [
+        {"prop_iri": "urn:p", "prop_label": "p", "range_iri": "urn:r", "range_label": "r"},
+        {"class_iri": "urn:c", "class_label": "c", "filler_iri": "urn:f", "filler_label": "f"},
+    ]
+    acc = set()
+    _collect_expr_iris(rows, acc)
+    assert acc == {"urn:p", "urn:r", "urn:c", "urn:f"}
+
+    _apply_expr_labels(rows, {"urn:p": "has part", "urn:f": "clinician"})
+    assert rows[0]["prop_label"] == "has part"
+    assert rows[0]["range_label"] == "r"          # urn:r absent -> untouched
+    assert rows[1]["filler_label"] == "clinician"
+    assert rows[1]["class_label"] == "c"          # urn:c absent -> untouched
+
+
 def test_apply_overlays_only_named_slots_and_only_known_iris():
     ast = {"type": "some",
            "property": {"type": "named", "iri": "urn:p", "label": "urn:p-frag"},

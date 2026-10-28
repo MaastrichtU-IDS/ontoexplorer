@@ -179,17 +179,22 @@ def _build_class_expr(store, graph_node, node, label_fn, depth: int = 0) -> dict
 # These two pure helpers close that gap as a post-pass: collect every named-IRI
 # label slot in the already-built structures, then overlay the entity_index
 # label (the display source of truth for the rest of the page) wherever one
-# exists. They walk both shapes produced on a term page:
-#   • `_build_class_expr` AST node   — {"type": "named", "iri", "label", …}
-#   • Manchester token               — {"t": "iri", "iri", "label", …}
-# and recurse through every nested dict/list (operands, fillers, filler_expr,
-# manchester lists) without knowing the field names.
+# exists. They walk the two label-carrying shapes produced on a term page, and
+# recurse through every nested dict/list without knowing the field names:
+#   • class-expression node / Manchester token — a dict carrying "iri" + "label"
+#     ({"type": "named", …} or {"t": "iri", …})
+#   • sibling "<x>_iri" / "<x>_label" pairs — the row shape used by the
+#     domain-of (schema_properties: prop_/range_), usage (class_/filler_) and
+#     class-usage (class_/property_) tables, whose plain label fields are set
+#     straight from `label_fn` and so share the same fragment fallback.
 def _collect_expr_iris(obj, acc: set) -> None:
     if isinstance(obj, dict):
         iri = obj.get("iri")
         if isinstance(iri, str) and (obj.get("type") == "named" or obj.get("t") == "iri"):
             acc.add(iri)
-        for v in obj.values():
+        for k, v in obj.items():
+            if k.endswith("_iri") and isinstance(v, str):
+                acc.add(v)
             _collect_expr_iris(v, acc)
     elif isinstance(obj, list):
         for v in obj:
@@ -202,7 +207,11 @@ def _apply_expr_labels(obj, labels: dict[str, str]) -> None:
         if (isinstance(iri, str) and iri in labels
                 and (obj.get("type") == "named" or obj.get("t") == "iri")):
             obj["label"] = labels[iri]
-        for v in obj.values():
+        for k, v in list(obj.items()):
+            if k.endswith("_iri") and isinstance(v, str) and v in labels:
+                _lbl_key = k[:-4] + "_label"
+                if _lbl_key in obj:
+                    obj[_lbl_key] = labels[v]
             _apply_expr_labels(v, labels)
     elif isinstance(obj, list):
         for v in obj:
@@ -3281,6 +3290,7 @@ async def get_term(
         superclass_expressions, inferred_superclass_expressions, equivalent_to,
         disjoint_with, inferred_disjoint_with, disjoint_union_of,
         general_class_axioms, usage, property_axioms, class_usage,
+        schema_properties, inherited_schema_properties,
     ]
     _expr_iris: set[str] = set()
     for _s in _expr_structs:
