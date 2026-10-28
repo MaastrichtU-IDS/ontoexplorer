@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, slugFromIri, type Ontology, type OntologyVersion } from '../lib/api'
+import { api, slugFromIri, type MetaCandidate, type Ontology, type OntologyVersion } from '../lib/api'
 import { useAuth } from '../hooks/useAuth'
 import ReindexWithReasoner from '../components/ReindexWithReasoner'
 import ResolvableBadge from '../components/ResolvableBadge'
@@ -360,7 +360,7 @@ function DefaultVersionEditor({ ontology, versions }: { ontology: Ontology; vers
 // #364: inline "fix a held version" panel. A version held by the quality gate
 // isn't public; the contributor sees why and self-serves the common fixes
 // (declare a compliant license; set a title) → re-run the gate via reevaluate.
-function HeldFixPanel(
+export function HeldFixPanel(
   { ontologyId, version, onDone }:
   { ontologyId: string; version: OntologyVersion; onDone: () => void },
 ) {
@@ -377,6 +377,7 @@ function HeldFixPanel(
     reasons.some(r => r.toLowerCase().includes('license'))
   const needsTitle = reasons.some(r => r.toLowerCase().includes('title'))
   const [license, setLicense] = useState('')
+  const [titleChoice, setTitleChoice] = useState('')
   const [err, setErr] = useState<string | null>(null)
 
   const { data: lic } = useQuery({
@@ -385,8 +386,40 @@ function HeldFixPanel(
     enabled: needsLicense,
     staleTime: 5 * 60_000,
   })
+
+  // Candidate title values actually present in the file (#364 Phase 3): a title
+  // property often exists but wasn't the one auto-mapped, so offer those instead of
+  // making the contributor retype one. Graceful: if the metadata profile isn't ready
+  // the chooser just doesn't appear and the manual Title field above still works.
+  const { data: cand } = useQuery({
+    queryKey: ['meta-candidates', version.id],
+    queryFn: () => api.ontologies.meta.candidates(ontologyId, version.id),
+    enabled: needsTitle,
+    retry: false,
+    staleTime: 5 * 60_000,
+  })
+  const titleOptions = React.useMemo(() => {
+    const cs = (cand?.title as MetaCandidate[] | undefined) ?? []
+    const seen = new Set<string>()
+    const opts: { value: string; source: string }[] = []
+    for (const c of cs) {
+      for (const raw of c.values ?? []) {
+        const t = (raw ?? '').trim()
+        if (t && !seen.has(t)) { seen.add(t); opts.push({ value: t, source: c.label || c.iri }) }
+      }
+    }
+    return opts
+  }, [cand])
+
   const publish = useMutation({
-    mutationFn: () => api.ontologies.reevaluateVersion(ontologyId, version.id, license || undefined),
+    // If the contributor picked a title from the file, set it before re-running the
+    // gate so the "no title" reason clears in the same action.
+    mutationFn: async () => {
+      if (needsTitle && titleChoice) {
+        await api.ontologies.patch(ontologyId, { title: titleChoice })
+      }
+      return api.ontologies.reevaluateVersion(ontologyId, version.id, license || undefined)
+    },
     // Refetch the version list on every outcome: if it published, the parent
     // unmounts this panel; if it's still held, the panel re-renders with the
     // freshly-recomputed reasons. No local reason state to drift.
@@ -423,6 +456,21 @@ function HeldFixPanel(
       ) : (
         <span style={{ color: 'var(--text-muted)' }}>Everything looks fixed — publish to go live.</span>
       )}
+      {needsTitle && titleOptions.length > 0 && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', color: 'var(--text-dim)' }}>
+          Title from your file:
+          <select
+            value={titleChoice}
+            onChange={e => setTitleChoice(e.target.value)}
+            style={{ fontSize: 'var(--font-size-sm)', background: 'var(--bg-secondary)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 6px', maxWidth: 360 }}
+          >
+            <option value="">Choose a title…</option>
+            {titleOptions.map((o, i) => (
+              <option key={i} value={o.value}>{o.value} — {o.source}</option>
+            ))}
+          </select>
+        </label>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         {needsLicense && (
           <select
@@ -442,7 +490,9 @@ function HeldFixPanel(
           {publish.isPending ? '…' : 'Publish'}
         </button>
       </div>
-      {needsTitle && <span style={{ color: 'var(--text-dim)' }}>Set a title in the Title field above, then Publish.</span>}
+      {needsTitle && titleOptions.length === 0 && (
+        <span style={{ color: 'var(--text-dim)' }}>Set a title in the Title field above, then Publish.</span>
+      )}
       {err && <span style={{ color: 'var(--red-soft)' }}>{err}</span>}
     </div>
   )

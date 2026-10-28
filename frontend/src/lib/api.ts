@@ -750,6 +750,14 @@ export interface OntologyMetaResolved {
   used_in_project: string[]
 }
 
+// One candidate property for a metadata role (from GET …/meta/candidates):
+// the predicate present in the file, its values, and a display label.
+export interface MetaCandidate {
+  iri: string
+  values: string[]
+  label: string | null
+}
+
 export interface OntologyMetaProfile {
   version_id: string
   title_props: string[]
