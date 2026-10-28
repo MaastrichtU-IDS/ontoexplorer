@@ -167,6 +167,63 @@ def _build_class_expr(store, graph_node, node, label_fn, depth: int = 0) -> dict
     return {"type": "unknown"}
 
 
+# ── Expression-internal label resolution (entity_index overlay) ───────────────
+# Named IRIs that appear only INSIDE a class expression — a restriction's
+# onProperty / filler, an and/or operand, a general class axiom — are discovered
+# late in `_build_class_expr` / `render_class_expression`, after the term's
+# targeted entity_index prefetch (`_pre_iris`) and against the blank-node closure
+# store, which carries no named-IRI rdfs:label. Both render such IRIs as the raw
+# local name, so an axiom shows half-labelled (e.g. `has action SubClassOf
+# CLCO_0002502 some CLCO_0000108` instead of `… has subject some clinician`).
+#
+# These two pure helpers close that gap as a post-pass: collect every named-IRI
+# label slot in the already-built structures, then overlay the entity_index
+# label (the display source of truth for the rest of the page) wherever one
+# exists. They walk both shapes produced on a term page:
+#   • `_build_class_expr` AST node   — {"type": "named", "iri", "label", …}
+#   • Manchester token               — {"t": "iri", "iri", "label", …}
+# and recurse through every nested dict/list (operands, fillers, filler_expr,
+# manchester lists) without knowing the field names.
+def _collect_expr_iris(obj, acc: set) -> None:
+    if isinstance(obj, dict):
+        iri = obj.get("iri")
+        if isinstance(iri, str) and (obj.get("type") == "named" or obj.get("t") == "iri"):
+            acc.add(iri)
+        for v in obj.values():
+            _collect_expr_iris(v, acc)
+    elif isinstance(obj, list):
+        for v in obj:
+            _collect_expr_iris(v, acc)
+
+
+def _apply_expr_labels(obj, labels: dict[str, str]) -> None:
+    if isinstance(obj, dict):
+        iri = obj.get("iri")
+        if (isinstance(iri, str) and iri in labels
+                and (obj.get("type") == "named" or obj.get("t") == "iri")):
+            obj["label"] = labels[iri]
+        for v in obj.values():
+            _apply_expr_labels(v, labels)
+    elif isinstance(obj, list):
+        for v in obj:
+            _apply_expr_labels(v, labels)
+
+
+async def _entity_index_labels(db: AsyncSession, version_id: str, iris) -> dict[str, str]:
+    """`{iri: primary_label}` from entity_index for `iris` that have a non-empty
+    label, in one query. Targeted (vs. the whole-version map) so the main term
+    endpoint keeps resolving only the IRIs a term actually references."""
+    uniq = [i for i in dict.fromkeys(iris) if i]
+    if not uniq:
+        return {}
+    rows = (await db.execute(
+        text("SELECT iri, primary_label FROM entity_index "
+             "WHERE version_id = :vid AND iri = ANY(:iris)"),
+        {"vid": version_id, "iris": uniq},
+    )).all()
+    return {r.iri: r.primary_label for r in rows if r.primary_label}
+
+
 # ── Blank-node axiom closure (oxigraph-as-a-service) ──────────────────────────
 # The HTTP store proxy cannot resolve a stored blank node by label: a bound
 # BlankNode term is inlined into SPARQL as `_:x`, which in query syntax is a
@@ -3215,6 +3272,24 @@ async def get_term(
     _sub_a = (asserted_sub_iris, asserted_sub_total, _sub_a_cut)
     _sub_i = (inferred_sub_iris, _sub_i_total, _sub_i_cut)
 
+    # Overlay entity_index labels onto IRIs that appear only inside class
+    # expressions / usage axioms (restriction properties & fillers, operands,
+    # general class axioms). `_label` fragment-fell-back for these because they
+    # are discovered after the `_pre_iris` prefetch; resolve them in one query so
+    # an axiom reads "has subject some clinician", not "CLCO_0002502 some CLCO_0000108".
+    _expr_structs = [
+        superclass_expressions, inferred_superclass_expressions, equivalent_to,
+        disjoint_with, inferred_disjoint_with, disjoint_union_of,
+        general_class_axioms, usage, property_axioms, class_usage,
+    ]
+    _expr_iris: set[str] = set()
+    for _s in _expr_structs:
+        _collect_expr_iris(_s, _expr_iris)
+    _expr_labels = await _entity_index_labels(db, version_id, _expr_iris)
+    if _expr_labels:
+        for _s in _expr_structs:
+            _apply_expr_labels(_s, _expr_labels)
+
     _payload = {
         "iri": term_iri,
         "label": typed_label if term_labels else top_label,
@@ -3309,6 +3384,18 @@ async def get_term_usage_page(
     def _label(iri: str) -> str:
         return label_for(_lmap, iri)
 
+    def _relabel_rows(rows: list[dict]) -> list[dict]:
+        # The leading class token uses `_label` (entity_index), but the Manchester
+        # restriction is rendered against the closure store, which lacks named-IRI
+        # labels — so its property/filler tokens fall back to the local name.
+        # Overlay the entity_index label for every indexed IRI in the rows.
+        iris: set[str] = set()
+        _collect_expr_iris(rows, iris)
+        labels = {i: _lmap[i][0] for i in iris if i in _lmap and _lmap[i][0]}
+        if labels:
+            _apply_expr_labels(rows, labels)
+        return rows
+
     # Determine kind via the term's rdf:type. Cheap: one SPARQL ASK.
     def _is_property(s) -> bool:
         q = f"""
@@ -3351,9 +3438,9 @@ async def get_term_usage_page(
             }}
             ORDER BY ?class ?relation ?restrictType
         """
-        rows = await asyncio.to_thread(
+        rows = _relabel_rows(await asyncio.to_thread(
             _sparql_usage, store, g_iri, q, sql_offset, sql_limit, _label, term_iri
-        )
+        ))
         has_more = len(rows) > limit
         return {"kind": "property", "offset": offset, "limit": limit,
                 "items": rows[:limit], "has_more": has_more}
@@ -3385,10 +3472,10 @@ async def get_term_usage_page(
         OFFSET {sql_offset} LIMIT {sql_limit}
     """
     _adc_map = await asyncio.to_thread(_adc_map_via_sparql, store, g_iri)
-    rows = await asyncio.to_thread(
+    rows = _relabel_rows(await asyncio.to_thread(
         _sparql_class_usage, store, g_iri, cu_q, sql_offset, sql_limit, disj_q,
         _label, _adc_map, term_iri
-    )
+    ))
     has_more = len(rows) > limit
     return {"kind": "class", "offset": offset, "limit": limit,
             "items": rows[:limit], "has_more": has_more}
@@ -3458,6 +3545,18 @@ async def get_term_expanded(
 
     def _label(iri: str) -> str:
         return label_for(_lmap, iri)
+
+    def _relabel(*structs) -> None:
+        # Overlay entity_index labels onto IRIs rendered inside class expressions /
+        # usage axioms — the Manchester restriction tokens resolve against the
+        # closure store, which has no named-IRI labels, so they'd show local names.
+        iris: set[str] = set()
+        for s in structs:
+            _collect_expr_iris(s, iris)
+        labels = {i: _lmap[i][0] for i in iris if i in _lmap and _lmap[i][0]}
+        if labels:
+            for s in structs:
+                _apply_expr_labels(s, labels)
 
     # Resolve ancestors via ELK (cached). Skip ELK for properties — empty result.
     rdf_types_q = f"""
@@ -3638,6 +3737,12 @@ async def get_term_expanded(
         )
 
     _cu_rows = await asyncio.to_thread(_class_usage_rows, store)
+
+    # Overlay entity_index labels onto expression-internal IRIs (restriction
+    # property/filler tokens, inferred-expression operands) that otherwise render
+    # as bare local names.
+    _relabel(_cu_rows, ox_result["inferred_superclass_expressions"],
+             ox_result["inferred_disjoint_with"])
 
     payload = {
         "inferred_superclass_expressions": ox_result["inferred_superclass_expressions"],
