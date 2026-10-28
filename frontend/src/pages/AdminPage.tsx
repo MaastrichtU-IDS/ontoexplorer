@@ -12,12 +12,14 @@ import { WorkersPanel } from '../components/admin/WorkersPanel'
 import { StarterQueriesPanel } from '../components/admin/StarterQueriesPanel'
 import { MaintainerRequestsPanel } from '../components/admin/MaintainerRequestsPanel'
 import { ReasonerProfilesPanel } from '../components/admin/ReasonerProfilesPanel'
+import { HeldQueuePanel } from '../components/admin/HeldQueuePanel'
 import { SectionLabel, ServiceCard, UpdateState, ontologyDisplayName } from '../components/admin/shared'
 
-type Tab = 'ontology' | 'sparql' | 'jobs' | 'maintainers' | 'reasoners'
-const TAB_VALUES: Tab[] = ['ontology', 'sparql', 'jobs', 'maintainers', 'reasoners']
+type Tab = 'ontology' | 'held' | 'sparql' | 'jobs' | 'maintainers' | 'reasoners'
+const TAB_VALUES: Tab[] = ['ontology', 'held', 'sparql', 'jobs', 'maintainers', 'reasoners']
 const TAB_LABELS: Record<Tab, string> = {
   ontology: 'Ontology',
+  held: 'Held for review',
   sparql: 'SPARQL queries',
   jobs: 'Jobs',
   maintainers: 'Maintainer requests',
@@ -554,6 +556,10 @@ export default function AdminPage() {
           </div>
           <JobsTable jobs={data!.jobs} />
         </>
+      )}
+
+      {tab === 'held' && (
+        <HeldQueuePanel />
       )}
 
       {tab === 'maintainers' && (

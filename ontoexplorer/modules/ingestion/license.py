@@ -158,3 +158,27 @@ def held_reasons(
     if not (title or "").strip():
         reasons.append("no title")
     return reasons
+
+
+def reevaluate_from_signals(
+    *, license_raw: str | None, declared_license: str | None,
+    triple_count: int | None, title: str | None, min_triples: int,
+    current_status: str = "needs_review",
+) -> tuple[str | None, bool, str, list[str]]:
+    """Honest re-run of the quality gate on a held version from its STORED signals —
+    the immutable content license (`license_raw`, SHA-256-addressed) overlaid with an
+    optional contributor-asserted `declared_license`, no store re-read. Returns
+    ``(effective_spdx, license_compliant, new_status, reasons)``; the caller assigns
+    the first two onto the version and flips its status when `new_status == "ready"`.
+
+    Shared by the owner reevaluate endpoint and the admin bulk re-check so both apply
+    identical gate semantics — the overlay fills a content-license ABSENCE only
+    (anti-laundering) and `decide_publish_status` never demotes a `ready` version.
+    This is the honest re-check, NOT the admin publish override (which ignores the
+    gate)."""
+    content_spdx, _, lic_ok = effective_license(license_raw, declared_license)
+    new_status, reasons = decide_publish_status(
+        current_status, license_compliant=lic_ok, triple_count=triple_count,
+        title=title, min_triples=min_triples,
+    )
+    return content_spdx, lic_ok, new_status, reasons

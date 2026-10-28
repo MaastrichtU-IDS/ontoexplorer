@@ -1126,6 +1126,40 @@ export interface AdminVersionsResponse {
   versions: AdminVersionEntry[]
 }
 
+// #364 Phase 3 — admin stale-review queue of quality-gate-held versions.
+export interface HeldQueueEntry {
+  version_id: string
+  ontology_id: string
+  ontology_title: string | null
+  ontology_shortname: string | null
+  created_at: string | null
+  age_days: number | null
+  triple_count: number | null
+  license: string | null
+  license_raw: string | null
+  declared_license: string | null
+  review_reasons: string[]
+}
+
+export interface HeldQueueResponse {
+  versions: HeldQueueEntry[]
+  min_age_days: number
+  total: number
+}
+
+export interface BulkReevaluateResult {
+  version_id: string
+  outcome: 'published' | 'still_held' | 'skipped' | 'not_found'
+  status?: string
+  review_reasons?: string[]
+}
+
+export interface BulkReevaluateResponse {
+  results: BulkReevaluateResult[]
+  published: number
+  requested: number
+}
+
 export interface WorkerTask {
   id: string
   name: string
@@ -1831,6 +1865,21 @@ export const api = {
         `/admin/versions/${versionId}/publish`,
         { method: 'POST' }
       ),
+
+    // #364 Phase 3 — stale-review queue: held versions across all ontologies,
+    // oldest first; min_age_days filters to the backlog (e.g. 14 for > 2 weeks).
+    heldVersions: (minAgeDays = 0) =>
+      request<HeldQueueResponse>(
+        `/admin/versions/held?min_age_days=${minAgeDays}&limit=1000`
+      ),
+
+    // Honest re-run of the quality gate on many held versions (publishes the ones
+    // that now pass) — not the publishVersion override.
+    bulkReevaluate: (versionIds: string[]) =>
+      request<BulkReevaluateResponse>(`/admin/versions/bulk-reevaluate`, {
+        method: 'POST',
+        body: JSON.stringify({ version_ids: versionIds }),
+      }),
 
     queueDiff: (fromVersionId: string, toVersionId: string) =>
       request<{ status: string; task_id: string }>(
