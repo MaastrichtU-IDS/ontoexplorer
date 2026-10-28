@@ -700,6 +700,7 @@ def ingest_ontology(
     groups: list[str] | None = None,
     reasoner: str = "rustdl",
     reasoner_profile_id: str | None = None,
+    declared_license: str | None = None,
 ) -> dict:
     """Celery task: run the full ingestion pipeline for one ontology submission."""
     from ontoexplorer.database import make_celery_db_session
@@ -724,6 +725,7 @@ def ingest_ontology(
         filename=filename, content_type=content_type, format=parse_format(format),
         owner_id=owner_id, groups=groups or [],
         reasoner=reasoner, reasoner_profile_id=reasoner_profile_id,
+        declared_license=declared_license,
     )
 
     session_factory = make_celery_db_session()

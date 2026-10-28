@@ -440,6 +440,28 @@ async def submit_ontology(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     fmt = parsed.value if parsed else None
 
+    # Optional contributor-asserted license overlay (#364 Phase 3) — the API path to
+    # what the dashboard fix panel offers interactively, for automated/backfill
+    # ingests. Stored on the version; the gate's effective_license() uses it to fill
+    # a content-license ABSENCE only (it never launders a license the content itself
+    # declares). Validated here so automation gets an immediate 422 rather than a
+    # silent hold: a value that does not canonicalize into the accepted allowlist is
+    # rejected up front. Read from the form for uploads and the JSON body otherwise.
+    _raw_declared = form.get("declared_license") if form is not None else body.get("declared_license")
+    declared_license: str | None = None
+    if _raw_declared is not None and str(_raw_declared).strip():
+        from ontoexplorer.modules.ingestion.license import canonicalize_license, is_compliant
+        declared_license = canonicalize_license(str(_raw_declared)) or str(_raw_declared).strip()
+        if not is_compliant(declared_license):
+            from ontoexplorer.modules.ingestion.license import compliant_license_set
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"declared_license '{_raw_declared}' is not an accepted license; "
+                    f"choose one of: {sorted(compliant_license_set())}"
+                ),
+            )
+
     if is_multipart:
         # Stream the upload straight to MinIO and pass the ingest task only the
         # object key. Avoids reading the whole file into memory + hex-encoding
@@ -473,6 +495,7 @@ async def submit_ontology(
                 format=fmt,
                 owner_id=owner_id,
                 reasoner=reasoner, reasoner_profile_id=reasoner_profile_id,
+                declared_license=declared_license,
             ),
         )
         return {"task_id": task.id, "status": "queued"}
@@ -482,12 +505,12 @@ async def submit_ontology(
     if "iri" in body:
         task = await loop.run_in_executor(
             None,
-            lambda: ingest_ontology.delay(iri=body["iri"], format=fmt, owner_id=owner_id, groups=groups, reasoner=reasoner, reasoner_profile_id=reasoner_profile_id),
+            lambda: ingest_ontology.delay(iri=body["iri"], format=fmt, owner_id=owner_id, groups=groups, reasoner=reasoner, reasoner_profile_id=reasoner_profile_id, declared_license=declared_license),
         )
     elif "url" in body:
         task = await loop.run_in_executor(
             None,
-            lambda: ingest_ontology.delay(url=body["url"], format=fmt, owner_id=owner_id, groups=groups, reasoner=reasoner, reasoner_profile_id=reasoner_profile_id),
+            lambda: ingest_ontology.delay(url=body["url"], format=fmt, owner_id=owner_id, groups=groups, reasoner=reasoner, reasoner_profile_id=reasoner_profile_id, declared_license=declared_license),
         )
     elif "content" in body:
         raw = body["content"].encode()
@@ -504,6 +527,7 @@ async def submit_ontology(
                 owner_id=owner_id,
                 groups=groups,
                 reasoner=reasoner, reasoner_profile_id=reasoner_profile_id,
+                declared_license=declared_license,
             ),
         )
     else:
