@@ -1810,7 +1810,16 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         # counter is cleared on success below and self-expires after 24h. #185
         _attempt_key = f"embed:attempts:{version_id}"
         _attempts = r.incr(_attempt_key)
-        r.expire(_attempt_key, 86400)
+        # Anchor the 24h window to the FIRST attempt only. Refreshing the TTL on
+        # every delivery let the 20-min reconcile beat re-ping a gave-up counter
+        # faster than it could expire, pinning it above the cap forever — so a
+        # version that failed 3x (e.g. worker restarts during a deploy burst) was
+        # never retried again and its embedding stayed wedged for weeks (#229).
+        # Anchored to the first attempt, the window actually expires and a later
+        # deliberate re-dispatch gets a fresh set of tries, while a tight
+        # acks_late redelivery loop is still capped within the 24h window.
+        if _attempts == 1:
+            r.expire(_attempt_key, 86400)
         if _attempts > 3:
             log.warning("embed_ontology_gave_up", version_id=version_id, attempts=_attempts)
             return {"status": "gave_up", "attempts": _attempts, "version_id": version_id}
