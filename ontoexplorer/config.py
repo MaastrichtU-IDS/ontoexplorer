@@ -127,6 +127,13 @@ class Settings(BaseSettings):
     # Ontology upload allowlist — comma-separated emails permitted to add
     # ontologies (in ADDITION to admins). Empty => admins only.
     upload_allowed_emails: str = ""
+    # Trust anchor for the upload role (#365): only a user with a verified email
+    # may be GRANTED is_uploader via an approved maintainer request. Keycloak
+    # populates email_verified (incl. the ORCID-no-email case via Review-Profile).
+    # Set False to let an admin grant upload rights on discretion regardless
+    # (escape hatch for a legacy/unverifiable account). Never gates admins or the
+    # UPLOAD_ALLOWED_EMAILS allowlist, which bypass is_uploader entirely.
+    require_verified_email_for_uploader: bool = True
 
     # Licenses the platform is cleared to host/redistribute (SPDX ids, comma-separated).
     # A submitted/declared ontology license is canonicalized to SPDX and must be in this

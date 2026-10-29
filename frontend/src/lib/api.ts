@@ -228,6 +228,9 @@ export interface MaintainerRequest {
   // decorated fields (present on list responses)
   user_email?: string | null
   user_display_name?: string | null
+  user_email_verified?: boolean
+  user_is_uploader?: boolean
+  user_providers?: string[]
   ontology_shortname?: string
   ontology_iri?: string
 }
