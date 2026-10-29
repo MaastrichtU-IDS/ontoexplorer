@@ -44,6 +44,48 @@ def test_embed_ontology_task_registered():
     assert "ontoexplorer.embed_ontology" in celery_app.tasks
 
 
+def test_embed_attempt_cap_does_not_refresh_ttl_on_giveup(monkeypatch):
+    """Regression (#229): the attempt-cap counter's 24h TTL is anchored to the
+    FIRST attempt, never refreshed on later deliveries.
+
+    The 20-min reconcile beat re-dispatches every un-embedded ready version. The
+    task used to call `r.expire(key, 86400)` on *every* delivery, including the
+    over-cap gave-up path — so the beat re-pinged the counter faster than it could
+    expire, pinning it above the cap forever. A version that failed 3x (e.g. from
+    worker restarts during a deploy burst) was then never retried again, wedging
+    the embedded gap for weeks. On the gave-up path the TTL must NOT be refreshed."""
+    from ontoexplorer.modules.jobs.tasks import embed_ontology
+
+    mock_redis = MagicMock()
+    mock_redis.incr.return_value = 9  # already over the cap
+    monkeypatch.setattr(
+        "ontoexplorer.modules.search.indexer._get_redis", lambda: mock_redis)
+
+    result = embed_ontology.apply(
+        args=("v1",), kwargs={"ontology_id": "o1"}).get()
+    assert result["status"] == "gave_up"
+    mock_redis.expire.assert_not_called()
+
+
+def test_embed_attempt_cap_sets_ttl_on_first_attempt(monkeypatch):
+    """The cap window's TTL is set once, on the first attempt, so it actually
+    expires and a later deliberate re-dispatch gets a fresh set of tries (#229)."""
+    from ontoexplorer.modules.jobs.tasks import embed_ontology
+
+    mock_redis = MagicMock()
+    mock_redis.incr.return_value = 1  # first attempt
+    monkeypatch.setattr(
+        "ontoexplorer.modules.search.indexer._get_redis", lambda: mock_redis)
+    _FakeSession, _ = _entity_index_session([])  # empty index -> skip after the guard
+    monkeypatch.setattr(
+        "ontoexplorer.database.make_celery_db_session", lambda: (lambda: _FakeSession()))
+
+    result = embed_ontology.apply(
+        args=("v1",), kwargs={"ontology_id": "o1"}).get()
+    assert result["status"] == "skip"
+    mock_redis.expire.assert_called_once_with("embed:attempts:v1", 86400)
+
+
 def test_embed_ontology_skips_empty_index(monkeypatch):
     """Task returns skip status when entity_index has no entities for the version."""
     from ontoexplorer.modules.jobs.tasks import embed_ontology
