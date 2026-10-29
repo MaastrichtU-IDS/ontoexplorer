@@ -11,6 +11,19 @@ if TYPE_CHECKING:
 _MODEL_NAME = "nomic-ai/nomic-embed-text-v1.5"
 _embedder: "TextEmbedding | None" = None
 
+# Memory safety for the embed worker (#229). fastembed pads every batch to its
+# longest sequence, so peak attention memory is O(batch_size x heads x seq^2). An
+# uncapped definition (some ontologies carry ~12k-char / ~3k-token definitions)
+# turned a batch of 128 into a tens-of-GiB allocation that OOM-killed worker-embed
+# at its 32Gi limit — even on ontologies with only a few hundred entities. We bound
+# both factors: cap each entity's text so no sequence is pathologically long, and
+# use a smaller default batch. The retrieval signal lives in the label + head of
+# the definition + synonyms, so the cap costs little recall. 2000 chars ~= 512
+# tokens; 32 x 12 x 512^2 x 4 B ~= 0.4 GiB of attention, vs ~48 GiB before.
+MAX_DEF_CHARS = 1000
+MAX_ENTITY_TEXT_CHARS = 2000
+EMBED_BATCH_SIZE = 32
+
 
 def get_embedder() -> "TextEmbedding":
     global _embedder
@@ -42,6 +55,10 @@ def build_entity_text(
         defs = [{"value": raw_defs, "lang": ""}]
     def_val = defs[0].get("value", "") if defs else ""
     if def_val:
+        # Cap the definition: it is the usual source of a multi-thousand-token
+        # sequence, and the head of a definition carries the retrieval signal (#229).
+        if len(def_val) > MAX_DEF_CHARS:
+            def_val = def_val[:MAX_DEF_CHARS].rstrip()
         parts.append(def_val + ".")
 
     raw_syns = entity.get("synonyms", "[]")
@@ -60,14 +77,20 @@ def build_entity_text(
     if child_labels:
         parts.append("Subclasses: " + ", ".join(child_labels[:10]) + ".")
 
-    return " ".join(parts)
+    text = " ".join(parts)
+    # Hard backstop so no single sequence can blow up batch attention memory,
+    # whatever the field mix (#229). The per-field caps above usually keep us
+    # well under this; this only bites a pathological combination.
+    if len(text) > MAX_ENTITY_TEXT_CHARS:
+        text = text[:MAX_ENTITY_TEXT_CHARS].rstrip()
+    return text
 
 
 def text_hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def embed_texts(texts: list[str], batch_size: int = 128) -> list[list[float]]:
+def embed_texts(texts: list[str], batch_size: int = EMBED_BATCH_SIZE) -> list[list[float]]:
     embedder = get_embedder()
     return [v.tolist() for v in embedder.passage_embed(texts, batch_size=batch_size)]
 
