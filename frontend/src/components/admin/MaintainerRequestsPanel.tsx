@@ -84,6 +84,31 @@ export function MaintainerRequestsPanel() {
               {r.user_email && r.user_display_name ? ` · ${r.user_email}` : ''}
               {' · '}{new Date(r.created_at).toLocaleString()}
             </div>
+            {/* Trust signals the admin vets the requester on (#365): verified email,
+                linked providers, and whether they already hold upload rights. */}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6, fontSize: '0.72rem' }}>
+              {r.user_email_verified !== undefined && (
+                <span style={{
+                  padding: '1px 7px', borderRadius: 999, fontWeight: 700,
+                  color: r.user_email_verified ? 'var(--green)' : 'var(--orange)',
+                  background: 'var(--bg)', border: '1px solid var(--border)',
+                }}>
+                  {r.user_email_verified ? '✓ Email verified' : '⚠ Email not verified'}
+                </span>
+              )}
+              {(r.user_providers ?? []).map(p => (
+                <span key={p} style={{
+                  padding: '1px 7px', borderRadius: 999, color: 'var(--text-dim)',
+                  background: 'var(--bg)', border: '1px solid var(--border)',
+                }}>{p}</span>
+              ))}
+              {r.user_is_uploader && (
+                <span style={{
+                  padding: '1px 7px', borderRadius: 999, color: 'var(--text-dim)',
+                  background: 'var(--bg)', border: '1px solid var(--border)',
+                }}>already an uploader</span>
+              )}
+            </div>
             {r.note && (
               <div style={{ marginTop: 8, fontSize: 'var(--font-size-sm)', color: 'var(--text)', whiteSpace: 'pre-wrap' }}>
                 <span style={{ color: 'var(--text-dim)' }}>Rationale: </span>{r.note}
@@ -103,14 +128,22 @@ export function MaintainerRequestsPanel() {
                     color: 'var(--text)', fontSize: 'var(--font-size-sm)', padding: '6px 8px', resize: 'vertical',
                   }}
                 />
+                {r.request_type === 'uploader' && r.user_email_verified === false && (
+                  <p style={{ margin: '0 0 8px', fontSize: '0.72rem', color: 'var(--orange)' }}>
+                    Upload access requires a verified email. Ask the requester to sign in and
+                    verify their email, then approve.
+                  </p>
+                )}
                 <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                   <button
                     onClick={() => decide.mutate({ id: r.id, action: 'approve' })}
-                    disabled={decide.isPending}
+                    disabled={decide.isPending || (r.request_type === 'uploader' && r.user_email_verified === false)}
                     style={{
                       padding: '5px 14px', borderRadius: 'var(--radius-sm)', border: 'none',
                       background: 'var(--green)', color: 'var(--on-accent)', fontWeight: 600,
-                      fontSize: 'var(--font-size-sm)', cursor: 'pointer',
+                      fontSize: 'var(--font-size-sm)',
+                      cursor: (r.request_type === 'uploader' && r.user_email_verified === false) ? 'not-allowed' : 'pointer',
+                      opacity: (r.request_type === 'uploader' && r.user_email_verified === false) ? 0.5 : 1,
                     }}
                   >Approve</button>
                   <button

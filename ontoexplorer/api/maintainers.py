@@ -10,10 +10,11 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ontoexplorer.config import can_upload
+from ontoexplorer.config import can_upload, get_settings
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import (
     MaintainerRequest,
+    OAuthAccount,
     Ontology,
     OntologyMaintainer,
     User,
@@ -56,6 +57,10 @@ def _req_dict(r: MaintainerRequest, user: User | None = None, onto: Ontology | N
     if user is not None:
         d["user_email"] = user.email
         d["user_display_name"] = user.display_name
+        # Trust signals for the admin review screen (#365 Part 3): vet on a
+        # verified email + prior grants rather than on affiliation.
+        d["user_email_verified"] = user.email_verified
+        d["user_is_uploader"] = user.is_uploader
     if onto is not None:
         d["ontology_shortname"] = onto.shortname
         d["ontology_iri"] = onto.iri
@@ -76,9 +81,19 @@ async def _decorate(db: AsyncSession, rows: list[MaintainerRequest]) -> list[dic
         ontos = {
             o.id: o for o in (await db.execute(select(Ontology).where(Ontology.id.in_(onto_ids)))).scalars().all()
         }
+    # Linked identity providers per requester (orcid / github / google / keycloak)
+    # — context the admin uses to vet an industry user on identity (#365 Part 3).
+    providers: dict[str, list[str]] = {}
+    if user_ids:
+        for acct in (await db.execute(
+            select(OAuthAccount).where(OAuthAccount.user_id.in_(user_ids))
+        )).scalars().all():
+            providers.setdefault(acct.user_id, []).append(acct.provider)
     out = []
     for r in rows:
         d = _req_dict(r, users.get(r.user_id), ontos.get(r.ontology_id) if r.ontology_id else None)
+        if r.user_id in providers:
+            d["user_providers"] = sorted(set(providers[r.user_id]))
         rb = users.get(r.reviewed_by) if r.reviewed_by else None
         if rb is not None:
             d["reviewed_by_email"] = rb.email
@@ -222,6 +237,17 @@ async def approve(
         u = (await db.execute(select(User).where(User.id == r.user_id))).scalar_one_or_none()
         if u is None:
             raise HTTPException(404, "Requesting user no longer exists")
+        # Upload rights anchor on a verified email (#365). Refuse the grant for an
+        # unverified requester without finalizing the request, so it stays pending
+        # and the admin can approve once the user verifies (via Keycloak). The
+        # escape hatch is REQUIRE_VERIFIED_EMAIL_FOR_UPLOADER=false.
+        if get_settings().require_verified_email_for_uploader and not u.email_verified:
+            raise HTTPException(
+                409,
+                "Cannot grant upload access: this user's email is not verified. "
+                "Ask them to sign in and complete email verification first, then "
+                "approve again.",
+            )
         u.is_uploader = True
     else:  # ontology
         exists = (await db.execute(

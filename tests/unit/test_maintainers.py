@@ -33,8 +33,9 @@ async def _make_ontology(db) -> Ontology:
     return o
 
 
-async def _make_user(db) -> User:
-    u = User(id=str(uuid.uuid4()), email=f"req-{uuid.uuid4()}@example.com", display_name="Requester")
+async def _make_user(db, email_verified: bool = False) -> User:
+    u = User(id=str(uuid.uuid4()), email=f"req-{uuid.uuid4()}@example.com",
+             display_name="Requester", email_verified=email_verified)
     db.add(u)
     await db.commit()
     return u
@@ -127,7 +128,7 @@ async def test_admin_list_forbidden_for_non_admin(client, user_and_key):
 @pytest.mark.anyio
 async def test_admin_approve_uploader_grants_is_uploader(client, user_and_key, db_session, _as_admin):
     _, key = user_and_key
-    requester = await _make_user(db_session)
+    requester = await _make_user(db_session, email_verified=True)
     req = MaintainerRequest(user_id=requester.id, request_type="uploader", note="please")
     db_session.add(req)
     await db_session.commit()
@@ -140,6 +141,90 @@ async def test_admin_approve_uploader_grants_is_uploader(client, user_and_key, d
 
     u = (await db_session.execute(select(User).where(User.id == requester.id))).scalar_one()
     assert u.is_uploader is True
+
+
+@pytest.mark.anyio
+async def test_admin_approve_uploader_blocked_when_email_unverified(
+    client, user_and_key, db_session, _as_admin
+):
+    """Upload rights anchor on a verified email (#365). An unverified requester's
+    uploader grant is refused, the role is NOT granted, and the request stays
+    pending so the admin can approve once the user verifies."""
+    requester = await _make_user(db_session)  # email_verified defaults False
+    assert requester.email_verified is False
+    req = MaintainerRequest(user_id=requester.id, request_type="uploader", note="please")
+    db_session.add(req)
+    await db_session.commit()
+
+    _, key = user_and_key
+    r = await client.post(f"/api/v1/admin/maintainer-requests/{req.id}/approve",
+                          json={}, headers=_auth(key))
+    assert r.status_code == 409
+    assert "verif" in r.json()["detail"].lower()
+
+    await db_session.refresh(requester)
+    assert requester.is_uploader is False
+    req_row = (await db_session.execute(
+        select(MaintainerRequest).where(MaintainerRequest.id == req.id)
+    )).scalar_one()
+    assert req_row.status == "pending"  # not finalized — retryable after verification
+
+
+@pytest.mark.anyio
+async def test_admin_approve_uploader_allowed_when_gate_disabled(
+    client, user_and_key, db_session, _as_admin, monkeypatch
+):
+    """The verified-email requirement is a config knob; with it off, an
+    unverified user can still be granted (admin-discretion escape hatch)."""
+    monkeypatch.setattr(get_settings(), "require_verified_email_for_uploader", False, raising=False)
+    requester = await _make_user(db_session)  # unverified
+    req = MaintainerRequest(user_id=requester.id, request_type="uploader")
+    db_session.add(req)
+    await db_session.commit()
+
+    _, key = user_and_key
+    r = await client.post(f"/api/v1/admin/maintainer-requests/{req.id}/approve",
+                          json={}, headers=_auth(key))
+    assert r.status_code == 200
+    await db_session.refresh(requester)
+    assert requester.is_uploader is True
+
+
+@pytest.mark.anyio
+async def test_email_verification_does_not_gate_ontology_requests(
+    client, user_and_key, db_session, _as_admin
+):
+    """The verified-email gate is specific to the global upload role; a
+    per-ontology maintainer grant is unaffected."""
+    requester = await _make_user(db_session)  # unverified
+    onto = await _make_ontology(db_session)
+    req = MaintainerRequest(user_id=requester.id, request_type="ontology", ontology_id=onto.id)
+    db_session.add(req)
+    await db_session.commit()
+
+    _, key = user_and_key
+    r = await client.post(f"/api/v1/admin/maintainer-requests/{req.id}/approve",
+                          json={}, headers=_auth(key))
+    assert r.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_admin_list_surfaces_requester_trust_signals(
+    client, user_and_key, db_session, _as_admin
+):
+    """The admin review screen needs verified-email + prior-grant context to vet a
+    requester on identity rather than affiliation (#365 Part 3)."""
+    requester = await _make_user(db_session, email_verified=True)
+    req = MaintainerRequest(user_id=requester.id, request_type="uploader", note="please")
+    db_session.add(req)
+    await db_session.commit()
+
+    _, key = user_and_key
+    r = await client.get("/api/v1/admin/maintainer-requests?status=pending", headers=_auth(key))
+    assert r.status_code == 200
+    row = next(x for x in r.json()["requests"] if x["id"] == req.id)
+    assert row["user_email_verified"] is True
+    assert row["user_is_uploader"] is False
 
 
 @pytest.mark.anyio
@@ -183,7 +268,7 @@ async def test_admin_deny_sets_denied(client, user_and_key, db_session, _as_admi
 @pytest.mark.anyio
 async def test_admin_approve_already_decided_409(client, user_and_key, db_session, _as_admin):
     _, key = user_and_key
-    requester = await _make_user(db_session)
+    requester = await _make_user(db_session, email_verified=True)
     req = MaintainerRequest(user_id=requester.id, request_type="uploader")
     db_session.add(req)
     await db_session.commit()
@@ -212,7 +297,7 @@ async def test_create_request_emails_admins(client, user_and_key, _capture_email
 @pytest.mark.anyio
 async def test_approve_emails_requester(client, user_and_key, db_session, _as_admin, _capture_email):
     _, key = user_and_key
-    requester = await _make_user(db_session)
+    requester = await _make_user(db_session, email_verified=True)
     req = MaintainerRequest(user_id=requester.id, request_type="uploader")
     db_session.add(req)
     await db_session.commit()
