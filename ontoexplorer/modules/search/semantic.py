@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import asyncio
 
+import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.modules.search.embedder import embed_query
+
+log = structlog.get_logger()
 
 
 async def semantic_search(
@@ -27,6 +30,11 @@ async def semantic_search(
 
     try:
         qvec = await asyncio.to_thread(embed_query, query)
+    except Exception as e:
+        log.warning("semantic_search_embed_failed", error=str(e))
+        return []
+
+    try:
         vec_str = "[" + ",".join(f"{x:.8f}" for x in qvec) + "]"
         sql = text("""
             SELECT te.entity_iri AS iri, te.entity_type AS type,
@@ -43,7 +51,8 @@ async def semantic_search(
         """)
         result = await db.execute(sql, {"vec": vec_str, "ids": version_ids, "lim": limit})
         rows = result.all()
-    except Exception:
+    except Exception as e:
+        log.warning("semantic_search_query_failed", error=str(e))
         return []
 
     if not rows:

@@ -143,4 +143,7 @@ def embed_batch(texts: list[str], *, prefix: str) -> list[list[float]]:
     for v in vectors:
         if len(v) != s.embedding_dim:
             raise EmbeddingError(f"embedding dim {len(v)} != expected {s.embedding_dim}")
+    for v in vectors:
+        if not any(v):
+            raise EmbeddingError("degenerate (zero) embedding returned by backend")
     return [_l2(v) for v in vectors]

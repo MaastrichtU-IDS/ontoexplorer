@@ -177,3 +177,10 @@ def test_embed_batch_429_retries_not_split(wire):
     assert len(primary) == 3
     assert all(len(c[1]["input"]) == 2 for c in calls)
     assert calls[-1][0] == FALLBACK + "/embeddings"
+
+
+def test_embed_batch_rejects_zero_vector(wire):
+    _, st = wire
+    st["handler"] = lambda r, b: _ok([[0.0] * DIM for _ in b["input"]])
+    with pytest.raises(ec.EmbeddingError):
+        ec.embed_batch(["a"], prefix="")

@@ -69,3 +69,22 @@ async def test_semantic_search_deduplicates_iris(monkeypatch):
     assert result[0]["iri"] == "http://example.org/Heart"
     assert result[0]["label"] == "heart"
     assert result[0]["score"] == 0.95
+
+
+@pytest.mark.asyncio
+async def test_semantic_search_logs_and_returns_empty_on_embed_failure(monkeypatch):
+    from ontoexplorer.modules.search import semantic
+    from ontoexplorer.modules.search.embed_client import EmbeddingError
+
+    def boom(q):
+        raise EmbeddingError("backend down")
+
+    warnings = []
+    monkeypatch.setattr(semantic, "embed_query", boom)
+    monkeypatch.setattr(semantic.log, "warning", lambda event, **kw: warnings.append((event, kw)))
+    db = AsyncMock()
+    result = await semantic.semantic_search("heart", db, ["v1"], limit=5)
+    assert result == []
+    db.execute.assert_not_called()
+    assert warnings and warnings[0][0] == "semantic_search_embed_failed"
+    assert "backend down" in warnings[0][1]["error"]
