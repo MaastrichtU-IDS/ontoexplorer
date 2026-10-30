@@ -52,7 +52,7 @@ celery_app.conf.update(
         "ontoexplorer.purge_version_artifacts": {"queue": "write"},
         "ontoexplorer.backfill_metadata": {"queue": "write"},
         # index_ontology and embed_ontology are read-only on the store but
-        # memory-heavy (search-index build / fastembed vectors of large
+        # memory-heavy (search-index build / embedding vectors of large
         # ontologies). Route them to dedicated queues drained by low-concurrency
         # workers so they can't stack up on the "light" read worker and OOM it —
         # the "light" worker can then run reads at high concurrency again. Both
@@ -1921,8 +1921,8 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
             log.info("embed_ontology_incremental", version_id=version_id,
                      changed=len(records), total=_all_n)
 
-        # Larger batches amortize ONNX call overhead and cut DB-commit frequency.
-        # embed_texts feeds these to passage_embed in sub-batches of 128.
+        # Larger batches amortize HTTP call overhead and cut DB-commit frequency.
+        # embed_texts POSTs these to the embeddings endpoint in sub-batches of batch_size.
         BATCH = 256
         total = len(records)
 

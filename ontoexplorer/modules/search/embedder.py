@@ -2,16 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from fastembed import TextEmbedding
+from ontoexplorer.config import get_settings
+from ontoexplorer.modules.search import embed_client
 
-_MODEL_NAME = "nomic-ai/nomic-embed-text-v1.5"
-_embedder: "TextEmbedding | None" = None
+MODEL_REV = embed_client.MODEL_REV
 
-# Memory safety for the embed worker (#229). fastembed pads every batch to its
+# Memory safety for the embed worker (#229). the backend pads every batch to its
 # longest sequence, so peak attention memory is O(batch_size x heads x seq^2). An
 # uncapped definition (some ontologies carry ~12k-char / ~3k-token definitions)
 # turned a batch of 128 into a tens-of-GiB allocation that OOM-killed worker-embed
@@ -23,18 +21,6 @@ _embedder: "TextEmbedding | None" = None
 MAX_DEF_CHARS = 1000
 MAX_ENTITY_TEXT_CHARS = 2000
 EMBED_BATCH_SIZE = 32
-
-
-def get_embedder() -> "TextEmbedding":
-    global _embedder
-    if _embedder is None:
-        from fastembed import TextEmbedding
-        cache_path = os.environ.get("FASTEMBED_CACHE_PATH")
-        kwargs: dict[str, str] = {}
-        if cache_path:
-            kwargs["cache_dir"] = cache_path
-        _embedder = TextEmbedding(_MODEL_NAME, **kwargs)
-    return _embedder
 
 
 def build_entity_text(
@@ -91,10 +77,12 @@ def text_hash(text: str) -> str:
 
 
 def embed_texts(texts: list[str], batch_size: int = EMBED_BATCH_SIZE) -> list[list[float]]:
-    embedder = get_embedder()
-    return [v.tolist() for v in embedder.passage_embed(texts, batch_size=batch_size)]
+    prefix = get_settings().embedding_doc_prefix
+    out: list[list[float]] = []
+    for i in range(0, len(texts), batch_size):
+        out.extend(embed_client.embed_batch(texts[i : i + batch_size], prefix=prefix))
+    return out
 
 
 def embed_query(text: str) -> list[float]:
-    embedder = get_embedder()
-    return next(embedder.query_embed([text])).tolist()  # type: ignore[return-value]
+    return embed_client.embed_batch([text], prefix=get_settings().embedding_query_prefix)[0]

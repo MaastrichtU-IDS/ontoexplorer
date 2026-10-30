@@ -21,38 +21,34 @@ from ontoexplorer.models.db import ApiKey, User  # noqa: E402
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 
-class _FakeVec:
-    """A stand-in embedding vector with the .tolist() the embedder callers expect."""
+def _fake_embed_batch(texts, *, prefix):
+    """Deterministic fake 768-dim vector per text (stand-in for the HTTP embed client)."""
+    import hashlib
 
-    def tolist(self) -> list[float]:
-        return [0.0] * 768
-
-
-class _FakeEmbedder:
-    def query_embed(self, texts):
-        return iter([_FakeVec() for _ in texts])
-
-    def passage_embed(self, texts, batch_size: int = 128):
-        return [_FakeVec() for _ in texts]
+    out = []
+    for t in texts:
+        seed = hashlib.sha256((prefix + t).encode()).digest()
+        out.append([seed[i % len(seed)] / 255.0 for i in range(768)])
+    return out
 
 
 @pytest.fixture(autouse=True)
 def _stub_embedder(request, monkeypatch):
-    """Keep the real fastembed/ONNX model out of the test lane.
+    """Keep the real embeddings HTTP backend out of the test lane.
 
     Building the app under TestClient fires the startup warmup thread, and any
-    semantic-search call hits embed_query — both load a ~500 MB fastembed model
-    whose native ONNX runtime aborts at interpreter shutdown (a flaky SIGABRT /
-    "I/O operation on closed file" that intermittently reds the backend CI job).
-    Patch the single choke point, get_embedder(); embed_query/embed_texts both go
-    through it, so every path (warmup thread included) gets the fake. Tests marked
-    `slow` — the ones that deliberately exercise the real embedder, and which CI
-    excludes — opt out.
+    semantic-search call hits embed_query. Patch the single choke point,
+    embed_client.embed_batch; embed_query/embed_texts both go through it (as a
+    module attribute), so every path (warmup thread included) gets the fake.
+    Tests marked `slow` opt out.
     """
     if request.node.get_closest_marker("slow"):
         return
-    import ontoexplorer.modules.search.embedder as _emb
-    monkeypatch.setattr(_emb, "get_embedder", lambda: _FakeEmbedder())
+    # The client's own unit tests exercise the real embed_batch against a mocked transport.
+    if request.module.__name__.rsplit(".", 1)[-1] == "test_embed_client":
+        return
+    import ontoexplorer.modules.search.embed_client as _ec
+    monkeypatch.setattr(_ec, "embed_batch", _fake_embed_batch)
 
 
 @pytest.fixture(scope="session")
