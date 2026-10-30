@@ -160,3 +160,20 @@ def test_empty_primary_goes_straight_to_fallback(wire, monkeypatch):
     st["handler"] = lambda r, b: _ok([_vec()])
     ec.embed_batch(["a"], prefix="")
     assert [c[0] for c in calls] == [FALLBACK + "/embeddings"]
+
+
+def test_embed_batch_429_retries_not_split(wire):
+    calls, st = wire
+
+    def h(r, b):
+        if str(r.url).startswith(PRIMARY):
+            return httpx.Response(429, text="rate limit exceeded")
+        return _ok([_vec() for _ in b["input"]])
+
+    st["handler"] = h
+    out = ec.embed_batch(["a", "b"], prefix="")
+    assert len(out) == 2
+    primary = [c for c in calls if c[0].startswith(PRIMARY)]
+    assert len(primary) == 3
+    assert all(len(c[1]["input"]) == 2 for c in calls)
+    assert calls[-1][0] == FALLBACK + "/embeddings"

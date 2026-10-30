@@ -24,7 +24,14 @@ FALLBACK_COUNT = 0
 
 _client = httpx.Client()
 
-_TOO_LARGE_MARKERS = ("too large", "too long", "exceed", "batch size", "context length")
+_TOO_LARGE_MARKERS = (
+    "too large",
+    "input is too long",
+    "maximum context length",
+    "context length",
+    "batch size",
+    "n_ubatch",
+)
 
 
 class EmbeddingError(Exception):
@@ -49,6 +56,8 @@ def _l2(vec: list[float]) -> list[float]:
 def _is_too_large(resp: httpx.Response) -> bool:
     if resp.status_code == 413:
         return True
+    if resp.status_code == 429:
+        return False
     if resp.status_code >= 400:
         body = resp.text.lower()
         return any(m in body for m in _TOO_LARGE_MARKERS)
