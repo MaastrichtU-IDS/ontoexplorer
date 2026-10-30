@@ -1794,6 +1794,7 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         from ontoexplorer.clients.oxigraph import graph_iri, sparql_query
         from ontoexplorer.modules.search.indexer import _get_redis
         from ontoexplorer.modules.search.embedder import build_entity_text, text_hash, embed_texts
+        from ontoexplorer.modules.search.embed_client import MODEL_REV
         from ontoexplorer.database import make_celery_db_session
         from ontoexplorer.models.db import OntologyVersion, TermEmbedding
         from ontoexplorer.modules.jobs import tracker
@@ -1848,8 +1849,9 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         async def _load_existing_hashes() -> dict[str, str]:
             async with make_celery_db_session()() as _db:
                 _rows = (await _db.execute(_sa_text(
-                    "SELECT entity_iri, text_hash FROM term_embeddings WHERE version_id = :v"
-                ), {"v": version_id})).all()
+                    "SELECT entity_iri, text_hash FROM term_embeddings "
+                    "WHERE version_id = :v AND model_rev = :rev"
+                ), {"v": version_id, "rev": MODEL_REV})).all()
             return {r.entity_iri: r.text_hash for r in _rows}
 
         existing_hashes = asyncio.run(_load_existing_hashes())
@@ -1948,6 +1950,7 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                                 "entity_type": etype,
                                 "text_hash": h,
                                 "embedding": emb,
+                                "model_rev": MODEL_REV,
                             }
                             for (iri, etype, _, h), emb in zip(batch, embeddings)
                         ]
@@ -1961,8 +1964,14 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                                 "entity_type": ins.excluded.entity_type,
                                 "text_hash": ins.excluded.text_hash,
                                 "embedding": ins.excluded.embedding,
+                                "model_rev": ins.excluded.model_rev,
                             },
-                            where=(TermEmbedding.text_hash != ins.excluded.text_hash),
+                            # Also refresh when only the producer stamp differs, so a
+                            # legacy (NULL model_rev) row with unchanged text is re-stamped.
+                            where=(
+                                (TermEmbedding.text_hash != ins.excluded.text_hash)
+                                | TermEmbedding.model_rev.is_distinct_from(ins.excluded.model_rev)
+                            ),
                         )
                         # Serialize the DB write (not the CPU embed_texts above)
                         # against a concurrent entity_index write (#185). Per-batch
