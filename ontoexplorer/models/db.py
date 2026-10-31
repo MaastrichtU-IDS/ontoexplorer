@@ -441,6 +441,8 @@ class TermEmbedding(Base):
     entity_type: Mapped[str] = mapped_column(String)
     text_hash: Mapped[str] = mapped_column(String)
     embedding: Mapped[list] = mapped_column(Vector(768))
+    # Producer stamp; NULL = legacy (pre-GGUF) embedder. See embed_client.MODEL_REV.
+    model_rev: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class EntityIndex(Base):

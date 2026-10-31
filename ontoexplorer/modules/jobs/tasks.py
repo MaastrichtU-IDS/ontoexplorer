@@ -52,7 +52,7 @@ celery_app.conf.update(
         "ontoexplorer.purge_version_artifacts": {"queue": "write"},
         "ontoexplorer.backfill_metadata": {"queue": "write"},
         # index_ontology and embed_ontology are read-only on the store but
-        # memory-heavy (search-index build / fastembed vectors of large
+        # memory-heavy (search-index build / embedding vectors of large
         # ontologies). Route them to dedicated queues drained by low-concurrency
         # workers so they can't stack up on the "light" read worker and OOM it —
         # the "light" worker can then run reads at high concurrency again. Both
@@ -1776,6 +1776,88 @@ def _filter_unchanged_records(records, existing: dict) -> list:
     return [r for r in records if existing.get(r[0]) != r[3]]
 
 
+def build_version_records(version_id: str, ontology_id: str) -> list[tuple[str, str, str, str]]:
+    """Enumerate a version's embeddable entities as (iri, entity_type, text, text_hash).
+
+    Single source of truth for embedding text, shared by ``embed_ontology`` and
+    ``scripts/reembed_backfill.py`` so vectors/text_hash can never diverge.
+    Synchronous (drives its own short asyncio.run for the DB read)."""
+    from ontoexplorer.clients.oxigraph import graph_iri, sparql_query
+    from ontoexplorer.modules.search.embedder import build_entity_text, text_hash
+    from ontoexplorer.database import make_celery_db_session
+
+    named_graph = graph_iri(ontology_id, version_id)
+
+    from ontoexplorer.models.db import EntityIndex as _EI
+    from ontoexplorer.api.ols._shapes import entity_index_to_legacy_dict as _adapt_ei
+    from sqlalchemy import select as _select
+
+    async def _load_ents() -> dict[str, dict]:
+        async with make_celery_db_session()() as _db:
+            _rows = (await _db.execute(
+                _select(_EI).where(_EI.version_id == version_id))).scalars().all()
+        return {rr.iri: _adapt_ei(rr) for rr in _rows}
+
+    _ent_map = asyncio.run(_load_ents())
+    all_entities: dict[str, str] = {iri: e.get("type", "class") for iri, e in _ent_map.items()}
+
+    if not all_entities:
+        return []
+
+    _SKIP_IRIS = {
+        "http://www.w3.org/2002/07/owl#Thing",
+        "http://www.w3.org/2002/07/owl#topObjectProperty",
+        "http://www.w3.org/2002/07/owl#topDataProperty",
+    }
+    parents_by_iri: dict[str, list[str]] = {iri: [] for iri in all_entities}
+    children_by_iri: dict[str, list[str]] = {iri: [] for iri in all_entities}
+
+    try:
+        for sol in sparql_query(f"""
+            PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+            SELECT ?entity ?parent WHERE {{
+                GRAPH <{named_graph}> {{
+                    ?entity rdfs:subClassOf ?parent .
+                    FILTER(isIRI(?entity) && isIRI(?parent))
+                }}
+            }}
+        """):
+            iri = sol["entity"].value
+            parent = sol["parent"].value
+            if iri in parents_by_iri and parent not in _SKIP_IRIS:
+                parents_by_iri[iri].append(parent)
+        for sol in sparql_query(f"""
+            PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+            SELECT ?child ?entity WHERE {{
+                GRAPH <{named_graph}> {{
+                    ?child rdfs:subClassOf ?entity .
+                    FILTER(isIRI(?child) && isIRI(?entity))
+                }}
+            }}
+        """):
+            iri = sol["entity"].value
+            child = sol["child"].value
+            if iri in children_by_iri:
+                children_by_iri[iri].append(child)
+    except Exception as exc:
+        log.warning("embed_ontology_sparql_warn", version_id=version_id, error=str(exc))
+
+    def _label(iri: str) -> str:
+        e = _ent_map.get(iri)
+        return (e.get("primary_label") if e else None) or iri.split("/")[-1].split("#")[-1]
+
+    records: list[tuple[str, str, str, str]] = []
+    for iri, etype in all_entities.items():
+        entity = _ent_map.get(iri)
+        if not entity:
+            continue
+        p_labels = [_label(p) for p in parents_by_iri.get(iri, [])[:5]]
+        c_labels = [_label(c) for c in children_by_iri.get(iri, [])[:10]]
+        t = build_entity_text(entity, p_labels, c_labels)
+        records.append((iri, etype, t, text_hash(t)))
+    return records
+
+
 @celery_app.task(name="ontoexplorer.embed_ontology", bind=True)
 def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
     """Compute pgvector embeddings for all indexed entities in a version."""
@@ -1791,9 +1873,9 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
     log.info("embed_ontology_start", version_id=version_id)
     try:
         import uuid as _uuid_mod
-        from ontoexplorer.clients.oxigraph import graph_iri, sparql_query
         from ontoexplorer.modules.search.indexer import _get_redis
-        from ontoexplorer.modules.search.embedder import build_entity_text, text_hash, embed_texts
+        from ontoexplorer.modules.search.embedder import embed_texts
+        from ontoexplorer.modules.search.embed_client import MODEL_REV
         from ontoexplorer.database import make_celery_db_session
         from ontoexplorer.models.db import OntologyVersion, TermEmbedding
         from ontoexplorer.modules.jobs import tracker
@@ -1801,7 +1883,6 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
         r = _get_redis()
-        named_graph = graph_iri(ontology_id, version_id)
 
         # Guard: cap attempts per version. A giant embed that OOMs mid-run
         # redelivers under acks_late and restarts from 0 — an infinite loop that
@@ -1824,22 +1905,8 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
             log.warning("embed_ontology_gave_up", version_id=version_id, attempts=_attempts)
             return {"status": "gave_up", "attempts": _attempts, "version_id": version_id}
 
-        # Load the version's entities from entity_index (#242 Workstream B — was the
-        # Redis type-sets + per-entity :iri: hgetall) to build the embedding text.
-        from ontoexplorer.models.db import EntityIndex as _EI
-        from ontoexplorer.api.ols._shapes import entity_index_to_legacy_dict as _adapt_ei
-        from sqlalchemy import select as _select
-
-        async def _load_ents() -> dict[str, dict]:
-            async with make_celery_db_session()() as _db:
-                _rows = (await _db.execute(
-                    _select(_EI).where(_EI.version_id == version_id))).scalars().all()
-            return {rr.iri: _adapt_ei(rr) for rr in _rows}
-
-        _ent_map = asyncio.run(_load_ents())
-        all_entities: dict[str, str] = {iri: e.get("type", "class") for iri, e in _ent_map.items()}
-
-        if not all_entities:
+        records = build_version_records(version_id, ontology_id)
+        if not records:
             log.info("embed_ontology_skip_empty", version_id=version_id)
             return {"status": "skip", "version_id": version_id}
 
@@ -1848,63 +1915,12 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         async def _load_existing_hashes() -> dict[str, str]:
             async with make_celery_db_session()() as _db:
                 _rows = (await _db.execute(_sa_text(
-                    "SELECT entity_iri, text_hash FROM term_embeddings WHERE version_id = :v"
-                ), {"v": version_id})).all()
+                    "SELECT entity_iri, text_hash FROM term_embeddings "
+                    "WHERE version_id = :v AND model_rev = :rev"
+                ), {"v": version_id, "rev": MODEL_REV})).all()
             return {r.entity_iri: r.text_hash for r in _rows}
 
         existing_hashes = asyncio.run(_load_existing_hashes())
-
-        _SKIP_IRIS = {
-            "http://www.w3.org/2002/07/owl#Thing",
-            "http://www.w3.org/2002/07/owl#topObjectProperty",
-            "http://www.w3.org/2002/07/owl#topDataProperty",
-        }
-        parents_by_iri: dict[str, list[str]] = {iri: [] for iri in all_entities}
-        children_by_iri: dict[str, list[str]] = {iri: [] for iri in all_entities}
-
-        try:
-            for sol in sparql_query(f"""
-                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-                SELECT ?entity ?parent WHERE {{
-                    GRAPH <{named_graph}> {{
-                        ?entity rdfs:subClassOf ?parent .
-                        FILTER(isIRI(?entity) && isIRI(?parent))
-                    }}
-                }}
-            """):
-                iri = sol["entity"].value
-                parent = sol["parent"].value
-                if iri in parents_by_iri and parent not in _SKIP_IRIS:
-                    parents_by_iri[iri].append(parent)
-            for sol in sparql_query(f"""
-                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-                SELECT ?child ?entity WHERE {{
-                    GRAPH <{named_graph}> {{
-                        ?child rdfs:subClassOf ?entity .
-                        FILTER(isIRI(?child) && isIRI(?entity))
-                    }}
-                }}
-            """):
-                iri = sol["entity"].value
-                child = sol["child"].value
-                if iri in children_by_iri:
-                    children_by_iri[iri].append(child)
-        except Exception as exc:
-            log.warning("embed_ontology_sparql_warn", version_id=version_id, error=str(exc))
-
-        def _label(iri: str) -> str:
-            e = _ent_map.get(iri)
-            return (e.get("primary_label") if e else None) or iri.split("/")[-1].split("#")[-1]
-
-        records: list[tuple[str, str, str, str]] = []
-        for iri, etype in all_entities.items():
-            entity = _ent_map.get(iri)
-            if not entity:
-                continue
-            p_labels = [_label(p) for p in parents_by_iri.get(iri, [])[:5]]
-            c_labels = [_label(c) for c in children_by_iri.get(iri, [])[:10]]
-            t = build_entity_text(entity, p_labels, c_labels)
-            records.append((iri, etype, t, text_hash(t)))
 
         # Re-embed only new/changed entities — skip those already stored with the
         # same text_hash so a re-embed of an unchanged version runs no model
@@ -1919,8 +1935,8 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
             log.info("embed_ontology_incremental", version_id=version_id,
                      changed=len(records), total=_all_n)
 
-        # Larger batches amortize ONNX call overhead and cut DB-commit frequency.
-        # embed_texts feeds these to passage_embed in sub-batches of 128.
+        # Larger batches amortize HTTP call overhead and cut DB-commit frequency.
+        # embed_texts POSTs these to the embeddings endpoint in sub-batches of batch_size.
         BATCH = 256
         total = len(records)
 
@@ -1948,6 +1964,7 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                                 "entity_type": etype,
                                 "text_hash": h,
                                 "embedding": emb,
+                                "model_rev": MODEL_REV,
                             }
                             for (iri, etype, _, h), emb in zip(batch, embeddings)
                         ]
@@ -1961,8 +1978,14 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                                 "entity_type": ins.excluded.entity_type,
                                 "text_hash": ins.excluded.text_hash,
                                 "embedding": ins.excluded.embedding,
+                                "model_rev": ins.excluded.model_rev,
                             },
-                            where=(TermEmbedding.text_hash != ins.excluded.text_hash),
+                            # Also refresh when only the producer stamp differs, so a
+                            # legacy (NULL model_rev) row with unchanged text is re-stamped.
+                            where=(
+                                (TermEmbedding.text_hash != ins.excluded.text_hash)
+                                | TermEmbedding.model_rev.is_distinct_from(ins.excluded.model_rev)
+                            ),
                         )
                         # Serialize the DB write (not the CPU embed_texts above)
                         # against a concurrent entity_index write (#185). Per-batch

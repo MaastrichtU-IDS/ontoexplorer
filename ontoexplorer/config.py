@@ -85,6 +85,18 @@ class Settings(BaseSettings):
     # Anthropic
     anthropic_api_key: str = ""
 
+    # Embeddings: OpenAI-compatible /v1/embeddings endpoint (e.g. LiteLLM),
+    # with a local fallback endpoint.
+    embedding_base_url: str = ""
+    embedding_api_key: str = ""
+    embedding_model: str = "nomic-embed-text"
+    embedding_fallback_base_url: str = "http://localhost:8090/v1"
+    embedding_timeout_s: float = 30.0
+    embedding_fallback_timeout_s: float = 120.0
+    embedding_dim: int = 768
+    embedding_doc_prefix: str = "search_document: "
+    embedding_query_prefix: str = "search_query: "
+
     # Secret for the rotating daily salt used to dedup usage views/downloads.
     # Falls back to jwt_secret_key when unset. Never stored per-visitor.
     usage_hash_salt: str = ""

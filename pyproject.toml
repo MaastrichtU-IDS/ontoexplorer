@@ -29,7 +29,6 @@ dependencies = [
     "prometheus-client",
     "lark>=1.2",
     "redis>=6.0",
-    "fastembed>=0.3",
     "pgvector>=0.3",
     "anthropic>=0.97",
     "bioregistry>=0.11",
