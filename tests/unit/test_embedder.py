@@ -1,5 +1,4 @@
 import json
-import pytest
 from ontoexplorer.modules.search.embedder import build_entity_text, text_hash
 
 

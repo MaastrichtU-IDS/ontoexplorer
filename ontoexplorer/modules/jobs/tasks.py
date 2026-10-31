@@ -1873,9 +1873,8 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
     log.info("embed_ontology_start", version_id=version_id)
     try:
         import uuid as _uuid_mod
-        from ontoexplorer.clients.oxigraph import graph_iri, sparql_query
         from ontoexplorer.modules.search.indexer import _get_redis
-        from ontoexplorer.modules.search.embedder import build_entity_text, text_hash, embed_texts
+        from ontoexplorer.modules.search.embedder import embed_texts
         from ontoexplorer.modules.search.embed_client import MODEL_REV
         from ontoexplorer.database import make_celery_db_session
         from ontoexplorer.models.db import OntologyVersion, TermEmbedding
@@ -1884,7 +1883,6 @@ def embed_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
         r = _get_redis()
-        named_graph = graph_iri(ontology_id, version_id)
 
         # Guard: cap attempts per version. A giant embed that OOMs mid-run
         # redelivers under acks_late and restarts from 0 — an infinite loop that
