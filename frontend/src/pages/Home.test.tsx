@@ -78,3 +78,15 @@ test('switching to Query tab shows the structured-query search bar', () => {
   expect(screen.getByTestId('search-bar')).toBeInTheDocument()
   expect(screen.getByTestId('ontology-picker')).toBeInTheDocument()
 })
+
+test('stat cards link to the entity browser', async () => {
+  const api = (await import('../lib/api')).api
+  const spy = vi.spyOn(api.stats, 'public').mockResolvedValue({
+    total_ontologies: 5, total_classes: 1000, total_axioms: 99,
+  } as never)
+  renderHome()
+  const classes = (await screen.findByText('Classes')).closest('a')
+  expect(classes).toHaveAttribute('href', '/browse?type=class')
+  expect(screen.getByText('Axioms').closest('a')).toHaveAttribute('href', '/browse?mode=query')
+  spy.mockRestore()
+})

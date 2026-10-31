@@ -10,6 +10,7 @@ import DashboardLayout from './components/DashboardLayout'
 // eager so it paints immediately.
 const Home = lazy(() => import('./pages/Home'))
 const Search = lazy(() => import('./pages/Search'))
+const EntityBrowser = lazy(() => import('./pages/EntityBrowser'))
 const Ontologies = lazy(() => import('./pages/Ontologies'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const AddOntology = lazy(() => import('./pages/AddOntology'))
@@ -131,6 +132,7 @@ export default function App() {
       <Route path="/compare" element={<CompareRedirect />} />
       <Route path="/coverage" element={<Navigate to="/ontologies?tab=coverage" replace />} />
       <Route path="/owl-profile" element={<Navigate to="/ontologies?tab=profiles" replace />} />
+      <Route path="/browse" element={<Shell><EntityBrowser /></Shell>} />
       <Route path="/search" element={<Shell><Search /></Shell>} />
       <Route path="/sparql" element={<Shell><Sparql /></Shell>} />
       <Route path="/sparql/gallery" element={<Shell><SparqlGallery /></Shell>} />

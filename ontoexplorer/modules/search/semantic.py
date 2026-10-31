@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import math
 
 import structlog
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ontoexplorer.models.db import EntityIndex, Ontology, TermEmbedding
 from ontoexplorer.modules.search.embedder import embed_query
 
 log = structlog.get_logger()
@@ -88,3 +90,84 @@ async def semantic_search(
         })
 
     return out
+
+
+class EmbedUnavailable(Exception):
+    """The embedding backend failed; distinct from DB errors so callers can degrade."""
+
+
+async def semantic_related(
+    db: AsyncSession,
+    query: str,
+    type: str,
+    version_ids: list[str],
+    ontology_ids: list[str] | None,
+    k: int,
+) -> list[dict]:
+    """Nearest entities of one `type` to `query`, by cosine similarity.
+
+    Unlike `semantic_search`, an embed-backend failure PROPAGATES (as `EmbedUnavailable`) so the caller can
+    report the backend as unavailable (vs. "no embeddings" = empty list). Rows are
+    returned as dicts carrying the raw `labels`/`definitions` of `entity_index` plus
+    `score`; display shaping is the caller's job.
+    """
+    if not version_ids or not query.strip() or k < 1:
+        return []
+
+    try:
+        qvec = await asyncio.to_thread(embed_query, query)
+    except Exception as exc:
+        raise EmbedUnavailable(str(exc)) from exc
+
+    dialect = db.get_bind().dialect.name
+    if dialect == "postgresql":
+        vec_str = "[" + ",".join(f"{x:.8f}" for x in qvec) + "]"
+        onto_clause = "AND ei.ontology_id = ANY(:onts)" if ontology_ids else ""
+        sql = text(f"""
+            SELECT ei.iri, ei.primary_label, ei.labels, ei.short, ei.type,
+                   ei.ontology_id, o.title AS ontology_title, o.shortname AS ontology_shortname,
+                   ei.version_id,
+                   ei.source, ei.definitions,
+                   1 - (te.embedding <=> CAST(:vec AS vector)) AS score
+            FROM term_embeddings te
+            JOIN entity_index ei
+                 ON ei.version_id = te.version_id AND ei.iri = te.entity_iri
+            JOIN ontologies o ON o.id = ei.ontology_id
+            WHERE te.entity_type = :type
+              AND te.version_id = ANY(:ids)
+              {onto_clause}
+            ORDER BY te.embedding <=> CAST(:vec AS vector)
+            LIMIT :k
+        """)
+        params = {"vec": vec_str, "type": type, "ids": version_ids, "k": k}
+        if ontology_ids:
+            params["onts"] = ontology_ids
+        rows = (await db.execute(sql, params)).mappings().all()
+        return [{**r, "score": round(float(r["score"]), 4)} for r in rows]
+
+    # Non-Postgres (sqlite test lane): no pgvector operators, rank in Python.
+    stmt = (
+        select(TermEmbedding.embedding, EntityIndex, Ontology.title, Ontology.shortname)
+        .join(EntityIndex, (EntityIndex.version_id == TermEmbedding.version_id)
+              & (EntityIndex.iri == TermEmbedding.entity_iri))
+        .join(Ontology, Ontology.id == EntityIndex.ontology_id)
+        .where(TermEmbedding.entity_type == type,
+               TermEmbedding.version_id.in_(version_ids))
+    )
+    if ontology_ids:
+        stmt = stmt.where(EntityIndex.ontology_id.in_(ontology_ids))
+    qn = math.sqrt(sum(x * x for x in qvec)) or 1.0
+    scored = []
+    for emb, e, title, shortname in (await db.execute(stmt)).all():
+        emb = [float(x) for x in emb]
+        en = math.sqrt(sum(x * x for x in emb)) or 1.0
+        score = sum(a * b for a, b in zip(qvec, emb)) / (qn * en)
+        scored.append({
+            "iri": e.iri, "primary_label": e.primary_label, "labels": e.labels,
+            "short": e.short, "type": e.type, "ontology_id": e.ontology_id,
+            "ontology_title": title, "ontology_shortname": shortname,
+            "version_id": e.version_id, "source": e.source,
+            "definitions": e.definitions, "score": round(score, 4),
+        })
+    scored.sort(key=lambda r: -r["score"])
+    return scored[:k]

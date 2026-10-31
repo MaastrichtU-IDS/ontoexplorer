@@ -105,8 +105,12 @@ async def pg_entity_search(
     types: list[str] | None = None,
     version_id: str | None = None,
     ontology_ids: list[str] | None = None,
+    version_ids: list[str] | None = None,
 ) -> list[dict]:
     """Entity search via Postgres `entity_index`.
+
+    `version_ids`, if given, restricts to that set of versions INSIDE the query
+    (before IRI dedup), so a superseded version can't shadow a wanted one.
 
     Cross-ontology by default; pass `version_id` to scope to a single version (the
     OLS per-ontology search, #242 Stage 1 — replaces the Redis prefix-zset lookup),
@@ -127,6 +131,10 @@ async def pg_entity_search(
 
     type_filter_sql = "AND ei.type = ANY(:types)" if types else ""
     vid_filter_sql = "AND ei.version_id = :vid" if version_id else ""
+    if version_ids is not None:
+        if not version_ids:
+            return []
+        vid_filter_sql += " AND ei.version_id = ANY(:version_ids)"
     ontology_filter_sql = "AND ei.ontology_id = ANY(:ontology_ids)" if ontology_ids else ""
     collate_sql = _collate_c(db)
 
@@ -173,6 +181,8 @@ async def pg_entity_search(
         params["types"] = list(types)
     if version_id:
         params["vid"] = version_id
+    if version_ids:
+        params["version_ids"] = list(version_ids)
     if ontology_ids:
         params["ontology_ids"] = list(ontology_ids)
     result = await db.execute(prefix_sql, params)
@@ -218,6 +228,8 @@ async def pg_entity_search(
             params2["types"] = list(types)
         if version_id:
             params2["vid"] = version_id
+        if version_ids:
+            params2["version_ids"] = list(version_ids)
         if ontology_ids:
             params2["ontology_ids"] = list(ontology_ids)
         result = await db.execute(tsv_sql, params2)

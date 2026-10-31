@@ -1324,9 +1324,81 @@ export function parseTerm(raw: RawTermDetail): ParsedTerm {
   }
 }
 
+// ── Entity browser ────────────────────────────────────────────────────────────
+
+export interface EntityRow {
+  iri: string
+  primary_label: string
+  short: string
+  type: string
+  ontology_id: string
+  ontology_title: string
+  ontology_shortname: string
+  version_id: string
+  source: string
+  definition: string
+}
+
+export interface EntityListResponse {
+  entities: EntityRow[]
+  next: string | null
+  approx_total: number
+  limit: number
+}
+
+export type RelatedRow = EntityRow & { score: number }
+
+export interface RelatedResponse {
+  entities: RelatedRow[]
+  unavailable: boolean
+}
+
+export interface Facet {
+  ontology_id: string
+  short: string
+  title: string
+  count: number
+}
+
+export interface EntityListParams {
+  type: string
+  q?: string
+  ontology?: string[]
+  limit?: number
+  cursor?: string
+  lang?: string
+}
+
+export interface EntityRelatedParams {
+  type: string
+  q: string
+  ontology?: string[]
+  k?: number
+  lang?: string
+}
+
+function entityQuery(params: Record<string, string | number | string[] | undefined>): string {
+  const qs = new URLSearchParams()
+  for (const [key, val] of Object.entries(params)) {
+    if (val === undefined || val === '') continue
+    if (Array.isArray(val)) val.forEach(v => qs.append(key, v))
+    else qs.set(key, String(val))
+  }
+  return qs.toString()
+}
+
 // ── API surface ───────────────────────────────────────────────────────────────
 
 export const api = {
+  entities: {
+    list: (p: EntityListParams) =>
+      request<EntityListResponse>(`/entities?${entityQuery({ ...p })}`),
+    related: (p: EntityRelatedParams) =>
+      request<RelatedResponse>(`/entities/related?${entityQuery({ ...p })}`),
+    facets: async (type: string) =>
+      (await request<{ ontologies: Facet[] }>(`/entities/facets?${entityQuery({ type })}`)).ontologies,
+  },
+
   auth: {
     // NOTE: the auth router is mounted at /auth (NOT under /api/v1), so these use
     // authRequest (no BASE prefix), not request.
