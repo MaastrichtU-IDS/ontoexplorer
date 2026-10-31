@@ -161,14 +161,19 @@ def build_hnsw_index() -> None:
     Live index (pg_indexes): ``CREATE INDEX term_embeddings_embedding_idx ON term_embeddings
     USING hnsw (embedding vector_cosine_ops)`` -- default params (m=16, ef_construction=64).
 
-    Needs ``maintenance_work_mem`` >= ~12GB (3.95M x 768 x 4B ~= 12GB of vectors/graph)
-    or pgvector's build spills to the slow on-disk path. Live default is 512MB, so this
-    sets 14GB for the session; the Postgres pod memory limit must exceed that
-    (plus shared_buffers) or the build will be OOM-killed. Also raises parallel workers.
+    Live index (pg_indexes): default params (m=16, ef_construction=64).
+
+    Ideal ``maintenance_work_mem`` is ~12GB (3.96M x 768 x 4B) to keep the whole
+    graph in memory, but THIS Postgres pod is limited to 16Gi (shared_buffers +
+    everything else live in there too), so 14GB would OOM-kill it. We set 8GB:
+    safely under the limit, at the cost of pgvector spilling to the slower on-disk
+    build path. Acceptable for a one-time build. If it is too slow, bump the
+    postgres pod memory temporarily and raise this instead. Live default is 512MB.
     """
     async def _go():
         async with _Session() as db:
-            await db.execute(text("SET maintenance_work_mem = '14GB'"))
+            # 8GB, NOT 14GB: postgres pod limit is 16Gi (see docstring).
+            await db.execute(text("SET maintenance_work_mem = '8GB'"))
             await db.execute(text("SET max_parallel_maintenance_workers = 4"))
             await db.execute(text(
                 f"CREATE INDEX IF NOT EXISTS {NEW}_embedding_idx ON {NEW} "
