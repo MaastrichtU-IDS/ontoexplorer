@@ -40,8 +40,15 @@ log = logging.getLogger("reembed_backfill")
 NEW = "term_embeddings_new"
 DONE = "term_embeddings_new_done"
 DOC_PREFIX = "search_document: "  # verbatim (Global Constraints)
-CHUNK = 256          # rows per embed request / insert statement
-WORKERS = 4          # concurrent embed requests (bounded)
+# The nomic backend (llama-server on the Mac mini) is a SINGLE GPU slot: its
+# ~214 texts/s ceiling is reached by one stream, and extra concurrency only
+# builds a queue (a 4-wide run drove request latency to 37s and tripped the
+# gateway's retry storm). WORKERS=2 is shallow pipelining -- one batch computes
+# while the next is in transit/insert -- which keeps the GPU fed without a queue.
+# CHUNK=128 keeps each request ~0.6s so live prod embeds sharing the slot wait
+# only briefly. Raise both only if the backend gains real parallel capacity.
+CHUNK = 128          # rows per embed request / insert statement
+WORKERS = 2          # concurrent embed requests (bounded; single-slot backend)
 DIM = 768
 
 _Session = make_celery_db_session()  # NullPool: safe across asyncio.run() calls
