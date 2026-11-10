@@ -101,10 +101,24 @@ def test_no_entries_yields_nothing():
     assert pick_label([], "en") == (None, None)
 
 
-def test_no_language_requested_keeps_source_order():
-    """Without a preference there is nothing to score, so the first entry — the
-    order the profile's label properties were queried in — stands."""
-    assert pick_label(ENTRIES, None) == ("Nahrung", "de")
+def test_no_language_requested_still_prefers_english():
+    """With no preference, English still wins over whatever the profile queried
+    first — matching _label_score (en=2 regardless of the reader's lang). A term
+    whose first label is a non-English synonym must not headline in that language
+    for a reader who stated no preference."""
+    assert pick_label(ENTRIES, None) == ("food", "en")
+
+
+def test_no_language_requested_falls_back_to_untagged_before_other_langs():
+    """No preference and no English: untagged beats an arbitrary tagged label."""
+    entries = [{"value": "Nahrung", "lang": "de"}, {"value": "plain", "lang": ""}]
+    assert pick_label(entries, None) == ("plain", None)
+
+
+def test_no_language_requested_last_resort_is_source_order():
+    """No preference, no English, no untagged: the first entry stands."""
+    entries = [{"value": "Nahrung", "lang": "de"}, {"value": "aliment", "lang": "fr"}]
+    assert pick_label(entries, None) == ("Nahrung", "de")
 
 
 # ── resolve_lang precedence ───────────────────────────────────────────────────
