@@ -21,31 +21,29 @@ _COLS = ["type", "primary_label_norm", "iri", "version_id"]
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
-    if bind.dialect.name != "postgresql":
-        # sqlite (tests): small tables, plain create.
-        op.create_index("ix_entity_index_browse", "entity_index", _COLS)
-        return
-    # entity_index is ~6M rows: build CONCURRENTLY so writes aren't blocked.
-    with op.get_context().autocommit_block():
-        op.create_index(
-            "ix_entity_index_browse",
-            "entity_index",
-            _COLS,
-            postgresql_concurrently=True,
-            if_not_exists=True,
-        )
+    # entity_index is HASH-partitioned. PostgreSQL rejects CREATE INDEX
+    # CONCURRENTLY on a partitioned parent ("cannot create index on partitioned
+    # table ... concurrently"), so a concurrent build is simply not possible
+    # here -- the earlier postgresql_concurrently=True version crashed the
+    # migrate init on every real (partitioned) database. A plain CREATE INDEX on
+    # the parent creates the index on all partitions in one statement. This runs
+    # in the migrate init (advisory-locked, before the new app pods serve), where
+    # the brief SHARE lock -- which still allows reads -- is acceptable at deploy
+    # time. if_not_exists keeps it idempotent and also covers the sqlite tests.
+    op.create_index(
+        "ix_entity_index_browse",
+        "entity_index",
+        _COLS,
+        if_not_exists=True,
+    )
 
 
 def downgrade() -> None:
-    bind = op.get_bind()
-    if bind.dialect.name != "postgresql":
-        op.drop_index("ix_entity_index_browse", table_name="entity_index")
-        return
-    with op.get_context().autocommit_block():
-        op.drop_index(
-            "ix_entity_index_browse",
-            table_name="entity_index",
-            postgresql_concurrently=True,
-            if_exists=True,
-        )
+    # Plain (non-concurrent) drop: CONCURRENTLY is likewise unavailable on a
+    # partitioned parent, and dropping the parent index removes the partition
+    # indexes with it.
+    op.drop_index(
+        "ix_entity_index_browse",
+        table_name="entity_index",
+        if_exists=True,
+    )
