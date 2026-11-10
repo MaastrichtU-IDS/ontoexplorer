@@ -16,6 +16,7 @@ from ontoexplorer.modules.search.evaluator import (
     RelationRequiresNamedClassError,
     evaluate_relation,
 )
+from ontoexplorer.modules.search.label_quality import clean_display_label
 from ontoexplorer.modules.search.lang import resolve_lang
 from ontoexplorer.modules.search.mos_parser import ParseError, parse, NamedClass
 from ontoexplorer.modules.search.semantic import semantic_search
@@ -89,7 +90,7 @@ async def search(
             "mode": "entity",
             "query": q,
             "results": [
-                {"iri": r["iri"], "label": r["label"], "short": r["short"],
+                {"iri": r["iri"], "label": clean_display_label(r["label"], r["iri"]), "short": r["short"],
                  "type": r.get("type", ""), "source": r.get("source", ""), "match_type": "entity"}
                 for r in results
             ],
@@ -154,7 +155,7 @@ async def search(
     # compares like-for-like instead of falling back to an implicit default.
     _rows = [
         {
-            "iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type,
+            "iri": r.iri, "label": clean_display_label(r.label, r.iri), "short": r.short, "match_type": r.match_type,
             "type": "class",
             "source": sources.get(r.iri, ""),
             "version_id": version_id,

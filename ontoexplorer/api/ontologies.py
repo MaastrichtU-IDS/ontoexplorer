@@ -1410,6 +1410,21 @@ async def list_versions(ontology_id: str, db: AsyncSession = Depends(get_db)):
     from ontoexplorer.config import get_settings as _gs_lv
     from ontoexplorer.modules.ingestion.license import held_reasons as _held
     _min_tri = _gs_lv().min_triples_for_publish
+    # Non-gating encoding-quality signal: how many entities per version have a
+    # '?'-corrupted primary label (non-ASCII destroyed at the source). Surfaced as
+    # a quality_warning to the owner WITHOUT holding the version — the corruption
+    # is upstream/lossy and the ontology is still usable. One batched COUNT.
+    from ontoexplorer.models.db import EntityIndex as _EIdx
+    from sqlalchemy import func as _func
+    _vids = [str(v.id) for v in versions]
+    _corrupt_counts: dict[str, int] = {}
+    if _vids:
+        _cc_rows = (await db.execute(
+            select(_EIdx.version_id, _func.count())
+            .where(_EIdx.version_id.in_(_vids), _EIdx.primary_label.op("~")("[?]{2,}"))
+            .group_by(_EIdx.version_id)
+        )).all()
+        _corrupt_counts = {str(vid): int(n) for vid, n in _cc_rows}
     out = []
     for v in versions:
         d = _version_dict(v)
@@ -1426,6 +1441,12 @@ async def list_versions(ontology_id: str, db: AsyncSession = Depends(get_db)):
         # window) can be reactivated by the owner back to needs_review — surface the
         # flag so the dashboard offers that instead of a dead "deprecated" row (#364).
         d["auto_retired_held"] = (v.status == "deprecated" and v.held_nudged_at is not None)
+        _cc = _corrupt_counts.get(str(v.id), 0)
+        d["quality_warnings"] = (
+            [f"{_cc} label(s) look encoding-corrupted (non-ASCII replaced with '?'); "
+             "this almost always comes from the source file, not OntoExplorer."]
+            if _cc else []
+        )
         out.append(d)
     return {"versions": out}
 
@@ -3224,6 +3245,13 @@ async def get_term(
     term_elucidations = _dedup_by_value([v for p in _ELUCIDATION_PREDS for v in properties_typed.get(p, [])])
     term_synonyms     = _dedup_by_value([v for p in _SYNONYM_PREDS     for v in properties_typed.get(p, [])])
 
+    # Suppress encoding-corrupted labels/synonyms — non-ASCII destroyed at the
+    # source (e.g. 'Vía' -> 'V??a', CJK -> '????') — so a term never renders as
+    # '?????'. The corruption is upstream and lossy; we only avoid showing it.
+    from ontoexplorer.modules.search.label_quality import clean_display_label, is_corrupt_label
+    term_labels   = [v for v in term_labels   if not is_corrupt_label(v.get("value"))]
+    term_synonyms = [v for v in term_synonyms if not is_corrupt_label(v.get("value"))]
+
     # Primary label, and the language it is actually in. The fallback used to be
     # entries[0] — whichever label property the profile queried first — so on a
     # class whose profile also treats skos:altLabel as a label, a synonym could
@@ -3232,7 +3260,7 @@ async def get_term(
 
     typed_label, typed_label_lang = pick_label(term_labels, effective_lang)
     if typed_label is None:
-        typed_label = term_iri.split("/")[-1]
+        typed_label = clean_display_label(None, term_iri)
 
     # For individuals: resolve rdf:type classes (excluding OWL meta-types) with labels
     _OWL_META = {
@@ -3270,7 +3298,7 @@ async def get_term(
                 _EntityIndex.iri.in_(_pred_iris),
             )
         )).all()
-        property_labels = {iri: label for iri, label, _t in _pl_rows}
+        property_labels = {iri: clean_display_label(label, iri) for iri, label, _t in _pl_rows}
         property_types = {iri: _t for iri, _label, _t in _pl_rows}
 
     # Cap what crosses the wire. The asserted subclass list is already bounded by
@@ -3302,7 +3330,7 @@ async def get_term(
 
     _payload = {
         "iri": term_iri,
-        "label": typed_label if term_labels else top_label,
+        "label": clean_display_label(typed_label if term_labels else top_label, term_iri),
         "labels": term_labels,
         "definitions": term_definitions,
         "elucidations": term_elucidations,

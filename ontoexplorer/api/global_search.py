@@ -13,6 +13,7 @@ from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Ontology, OntologyVersion, User
 from ontoexplorer.modules.auth.dependencies import get_current_user
 from ontoexplorer.modules.search.evaluator import AmbiguousLabelError, evaluate
+from ontoexplorer.modules.search.label_quality import clean_display_label
 from ontoexplorer.modules.search.lang import resolve_lang
 from ontoexplorer.modules.search.mos_parser import ParseError, NamedClass, parse
 from ontoexplorer.modules.search.semantic import semantic_search
@@ -264,7 +265,7 @@ async def global_search(
             # MOS class expressions always yield classes — tag explicitly so the
             # UI badge renders and the chip filter compares like-for-like.
             return [
-                {"iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type,
+                {"iri": r.iri, "label": clean_display_label(r.label, r.iri), "short": r.short, "match_type": r.match_type,
                  "type": "class",
                  "version_id": str(v.id), "ontology_id": str(v.ontology_id),
                  "lang": r.lang, "cross_language": r.cross_language}
@@ -359,7 +360,7 @@ async def ontology_search(
         return {
             "mode": "entity", "query": q, "version_id": version_id,
             "results": [
-                {"iri": r["iri"], "label": r["label"], "short": r["short"],
+                {"iri": r["iri"], "label": clean_display_label(r["label"], r["iri"]), "short": r["short"],
                  "type": r.get("type", ""), "match_type": "entity"}
                 for r in results
             ],
@@ -383,7 +384,7 @@ async def ontology_search(
 
     trimmed = search_results[:limit]
     _rows = [
-        {"iri": r.iri, "label": r.label, "short": r.short, "match_type": r.match_type,
+        {"iri": r.iri, "label": clean_display_label(r.label, r.iri), "short": r.short, "match_type": r.match_type,
          "type": "class", "version_id": version_id,
          "lang": r.lang, "cross_language": r.cross_language}
         for r in trimmed
