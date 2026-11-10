@@ -49,6 +49,14 @@ def pick_label(entries, lang: str | None) -> tuple[str | None, str | None]:
     _label_score in the terms endpoint and resolve_label on the SQL paths, so
     the same entity does not change label depending on which one answered.
 
+    The English > untagged preference applies even when no language is
+    requested (`lang` is None): _label_score scores English 2 and untagged 1
+    regardless of the reader's preference, so without this a reader with no
+    stated language saw `entries[0]` — whatever the profile queried first,
+    e.g. an Albanian label ahead of the English one on the same term — while
+    every SQL path showed the English one. Only after English and untagged are
+    both absent does it fall back to `entries[0]`.
+
     Two things this replaced, both wrong. The fallback was `entries[0]`, i.e.
     whichever label property the profile happened to query first — on a class
     whose profile also treats skos:altLabel as a label, that made a German
@@ -70,12 +78,12 @@ def pick_label(entries, lang: str | None) -> tuple[str | None, str | None]:
         for e in entries:
             if tag_of(e) == want:
                 return e["value"], want
-        for e in entries:
-            if tag_of(e) == "en":
-                return e["value"], "en"
-        for e in entries:
-            if tag_of(e) == "":
-                return e["value"], None
+    for e in entries:
+        if tag_of(e) == "en":
+            return e["value"], "en"
+    for e in entries:
+        if tag_of(e) == "":
+            return e["value"], None
 
     first = entries[0]
     return first["value"], (tag_of(first) or None)
