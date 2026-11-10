@@ -12,6 +12,7 @@ from ontoexplorer.database import get_db
 from ontoexplorer.models.db import EntityIndex, Ontology
 from ontoexplorer.modules.auth.dependencies import get_current_user
 from ontoexplorer.modules.search import browse
+from ontoexplorer.modules.search.label_quality import clean_display_label, is_corrupt_label
 from ontoexplorer.modules.search.pg_search import pg_entity_search
 from ontoexplorer.modules.search.semantic import EmbedUnavailable, semantic_related
 from ontoexplorer.modules.search.versions import latest_ready_versions
@@ -39,9 +40,15 @@ def _definition(definitions) -> str:
 
 
 def _label(row, lang: str | None) -> str:
-    if lang and isinstance(row.labels, dict) and row.labels.get(lang):
-        return row.labels[lang]
-    return row.primary_label
+    # Never return an encoding-corrupted label ('?????'); fall back to a clean
+    # language/alternative label, else the humanized IRI local name.
+    labels = getattr(row, "labels", None)
+    if lang and isinstance(labels, dict):
+        val = labels.get(lang)
+        if val and not is_corrupt_label(val):
+            return val
+    alts = list(labels.values()) if isinstance(labels, dict) else ()
+    return clean_display_label(getattr(row, "primary_label", None), row.iri, alternatives=alts)
 
 
 async def _scoped_count(db: AsyncSession, entity_type: str, vids: list[str],
@@ -113,7 +120,7 @@ async def list_entities(
         for h in hits:
             r = extra.get((h["version_id"], h["iri"]))
             entities.append({
-                "iri": h["iri"], "primary_label": h["label"], "short": h["short"],
+                "iri": h["iri"], "primary_label": clean_display_label(h["label"], h["iri"]), "short": h["short"],
                 "type": h["type"], "ontology_id": h["ontology_id"],
                 "ontology_title": (r.title if r else None) or h.get("ontology_shortname", ""),
                 "ontology_shortname": h.get("ontology_shortname") or (r.shortname if r else None) or "",
