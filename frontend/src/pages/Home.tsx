@@ -186,10 +186,31 @@ function OntologySearch() {
                     onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-secondary)'; e.currentTarget.style.borderColor = 'var(--border)' }}
                     onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'transparent' }}
                   >
-                    <span style={{ fontWeight: 600 }}>{o.shortname ?? o.title ?? o.iri}</span>
-                    {o.title && o.shortname && (
-                      <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>{o.title}</span>
-                    )}
+                    {(() => {
+                      // The list response carries the human-readable name in `label`
+                      // (an rdfs:label / dcterms:title); `title` is null on this path.
+                      // Lead with that name, matching the catalogue page, and keep the
+                      // shortname slug as a secondary chip. Fall back to the slug (then
+                      // the IRI) as the primary when there is no label at all.
+                      const name = o.label?.trim() || o.title?.trim() || null
+                      const slug = o.shortname ?? null
+                      return name ? (
+                        <>
+                          <span style={{
+                            fontWeight: 600, flexShrink: 1, minWidth: 0,
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }}>{name}</span>
+                          {slug && (
+                            <span style={{
+                              color: 'var(--text-muted)', fontSize: 12, flexShrink: 0,
+                              fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+                            }}>{slug}</span>
+                          )}
+                        </>
+                      ) : (
+                        <span style={{ fontWeight: 600 }}>{slug ?? o.iri}</span>
+                      )
+                    })()}
                     {o.class_count != null && (
                       <span style={{ marginLeft: 'auto', color: 'var(--text-dim)', fontSize: 12, whiteSpace: 'nowrap' }}>
                         {o.class_count.toLocaleString()} classes
