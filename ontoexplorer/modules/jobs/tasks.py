@@ -1479,16 +1479,43 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                     _lc = await version_lang_counts(db, version_id)
                 except Exception:
                     _lc = None
+                # Graph-level VoID counts for /stats — computed once here (the
+                # same six SPARQL the endpoint used to run live) so no visitor
+                # pays the 13-30s cold cost on a large ontology. Best-effort: a
+                # stats hiccup must never fail indexing; NULL just leaves the
+                # endpoint's self-healing fallback to compute it on first view.
+                _gc = None
+                try:
+                    from ontoexplorer.clients.oxigraph import (
+                        get_store as _get_store, graph_iri as _graph_iri)
+                    from ontoexplorer.modules.search.graph_stats import (
+                        compute_graph_counts as _cgc)
+                    _gc = await asyncio.to_thread(
+                        _cgc, _get_store(), _graph_iri(ontology_id, version_id))
+                except Exception:
+                    log.warning("graph_counts_compute_failed", version_id=version_id, exc_info=True)
+                    _gc = None
                 _vals = {"status": _new_status, "indexed_at": _dt.now(_tz.utc),
                          "license": _spdx, "license_raw": _lic_raw, "license_compliant": _lic_ok}
                 if _lc is not None:
                     _vals["lang_counts"] = _lc
+                if _gc is not None:
+                    _vals["graph_counts"] = _gc
                 await db.execute(
                     _sa_update(_OV)
                     .where(_OV.id == version_id, _OV.status != "deprecated")
                     .values(**_vals)
                 )
                 await db.commit()
+                # Drop the per-version stats cache so the next /stats rebuilds
+                # from the freshly written row (O(1) delete, not a keyspace scan).
+                if _gc is not None:
+                    try:
+                        from ontoexplorer.modules.search.indexer import (
+                            _get_redis as _gr, _stats_cache_key as _sck)
+                        _gr().delete(_sck(version_id))
+                    except Exception:
+                        pass
 
             # Outside the session: best-effort owner notification (never raises).
             if _held_email is not None:

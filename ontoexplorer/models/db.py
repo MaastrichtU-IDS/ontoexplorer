@@ -208,6 +208,16 @@ class OntologyVersion(Base):
     # the whole catalogue on filtered /ontologies requests.
     lang_counts: Mapped[dict | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=True)
+    # Materialized graph-level VoID counts {triple_count, class_count,
+    # object_property_count, datatype_property_count, annotation_property_count,
+    # individual_count}, written at index time by the same SPARQL the stats
+    # endpoint used to run live. Serving from here turns /stats from six
+    # O(graph-size) Oxigraph COUNT queries (13-30s cold on large ontologies,
+    # HTTP 500 on the biggest) into an O(1) row read. NULL = not yet computed →
+    # the endpoint falls back to the live compute and self-heals this row. See
+    # modules/search/graph_stats.py.
+    graph_counts: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True)
     # Input repairs the reasoner applied to this version's graph so horned-owl's
     # strict reader could parse it (work-arounds for non-conformant published
     # content). Maps a repair kind to a count, e.g. {"stripped_ontology_types": 2,
