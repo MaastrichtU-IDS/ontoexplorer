@@ -90,3 +90,26 @@ test('stat cards link to the entity browser', async () => {
   expect(screen.getByText('Axioms').closest('a')).toHaveAttribute('href', '/browse?mode=query')
   spy.mockRestore()
 })
+
+test('ontology search leads with the human title, slug as a secondary chip', async () => {
+  const api = (await import('../lib/api')).api
+  // The list endpoint carries the readable name in `label`; `title` is null here.
+  const spy = vi.spyOn(api.ontologies, 'list').mockResolvedValue({
+    ontologies: [
+      { id: 'genepio', iri: 'http://purl.obolibrary.org/obo/genepio.owl',
+        shortname: 'genepio', title: null, label: 'Genomic Epidemiology Ontology',
+        class_count: 1234, created_at: '2024-01-01' },
+    ],
+    offset: 0, limit: 50, total: 1,
+  } as never)
+  renderHome()
+  fireEvent.change(screen.getByPlaceholderText(/Search ontologies by name/i), {
+    target: { value: 'gene' },
+  })
+  // The readable title is the primary (linked) text…
+  const titleEl = await screen.findByText('Genomic Epidemiology Ontology')
+  expect(titleEl.closest('a')).toHaveAttribute('href', '/ontologies/genepio')
+  // …and the shortname slug still appears as a secondary chip.
+  expect(screen.getByText('genepio')).toBeInTheDocument()
+  spy.mockRestore()
+})
