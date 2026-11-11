@@ -1677,7 +1677,7 @@ async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = De
     import asyncio
     import json as _json
 
-    await _get_version_or_404(db, ontology_id, version_id)
+    version = await _get_version_or_404(db, ontology_id, version_id)
     from ontoexplorer.clients.oxigraph import get_store, graph_iri
     from ontoexplorer.modules.search.indexer import _get_redis, _stats_cache_key, _SEARCH_TTL
 
@@ -1690,57 +1690,30 @@ async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = De
     except Exception:
         pass
 
-    # ── Compute: all queries run concurrently off the event loop ─────────────
-    store = get_store()
-    g = graph_iri(ontology_id, version_id)
+    # ── Counts: prefer the materialized row, else compute live and self-heal ──
+    # graph_counts is the six VoID counts written on the version row at index
+    # time (modules/search/graph_stats.py). When present this endpoint is an
+    # O(1) read — no Oxigraph hit at all. A version indexed before the column
+    # existed has graph_counts = NULL: compute the six counts live (the former
+    # always-live path, same queries → same values) and persist them so the
+    # next request, and every reader after, is instant.
+    from ontoexplorer.modules.search.graph_stats import (
+        compute_graph_counts, GRAPH_COUNT_KEYS)
 
-    def _count(sparql: str) -> int:
-        rows = list(store.query(sparql))
-        if rows:
-            v = rows[0]["n"]
-            return int(v.value) if v is not None else 0
-        return 0
-
-    (
-        triple_count,
-        class_count,
-        obj_prop_count,
-        data_prop_count,
-        ann_prop_count,
-        ind_count,
-    ) = await asyncio.gather(
-        asyncio.to_thread(_count, f"SELECT (COUNT(*) AS ?n) WHERE {{ GRAPH <{g}> {{ ?s ?p ?o }} }}"),
-        asyncio.to_thread(_count, f"""
-            PREFIX owl: <http://www.w3.org/2002/07/owl#>
-            SELECT (COUNT(DISTINCT ?c) AS ?n) WHERE {{
-                GRAPH <{g}> {{ ?c a owl:Class . FILTER(isIRI(?c)) }}
-            }}
-        """),
-        asyncio.to_thread(_count, f"""
-            PREFIX owl: <http://www.w3.org/2002/07/owl#>
-            SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE {{
-                GRAPH <{g}> {{ ?p a owl:ObjectProperty . FILTER(isIRI(?p)) }}
-            }}
-        """),
-        asyncio.to_thread(_count, f"""
-            PREFIX owl: <http://www.w3.org/2002/07/owl#>
-            SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE {{
-                GRAPH <{g}> {{ ?p a owl:DatatypeProperty . FILTER(isIRI(?p)) }}
-            }}
-        """),
-        asyncio.to_thread(_count, f"""
-            PREFIX owl: <http://www.w3.org/2002/07/owl#>
-            SELECT (COUNT(DISTINCT ?p) AS ?n) WHERE {{
-                GRAPH <{g}> {{ ?p a owl:AnnotationProperty . FILTER(isIRI(?p)) }}
-            }}
-        """),
-        asyncio.to_thread(_count, f"""
-            PREFIX owl: <http://www.w3.org/2002/07/owl#>
-            SELECT (COUNT(DISTINCT ?i) AS ?n) WHERE {{
-                GRAPH <{g}> {{ ?i a owl:NamedIndividual . FILTER(isIRI(?i)) }}
-            }}
-        """),
-    )
+    counts = version.graph_counts if isinstance(version.graph_counts, dict) else None
+    if counts is None or any(k not in counts for k in GRAPH_COUNT_KEYS):
+        store = get_store()
+        g = graph_iri(ontology_id, version_id)
+        counts = await asyncio.to_thread(compute_graph_counts, store, g)
+        try:
+            from sqlalchemy import update as _sa_update
+            await db.execute(
+                _sa_update(OntologyVersion)
+                .where(OntologyVersion.id == version_id)
+                .values(graph_counts=counts))
+            await db.commit()
+        except Exception:
+            await db.rollback()
 
     # Search-index counts from entity_index + indexed_at from the version row
     # (#242 Stage 2 — was the Redis search:meta hash; schema_version was an internal
@@ -1763,14 +1736,20 @@ async def version_stats(ontology_id: str, version_id: str, db: AsyncSession = De
     except Exception:
         pass
 
+    def _c(key: str) -> int:
+        try:
+            return int(counts.get(key, 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
     result = {
-        "triple_count":              triple_count,
-        "class_count":               class_count,
-        "property_count":            obj_prop_count + data_prop_count + ann_prop_count,
-        "object_property_count":     obj_prop_count,
-        "datatype_property_count":   data_prop_count,
-        "annotation_property_count": ann_prop_count,
-        "individual_count":          ind_count,
+        "triple_count":              _c("triple_count"),
+        "class_count":               _c("class_count"),
+        "property_count":            _c("object_property_count") + _c("datatype_property_count") + _c("annotation_property_count"),
+        "object_property_count":     _c("object_property_count"),
+        "datatype_property_count":   _c("datatype_property_count"),
+        "annotation_property_count": _c("annotation_property_count"),
+        "individual_count":          _c("individual_count"),
         "index_meta":                index_meta,
     }
 
