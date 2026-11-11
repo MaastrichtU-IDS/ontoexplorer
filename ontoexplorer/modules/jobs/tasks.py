@@ -1400,6 +1400,16 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                 _get_redis().setex(
                     owl_profile_cache_key(version_id), _SEARCH_TTL, _json.dumps(_payload)
                 )
+                # Durable mirror on the row so the fleet rollup / catalogue filters
+                # survive the Redis TTL (same reason coverage is persisted).
+                from sqlalchemy import update as _upd_prof
+                async def _persist_owl_profile():
+                    async with make_celery_db_session()() as _db:
+                        await _db.execute(
+                            _upd_prof(_OVp).where(_OVp.id == version_id).values(
+                                owl_profile=_payload))
+                        await _db.commit()
+                asyncio.run(_persist_owl_profile())
                 log.info(
                     "owl_profile_populated", version_id=version_id,
                     duration_s=round(_pt.monotonic() - _t0, 2),
@@ -2322,33 +2332,28 @@ def refresh_owl_profile(version_id: str, ontology_id: str) -> dict:
     signature after the horned-profile rewrite — this task was a no-op/raise.)
     """
     import json as _json
-    from datetime import datetime as _pdt, timezone as _ptz
-    from sqlalchemy import select as _sel
+    from sqlalchemy import update as _upd
     from ontoexplorer.database import make_celery_db_session
-    from ontoexplorer.clients.minio import download_bytes as _dl
-    from ontoexplorer.clients.oxigraph import get_store, graph_iri
-    from ontoexplorer.config import get_settings as _gs
     from ontoexplorer.models.db import OntologyVersion as _OV
-    from ontoexplorer.modules.owl_profile.detector import detect_profiles
-    from ontoexplorer.modules.owl_profile.language import detect_language
     from ontoexplorer.modules.owl_profile.cache import owl_profile_cache_key
+    from ontoexplorer.modules.owl_profile.compute import compute_owl_profile_payload
     from ontoexplorer.modules.search.indexer import _get_redis, _SEARCH_TTL
 
-    async def _fetch_key_fmt():
+    async def _run():
         async with make_celery_db_session()() as db:
-            return (await db.execute(
-                _sel(_OV.minio_key, _OV.format).where(_OV.id == version_id)
-            )).first()
+            payload = await compute_owl_profile_payload(db, version_id, ontology_id)
+            if payload is None:
+                return None
+            await db.execute(
+                _upd(_OV).where(_OV.id == version_id).values(owl_profile=payload))
+            await db.commit()
+            return payload
 
-    row = asyncio.run(_fetch_key_fmt())
-    if not row or not row.minio_key:
+    payload = asyncio.run(_run())
+    if payload is None:
         log.warning("owl_profile_refresh_skipped_no_file", version_id=version_id)
         return {"status": "skipped", "version_id": version_id, "reason": "no stored file"}
 
-    content = _dl(_gs().minio_ontologies_bucket, row.minio_key)
-    payload = detect_profiles(content, row.format)
-    payload["language"] = detect_language(get_store(), graph_iri=graph_iri(ontology_id, version_id))
-    payload["indexed_at"] = _pdt.now(_ptz.utc).isoformat()
     _get_redis().setex(owl_profile_cache_key(version_id), _SEARCH_TTL, _json.dumps(payload))
     log.info("owl_profile_refresh_done", version_id=version_id)
     return {"status": "done", "version_id": version_id,
@@ -2447,62 +2452,38 @@ def refresh_reuse(version_id: str, ontology_id: str) -> dict:
     search index, OWL profile cache, or queue embeddings.
     """
     import json as _json
-    from dataclasses import asdict as _asdict
 
-    from sqlalchemy import select
+    from sqlalchemy import update as _upd
 
-    from ontoexplorer.clients.oxigraph import get_store, graph_iri
     from ontoexplorer.database import make_celery_db_session
-    from ontoexplorer.models.db import Ontology, OntologyImport
+    from ontoexplorer.models.db import OntologyVersion as _OV
     from ontoexplorer.modules.reuse.cache import reuse_cache_key
-    from ontoexplorer.modules.reuse.detector import detect_reuse
-    from ontoexplorer.modules.search.indexer import (
-        _get_redis,
-        _SEARCH_TTL,
-    )
+    from ontoexplorer.modules.reuse.compute import compute_reuse_payload
+    from ontoexplorer.modules.search.indexer import _get_redis, _SEARCH_TTL
 
-    async def _gather():
+    async def _run():
         async with make_celery_db_session()() as db:
-            ont = (await db.execute(
-                select(Ontology).where(Ontology.id == ontology_id)
-            )).scalar_one_or_none()
-            imp_rows = (await db.execute(
-                select(OntologyImport).where(OntologyImport.version_id == version_id)
-            )).scalars().all()
-            db_imports = [
-                {"import_iri": row.import_iri, "depth": 1} for row in imp_rows
-            ]
-            # Re-collect (iri, type) from entity_index (#242 Workstream B — was the
-            # Redis type-sets).
-            from ontoexplorer.models.db import EntityIndex as _EI
-            _ent_rows = (await db.execute(
-                select(_EI.iri, _EI.type).where(_EI.version_id == version_id))).all()
-            entities = [(iri, etype) for iri, etype in _ent_rows]
-            return ont.iri if ont else "", db_imports, entities
+            payload = await compute_reuse_payload(db, version_id, ontology_id)
+            if payload is None:
+                return None
+            await db.execute(
+                _upd(_OV).where(_OV.id == version_id).values(reuse=payload))
+            await db.commit()
+            return payload
 
-    host_iri, db_imports, entities = asyncio.run(_gather())
-    host_namespaces = [host_iri + sep for sep in ("#", "/")] if host_iri else []
+    payload = asyncio.run(_run())
+    if payload is None:
+        log.warning("reuse_refresh_skipped_version_gone", version_id=version_id)
+        return {"status": "skipped", "version_id": version_id, "reason": "version gone"}
 
-    r = _get_redis()
-    g = graph_iri(ontology_id, version_id)
-    report = detect_reuse(
-        get_store(),
-        graph_iri=g,
-        version_id=version_id,
-        host_iri=host_iri,
-        host_namespaces=host_namespaces,
-        db_imports=db_imports,
-        entities=entities,
-    )
-    r.setex(reuse_cache_key(version_id), _SEARCH_TTL,
-            _json.dumps(_asdict(report)))
+    _get_redis().setex(reuse_cache_key(version_id), _SEARCH_TTL, _json.dumps(payload))
     log.info("reuse_refresh_done", version_id=version_id)
     return {
         "status": "done",
         "version_id": version_id,
-        "imports_count": len(report.imports),
-        "mireot_terms_count": len(report.mireot_terms),
-        "sources_reused": len(report.term_iri_reuse),
+        "imports_count": len(payload.get("imports", [])),
+        "mireot_terms_count": len(payload.get("mireot_terms", [])),
+        "sources_reused": len(payload.get("term_iri_reuse", {})),
     }
 
 

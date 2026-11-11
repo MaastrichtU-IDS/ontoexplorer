@@ -228,6 +228,24 @@ class OntologyVersion(Base):
     # modules/search/coverage.py::compute_coverage_from_index.
     coverage: Mapped[dict | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=True)
+    # Materialized OWL 2 profile classification payload {el,ql,rl,dl: {in_profile,
+    # total_violations,...}, language: {tier,...}, indexed_at} — the content-based
+    # horned-profile result, written at index time by the same compute the Redis
+    # cache used. Like coverage, it lived only in a 30-day-TTL Redis cache, so the
+    # /owl-profile/public fleet rollup and the profile/language catalogue filters
+    # silently dropped every version whose key had aged out. Persisting it here
+    # makes it durable. NULL = not yet computed → endpoints fall back to Redis.
+    # See modules/owl_profile/compute.py::compute_owl_profile_payload.
+    owl_profile: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True)
+    # Materialized reuse report {imports, mireot_terms, term_iri_reuse, mappings,
+    # ...} — the detect_reuse result, written at index time by the same compute the
+    # Redis cache used. Same 30-day-TTL failure mode as coverage/owl_profile: the
+    # /reuse/fleet rollup and the reuse catalogue filter silently dropped aged
+    # versions (only 4 of 2013 keys survived). NULL = not yet computed → endpoints
+    # fall back to Redis. See modules/reuse/compute.py::compute_reuse_payload.
+    reuse: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True)
     # Input repairs the reasoner applied to this version's graph so horned-owl's
     # strict reader could parse it (work-arounds for non-conformant published
     # content). Maps a repair kind to a count, e.g. {"stripped_ontology_types": 2,
