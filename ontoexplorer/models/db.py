@@ -218,6 +218,16 @@ class OntologyVersion(Base):
     # modules/search/graph_stats.py.
     graph_counts: Mapped[dict | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=True)
+    # Materialized per-version coverage payload {by_type: {<type>: {total,
+    # with_label, with_definition, multilingual, by_lang}}, version_id, indexed_at}
+    # — the same shape the indexer writes to Redis, recomputed from entity_index.
+    # Coverage used to live only in a 30-day-TTL Redis cache, so the fleet rollup
+    # silently dropped every version indexed > 30 days ago (2009 of 2013 → only 4
+    # shown). Persisting it here makes it durable. NULL = not yet computed → the
+    # endpoints fall back to Redis, then recompute and self-heal. See
+    # modules/search/coverage.py::compute_coverage_from_index.
+    coverage: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True)
     # Input repairs the reasoner applied to this version's graph so horned-owl's
     # strict reader could parse it (work-arounds for non-conformant published
     # content). Maps a repair kind to a count, e.g. {"stripped_ontology_types": 2,

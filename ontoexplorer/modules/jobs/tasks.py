@@ -1495,12 +1495,27 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                 except Exception:
                     log.warning("graph_counts_compute_failed", version_id=version_id, exc_info=True)
                     _gc = None
-                _vals = {"status": _new_status, "indexed_at": _dt.now(_tz.utc),
+                _now = _dt.now(_tz.utc)
+                # Durable per-version coverage, recomputed from entity_index (just
+                # written above, same source version_lang_counts reads). Mirrors
+                # the indexer's Redis payload but survives the 30-day TTL. Best-
+                # effort; NULL leaves the endpoints' self-heal to fill it.
+                _cov = None
+                try:
+                    from ontoexplorer.modules.search.coverage import (
+                        compute_coverage_from_index as _ccfi)
+                    _cov = await _ccfi(db, version_id, _now.isoformat())
+                except Exception:
+                    log.warning("coverage_compute_failed", version_id=version_id, exc_info=True)
+                    _cov = None
+                _vals = {"status": _new_status, "indexed_at": _now,
                          "license": _spdx, "license_raw": _lic_raw, "license_compliant": _lic_ok}
                 if _lc is not None:
                     _vals["lang_counts"] = _lc
                 if _gc is not None:
                     _vals["graph_counts"] = _gc
+                if _cov is not None:
+                    _vals["coverage"] = _cov
                 await db.execute(
                     _sa_update(_OV)
                     .where(_OV.id == version_id, _OV.status != "deprecated")
