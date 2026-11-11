@@ -1135,6 +1135,20 @@ def _populate_reuse_cache(
     from dataclasses import asdict as _asdict
     payload = _asdict(report)
     r.setex(reuse_cache_key(version_id), _SEARCH_TTL, _json.dumps(payload))
+    # Durable mirror on the row so the fleet rollup / catalogue filter survive the
+    # Redis TTL (same reason coverage is persisted). Best-effort.
+    try:
+        from sqlalchemy import update as _upd
+
+        async def _persist():
+            async with make_celery_db_session()() as db:
+                await db.execute(
+                    _upd(OntologyVersion).where(OntologyVersion.id == version_id).values(
+                        reuse=payload))
+                await db.commit()
+        _asyncio.run(_persist())
+    except Exception:
+        pass
 
 
 def invalidate_index(version_id: str) -> None:

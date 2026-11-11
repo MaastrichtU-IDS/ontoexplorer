@@ -39,6 +39,11 @@ class _Session:
     async def execute(self, *a, **k):
         return _Result()
 
+    async def commit(self):
+        # refresh_owl_profile now persists the payload to versions.owl_profile
+        # (durable mirror) before writing Redis.
+        return None
+
 
 def test_refresh_owl_profile_writes_slim_payload(monkeypatch):
     r = fakeredis.FakeRedis(decode_responses=True)
