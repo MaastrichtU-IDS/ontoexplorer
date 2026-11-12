@@ -710,6 +710,47 @@ def _leanify_list_row(r: dict) -> dict:
     return out
 
 
+# Entity counts the durable versions.graph_counts column carries (written at index
+# time, #399). Same key names as the Redis stats cache.
+_GRAPH_COUNT_KEYS = (
+    "class_count", "object_property_count", "datatype_property_count",
+    "annotation_property_count", "individual_count", "triple_count",
+)
+
+
+def _version_counts(stats: dict | None, graph_counts: dict | None,
+                    triple_col: int | None) -> dict:
+    """Merge the per-version entity counts, preferring the Redis stats cache but
+    falling back to the durable versions.graph_counts column.
+
+    The list/home-search rows read counts from a 30-day-TTL Redis stats cache. For a
+    version last indexed > 30 days ago that key is gone, so class/property/individual
+    counts came back null and the UI dropped them — while triple_count survived via
+    its versions.triple_count column fallback. This is the "precomputed-value-in-
+    TTL'd-Redis silently drops aged versions" regression #399/#400/#401 fixed for the
+    /stats, coverage and owl-profile fleet views; graph_counts durably holds the same
+    counts, so fall back to it here too.
+
+    property_count and concept_count are not in graph_counts: property_count is the
+    sum of the three property sub-counts (matching the indexer); concept_count has no
+    durable column and stays cache-only (null when the cache has aged out).
+    """
+    s = stats or {}
+    gc = graph_counts or {}
+    out = {k: (s[k] if s.get(k) is not None else gc.get(k)) for k in _GRAPH_COUNT_KEYS}
+    if out["triple_count"] is None:
+        out["triple_count"] = triple_col
+    pc = s.get("property_count")
+    if pc is None:
+        subs = (out["object_property_count"], out["datatype_property_count"],
+                out["annotation_property_count"])
+        if any(x is not None for x in subs):
+            pc = sum(x or 0 for x in subs)
+    out["property_count"] = pc
+    out["concept_count"] = s.get("concept_count")
+    return out
+
+
 # ── Sort / filter helpers for server-side pagination ───────────────────────────
 # The list endpoint is server-authoritative for sort + language-code filter so
 # the frontend can paginate (infinite scroll) instead of fetching the whole
@@ -1103,14 +1144,17 @@ async def list_ontologies(
         if v:
             d["latest_version"] = _version_dict(v)
             s = stats_by_vid.get(v.id, {})
-            d["class_count"] = s.get("class_count")
-            d["property_count"] = s.get("property_count")
-            d["object_property_count"] = s.get("object_property_count")
-            d["datatype_property_count"] = s.get("datatype_property_count")
-            d["annotation_property_count"] = s.get("annotation_property_count")
-            d["triple_count"] = s.get("triple_count") or v.triple_count
-            d["individual_count"] = s.get("individual_count")
-            d["concept_count"] = s.get("concept_count")
+            # Prefer the Redis stats cache; fall back to the durable graph_counts
+            # column so counts don't vanish once the 30-day cache ages out (#399).
+            counts = _version_counts(s, v.graph_counts, v.triple_count)
+            d["class_count"] = counts["class_count"]
+            d["property_count"] = counts["property_count"]
+            d["object_property_count"] = counts["object_property_count"]
+            d["datatype_property_count"] = counts["datatype_property_count"]
+            d["annotation_property_count"] = counts["annotation_property_count"]
+            d["triple_count"] = counts["triple_count"]
+            d["individual_count"] = counts["individual_count"]
+            d["concept_count"] = counts["concept_count"]
             d["languages"] = langs_by_vid.get(v.id, [])
             d["language_tier"] = tier_by_vid.get(v.id)
             meta = meta_by_oid.get(o.id, {})
