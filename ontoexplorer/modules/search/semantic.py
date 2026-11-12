@@ -22,10 +22,18 @@ async def semantic_search(
 ) -> list[dict]:
     """Return entities semantically similar to query across the given versions.
 
-    Single SQL query joining `term_embeddings` → `entity_index` for metadata, so we
-    don't need to fan out to Redis for HGETALLs. A row with no entity_index join
-    (primary_label NULL) has no label to show and is skipped (#242 Stage 3 — the
-    Redis `:iri:` hash fallback is gone now the index is Postgres-only).
+    Two queries, not one (#402). Query 1 is the vector top-N over `term_embeddings`
+    alone (+ `versions` for ontology_id) — it keeps the HNSW index and touches NONE
+    of the 64 `entity_index` partitions. Query 2 enriches only those ≤`limit`
+    candidates from `entity_index`, keyed to the concrete versions they came from, so
+    partition pruning limits it to that handful of partitions. The old single query
+    `LEFT JOIN`ed `entity_index` with a runtime version_id, which the planner can't
+    prune → it locked all 64 partitions per request and, under concurrency, exhausted
+    the Postgres shared lock table (`out of shared memory`).
+
+    A candidate with no `entity_index` row (no label) is skipped — same as the old
+    LEFT-JOIN-then-skip (#242 Stage 3: the Redis `:iri:` hash fallback is gone now the
+    index is Postgres-only).
     """
     if not version_ids or not query.strip():
         return []
@@ -36,58 +44,72 @@ async def semantic_search(
         log.warning("semantic_search_embed_failed", error=str(e))
         return []
 
+    vec_str = "[" + ",".join(f"{x:.8f}" for x in qvec) + "]"
+
+    # Query 1 — vector top-N, term_embeddings only (0 entity_index partition locks).
     try:
-        vec_str = "[" + ",".join(f"{x:.8f}" for x in qvec) + "]"
-        sql = text("""
+        vsql = text("""
             SELECT te.entity_iri AS iri, te.entity_type AS type,
                    te.version_id, v.ontology_id,
-                   1 - (te.embedding <=> CAST(:vec AS vector)) AS score,
-                   ei.primary_label, ei.short, ei.source
+                   1 - (te.embedding <=> CAST(:vec AS vector)) AS score
             FROM term_embeddings te
             JOIN versions v ON v.id = te.version_id
-            LEFT JOIN entity_index ei
-                   ON ei.version_id = te.version_id AND ei.iri = te.entity_iri
             WHERE te.version_id = ANY(:ids)
             ORDER BY te.embedding <=> CAST(:vec AS vector)
             LIMIT :lim
         """)
-        result = await db.execute(sql, {"vec": vec_str, "ids": version_ids, "lim": limit})
-        rows = result.all()
+        cand = (await db.execute(
+            vsql, {"vec": vec_str, "ids": version_ids, "lim": limit})).all()
     except Exception as e:
         log.warning("semantic_search_query_failed", error=str(e))
         return []
 
-    if not rows:
+    if not cand:
+        return []
+
+    # Query 2 — enrich the candidates from entity_index, keyed to their concrete
+    # (version_id, iri). version_id = ANY(<few>) prunes to just those partitions.
+    try:
+        vids = list({c.version_id for c in cand})
+        iris = list({c.iri for c in cand})
+        esql = text("""
+            SELECT version_id, iri, primary_label, short, source
+            FROM entity_index
+            WHERE version_id = ANY(:vids) AND iri = ANY(:iris)
+        """)
+        meta = {(m.version_id, m.iri): m
+                for m in (await db.execute(esql, {"vids": vids, "iris": iris})).all()}
+    except Exception as e:
+        log.warning("semantic_search_enrich_failed", error=str(e))
         return []
 
     seen_iris: set[str] = set()
     out: list[dict] = []
 
-    for row in rows:
+    for row in cand:
         iri = row.iri
         if iri in seen_iris:
             continue
-        seen_iris.add(iri)
-
-        # entity_index is the sole metadata source (#242 Stage 3). A row that didn't
-        # join (primary_label NULL) has no label to render — skip it.
-        if row.primary_label is None:
+        # entity_index is the sole metadata source; a candidate with no row (or NULL
+        # primary_label) has no label to render — skip it.
+        m = meta.get((row.version_id, iri))
+        if m is None or m.primary_label is None:
             continue
-        label = row.primary_label
-        short = row.short or ""
-        source = row.source or ""
+        seen_iris.add(iri)
 
         out.append({
             "iri": iri,
-            "label": label,
-            "short": short,
+            "label": m.primary_label,
+            "short": m.short or "",
             "type": row.type,
-            "source": source,
+            "source": m.source or "",
             "match_type": "semantic",
             "score": round(float(row.score), 4),
             "version_id": row.version_id,
             "ontology_id": row.ontology_id,
         })
+        if len(out) >= limit:
+            break
 
     return out
 
@@ -122,17 +144,14 @@ async def semantic_related(
     dialect = db.get_bind().dialect.name
     if dialect == "postgresql":
         vec_str = "[" + ",".join(f"{x:.8f}" for x in qvec) + "]"
-        onto_clause = "AND ei.ontology_id = ANY(:onts)" if ontology_ids else ""
-        sql = text(f"""
-            SELECT ei.iri, ei.primary_label, ei.labels, ei.short, ei.type,
-                   ei.ontology_id, o.title AS ontology_title, o.shortname AS ontology_shortname,
-                   ei.version_id,
-                   ei.source, ei.definitions,
+        # Query 1 — vector top-k over term_embeddings (+ versions for the optional
+        # ontology filter). No entity_index join → 0 of the 64 partition locks (#402).
+        onto_clause = "AND v.ontology_id = ANY(:onts)" if ontology_ids else ""
+        vsql = text(f"""
+            SELECT te.entity_iri AS iri, te.version_id,
                    1 - (te.embedding <=> CAST(:vec AS vector)) AS score
             FROM term_embeddings te
-            JOIN entity_index ei
-                 ON ei.version_id = te.version_id AND ei.iri = te.entity_iri
-            JOIN ontologies o ON o.id = ei.ontology_id
+            JOIN versions v ON v.id = te.version_id
             WHERE te.entity_type = :type
               AND te.version_id = ANY(:ids)
               {onto_clause}
@@ -142,8 +161,31 @@ async def semantic_related(
         params = {"vec": vec_str, "type": type, "ids": version_ids, "k": k}
         if ontology_ids:
             params["onts"] = ontology_ids
-        rows = (await db.execute(sql, params)).mappings().all()
-        return [{**r, "score": round(float(r["score"]), 4)} for r in rows]
+        cand = (await db.execute(vsql, params)).all()
+        if not cand:
+            return []
+        # Query 2 — enrich the k candidates from entity_index, keyed to their concrete
+        # (version_id, iri) so partition pruning limits it to those few partitions.
+        # INNER semantics preserved: a candidate with no entity_index row is dropped.
+        vids = list({c.version_id for c in cand})
+        iris = list({c.iri for c in cand})
+        esql = text("""
+            SELECT ei.version_id, ei.iri, ei.primary_label, ei.labels, ei.short,
+                   ei.type, ei.ontology_id, ei.source, ei.definitions,
+                   o.title AS ontology_title, o.shortname AS ontology_shortname
+            FROM entity_index ei
+            JOIN ontologies o ON o.id = ei.ontology_id
+            WHERE ei.version_id = ANY(:vids) AND ei.iri = ANY(:iris)
+        """)
+        meta = {(m["version_id"], m["iri"]): m for m in
+                (await db.execute(esql, {"vids": vids, "iris": iris})).mappings().all()}
+        out = []
+        for c in cand:
+            m = meta.get((c.version_id, c.iri))
+            if m is None:
+                continue
+            out.append({**m, "score": round(float(c.score), 4)})
+        return out
 
     # Non-Postgres (sqlite test lane): no pgvector operators, rank in Python.
     stmt = (
