@@ -15,6 +15,7 @@ from ontoexplorer.api.ontologies import (
     _row_has_language,
     _row_modified,
     _sort_rows,
+    _version_counts,
 )
 
 
@@ -95,6 +96,57 @@ def test_lean_row_caps_long_description():
     lean = _leanify_list_row(_full_row(description=long))
     assert len(lean["description"]) <= _LIST_DESC_CAP + 1  # +1 for the ellipsis
     assert lean["description"].endswith("…")
+
+
+# ── _version_counts: durable graph_counts fallback for aged-out Redis stats ──────
+
+_GC = {  # a durable versions.graph_counts payload (what the indexer writes, #399)
+    "triple_count": 3038498, "class_count": 85169, "object_property_count": 321,
+    "datatype_property_count": 0, "annotation_property_count": 168,
+    "individual_count": 48,
+}
+
+
+def test_version_counts_prefers_redis_stats_when_present():
+    # Cache warm: the Redis stats dict wins; graph_counts is not consulted.
+    s = {"class_count": 10, "property_count": 6, "object_property_count": 3,
+         "datatype_property_count": 2, "annotation_property_count": 1,
+         "individual_count": 4, "concept_count": 7, "triple_count": 100}
+    out = _version_counts(s, _GC, triple_col=100)
+    assert out["class_count"] == 10
+    assert out["property_count"] == 6
+    assert out["concept_count"] == 7
+    assert out["triple_count"] == 100
+
+
+def test_version_counts_falls_back_to_graph_counts_when_cache_empty():
+    # Cache aged out (empty stats): counts come from the durable column instead of
+    # going null — this is the "gene ontology" hits that showed no class count.
+    out = _version_counts({}, _GC, triple_col=3038498)
+    assert out["class_count"] == 85169
+    assert out["object_property_count"] == 321
+    assert out["annotation_property_count"] == 168
+    assert out["individual_count"] == 48
+    assert out["triple_count"] == 3038498
+    # property_count isn't in graph_counts → summed from the three sub-counts.
+    assert out["property_count"] == 321 + 0 + 168
+    # concept_count has no durable column → stays null when the cache is gone.
+    assert out["concept_count"] is None
+
+
+def test_version_counts_triple_count_last_resort_column():
+    # Neither cache nor graph_counts has triple_count → the versions.triple_count
+    # column is the final fallback (preserves the old behavior).
+    out = _version_counts({}, {}, triple_col=42)
+    assert out["triple_count"] == 42
+    assert out["class_count"] is None  # genuinely unknown → null, not fabricated
+
+
+def test_version_counts_all_sources_empty():
+    out = _version_counts({}, None, triple_col=None)
+    assert out["class_count"] is None
+    assert out["property_count"] is None
+    assert out["triple_count"] is None
 
 
 def test_lean_row_leaves_short_description_intact():
