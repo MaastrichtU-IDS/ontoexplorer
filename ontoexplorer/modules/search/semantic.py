@@ -13,6 +13,24 @@ from ontoexplorer.modules.search.embedder import embed_query
 
 log = structlog.get_logger()
 
+# Force a CUSTOM plan for the partitioned entity_index enrichment lookups.
+#
+# With a bound `version_id = ANY($1)` array, PostgreSQL switches the prepared
+# statement to a GENERIC plan after ~5 executions. A generic plan prunes partitions
+# only at execution time but still takes an AccessShareLock on ALL 64 entity_index
+# partitions (and their 12 indexes each) at setup — 832 partition locks per request,
+# regardless of how few versions the candidates span. Under concurrency that overflows
+# the shared lock table: the #402 failure (`out of shared memory / increase
+# max_locks_per_transaction`, ~54% of requests at 150 VU). The earlier split (#403)
+# did not help: EXPLAIN with inlined literals showed pruning (a one-shot custom plan),
+# but asyncpg sends a bound array → generic plan → all 64 locked.
+#
+# A custom plan prunes at PLAN time to just the candidates' partitions (measured on
+# dev via pg_locks: 832 → 234 partition locks for a fleet-wide top-20). SET LOCAL
+# scopes this to the current request transaction only; both query 1 (vector) and this
+# enrichment already run in that one transaction.
+_FORCE_CUSTOM_PLAN = text("SET LOCAL plan_cache_mode = force_custom_plan")
+
 
 async def semantic_search(
     query: str,
@@ -68,10 +86,12 @@ async def semantic_search(
         return []
 
     # Query 2 — enrich the candidates from entity_index, keyed to their concrete
-    # (version_id, iri). version_id = ANY(<few>) prunes to just those partitions.
+    # (version_id, iri). force_custom_plan makes version_id = ANY(<few>) prune to just
+    # those partitions instead of locking all 64 (see _FORCE_CUSTOM_PLAN, #402).
     try:
         vids = list({c.version_id for c in cand})
         iris = list({c.iri for c in cand})
+        await db.execute(_FORCE_CUSTOM_PLAN)
         esql = text("""
             SELECT version_id, iri, primary_label, short, source
             FROM entity_index
@@ -166,9 +186,12 @@ async def semantic_related(
             return []
         # Query 2 — enrich the k candidates from entity_index, keyed to their concrete
         # (version_id, iri) so partition pruning limits it to those few partitions.
+        # force_custom_plan is required for the bound version_id array to prune rather
+        # than lock all 64 partitions (see _FORCE_CUSTOM_PLAN, #402).
         # INNER semantics preserved: a candidate with no entity_index row is dropped.
         vids = list({c.version_id for c in cand})
         iris = list({c.iri for c in cand})
+        await db.execute(_FORCE_CUSTOM_PLAN)
         esql = text("""
             SELECT ei.version_id, ei.iri, ei.primary_label, ei.labels, ei.short,
                    ei.type, ei.ontology_id, ei.source, ei.definitions,
