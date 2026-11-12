@@ -91,8 +91,17 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_model: str = "nomic-embed-text"
     embedding_fallback_base_url: str = "http://localhost:8090/v1"
+    # Dedicated in-cluster QUERY embedder (a scalable llama.cpp tier, same model).
+    # When set, query embeddings try it FIRST, then fall through to the LiteLLM
+    # gateway, then the single-replica resilience fallback (#406). Document/corpus
+    # embeddings do NOT use it — they stay on the gateway. Empty = disabled (queries
+    # use the gateway as before).
+    embedding_query_base_url: str = ""
     embedding_timeout_s: float = 30.0
     embedding_fallback_timeout_s: float = 120.0
+    # Query-embedding cache (Redis): repeated/popular queries skip the embed call
+    # entirely (#406). Keyed on (model_rev, query_prefix, text). 0 disables it.
+    embedding_query_cache_ttl_s: int = 3600
     embedding_dim: int = 768
     embedding_doc_prefix: str = "search_document: "
     embedding_query_prefix: str = "search_query: "

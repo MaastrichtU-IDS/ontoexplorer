@@ -8,6 +8,7 @@ from ontoexplorer.modules.search import embed_client as ec
 
 PRIMARY = "http://primary.test/v1"
 FALLBACK = "http://fallback.test/v1"
+QUERY_TIER = "http://embed-query.test/v1"
 DIM = 768
 
 
@@ -16,6 +17,7 @@ class _S:
     embedding_api_key = "sk-test"
     embedding_model = "nomic-embed-text"
     embedding_fallback_base_url = FALLBACK
+    embedding_query_base_url = ""  # off by default; set in query-routing tests
     embedding_timeout_s = 5.0
     embedding_fallback_timeout_s = 7.0
     embedding_dim = DIM
@@ -184,3 +186,45 @@ def test_embed_batch_rejects_zero_vector(wire):
     st["handler"] = lambda r, b: _ok([[0.0] * DIM for _ in b["input"]])
     with pytest.raises(ec.EmbeddingError):
         ec.embed_batch(["a"], prefix="")
+
+
+# ── #406: query embeds prefer the dedicated embed-query tier ─────────────────────
+
+class _SQ(_S):
+    embedding_query_base_url = QUERY_TIER
+
+
+def test_query_embed_prefers_query_tier(wire, monkeypatch):
+    calls, st = wire
+    monkeypatch.setattr(ec, "get_settings", lambda: _SQ())
+    st["handler"] = lambda r, b: _ok([_vec() for _ in b["input"]])
+    ec.embed_batch(["q"], prefix="search_query: ", query=True)
+    # First hit is the dedicated query tier, with no auth header.
+    assert calls[0][0] == QUERY_TIER + "/embeddings"
+    assert "authorization" not in calls[0][2]
+
+
+def test_query_embed_falls_over_query_tier_to_gateway(wire, monkeypatch):
+    calls, st = wire
+    monkeypatch.setattr(ec, "get_settings", lambda: _SQ())
+
+    def h(r, b):
+        if str(r.url).startswith(QUERY_TIER):
+            return httpx.Response(503, text="overloaded")
+        return _ok([_vec()])
+
+    st["handler"] = h
+    out = ec.embed_batch(["q"], prefix="search_query: ", query=True)
+    assert len(out) == 1
+    hosts = [c[0] for c in calls]
+    assert hosts[0] == QUERY_TIER + "/embeddings"
+    assert hosts[-1] == PRIMARY + "/embeddings"  # fell over to the gateway
+
+
+def test_doc_embed_ignores_query_tier(wire, monkeypatch):
+    calls, st = wire
+    monkeypatch.setattr(ec, "get_settings", lambda: _SQ())
+    st["handler"] = lambda r, b: _ok([_vec() for _ in b["input"]])
+    ec.embed_batch(["d"], prefix="search_document: ")  # query defaults to False
+    assert QUERY_TIER not in calls[0][0]
+    assert calls[0][0] == PRIMARY + "/embeddings"

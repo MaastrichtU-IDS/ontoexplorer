@@ -132,17 +132,79 @@ def test_embed_texts_uses_doc_prefix(monkeypatch):
     assert calls == [(["a", "b"], "search_document: "), (["c"], "search_document: ")]
 
 
-def test_embed_query_uses_query_prefix(monkeypatch):
+class _SettingsStub:
+    embedding_query_prefix = "search_query: "
+    embedding_query_cache_ttl_s = 0  # cache off for deterministic call assertions
+    embedding_dim = 768
+
+
+def test_embed_query_uses_query_prefix_and_query_route(monkeypatch):
     from ontoexplorer.modules.search import embed_client, embedder
     calls = []
 
-    def fake(texts, *, prefix):
-        calls.append((list(texts), prefix))
+    def fake(texts, *, prefix, query=False):
+        calls.append((list(texts), prefix, query))
         return [[0.5, 0.5]]
 
+    monkeypatch.setattr(embedder, "get_settings", lambda: _SettingsStub())
     monkeypatch.setattr(embed_client, "embed_batch", fake)
     assert embedder.embed_query("x") == [0.5, 0.5]
-    assert calls == [(["x"], "search_query: ")]
+    # query=True routes to the dedicated query tier first (#406).
+    assert calls == [(["x"], "search_query: ", True)]
+
+
+def test_embed_query_cache_hit_skips_embed(monkeypatch):
+    """A cached query vector is returned without calling the embed backend (#406)."""
+    from ontoexplorer.modules.search import embed_client, embedder
+    import json as _json
+
+    class _S:
+        embedding_query_prefix = "search_query: "
+        embedding_query_cache_ttl_s = 3600
+        embedding_dim = 768
+
+    cached = [0.1] * 768
+
+    class _R:
+        def get(self, k):
+            return _json.dumps(cached)
+        def setex(self, *a):
+            raise AssertionError("should not write on a cache hit")
+
+    monkeypatch.setattr(embedder, "get_settings", lambda: _S())
+    monkeypatch.setattr("ontoexplorer.modules.search.indexer._get_redis", lambda: _R())
+
+    def boom(*a, **k):
+        raise AssertionError("embed backend must not be called on a cache hit")
+
+    monkeypatch.setattr(embed_client, "embed_batch", boom)
+    assert embedder.embed_query("heart") == cached
+
+
+def test_embed_query_cache_miss_embeds_and_stores(monkeypatch):
+    from ontoexplorer.modules.search import embed_client, embedder
+
+    class _S:
+        embedding_query_prefix = "search_query: "
+        embedding_query_cache_ttl_s = 3600
+        embedding_dim = 768
+
+    stored = {}
+
+    class _R:
+        def get(self, k):
+            return None  # miss
+        def setex(self, k, ttl, v):
+            stored[k] = (ttl, v)
+
+    vec = [0.2] * 768
+    monkeypatch.setattr(embedder, "get_settings", lambda: _S())
+    monkeypatch.setattr("ontoexplorer.modules.search.indexer._get_redis", lambda: _R())
+    monkeypatch.setattr(embed_client, "embed_batch", lambda *a, **k: [vec])
+    assert embedder.embed_query("heart") == vec
+    assert len(stored) == 1
+    (_k, (ttl, _v)), = stored.items()
+    assert ttl == 3600
 
 
 def test_embedder_has_no_fastembed_import():
