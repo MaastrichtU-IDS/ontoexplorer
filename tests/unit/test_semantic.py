@@ -56,15 +56,22 @@ def _meta(iri, version_id, primary_label, short="", source=""):
 
 
 def _two_call_db(cand_rows, meta_rows):
-    """A db whose two execute() calls return the vector candidates then the
-    enrichment rows (semantic_search now issues two queries, #402)."""
+    """A db whose execute() calls return the vector candidates, then the no-op
+    `SET LOCAL plan_cache_mode = force_custom_plan` (#402), then the enrichment rows.
+    semantic_search issues the vector query, forces a custom plan, then enriches."""
     db = AsyncMock()
     vec_result = MagicMock()
     vec_result.all.return_value = cand_rows
     enrich_result = MagicMock()
     enrich_result.all.return_value = meta_rows
-    db.execute.side_effect = [vec_result, enrich_result]
+    db.execute.side_effect = [vec_result, MagicMock(), enrich_result]
     return db
+
+
+def _executed_sql(db) -> str:
+    """All SQL text passed to db.execute, joined — for asserting the force_custom_plan
+    SET actually runs before enrichment (#402)."""
+    return "\n".join(str(c.args[0]) for c in db.execute.call_args_list if c.args)
 
 
 @pytest.mark.asyncio
@@ -92,6 +99,9 @@ async def test_semantic_search_deduplicates_iris(monkeypatch):
     assert result[0]["iri"] == iri
     assert result[0]["label"] == "heart"
     assert result[0]["score"] == 0.95
+    # The enrichment must run under a forced custom plan so the bound version_id array
+    # prunes partitions instead of locking all 64 (#402).
+    assert "force_custom_plan" in _executed_sql(db)
 
 
 @pytest.mark.asyncio
@@ -150,7 +160,8 @@ async def test_semantic_related_pg_splits_and_shapes(monkeypatch):
     bind = MagicMock()
     bind.dialect.name = "postgresql"
     db.get_bind = MagicMock(return_value=bind)
-    db.execute.side_effect = [vec_result, enrich_result]
+    # vector, then SET LOCAL force_custom_plan (#402), then enrichment
+    db.execute.side_effect = [vec_result, MagicMock(), enrich_result]
 
     out = await semantic.semantic_related(
         db, "alpha", "class", ["v1"], ["o1"], 10)
@@ -160,6 +171,7 @@ async def test_semantic_related_pg_splits_and_shapes(monkeypatch):
     assert out[0]["definitions"] == ["an alpha"]
     assert out[0]["ontology_title"] == "Onto"
     assert out[0]["score"] == 0.9
+    assert "force_custom_plan" in _executed_sql(db)  # the #402 lock fix ran
 
 
 @pytest.mark.asyncio
