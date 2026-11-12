@@ -22,7 +22,12 @@ _BACKOFF_S = (0.5, 1.0)
 # Number of times the fallback host served a request (observability).
 FALLBACK_COUNT = 0
 
-_client = httpx.Client()
+# A single shared sync client. Query embeds run concurrently (one per in-flight
+# search, via asyncio.to_thread), so the default keepalive pool (20) would cap
+# throughput against the scaled embed-query tier (#406); widen it.
+_client = httpx.Client(
+    limits=httpx.Limits(max_connections=200, max_keepalive_connections=100)
+)
 
 _TOO_LARGE_MARKERS = (
     "too large",
@@ -98,45 +103,60 @@ def _post(base_url: str, api_key: str, payload: dict, timeout: float, retries: i
             attempt += 1
 
 
-def embed_batch(texts: list[str], *, prefix: str) -> list[list[float]]:
+def _endpoints(s, *, query: bool) -> list[tuple[str, str, float, int]]:
+    """Ordered (base_url, api_key, timeout_s, retries) to try, in priority order.
+
+    Query embeds prefer the dedicated in-cluster embed-query tier (when configured),
+    then the LiteLLM gateway, then the single-replica resilience fallback (#406). Doc
+    / corpus embeds skip the query tier and go to the gateway first. Each tier's first
+    error fails over to the next, so a down/slow embed-query never breaks search.
+    """
+    eps: list[tuple[str, str, float, int]] = []
+    if query and s.embedding_query_base_url:
+        # retries=0: fail over to the gateway immediately rather than retrying a
+        # saturated query tier.
+        eps.append((s.embedding_query_base_url, "", s.embedding_timeout_s, 0))
+    if s.embedding_base_url:
+        eps.append((s.embedding_base_url, s.embedding_api_key, s.embedding_timeout_s, NUM_RETRIES))
+    eps.append((s.embedding_fallback_base_url, "", s.embedding_fallback_timeout_s, 0))
+    return eps
+
+
+def embed_batch(texts: list[str], *, prefix: str, query: bool = False) -> list[list[float]]:
     global FALLBACK_COUNT
     if not texts:
         return []
     s = get_settings()
     payload = {"model": s.embedding_model, "input": [prefix + t for t in texts]}
+    endpoints = _endpoints(s, query=query)
 
     def _split() -> list[list[float]]:
         mid = len(texts) // 2
-        return embed_batch(texts[:mid], prefix=prefix) + embed_batch(texts[mid:], prefix=prefix)
+        return (embed_batch(texts[:mid], prefix=prefix, query=query)
+                + embed_batch(texts[mid:], prefix=prefix, query=query))
 
     vectors = None
-    primary_err = None
-    if s.embedding_base_url:
+    errors: list[str] = []
+    for i, (base_url, api_key, timeout, retries) in enumerate(endpoints):
         try:
-            vectors = _post(
-                s.embedding_base_url, s.embedding_api_key, payload, s.embedding_timeout_s, NUM_RETRIES
-            )
-        except _TooLarge:
+            vectors = _post(base_url, api_key, payload, timeout, retries)
+            if i > 0:
+                FALLBACK_COUNT += 1
+                logger.warning(
+                    "embedding tier %d failed (%s); served by %s (fallback count=%d)",
+                    i, "; ".join(errors), base_url, FALLBACK_COUNT,
+                )
+            break
+        except _TooLarge as e:
+            # A too-large BATCH is fixed by splitting, not by another host.
             if len(texts) > 1:
                 return _split()
-            primary_err = "single input too large"
+            errors.append(f"{base_url}: single input too large ({e})")
         except _HostError as e:
-            primary_err = str(e)
+            errors.append(str(e))
 
     if vectors is None:
-        if s.embedding_base_url:
-            FALLBACK_COUNT += 1
-            logger.warning(
-                "embedding primary failed (%s); using fallback (count=%d)", primary_err, FALLBACK_COUNT
-            )
-        try:
-            vectors = _post(s.embedding_fallback_base_url, "", payload, s.embedding_fallback_timeout_s, 0)
-        except _TooLarge as e:
-            if len(texts) > 1:
-                return _split()
-            raise EmbeddingError(f"single input too large: {e}") from e
-        except _HostError as e:
-            raise EmbeddingError(f"embedding failed (primary: {primary_err}; fallback: {e})") from e
+        raise EmbeddingError("embedding failed (" + "; ".join(errors) + ")")
 
     if len(vectors) != len(texts):
         raise EmbeddingError(f"expected {len(texts)} vectors, got {len(vectors)}")

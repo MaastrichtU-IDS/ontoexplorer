@@ -21,8 +21,12 @@ from ontoexplorer.models.db import ApiKey, User  # noqa: E402
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 
-def _fake_embed_batch(texts, *, prefix):
-    """Deterministic fake 768-dim vector per text (stand-in for the HTTP embed client)."""
+def _fake_embed_batch(texts, *, prefix, query=False):
+    """Deterministic fake 768-dim vector per text (stand-in for the HTTP embed client).
+
+    Accepts the #406 `query` flag (query vs doc routing) and ignores it — the fake
+    returns the same deterministic vector regardless of which tier would serve it.
+    """
     import hashlib
 
     out = []

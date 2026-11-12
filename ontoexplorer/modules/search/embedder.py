@@ -84,5 +84,40 @@ def embed_texts(texts: list[str], batch_size: int = EMBED_BATCH_SIZE) -> list[li
     return out
 
 
+def _query_cache_key(prefix: str, text: str) -> str:
+    h = hashlib.sha256(f"{MODEL_REV}\x00{prefix}\x00{text}".encode()).hexdigest()
+    return f"qemb:{h}"
+
+
 def embed_query(text: str) -> list[float]:
-    return embed_client.embed_batch([text], prefix=get_settings().embedding_query_prefix)[0]
+    """Embed a search query, preferring the dedicated in-cluster query tier (#406),
+    with a best-effort Redis cache so repeated/popular queries skip the embed call.
+
+    Document/corpus embedding uses embed_texts (gateway path) and is NOT cached here.
+    """
+    s = get_settings()
+    prefix = s.embedding_query_prefix
+    ttl = s.embedding_query_cache_ttl_s
+
+    key = None
+    if ttl > 0:
+        key = _query_cache_key(prefix, text)
+        try:
+            from ontoexplorer.modules.search.indexer import _get_redis
+            raw = _get_redis().get(key)
+            if raw:
+                vec = json.loads(raw)
+                if isinstance(vec, list) and len(vec) == s.embedding_dim:
+                    return vec
+        except Exception:  # cache is best-effort — fall through to a live embed
+            key = key if ttl > 0 else None
+
+    vec = embed_client.embed_batch([text], prefix=prefix, query=True)[0]
+
+    if key is not None:
+        try:
+            from ontoexplorer.modules.search.indexer import _get_redis
+            _get_redis().setex(key, ttl, json.dumps(vec))
+        except Exception:
+            pass
+    return vec
