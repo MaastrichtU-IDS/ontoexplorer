@@ -354,3 +354,120 @@ async def test_github_inbound_no_secret_configured(client):
             },
         )
     assert resp.status_code == 501
+
+
+@pytest.mark.anyio
+async def test_github_inbound_matches_github_pages_source(client, db_session):
+    """A push matches an ontology registered from its GitHub Pages URL (not raw).
+
+    ontostart ontologies are registered from https://{owner}.github.io/{repo}/...,
+    which never equals a raw.githubusercontent.com URL — the handler must derive
+    the Pages candidate from the push for them to re-ingest.
+    """
+    from unittest.mock import MagicMock, patch
+
+    ont = Ontology(iri="https://w3id.org/ontostart/pro/",
+                   owner_id="owner-xyz", groups=["obo"])
+    db_session.add(ont)
+    await db_session.flush()
+    ver = OntologyVersion(
+        ontology_id=ont.id,
+        minio_key="test/pro.nt",
+        sha256="pagesdead",
+        format="ntriples",
+        status="ready",
+        # registered under GitHub Pages, NOT raw.githubusercontent.com
+        source_url="https://micheldumontier.github.io/ontostart/pro/versions/latest/pro.nt",
+    )
+    db_session.add(ver)
+    await db_session.commit()
+
+    payload = {
+        "ref": "refs/heads/main",
+        "repository": {"full_name": "micheldumontier/ontostart"},
+        "commits": [{"added": [], "modified": ["pro/versions/latest/pro.nt"], "removed": []}],
+    }
+    body = _json.dumps(payload).encode()
+    secret = "test-gh-secret"
+    sig = _gh_sig(secret, body)
+
+    mock_ingest = MagicMock()
+    mock_ingest.delay = MagicMock()
+    with (
+        patch("ontoexplorer.api.inbound.get_settings",
+              return_value=MagicMock(github_webhook_secret=secret)),
+        patch("ontoexplorer.api.inbound.ingest_ontology", mock_ingest),
+    ):
+        resp = await client.post(
+            "/api/v1/inbound/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-GitHub-Event": "push",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+    assert resp.status_code == 200
+    assert resp.json()["queued"] == 1
+    mock_ingest.delay.assert_called_once_with(
+        url="https://micheldumontier.github.io/ontostart/pro/versions/latest/pro.nt",
+        owner_id="owner-xyz",
+        groups=["obo"],
+    )
+
+
+@pytest.mark.anyio
+async def test_github_inbound_matches_user_site_pages_source(client, db_session):
+    """A push to a {owner}.github.io repo matches a Pages source at the domain root.
+
+    User/org site repos serve from the domain root (no /{repo}/ segment), and the
+    Pages host is lowercased even when the repo owner login is mixed-case.
+    """
+    from unittest.mock import MagicMock, patch
+
+    ont = Ontology(iri="https://acme.github.io/onto.ttl", owner_id="u1", groups=[])
+    db_session.add(ont)
+    await db_session.flush()
+    ver = OntologyVersion(
+        ontology_id=ont.id,
+        minio_key="test/u.ttl",
+        sha256="usersite",
+        format="turtle",
+        status="ready",
+        source_url="https://acme.github.io/vocab/onto.ttl",
+    )
+    db_session.add(ver)
+    await db_session.commit()
+
+    payload = {
+        "ref": "refs/heads/main",
+        "repository": {"full_name": "Acme/acme.github.io"},
+        "commits": [{"added": ["vocab/onto.ttl"], "modified": [], "removed": []}],
+    }
+    body = _json.dumps(payload).encode()
+    secret = "s"
+    sig = _gh_sig(secret, body)
+
+    mock_ingest = MagicMock()
+    mock_ingest.delay = MagicMock()
+    with (
+        patch("ontoexplorer.api.inbound.get_settings",
+              return_value=MagicMock(github_webhook_secret=secret)),
+        patch("ontoexplorer.api.inbound.ingest_ontology", mock_ingest),
+    ):
+        resp = await client.post(
+            "/api/v1/inbound/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-GitHub-Event": "push",
+                "X-Hub-Signature-256": sig,
+            },
+        )
+    assert resp.status_code == 200
+    assert resp.json()["queued"] == 1
+    mock_ingest.delay.assert_called_once_with(
+        url="https://acme.github.io/vocab/onto.ttl",
+        owner_id="u1",
+        groups=[],
+    )

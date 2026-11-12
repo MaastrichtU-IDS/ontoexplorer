@@ -59,11 +59,27 @@ async def github_webhook(
     if not changed_paths:
         return {"queued": 0}
 
-    # Build raw GitHub URLs for each changed path
-    candidate_urls = [
-        f"https://raw.githubusercontent.com/{repo_full_name}/{ref_name}/{path}"
-        for path in changed_paths
-    ]
+    # Build candidate source URLs for each changed path. A file in a repo is
+    # reachable two ways, and an ontology may be registered under either:
+    #   1. raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}
+    #   2. its GitHub Pages URL, when the repo publishes Pages — e.g. ontostart
+    #      ontologies are registered from https://{owner}.github.io/{repo}/{path}
+    #      (a Pages source_url never equals a raw one, so without this a push to a
+    #      Pages-hosted ontology would silently match nothing).
+    # Pages hostnames are always lowercased; the path keeps its case. A user/org
+    # site repo ("{owner}.github.io") serves from the domain root, every other repo
+    # under /{repo}/. We can't know a custom CNAME domain, so those stay raw-only.
+    owner, _, repo = repo_full_name.partition("/")
+    gh_pages_host = f"{owner.lower()}.github.io"
+    candidate_urls: list[str] = []
+    for path in changed_paths:
+        candidate_urls.append(
+            f"https://raw.githubusercontent.com/{repo_full_name}/{ref_name}/{path}"
+        )
+        if repo.lower() == gh_pages_host:
+            candidate_urls.append(f"https://{gh_pages_host}/{path}")
+        elif repo:
+            candidate_urls.append(f"https://{gh_pages_host}/{repo}/{path}")
 
     # Find registered ontologies whose source_url matches a changed file, and
     # carry the owner + groups into the re-ingest. Without owner_id the ingest
