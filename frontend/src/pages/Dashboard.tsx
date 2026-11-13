@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import React, { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api, slugFromIri, type MetaCandidate, type Ontology, type OntologyVersion } from '../lib/api'
 import { useAuth } from '../hooks/useAuth'
 import ReindexWithReasoner from '../components/ReindexWithReasoner'
@@ -894,6 +894,10 @@ export default function Dashboard() {
   const [search, setSearch] = useState('')
   const [sortCol, setSortCol] = useState<SortCol>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
+  // ?attention=1 (from the nav "needs your attention" badge) scopes the list to the
+  // caller's ontologies that have a held version, so the badge is a direct door.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const attentionOnly = searchParams.get('attention') === '1'
 
   // Server-authoritative list, scoped to the caller's owned/maintained set and
   // paginated on scroll — a prolific owner can have thousands of ontologies, so a
@@ -908,6 +912,7 @@ export default function Dashboard() {
       dir: sortDir,
       langs: [],
       mine: true,
+      attention: attentionOnly,
     })
 
   function handleSort(col: SortCol) {
@@ -938,6 +943,30 @@ export default function Dashboard() {
           + Add Ontology
         </Link>
       </div>
+
+      {/* "Needs your attention" filter banner (from the nav badge → ?attention=1):
+          names the active filter and offers a one-click way back to the full list. */}
+      {attentionOnly && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.35)',
+          borderRadius: 'var(--radius)', padding: '8px 12px', marginBottom: '1rem',
+          fontSize: 'var(--font-size-sm)',
+        }}>
+          <span style={{ color: 'var(--orange)', fontWeight: 600 }}>⚠ Needs your attention</span>
+          <span style={{ color: 'var(--text-muted)' }}>
+            Showing{typeof total === 'number' ? ` the ${total}` : ''} ontolog{total === 1 ? 'y' : 'ies'} with a version held for review.
+          </span>
+          <button
+            onClick={() => setSearchParams(prev => {
+              const p = new URLSearchParams(prev); p.delete('attention'); return p
+            }, { replace: true })}
+            style={{ marginLeft: 'auto', color: 'var(--accent)', background: 'transparent', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: 'var(--font-size-sm)' }}
+          >
+            Show all ontologies
+          </button>
+        </div>
+      )}
 
       {/* Search bar */}
       <div style={{
@@ -1000,7 +1029,9 @@ export default function Dashboard() {
                   colSpan={1}
                   style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}
                 >
-                  {q ? 'No ontologies match your filter.' : 'No ontologies yet. Use "+ Add Ontology" to get started.'}
+                  {attentionOnly
+                    ? 'Nothing needs your attention right now.'
+                    : q ? 'No ontologies match your filter.' : 'No ontologies yet. Use "+ Add Ontology" to get started.'}
                 </td>
               </tr>
             )}
