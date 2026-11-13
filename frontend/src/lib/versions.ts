@@ -50,12 +50,18 @@ export function versionLabel(
   const token = versionToken(v.version_iri)
   const primary = token || v.version_iri || v.id.slice(0, 8)
 
+  // Include the TIME, not just the date: re-ingests (polling, the inbound webhook)
+  // routinely produce several versions of the same version_iri on the same day, and
+  // a date-only label makes them indistinguishable — you can't tell which to keep or
+  // delete. Minute precision is enough to tell same-day versions apart.
   const date = v.created_at
-    ? new Date(v.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+    ? new Date(v.created_at).toLocaleString(undefined, {
+        year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+      })
     : ''
 
   const parts: string[] = [primary]
-  if (token && date) parts.push(date)   // show the date too when the primary is a version number
+  if (token && date) parts.push(date)   // show the date+time too when the primary is a version number
   if (typeof v.triple_count === 'number') parts.push(`${v.triple_count.toLocaleString()} triples`)
   if (opts.isDefault) parts.push('current')
   else if (v.status && v.status !== 'ready') parts.push(v.status)
