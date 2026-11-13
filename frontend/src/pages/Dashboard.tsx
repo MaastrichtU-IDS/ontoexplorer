@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, slugFromIri, type MetaCandidate, type Ontology, type OntologyVersion } from '../lib/api'
 import { useAuth } from '../hooks/useAuth'
@@ -404,7 +404,10 @@ export function HeldFixPanel(
     const opts: { value: string; source: string }[] = []
     for (const c of cs) {
       for (const raw of c.values ?? []) {
-        const t = (raw ?? '').trim()
+        // Candidate values come back as structured objects ({value,is_iri,language})
+        // from the backend, but older payloads/tests used bare strings — unwrap both.
+        // (Calling .trim() on the object was the Dashboard-blanks crash.)
+        const t = (typeof raw === 'string' ? raw : raw?.value ?? '').trim()
         if (t && !seen.has(t)) { seen.add(t); opts.push({ value: t, source: c.label || c.iri }) }
       }
     }
@@ -501,8 +504,17 @@ export function HeldFixPanel(
 export function VersionManager({ ontology, versions }: { ontology: Ontology; versions: OntologyVersion[] }) {
   const qc = useQueryClient()
   // Auto-expand when a version needs the contributor's attention, so the fix panel
-  // isn't hidden behind the collapsed "▸ N versions" toggle.
-  const [open, setOpen] = useState(() => versions.some(v => v.status === 'needs_review' || v.auto_retired_held))
+  // isn't hidden behind the collapsed "▸ N versions" toggle. `versions` arrives from
+  // an async query, so this must be reactive: a one-shot useState initializer runs
+  // while `versions` is still [] and never re-opens once the data loads (the bug that
+  // left a held version buried). Open via an effect when attention is needed, but
+  // stop once the user has toggled, so they can still collapse it.
+  const needsAttention = versions.some(v => v.status === 'needs_review' || v.auto_retired_held)
+  const [open, setOpen] = useState(false)
+  const [userToggled, setUserToggled] = useState(false)
+  useEffect(() => {
+    if (needsAttention && !userToggled) setOpen(true)
+  }, [needsAttention, userToggled])
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -540,8 +552,11 @@ export function VersionManager({ ontology, versions }: { ontology: Ontology; ver
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', minWidth: 0 }}>
-      <button onClick={() => setOpen(o => !o)} style={linkBtn}>
+      <button onClick={() => { setUserToggled(true); setOpen(o => !o) }} style={linkBtn}>
         {open ? '▾' : '▸'} {versions.length} version{versions.length === 1 ? '' : 's'}
+        {!open && needsAttention && (
+          <span style={{ color: 'var(--orange)', fontWeight: 600 }}> · needs your attention</span>
+        )}
       </button>
       {error && <span style={{ color: 'var(--red-soft)', fontSize: 11 }}>{error}</span>}
       {open && (
@@ -627,6 +642,11 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
   const versions = versionsData?.versions
   const latest: OntologyVersion | undefined =
     versions?.find(v => v.is_default) ?? versions?.[0]
+  // Row-level flag so the owner can see WHICH ontology the nav "needs attention"
+  // badge refers to — without expanding the versions list to find it.
+  const needsAttention = !!versions?.some(
+    v => v.status === 'needs_review' || v.auto_retired_held,
+  )
 
   const { data: statsData } = useQuery({
     queryKey: ['version-stats', ontology.id, latest?.id],
@@ -688,6 +708,18 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
                 {name}
               </Link>
               <IriChip iri={ontology.iri} />
+              {needsAttention && (
+                <span
+                  role="status"
+                  aria-label="This ontology has a version that needs your attention"
+                  style={{
+                    padding: '0.05rem 0.45rem', borderRadius: 999, fontSize: '0.7rem',
+                    fontWeight: 700, color: 'var(--bg)', background: 'var(--orange)',
+                  }}
+                >
+                  Needs your attention
+                </span>
+              )}
             </div>
 
             {/* Editable fields grid */}

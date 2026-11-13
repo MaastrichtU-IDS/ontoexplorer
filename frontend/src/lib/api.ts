@@ -756,11 +756,20 @@ export interface OntologyMetaResolved {
   used_in_project: string[]
 }
 
+// One value a candidate predicate carries. The backend (meta_profile/detector.py)
+// emits structured objects ({value, is_iri, language}); older payloads/tests used
+// bare strings, so consumers must handle both (unwrap with `typeof v === 'string'`).
+export interface MetaCandidateValue {
+  value: string
+  is_iri?: boolean
+  language?: string | null
+}
+
 // One candidate property for a metadata role (from GET …/meta/candidates):
 // the predicate present in the file, its values, and a display label.
 export interface MetaCandidate {
   iri: string
-  values: string[]
+  values: Array<string | MetaCandidateValue>
   label: string | null
 }
 

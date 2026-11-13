@@ -60,6 +60,22 @@ describe('HeldFixPanel title property-chooser', () => {
     await waitFor(() => expect(onDone).toHaveBeenCalled())
   })
 
+  it('renders title candidates whose values are structured objects (no blank-screen crash)', async () => {
+    // The real backend (meta_profile/detector.py) returns each value as an object
+    // {value,is_iri,language}, not a bare string. The chooser used to call .trim()
+    // directly on it → "raw.trim is not a function" → React unmounts → blank screen.
+    mockCandidates.mockResolvedValue({
+      version_id: 'v1',
+      title: [{
+        iri: 'http://purl.org/dc/terms/title',
+        values: [{ value: 'Process Roles Ontology (PRO)', is_iri: false, language: null }],
+        label: null,
+      }],
+    })
+    wrap(held(['no title']))
+    expect(await screen.findByText(/Process Roles Ontology \(PRO\)/)).toBeInTheDocument()
+  })
+
   it('falls back to the manual hint when the file has no title candidates', async () => {
     mockCandidates.mockResolvedValue({ version_id: 'v1', title: [] })
     wrap(held(['no title']))

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { VersionManager } from './Dashboard'
 import type { Ontology, OntologyVersion } from '../lib/api'
@@ -53,5 +53,32 @@ describe('VersionManager reactivate', () => {
   it('offers no reactivate control for an ordinary deprecated version', () => {
     wrap([retired({ auto_retired_held: false }), retired({ id: 'v2', status: 'ready', auto_retired_held: false })])
     expect(screen.queryByRole('button', { name: 'reactivate' })).toBeNull()
+  })
+
+  it('auto-expands when a held version arrives AFTER mount (async versions query)', async () => {
+    // Regression: the open state used a one-shot useState initializer that ran while
+    // `versions` was still [] (query pending) and never re-opened once data loaded,
+    // leaving the held version buried behind the collapsed "▸ N versions" toggle.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const ui = (versions: OntologyVersion[]) => (
+      <QueryClientProvider client={qc}>
+        <VersionManager ontology={ontology} versions={versions} />
+      </QueryClientProvider>
+    )
+    const { rerender } = render(ui([]))
+    expect(screen.queryByText(/set aside after inactivity/)).toBeNull()
+
+    // Versions resolve with a held draft → must auto-expand on its own.
+    await act(async () => { rerender(ui([retired()])) })
+    expect(await screen.findByText(/set aside after inactivity/)).toBeInTheDocument()
+  })
+
+  it('shows a collapsed "needs your attention" hint after the user collapses the list', async () => {
+    wrap([retired()])
+    // Auto-expanded; collapsing should still flag that attention is needed.
+    await screen.findByText(/set aside after inactivity/)
+    fireEvent.click(screen.getByRole('button', { name: /version/ }))
+    expect(screen.getByText(/needs your attention/)).toBeInTheDocument()
+    expect(screen.queryByText(/set aside after inactivity/)).toBeNull()
   })
 })
