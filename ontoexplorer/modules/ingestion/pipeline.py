@@ -146,6 +146,20 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     if existing_version:
         log.info("duplicate_detected", sha256=sha256, existing_version_id=existing_version.id)
         metrics.ontologies_ingested_total.labels(format=fmt.value, duplicate="true").inc()
+        # A byte-identical re-ingest creates no new version, so the post-commit
+        # supersede below never runs — a *static* pile of held drafts of this
+        # release (the content stopped changing while the quality gate kept
+        # holding it, so every re-push is now a dup) would never collapse.
+        # Collapse it here too: keep the matched version, drop any OTHER still-
+        # held draft of the same version_iri. Best-effort; a cleanup hiccup must
+        # never fail the (successful) dedup.
+        try:
+            await _supersede_stale_held_versions(
+                db, existing_version.ontology_id, existing_version.version_iri,
+                str(existing_version.id),
+            )
+        except Exception:
+            log.warning("supersede_on_duplicate_failed", exc_info=True)
         return IngestionResult(
             ontology_id=existing_version.ontology_id,
             version_id=existing_version.id,
