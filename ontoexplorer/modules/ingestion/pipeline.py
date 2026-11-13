@@ -374,6 +374,14 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
 
     await db.commit()
 
+    # ── Supersede any still-held draft of this exact version_iri ──────────────
+    # A re-ingest (update polling / the inbound webhook) of an ontology whose prior
+    # version of this version_iri was never published (status needs_review) would
+    # otherwise STACK a second held version with the same label; they pile up on every
+    # push. Replace instead: drop the prior held draft(s) of this version_iri now that
+    # fresher content for the same release has landed. Best-effort; never fails ingest.
+    await _supersede_stale_held_versions(db, ontology_id, version_iri, version_id)
+
     # ── Step 7: Extract FAIR metadata → metadata store ────────────────────────────────
     ontology_iri = canonical_iri or provisional_iri
     await _write_fair_metadata(
@@ -425,6 +433,70 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
         import_results=import_results,
         warnings=warnings,
     )
+
+
+async def _supersede_stale_held_versions(
+    db: AsyncSession, ontology_id: str, version_iri: str | None, keep_version_id: str,
+) -> list[str]:
+    """Hard-delete any still-held (``needs_review``) version that shares ``version_iri``
+    with the version just ingested, so a re-ingest REPLACES a never-published draft of
+    that release instead of stacking a duplicate. Without this, repeated pushes (via
+    update polling or the inbound GitHub webhook) to an ontology that keeps failing the
+    quality gate (e.g. no title) accumulate multiple held versions with the identical
+    version label, which the owner can't tell apart.
+
+    Scope is deliberately narrow and safe:
+    - **only** ``needs_review`` drafts — never a published ``ready`` version (those are
+      protected, as elsewhere), and never an in-flight ``ingested`` one (a concurrent run);
+    - **no-op** when the new version has no ``version_iri`` (can't identify a release —
+      matching NULLs would sweep unrelated drafts);
+    - **best-effort** — a cleanup hiccup must never fail the ingest, and if the artifact
+      purge can't be queued the row is left in place rather than orphaning its graph/object.
+
+    Mirrors ``_purge_version``'s ordering (queue artifact purge before dropping the row).
+    Returns the superseded version ids. The pinned-default FK is ``ondelete=SET NULL``, so
+    deleting a (would-be-odd) pinned draft clears the pin automatically.
+    """
+    if not version_iri:
+        return []
+    stale = (await db.execute(
+        select(OntologyVersion).where(
+            OntologyVersion.ontology_id == ontology_id,
+            OntologyVersion.version_iri == version_iri,
+            OntologyVersion.status == "needs_review",
+            OntologyVersion.id != keep_version_id,
+        )
+    )).scalars().all()
+    if not stale:
+        return []
+
+    from ontoexplorer.modules.jobs.tasks import purge_version_artifacts
+    superseded: list[str] = []
+    for old in stale:
+        old_id = str(old.id)
+        try:
+            purge_version_artifacts.delay(ontology_id, old_id, old.minio_key)
+        except Exception as exc:  # broker down — don't orphan artifacts
+            log.warning("supersede_purge_dispatch_failed", version_id=old_id, error=str(exc))
+            continue
+        try:
+            from ontoexplorer.clients.reasoning import invalidate_cache
+            await invalidate_cache(old_id)
+        except Exception:
+            pass  # non-fatal; the classification cache TTLs out
+        await db.delete(old)
+        superseded.append(old_id)
+
+    if superseded:
+        await db.commit()
+        try:
+            from ontoexplorer.modules.search.versions import invalidate_latest_ready_versions_cache
+            invalidate_latest_ready_versions_cache()
+        except Exception:
+            pass
+        log.info("superseded_held_versions", ontology_id=ontology_id,
+                 version_iri=version_iri, superseded=superseded, kept=keep_version_id)
+    return superseded
 
 
 class OntologyAccessDenied(Exception):
