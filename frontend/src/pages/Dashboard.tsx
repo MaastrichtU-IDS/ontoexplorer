@@ -159,9 +159,14 @@ function ShortnameEditor({ ontology }: { ontology: Ontology }) {
   )
 }
 
-function TitleEditor({ ontology }: { ontology: Ontology }) {
+export function TitleEditor({ ontology }: { ontology: Ontology }) {
   const [editing, setEditing] = useState(false)
-  const [value, setValue] = useState(ontology.title ?? ontology.label ?? '')
+  // Seed with the MANUAL title only (blank when there's none). Seeding with the
+  // auto-resolved `label` made clearing the field look futile: you'd blank it,
+  // save, and the identical auto name would reappear — reading as "it reverted to
+  // the original title" when the title had in fact been cleared. The auto name is
+  // instead shown as the input's ghost placeholder + a blank-means-auto hint.
+  const [value, setValue] = useState(ontology.title ?? '')
   const [error, setError] = useState<string | null>(null)
   const qc = useQueryClient()
 
@@ -181,7 +186,7 @@ function TitleEditor({ ontology }: { ontology: Ontology }) {
   const effective = ontology.label || null
   const isManual = !!ontology.title
 
-  function open() { setValue(ontology.title ?? ontology.label ?? ''); setError(null); setEditing(true) }
+  function open() { setValue(ontology.title ?? ''); setError(null); setEditing(true) }
   function commit() { save.mutate(value.trim()) }
 
   if (!editing) {
@@ -201,13 +206,18 @@ function TitleEditor({ ontology }: { ontology: Ontology }) {
       <span style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', flexWrap: 'wrap' }}>
         <input autoFocus value={value} onChange={e => setValue(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
-          placeholder="My Ontology"
+          placeholder={ontology.label || 'My Ontology'}
           style={{ fontSize: 'var(--font-size-sm)', padding: '0.15rem 0.4rem', width: '100%', maxWidth: '18rem' }} />
         <button onClick={commit} disabled={save.isPending} style={{ fontSize: 'var(--font-size-sm)', color: 'var(--accent)' }}>
           {save.isPending ? '…' : 'save'}
         </button>
         <button onClick={() => setEditing(false)} style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>cancel</button>
       </span>
+      {value.trim() === '' && effective && (
+        <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>
+          Leave blank to use the auto-resolved name “{effective}”.
+        </span>
+      )}
       {error && <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--red-soft)' }}>{error}</span>}
     </span>
   )
