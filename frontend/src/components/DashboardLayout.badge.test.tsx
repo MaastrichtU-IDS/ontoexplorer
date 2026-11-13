@@ -1,5 +1,5 @@
-import { render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import DashboardLayout from './DashboardLayout'
 import { api } from '../lib/api'
@@ -36,4 +36,28 @@ test('hides the badge when nothing is held', async () => {
   wrap()
   await waitFor(() => expect(mockCount).toHaveBeenCalled())
   expect(screen.queryByLabelText(/need your attention/)).toBeNull()
+})
+
+test('clicking the badge navigates to the attention-filtered list', async () => {
+  mockCount.mockResolvedValue({ needs_review: 2 })
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  function LocationProbe() {
+    const loc = useLocation()
+    return <div data-testid="loc">{loc.pathname}{loc.search}</div>
+  }
+  render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/dashboard']}>
+        <Routes>
+          <Route element={<DashboardLayout />}>
+            <Route path="/dashboard" element={<LocationProbe />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
+  )
+  const badge = await screen.findByRole('button', { name: /need your attention/ })
+  fireEvent.click(badge)
+  await waitFor(() =>
+    expect(screen.getByTestId('loc')).toHaveTextContent('/dashboard?attention=1'))
 })

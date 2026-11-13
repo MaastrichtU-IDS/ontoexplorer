@@ -828,6 +828,7 @@ async def list_ontologies(
     language: str | None = Query(None, description="Filter by language tier: rdf | rdfs | rdfs-plus | owl"),
     reuses: str | None = Query(None, description="Filter: latest version reuses this prefix"),
     mine: bool = Query(False, description="Only ontologies the caller owns or maintains"),
+    attention: bool = Query(False, description="Only the caller's ontologies with a version held for review (status needs_review) — the set behind the dashboard 'needs your attention' badge. Implies owner/maintainer scope."),
     skos: bool = Query(False, description="Only SKOS vocabularies (latest version has skos:Concept terms indexed). Derived, not a group tag."),
     lang: list[str] = Query(default=[], description="Filter: has labels in this language code (repeatable, e.g. ?lang=en&lang=fr)"),
     sort: str = Query("name", description="Sort column: name | date (last modified)"),
@@ -914,6 +915,21 @@ async def list_ontologies(
             .distinct()
         )
         conditions.append(Ontology.id.in_(_concept_oids))
+    if attention:
+        # "Needs your attention" filter: the caller's owned/maintained ontologies
+        # that have a version held by the quality gate (status needs_review) — the
+        # exact set counted by the /attention-count nav badge, so clicking the badge
+        # lands on this list. Owner-scoped (anonymous → empty), independent of the
+        # separate ?mine flag.
+        from ontoexplorer.modules.auth.permissions import owned_or_maintained_ontology_ids
+        _att_ids = await owned_or_maintained_ontology_ids(db, user.id) if user else []
+        conditions.append(Ontology.id.in_(_att_ids))
+        _held_oids = (
+            select(OntologyVersion.ontology_id)
+            .where(OntologyVersion.status == "needs_review")
+            .distinct()
+        )
+        conditions.append(Ontology.id.in_(_held_oids))
 
     # Keyword filter in SQL (#286): match shortname / IRI / title (columns) and the
     # latest ready version's resolved metadata title/description — so a search

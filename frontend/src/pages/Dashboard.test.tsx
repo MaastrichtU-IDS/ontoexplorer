@@ -2,6 +2,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import Dashboard from './Dashboard'
+import { api } from '../lib/api'
 
 vi.mock('../lib/api', () => ({
   slugFromIri: (iri: string) => {
@@ -121,4 +122,48 @@ test('the "+ Add Ontology" control links to the add page', () => {
   wrap()
   const link = screen.getByText('+ Add Ontology').closest('a')
   expect(link).toHaveAttribute('href', '/dashboard/add')
+})
+
+const listMock = () => api.ontologies.list as unknown as ReturnType<typeof vi.fn>
+const lastOpts = () => {
+  const calls = listMock().mock.calls
+  const c = calls[calls.length - 1]
+  return c[c.length - 1]
+}
+
+test('with ?attention=1 shows the filter banner and requests the held-only list', async () => {
+  listMock().mockClear()
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/dashboard?attention=1']}>
+        <Dashboard />
+      </MemoryRouter>
+    </QueryClientProvider>
+  )
+  expect(await screen.findByText('⚠ Needs your attention')).toBeInTheDocument()
+  expect(screen.getByText(/Show all ontologies/)).toBeInTheDocument()
+  await waitFor(() => expect(listMock()).toHaveBeenCalled())
+  expect(lastOpts()).toMatchObject({ attention: true })
+})
+
+test('without the param there is no banner and the list is not held-scoped', async () => {
+  listMock().mockClear()
+  wrap()
+  await waitFor(() => expect(screen.getAllByText('go').length).toBeGreaterThan(0))
+  expect(screen.queryByText('⚠ Needs your attention')).toBeNull()
+  expect(lastOpts()).toMatchObject({ attention: false })
+})
+
+test('"Show all ontologies" clears the attention filter', async () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/dashboard?attention=1']}>
+        <Dashboard />
+      </MemoryRouter>
+    </QueryClientProvider>
+  )
+  fireEvent.click(await screen.findByText(/Show all ontologies/))
+  await waitFor(() => expect(screen.queryByText('⚠ Needs your attention')).toBeNull())
 })

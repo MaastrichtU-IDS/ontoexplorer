@@ -1,4 +1,5 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import type { SyntheticEvent } from 'react'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { api } from '../lib/api'
@@ -14,8 +15,11 @@ const sidebarLinks = [
 ]
 
 // Amber pill showing how many of the caller's versions are held for review. The
-// held-version inbox lives on the Ontologies page, so the badge sits on that link.
+// held-version inbox lives on the Ontologies page, so the badge sits on that link
+// — and clicking the pill filters that list to just the held ontologies
+// (?attention=1), so the count is a direct door to the work it represents.
 function AttentionBadge() {
+  const navigate = useNavigate()
   const { data } = useQuery({
     queryKey: ['attention-count'],
     queryFn: () => api.ontologies.attentionCount(),
@@ -25,10 +29,22 @@ function AttentionBadge() {
   })
   const n = data?.needs_review ?? 0
   if (n <= 0) return null
+  // The pill lives inside the "Ontologies" <NavLink> (an <a>), so it can't be a
+  // nested link. Navigate programmatically, and prevent the surrounding anchor from
+  // also firing (which would drop the ?attention filter / trigger a full nav).
+  const go = (e: SyntheticEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    navigate('/dashboard?attention=1')
+  }
   return (
     <span
-      role="status"
+      role="button"
+      tabIndex={0}
+      onClick={go}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') go(e) }}
       aria-label={`${n} version${n === 1 ? '' : 's'} need your attention`}
+      title="Show the ontologies that need your attention"
       style={{
         marginLeft: '0.4rem',
         padding: '0.05rem 0.4rem',
@@ -38,6 +54,7 @@ function AttentionBadge() {
         lineHeight: 1.4,
         color: 'var(--bg)',
         background: 'var(--orange)',
+        cursor: 'pointer',
       }}
     >
       {n}
