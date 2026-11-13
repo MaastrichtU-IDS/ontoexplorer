@@ -65,6 +65,23 @@ async def test_supersedes_prior_held_drafts_of_same_version_iri(db_session, purg
     assert len(purges) == 2                               # one artifact-purge per superseded
 
 
+async def test_duplicate_match_keeps_matched_held_draft_drops_siblings(db_session, purges):
+    # The duplicate early-return path: a byte-identical re-ingest matches ONE
+    # already-held draft (the "keep"), so no new version is created. Collapsing a
+    # STATIC pile then means keeping that matched held draft and dropping any
+    # sibling held draft of the same version_iri. (Normal-path tests keep a fresh
+    # `ingested` version; here the kept id is itself `needs_review`.)
+    oid, (ready1, matched, sibling) = await _seed(db_session, [
+        {"status": "ready", "iri": "https://w3id.org/ontostart/pro/1.0.1"},
+        {"status": "needs_review"},   # the draft the dup sha matches → kept
+        {"status": "needs_review"},   # the stale sibling → collapsed
+    ])
+    superseded = await _supersede_stale_held_versions(db_session, oid, VIRI, matched)
+    assert superseded == [sibling]
+    assert await _ids(db_session, oid) == {ready1, matched}   # matched draft survives
+    assert len(purges) == 1
+
+
 async def test_never_supersedes_a_ready_version_of_same_iri(db_session, purges):
     oid, (ready_dup, new) = await _seed(db_session, [
         {"status": "ready"},       # a READY 1.0.2 is protected
