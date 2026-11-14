@@ -3,9 +3,9 @@
 # Docker's default is to publish on every interface, and its rules sit in the
 # DOCKER-USER iptables chain ahead of ufw — so `ufw deny 6379` does not close a
 # published port. On any host with a routable address that makes these services
-# reachable from the network, and three of them have no meaningful auth:
+# reachable from the network, and two of them have no meaningful auth:
 # redis has none at all and is the Celery broker (a task pushed there executes
-# in a worker holding the whole secret environment), postgres and fuseki carry
+# in a worker holding the whole secret environment), and postgres carries
 # the development defaults below.
 #
 # Loopback keeps every local workflow working — psql, redis-cli, a GUI client,
@@ -30,7 +30,6 @@ services:
       - postgres
       - redis
       - minio
-      - fuseki
       - reasoner-service
     volumes:
       - ./ontoexplorer:/app/ontoexplorer
@@ -120,27 +119,6 @@ services:
       MINIO_ROOT_PASSWORD: minioadmin
       MINIO_SERVER_URL: "http://minio:9000"
 
-  fuseki:
-    image: stain/jena-fuseki
-    user: root
-    ports:
-      - "127.0.0.1:7001:3030"
-    environment:
-      ADMIN_PASSWORD: admin
-      JVM_ARGS: "-Xmx1g"
-    # TDB2 on a named volume. `--mem` was silently non-durable: every restart
-    # discarded all FAIR metadata, and nothing re-derives it. Matches the k8s
-    # deployment. `/fuseki` stays the dataset path, so FUSEKI_ENDPOINT is
-    # unchanged.
-    # arq:httpServiceAllowed=false disables SPARQL SERVICE. Federation makes
-    # the Fuseki process dial a host named in the query, and this endpoint is
-    # reachable anonymously through the API's passthrough, so it is request
-    # forgery from inside the cluster. The app-layer guard rejects SERVICE too;
-    # this is the half that does not depend on a regex.
-    command: /jena-fuseki/fuseki-server --set arq:httpServiceAllowed=false --update --tdb2 --loc /fuseki-data /fuseki
-    volumes:
-      - fuseki-data:/fuseki-data
-
   postgres:
     image: pgvector/pgvector:pg16
     ports:
@@ -228,4 +206,3 @@ volumes:
   grafana-data:
   redis-data:
   fastembed-cache:
-  fuseki-data:

@@ -52,8 +52,6 @@ services:
         condition: service_started
       minio:
         condition: service_started
-      fuseki:
-        condition: service_started
       reasoner-service:
         condition: service_started
     pull_policy: always
