@@ -33,14 +33,19 @@ PROFILE_NAMES: tuple[str, ...] = ("el", "rl", "ql", "dl")
 _CHECK = {"el": "EL", "rl": "RL", "ql": "QL", "dl": "DL"}
 
 # our stored `version.format` -> horned-owl serialization literal. None means
-# "let horned-owl auto-detect" (it tries each parser until one succeeds), used
-# for formats without a direct mapping (e.g. turtle/ntriples).
+# "let horned-owl auto-detect" (it tries each parser until one succeeds). Prefer an
+# explicit literal: auto-detect mis-identifies some Turtle (e.g. files that open with
+# SPARQL-style PREFIX/BASE, or a leading comment) as RDF/XML and feeds them to the
+# wrong reader. py-horned-owl's literals are the short tokens below — note `ttl`/`nt`
+# are accepted (the long aliases `turtle`/`ntriples`/`rdfxml` are NOT).
 _FORMAT_MAP: dict[str, str | None] = {
     "obo": "obo",
     "ofn": "ofn", "functional": "ofn", "owl-functional": "ofn", "func": "ofn",
     "owx": "owx", "owl-xml": "owx", "owlxml": "owx", "owlx": "owx",
     "omn": "omn", "manchester": "omn",
     "owl": "rdf", "rdf": "rdf", "rdfxml": "rdf", "rdf-xml": "rdf", "xml": "rdf",
+    "ttl": "ttl", "turtle": "ttl",
+    "nt": "nt", "ntriples": "nt", "n-triples": "nt",
 }
 
 _IRI_RE = re.compile(r"<(https?://[^>]+)>")
