@@ -62,8 +62,8 @@ Defined in [ontoexplorer/metrics.py](../ontoexplorer/metrics.py):
 | `ontoexplorer_ingestion_triples` | Histogram | — | triple count per ingest |
 | `ontoexplorer_ingestion_errors_total` | Counter | step | per pipeline step |
 | `ontoexplorer_reasoning_jobs_total` | Counter | status | done / failed |
-| `ontoexplorer_reasoning_duration_seconds` | Histogram | — | ELK classification time |
-| `ontoexplorer_sparql_requests_total` | Counter | endpoint, method | endpoint is `fuseki` or `content` |
+| `ontoexplorer_reasoning_duration_seconds` | Histogram | — | reasoner classification time |
+| `ontoexplorer_sparql_requests_total` | Counter | endpoint, method | endpoint is `metadata` or `oxigraph` |
 | `ontoexplorer_sparql_latency_seconds` | Histogram | endpoint | proxy round-trip |
 | `ontoexplorer_sparql_errors_total` | Counter | endpoint | |
 | `ontoexplorer_webhook_deliveries_total` | Counter | status | |
@@ -130,7 +130,7 @@ Service Health.
   that calls `metrics.celery_queue_depth.labels(queue="celery").set(...)`
   on the API process — or expose a `/metrics` endpoint from the worker
   and add a second scrape target.
-- **Worker, beat, Fuseki, ELK, Postgres, Redis are not scraped.** Only
+- **Worker, beat, reasoner-service, Postgres, Redis are not scraped.** Only
   the API exports Prometheus metrics. Container-level CPU and memory
   would need `cadvisor`; Postgres and Redis have their own exporter
   sidecars (`postgres_exporter`, `redis_exporter`) that can be added to

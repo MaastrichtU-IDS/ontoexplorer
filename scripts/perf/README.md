@@ -28,9 +28,9 @@ python scripts/perf/write_throughput.py      --base https://<instance>
 
 **Read path**
 - Light endpoints are excellent unloaded (<20 ms) and size-independent.
-- **SPARQL-over-Fuseki is the read bottleneck: ~90 rps, flat across concurrency**
+- **SPARQL over the metadata store is the read bottleneck: ~90 rps, flat across concurrency**
   (single JVM pod) — ~5× lower than the Redis-backed endpoints. SPARQL-heavy read
-  load is Fuseki-bound; scaling it means scaling Fuseki, not the api.
+  load is metadata-store-bound; scaling it means scaling the store, not the api.
 - Redis-backed search/autocomplete peak ~400–490 rps at conc ~10, then decline —
   api-side worker saturation, not the backend.
 - `--workers 4` + a CPU reservation removed the hard *collapse* a single worker

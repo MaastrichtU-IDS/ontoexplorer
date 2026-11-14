@@ -5,10 +5,10 @@ A next-generation FAIR ontology repository — ingest, browse, query, and reason
 ## What it does
 
 - **Ingest** ontologies by IRI, URL, or file upload (OWL/XML, RDF/XML, Turtle, N-Triples, N-Quads, TriG, JSON-LD, OBO, Manchester, OWL Functional)
-- **Browse** class and property hierarchies with asserted and OWL-EL inferred views; keyboard-navigable (↑↓→←→, Enter)
+- **Browse** class and property hierarchies with asserted and inferred views; keyboard-navigable (↑↓→←→, Enter)
 - **Search** across all ontologies from the home page — keyword prefix search, structured MOS expression query, and **vector semantic search** (type ≥ 3 characters to get semantically similar results alongside prefix matches); a "Searching…" indicator replaces "No results" while queries are in flight
 - **Semantic search** — nomic-ai/nomic-embed-text-v1.5 embeddings stored in pgvector; cosine-similarity search over term labels, definitions, synonyms, and ontological context (superclasses/subclasses)
-- **Reason** using ELK (OWL-EL) — superclasses, subclasses, consistency, justifications
+- **Reason** using rustdl (DL / SROIQ) — superclasses, subclasses, consistency, justifications
 - **Inspect** ontology document metadata (dcterms, pav, vann, schema.org, etc.) and VoID statistics
 - **Query** via SPARQL 1.1 endpoints over both metadata (embedded Oxigraph) and content (Oxigraph)
 - **Authenticate** via ORCID, GitHub, or Google OAuth 2.0
@@ -375,7 +375,7 @@ Use the search bar at the top of the left panel to find classes and properties b
 
 ### Asserted vs. inferred views
 
-The Classes section header has an **Asserted / Inferred** toggle. The inferred view requires ELK reasoning to have completed for that ontology version (status shown on the ontology page). Language-filtered labels are applied to the inferred tree the same way as the asserted tree.
+The Classes section header has an **Asserted / Inferred** toggle. The inferred view requires reasoning (rustdl) to have completed for that ontology version (status shown on the ontology page). Language-filtered labels are applied to the inferred tree the same way as the asserted tree.
 
 ## Annotation Profiles
 
@@ -498,7 +498,7 @@ GET    /ontologies/{id}/{vid}/terms              Browse terms (classes/propertie
 GET    /ontologies/{id}/{vid}/terms/{iri}        Term detail with inferred relations
 GET    /ontologies/{id}/{vid}/search             Full-text search
 GET    /ontologies/{id}/{vid}/autocomplete       Label autocomplete
-GET    /ontologies/{id}/{vid}/inferred-children  Inferred class hierarchy (ELK)
+GET    /ontologies/{id}/{vid}/inferred-children  Inferred class hierarchy (rustdl)
 GET    /ontologies/{id}/{vid}/ancestors          Ancestor chain for tree navigation
 GET    /ontologies/{id}/{vid}/consistency        OWL consistency check
 POST   /ontologies/{id}/{vid}/justification      Request justification (async)
@@ -540,7 +540,7 @@ GET    /admin/overview                           System overview (requires admin
 POST   /admin/ontologies/{id}/ingest             Queue re-ingestion for one ontology (requires admin role)
 POST   /admin/ontologies/{id}/index              Queue search re-index for one ontology (requires admin role)
 POST   /admin/ontologies/{id}/embed              Queue embedding generation for one ontology (requires admin role)
-POST   /admin/ontologies/{id}/reason             Queue OWL-EL reasoning for one ontology (requires admin role)
+POST   /admin/ontologies/{id}/reason             Queue reasoning for one ontology (requires admin role)
 POST   /admin/reindex                            Queue re-index for all ingested versions (requires admin role)
 
 # SPARQL
@@ -604,7 +604,7 @@ GET    /ols/api/ontologies/{ont}/terms/{iri}/parents                 Asserted pa
 GET    /ols/api/ontologies/{ont}/terms/{iri}/children                Asserted children
 GET    /ols/api/ontologies/{ont}/terms/{iri}/ancestors               Transitive ancestors
 GET    /ols/api/ontologies/{ont}/terms/{iri}/descendants             Transitive descendants
-GET    /ols/api/ontologies/{ont}/terms/{iri}/hierarchicalParents     Inferred parents (ELK)
+GET    /ols/api/ontologies/{ont}/terms/{iri}/hierarchicalParents     Inferred parents (rustdl)
 GET    /ols/api/ontologies/{ont}/terms/{iri}/hierarchicalAncestors   Inferred transitive ancestors
 GET    /ols/api/ontologies/{ont}/terms/{iri}/hierarchicalDescendants Inferred transitive descendants
 GET    /ols/api/ontologies/{ont}/properties[/...]                    Object/data/annotation properties (same hierarchy shape)
@@ -745,7 +745,7 @@ ontoexplorer/                    Python package
     webhooks/                    HMAC-signed outbound delivery
   clients/
     oxigraph.py                  pyoxigraph Store wrapper
-    reasoning.py                 ELK service HTTP client (202-Accepted + poll)
+    reasoning.py                 reasoner-service HTTP client (202-Accepted + poll)
   models/
     db.py                        SQLAlchemy ORM (Ontology, OntologyVersion, User, …)
     api.py                       Pydantic request/response schemas
@@ -761,7 +761,7 @@ frontend/                        React + TypeScript SPA (Vite)
       auth.ts                    OAuth redirect, token management
 
 docker/
-  elk-service/                   OWL-EL reasoning microservice (FastAPI + py4j + ELK)
+  reasoner-service/              DL reasoning microservice (rustdl / konclude / km)
   prometheus/                    Scrape config
   grafana/                       Dashboard provisioning
   promtail/                      Log shipping to Loki
@@ -777,8 +777,8 @@ tests/
 | Content triplestore | pyoxigraph (embedded) | Rust-backed, SPARQL 1.1, no extra container; extract when concurrency demands it |
 | Metadata store | pyoxigraph (embedded) | SPARQL 1.1, DCAT/VoID, same engine as content |
 | OWL parsing | pyhornedowl + rdflib | pyhornedowl scales to SNOMED; rdflib handles Turtle/N-Triples/JSON-LD |
-| Reasoning | ELK in separate Docker service | OWL-EL complete, scales to GO (67k classes); isolated from API process |
-| ELK protocol | 202-Accepted + poll | Classification takes >10 min for large ontologies (GO ~7.5 min) |
+| Reasoning | rustdl in a separate Docker service | DL (SROIQ); scales to large ontologies; isolated from the API process |
+| Reasoner protocol | 202-Accepted + poll | Classification can take minutes for large ontologies |
 | Oxigraph in FastAPI | `asyncio.to_thread` + `asyncio.gather` | `Store.query()` is synchronous; blocks event loop if called directly |
 | Stats caching | Redis, pre-populated at index time | COUNT(*) over millions of triples is slow; 30-day TTL, invalidated on deprecation |
 | Auto-sync dedup | SHA-256 comparison before re-queue | Polling fetches the full file; comparing hash avoids spurious ingestion when nothing changed |
@@ -792,7 +792,7 @@ tests/
 | Embedding text | label + definition + synonyms + superclass/subclass labels | Ontological context improves cosine similarity for domain-specific synonymy ("auntie" → Aunt) beyond pure label matching |
 | Embedding resource limits | `OMP_NUM_THREADS=2`, `ONNXRUNTIME_NUM_THREADS=2`, `mem_limit=3g` | Default ONNX Runtime uses all cores (measured 800% CPU on 8-core host); limits prevent system starvation during backfill |
 | RDFS entity collection | `rdfs:Class` + `rdf:Property` checked after OWL types | Enables indexing of non-OWL vocabularies (Schema.org, SKOS, etc.); OWL types take precedence so standard ontologies are unaffected |
-| Inferred tree performance | Reverse `children_of` index built once per request; Redis pipeline for batch label lookups; in-process LRU cache for ELK classifications (10-min TTL, per-version lock) | GO has 67k+ classes — O(N²) child detection and per-request ELK fetches caused multi-minute loads; reverse index + cache reduces this to sub-second |
+| Inferred tree performance | Reverse `children_of` index built once per request; Redis pipeline for batch label lookups; in-process LRU cache for reasoner classifications (10-min TTL, per-version lock) | GO has 67k+ classes — O(N²) child detection and per-request reasoner fetches caused multi-minute loads; reverse index + cache reduces this to sub-second |
 | Admin pipeline actions | Per-row buttons (ingest / index / embed / reason) inline in status cells | Avoids extra columns; action buttons are contextually co-located with the status they affect |
 | Mobile layout | Single-pane, tree ↔ detail toggle | Two-pane layout unusable below 768px |
 
@@ -807,8 +807,8 @@ MINIO_ENDPOINT=minio:9000
 OXIGRAPH_DATA_PATH=/data/oxigraph
 OXIGRAPH_READ_ONLY=true          # set in API container; worker keeps write access
 FASTEMBED_CACHE_PATH=/root/.cache/fastembed  # shared volume between API and worker
-ELK_SERVICE_URL=http://elk-service:8001
-ELK_SERVICE_TIMEOUT=3600         # seconds — GO classification takes ~7.5 min
+REASONER_SERVICE_URL=http://reasoner-service:8001
+REASONER_SERVICE_TIMEOUT=3600     # seconds — large-ontology classification can take minutes
 JWT_SECRET_KEY=change-me-in-production
 
 # Inbound GitHub push webhook (optional — for immediate sync on push)
@@ -875,7 +875,7 @@ Set `AUTH_BYPASS=true` to skip OAuth entirely. The API will create a `dev@localh
 Push a semver tag on `main` (`0.2.0`, `v0.2.1`, etc.) and the `release.yml` workflow builds + publishes two images to GHCR:
 
 - `ghcr.io/maastrichtu-ids/ontoexplorer-api:<tag>` — used by `api`, `worker`, `beat`.
-- `ghcr.io/maastrichtu-ids/ontoexplorer-elk-service:<tag>` — the EL reasoner sidecar.
+- `ghcr.io/maastrichtu-ids/ontoexplorer-reasoner-service:<tag>` — the reasoner sidecar.
 
 Each release publishes three tags per image: the exact version (`:0.2.0`), the floating minor (`:0.2`), and `:latest`.
 
