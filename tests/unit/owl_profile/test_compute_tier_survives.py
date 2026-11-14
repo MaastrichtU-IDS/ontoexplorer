@@ -39,7 +39,8 @@ async def test_tier_persists_when_strict_parse_fails(monkeypatch):
     _patch_common(monkeypatch, tier="rdfs")
 
     def _boom(content, fmt=None):
-        raise ValueError("Failed to open ontology")
+        raise ValueError('Failed to open ontology: ValidityError("Invalid annotation '
+                         'found [Iri(IRI(\\"http://ex#\\")), RDF(Type), Iri(IRI(\\"voaf#Vocabulary\\"))]", Unknown)')
     monkeypatch.setattr("ontoexplorer.modules.owl_profile.detector.detect_profiles", _boom)
 
     payload = await compute_owl_profile_payload(_DB(), "v1", "o1")
@@ -49,6 +50,22 @@ async def test_tier_persists_when_strict_parse_fails(monkeypatch):
     assert "indexed_at" in payload
     for p in ("el", "ql", "rl", "dl"):                     # profiles not fabricated
         assert p not in payload
+    # the error is captured + categorized, and the generic wrapper is stripped
+    assert payload["profiles_error"].startswith("ValidityError")
+    assert "Invalid annotation found" in payload["profiles_error"]
+    assert payload["profiles_error_category"] == "invalid_annotation"
+
+
+async def test_error_category_mapping():
+    from ontoexplorer.modules.owl_profile.compute import _error_category
+    assert _error_category('ValidityError("Invalid annotation found [...]")') == "invalid_annotation"
+    assert _error_category("Unknown entity in equivalent class statement: [...]") == "equivalent_class_undeclared"
+    assert _error_category("Types of two properties do not match: ...") == "property_kind"
+    assert _error_category("Unexpected property kind in restriction") == "property_kind"
+    assert _error_category("Cannot distinguish the types of {r} and {s}") == "property_kind"
+    assert _error_category("Annotation properties cannot be equivalent: ...") == "annotation_property_equivalent"
+    assert _error_category('ParserError(Syntax(RdfSyntaxError(...)))') == "rdf_syntax"
+    assert _error_category("something else entirely") == "other"
 
 
 async def test_success_keeps_profiles_and_tier(monkeypatch):
