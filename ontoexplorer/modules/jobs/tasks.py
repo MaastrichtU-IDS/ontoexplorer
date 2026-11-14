@@ -2358,7 +2358,7 @@ def refresh_owl_profile(version_id: str, ontology_id: str) -> dict:
     log.info("owl_profile_refresh_done", version_id=version_id)
     return {"status": "done", "version_id": version_id,
             "language": payload["language"]["tier"],
-            "verdicts": {p: payload[p]["in_profile"] for p in ("el", "rl", "ql", "dl")}}
+            "verdicts": {p: (payload.get(p) or {}).get("in_profile") for p in ("el", "rl", "ql", "dl")}}
 
 
 @celery_app.task(name="ontoexplorer.refresh_stale_inferred_diffs")

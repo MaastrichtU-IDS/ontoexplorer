@@ -64,8 +64,11 @@ async def compute_owl_profile_payload(
         # tier -- the version gets a tier-only payload instead of a NULL row.
         lang = language.detect_language(
             oxigraph.get_store(), graph_iri=oxigraph.graph_iri(ontology_id, version_id))
+        # Download is infra: a transient MinIO/object error must stay NULL and be
+        # retried, so it is OUTSIDE the catch. Only the strict in-memory parse
+        # legitimately fails for the ~14% horned-owl's reader rejects.
+        content = minio.download_bytes(bucket, key)
         try:
-            content = minio.download_bytes(bucket, key)
             payload = detector.detect_profiles(content, fmt)
         except Exception:
             # EL/QL/RL/DL unavailable (strict reader rejected the file); keep the

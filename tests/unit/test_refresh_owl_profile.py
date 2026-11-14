@@ -81,3 +81,34 @@ def test_refresh_owl_profile_skips_when_no_file(monkeypatch):
                         lambda: (lambda: _NoFileSession()))
     out = tasks.refresh_owl_profile("v1", "o1")
     assert out["status"] == "skipped"
+
+
+def test_refresh_owl_profile_parse_failure_keeps_tier(monkeypatch):
+    """The ~14% of files the strict parser rejects must still get a tier-only row,
+    and the task must NOT raise (previously the verdicts builder KeyError'd on the
+    missing el/ql/rl/dl)."""
+    r = fakeredis.FakeRedis(decode_responses=True)
+    monkeypatch.setattr("ontoexplorer.database.make_celery_db_session",
+                        lambda: (lambda: _Session()))
+    monkeypatch.setattr("ontoexplorer.clients.minio.download_bytes",
+                        lambda bucket, key: b"<unparseable>")
+    monkeypatch.setattr("ontoexplorer.modules.owl_profile.language.detect_language",
+                        lambda *a, **k: {"tier": "rdfs", "label": "RDFS", "construct": "rdfs:Class"})
+    monkeypatch.setattr("ontoexplorer.clients.oxigraph.get_store", lambda: object())
+    monkeypatch.setattr("ontoexplorer.clients.oxigraph.graph_iri", lambda o, v: "urn:g")
+
+    def _boom(content, fmt=None):
+        raise ValueError("Failed to open ontology")
+    monkeypatch.setattr("ontoexplorer.modules.owl_profile.detector.detect_profiles", _boom)
+    monkeypatch.setattr("ontoexplorer.modules.search.indexer._get_redis", lambda: r)
+
+    out = tasks.refresh_owl_profile("v1", "o1")            # must NOT raise
+    assert out["status"] == "done"
+    assert out["language"] == "rdfs"
+    assert out["verdicts"] == {"el": None, "rl": None, "ql": None, "dl": None}
+
+    payload = json.loads(r.get(owl_profile_cache_key("v1")))
+    assert payload["profiles_unavailable"] is True
+    assert payload["language"]["tier"] == "rdfs"
+    for key in ("el", "rl", "ql", "dl"):
+        assert key not in payload
