@@ -10,6 +10,16 @@ const PROFILE_LABELS: Record<string, string> = {
   dl: 'OWL 2 DL',
 }
 
+// Plain-language hint for why the OWL 2 profile couldn't be computed, keyed by the
+// backend's profiles_error_category (compute._error_category).
+const PROFILE_ERROR_HINTS: Record<string, string> = {
+  invalid_annotation: 'The file types a node with an rdf:type the strict OWL reader rejects — often a catalogue typing such as voaf:Vocabulary or adms:SemanticAsset.',
+  equivalent_class_undeclared: 'An owl:equivalentClass references a class that is never declared in the file.',
+  property_kind: "A property's kind (object / data / annotation) is ambiguous or inconsistent in the file.",
+  annotation_property_equivalent: 'Two annotation properties are asserted equivalent, which the strict reader rejects.',
+  rdf_syntax: 'The file could not be parsed as its RDF serialization.',
+}
+
 // Language/expressivity tier — a coarser axis than the OWL 2 profile. Each tier
 // gets its own accent so an RDFS vocabulary reads as RDFS at a glance instead of
 // only surfacing as "OWL 2 DL" / "OWL Full".
@@ -294,6 +304,22 @@ export default function OwlProfileSection({
           OWL&nbsp;2 profile (EL/QL/RL/DL) not computed for this version — the strict
           OWL parser could not load the source file. The language tier above is still
           derived from the stored triples.
+          {record.profiles_error_category && PROFILE_ERROR_HINTS[record.profiles_error_category] && (
+            <div style={{ marginTop: '0.4rem' }}>
+              {PROFILE_ERROR_HINTS[record.profiles_error_category]}
+              {record.profiles_error_category !== 'rdf_syntax' && (
+                <> See <a href="https://github.com/phillord/horned-owl/issues/347" target="_blank" rel="noreferrer">horned-owl#347</a>.</>
+              )}
+            </div>
+          )}
+          {record.profiles_error && (
+            <details data-testid="profiles-error-detail" style={{ marginTop: '0.4rem' }}>
+              <summary style={{ cursor: 'pointer' }}>parser error</summary>
+              <code style={{ display: 'block', whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginTop: '0.3rem', fontSize: 'var(--font-size-xs, 11px)' }}>
+                {record.profiles_error}
+              </code>
+            </details>
+          )}
         </div>
       ) : (
         <div

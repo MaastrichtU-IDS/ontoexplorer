@@ -22,10 +22,34 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
+import structlog
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.models.db import OntologyVersion
+
+_log = structlog.get_logger("ontoexplorer.owl_profile")
+
+
+def _error_category(msg: str) -> str:
+    """Coarse bucket for an OWL-profile parse failure, so the UI can show a plain-
+    language hint. Mirrors the failure classes seen across the catalogue (see
+    phillord/horned-owl#347)."""
+    m = msg.lower()
+    if "invalid annotation found" in m:
+        return "invalid_annotation"
+    if "unknown entity in equivalent class" in m:
+        return "equivalent_class_undeclared"
+    if ("types of two properties do not match" in m
+            or "unexpected property kind" in m
+            or "cannot distinguish the types" in m):
+        return "property_kind"
+    if "annotation properties cannot be equivalent" in m:
+        return "annotation_property_equivalent"
+    if "parsererror" in m or "syntax" in m:
+        return "rdf_syntax"
+    return "other"
 
 
 async def compute_owl_profile_payload(
@@ -70,11 +94,17 @@ async def compute_owl_profile_payload(
         content = minio.download_bytes(bucket, key)
         try:
             payload = detector.detect_profiles(content, fmt)
-        except Exception:
+        except Exception as exc:
             # EL/QL/RL/DL unavailable (strict reader rejected the file); keep the
-            # tier and flag the gap. Downstream readers access el/ql/rl/dl via
-            # .get(), so a profile-less payload is safe.
-            return {"language": lang, "indexed_at": stamp, "profiles_unavailable": True}
+            # tier, flag the gap, and surface WHY so an owner can act on it.
+            # Downstream readers access el/ql/rl/dl via .get(), so a profile-less
+            # payload is safe.
+            msg = str(exc).replace("Failed to open ontology: ", "", 1)[:500]
+            cat = _error_category(msg)
+            _log.warning("owl_profile_parse_failed", version_id=version_id,
+                         category=cat, error=msg)
+            return {"language": lang, "indexed_at": stamp, "profiles_unavailable": True,
+                    "profiles_error": msg, "profiles_error_category": cat}
         payload["language"] = lang
         payload["indexed_at"] = stamp
         return payload

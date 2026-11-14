@@ -95,6 +95,8 @@ test('tier-only payload (parser-rejected file) shows tier + note, no crash, no c
   versionFn.mockImplementationOnce(() => Promise.resolve({
     indexed_at: '2026-11-14T00:00:00Z',
     profiles_unavailable: true,
+    profiles_error: 'ValidityError("Invalid annotation found [... voaf#Vocabulary]", Unknown)',
+    profiles_error_category: 'invalid_annotation',
     language: { tier: 'rdfs', label: 'RDFS', construct: 'rdfs:Class' },
   } as any))
   wrap(<OwlProfileSection ontologyId="o1" versionId="v1-tieronly" />)
@@ -102,6 +104,9 @@ test('tier-only payload (parser-rejected file) shows tier + note, no crash, no c
   expect(screen.getByTestId('profiles-unavailable')).toBeInTheDocument()   // explanatory note
   expect(screen.queryByTestId('profile-card-el')).not.toBeInTheDocument()  // no cards (no crash)
   expect(screen.queryByTestId('profile-card-dl')).not.toBeInTheDocument()
+  // surfaces WHY: plain-language hint + the raw parser error
+  expect(screen.getByText(/voaf:Vocabulary or adms:SemanticAsset/)).toBeInTheDocument()
+  expect(screen.getByTestId('profiles-error-detail').textContent).toMatch(/Invalid annotation found/)
 })
 
 test('expanding non-conformant profile shows violations by axiom type', async () => {

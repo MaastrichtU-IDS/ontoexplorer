@@ -887,6 +887,10 @@ export interface OwlProfileRecord {
   dl?: ProfileResult
   /** True when the EL/QL/RL/DL profiles could not be computed (parser rejected the file). */
   profiles_unavailable?: boolean
+  /** The parser error (why profiles couldn't be computed), when profiles_unavailable. */
+  profiles_error?: string
+  /** Coarse category of profiles_error: invalid_annotation | equivalent_class_undeclared | property_kind | annotation_property_equivalent | rdf_syntax | other. */
+  profiles_error_category?: string
   language?: LanguageResult
   // Older cached profile payloads were written without this; the UI formats it
   // defensively (formatTimestamp) and shows "unknown" when absent.
