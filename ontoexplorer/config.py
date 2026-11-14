@@ -70,7 +70,8 @@ class Settings(BaseSettings):
 
     sparql_query_timeout_seconds: int = 30
 
-    # Reasoning service (currently runs whelk; ELK_SERVICE_* kept as deprecated aliases)
+    # Reasoning service (pluggable backends: rustdl (default), konclude, km;
+    # ELK_SERVICE_* env names kept as deprecated aliases)
     reasoner_service_url: str = Field(
         default="http://localhost:8001",
         validation_alias=AliasChoices("REASONER_SERVICE_URL", "ELK_SERVICE_URL"),

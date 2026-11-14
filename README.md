@@ -10,7 +10,7 @@ A next-generation FAIR ontology repository — ingest, browse, query, and reason
 - **Semantic search** — nomic-ai/nomic-embed-text-v1.5 embeddings stored in pgvector; cosine-similarity search over term labels, definitions, synonyms, and ontological context (superclasses/subclasses)
 - **Reason** using ELK (OWL-EL) — superclasses, subclasses, consistency, justifications
 - **Inspect** ontology document metadata (dcterms, pav, vann, schema.org, etc.) and VoID statistics
-- **Query** via SPARQL 1.1 endpoints over both metadata (Fuseki) and content (Oxigraph)
+- **Query** via SPARQL 1.1 endpoints over both metadata (embedded Oxigraph) and content (Oxigraph)
 - **Authenticate** via ORCID, GitHub, or Google OAuth 2.0
 - **Profile** annotation properties per version — auto-detect which IRIs carry labels, definitions, synonyms, deprecated flags, and examples; the **Profile tab** shows every detected annotation property as a row (with its `rdfs:label` from the RDF data as the display name), lets you assign or reassign roles, and rebuilds the search index on save
 - **Standardize metadata** — auto-detect which vocabulary expresses each ontology's title, description, version, license, homepage, creators, and 29 total roles (including MOD-API properties such as `mod:competencyQuestion`, `mod:reliesOn`, `mod:similar`) from the `owl:Ontology` block; confirm or override via the same **Profile tab**
@@ -36,8 +36,8 @@ A next-generation FAIR ontology repository — ingest, browse, query, and reason
       └──────────────┘        └──────────────────┘       └──────────────┘
               ▼                         ▼                          ▼
       ┌──────────────┐        ┌──────────────────┐       ┌──────────────┐
-      │    MinIO     │        │     Fuseki       │       │ Celery Worker│
-      │  (port 9000) │        │  (port 7001)     │       │  (ingestion, │
+      │    MinIO     │        │  Metadata store  │       │ Celery Worker│
+      │  (port 9000) │        │   (embedded)     │       │  (ingestion, │
       │  OWL files   │        │  FAIR metadata   │       │   reasoning) │
       └──────────────┘        └──────────────────┘       └──────────────┘
                                                                    │
@@ -53,7 +53,7 @@ A next-generation FAIR ontology repository — ingest, browse, query, and reason
 |---|---|
 | MinIO | Raw ontology files and cached `owl:imports` |
 | Oxigraph (embedded) | Asserted + inferred RDF triples, SPARQL content queries (RDF-family uploads stream in as-is; Manchester/OBO/OWL-Functional are converted to Turtle first) |
-| Fuseki | DCAT/VoID/PROV-O metadata, federation-ready SPARQL endpoint |
+| Oxigraph (metadata, embedded) | DCAT/VoID/PROV-O metadata, federation-ready SPARQL endpoint |
 | Postgres (pgvector) | Users, versions, jobs, webhooks, API keys, annotation profiles, **term embeddings** |
 | Redis | Celery broker, search/label index, stats cache, reasoner-service cache (input axioms as N-Triples, classification/justification results, per-version `.ofn`) |
 
@@ -111,7 +111,6 @@ Backend services:
 | API           | http://localhost:8000      | FastAPI backend              |
 | API Docs      | http://localhost:8000/api/docs | Swagger UI               |
 | MinIO Console | http://localhost:9001      | Object storage (minioadmin/minioadmin) |
-| Fuseki        | http://localhost:7001      | SPARQL metadata endpoint     |
 | Prometheus    | http://localhost:9090      | Metrics                      |
 | Grafana       | http://localhost:3000      | Dashboards                   |
 | Loki          | http://localhost:3100      | Log aggregation              |
@@ -545,7 +544,7 @@ POST   /admin/ontologies/{id}/reason             Queue OWL-EL reasoning for one 
 POST   /admin/reindex                            Queue re-index for all ingested versions (requires admin role)
 
 # SPARQL
-GET/POST /sparql                                 SPARQL over Fuseki (FAIR metadata)
+GET/POST /sparql                                 SPARQL over the embedded metadata store (FAIR metadata)
 GET/POST /sparql/content                         SPARQL over Oxigraph (asserted triples)
 
 # Search
@@ -734,7 +733,7 @@ ontoexplorer/                    Python package
     ols/                         OLS4-compatible read-only shim at /ols/api/... (v1 HAL + v2 flat + Solr search + LLM)
   modules/
     ingestion/                   OWL/RDF parsing pipeline (pyhornedowl + rdflib)
-    metadata/                    DCAT/VoID/PROV-O generators, Fuseki writer
+    metadata/                    DCAT/VoID/PROV-O generators, metadata-store writer
     storage/                     MinIO client
     content/                     Oxigraph named-graph management
     auth/                        OAuth providers, JWT sessions, FastAPI deps
@@ -776,7 +775,7 @@ tests/
 | Concern | Decision | Rationale |
 |---|---|---|
 | Content triplestore | pyoxigraph (embedded) | Rust-backed, SPARQL 1.1, no extra container; extract when concurrency demands it |
-| Metadata store | Fuseki (Jena) | SPARQL 1.1 + update, DCAT/VoID native, federation-ready |
+| Metadata store | pyoxigraph (embedded) | SPARQL 1.1, DCAT/VoID, same engine as content |
 | OWL parsing | pyhornedowl + rdflib | pyhornedowl scales to SNOMED; rdflib handles Turtle/N-Triples/JSON-LD |
 | Reasoning | ELK in separate Docker service | OWL-EL complete, scales to GO (67k classes); isolated from API process |
 | ELK protocol | 202-Accepted + poll | Classification takes >10 min for large ontologies (GO ~7.5 min) |

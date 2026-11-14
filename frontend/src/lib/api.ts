@@ -284,8 +284,8 @@ export interface OntologyVersion {
   triple_count: number | null
   download_url: string
   created_at: string
-  /** Reasoner this version was ingested/classified with (e.g. "whelk",
-   *  "rustdl", "konclude"). Look it up in `api.reasoners.list()` to find its
+  /** Reasoner this version was ingested/classified with (e.g. "rustdl",
+   *  "konclude"). Look it up in `api.reasoners.list()` to find its
    *  capabilities — e.g. whether it supports `justify`. */
   reasoner?: string | null
   reasoner_profile_id?: string | null
@@ -516,7 +516,7 @@ export interface SearchResult {
 
 export interface JustificationResult {
   /** Each justification is a list of Manchester-syntax axiom strings (one
-   *  reasoning step per line). Uniform across reasoners (whelk, rustdl, …) —
+   *  reasoning step per line). Uniform across reasoners (rustdl, konclude, …) —
    *  see `format`. */
   justifications: string[][]
   format: string
