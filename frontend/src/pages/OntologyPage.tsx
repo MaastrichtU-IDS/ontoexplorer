@@ -15,6 +15,7 @@ import HistoryTab from '../components/HistoryTab'
 import CoverageSection from '../components/CoverageSection'
 import OwlProfileSection from '../components/OwlProfileSection'
 import { ReuseSection } from '../components/ReuseSection'
+import FairReportSection from '../components/FairReportSection'
 import SearchBar from '../components/SearchBar'
 import { useLang } from '../hooks/useLang'
 import { useOntologyLanguages } from '../hooks/useOntologyLanguages'
@@ -1030,7 +1031,7 @@ export default function OntologyPage() {
     classModeUserSet.current = false
   }, [activeVid])
   const [mobilePane, setMobilePane] = useState<'tree' | 'detail'>('tree')
-  const [detailTab, setDetailTab] = useState<'info' | 'profile' | 'history' | 'coverage' | 'owl-profile' | 'reuse'>('info')
+  const [detailTab, setDetailTab] = useState<'info' | 'profile' | 'history' | 'coverage' | 'owl-profile' | 'reuse' | 'fair'>('info')
   const location = useLocation()
   useEffect(() => {
     if (location.hash === '#owl-profile') {
@@ -1369,7 +1370,7 @@ export default function OntologyPage() {
             display: 'flex', overflowX: 'auto', borderBottom: '1px solid var(--border)',
             background: 'var(--bg-secondary)', flexShrink: 0,
           }}>
-            {(['info', 'profile', 'history', 'coverage', 'owl-profile', 'reuse'] as const).map(tab => (
+            {(['info', 'profile', 'history', 'coverage', 'owl-profile', 'reuse', 'fair'] as const).map(tab => (
               <button
                 key={tab}
                 onClick={() => setDetailTab(tab)}
@@ -1382,7 +1383,7 @@ export default function OntologyPage() {
                   whiteSpace: 'nowrap',
                 }}
               >
-                {tab === 'owl-profile' ? 'OWL Profile' : tab === 'reuse' ? 'Reuse' : tab}
+                {tab === 'owl-profile' ? 'OWL Profile' : tab === 'reuse' ? 'Reuse' : tab === 'fair' ? 'FAIR' : tab}
               </button>
             ))}
           </div>
@@ -1438,6 +1439,12 @@ export default function OntologyPage() {
             ) : detailTab === 'reuse' ? (
               oid && activeVid
                 ? <ReuseSection ontologyId={oid} versionId={activeVid} />
+                : <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 12 }}>
+                    No version available.
+                  </div>
+            ) : detailTab === 'fair' ? (
+              oid && activeVid
+                ? <FairReportSection ontologyId={oid} versionId={activeVid} />
                 : <div style={{ padding: '1rem', color: 'var(--text-dim)', fontSize: 12 }}>
                     No version available.
                   </div>

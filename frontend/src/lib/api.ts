@@ -1414,6 +1414,49 @@ function entityQuery(params: Record<string, string | number | string[] | undefin
 
 // ── API surface ───────────────────────────────────────────────────────────────
 
+export interface FairCheck {
+  id: string
+  principle: string
+  name: string
+  status: 'pass' | 'partial' | 'fail'
+  score: number
+  score_pct: number
+  evidence: string
+  panel: string
+  tests: [string, string][]
+  detail: {
+    roles: { role: string; predicates: string[]; filled: boolean; excluded: boolean }[]
+    scored: number
+    filled: number
+    excluded: number
+  } | null
+}
+
+export interface FairPrinciple {
+  principle: string
+  score: number
+  score_pct: number
+  checks: FairCheck[]
+}
+
+export interface FairReport {
+  overall: number
+  overall_pct: number
+  verdict: string
+  principles: FairPrinciple[]
+  n_checks: number
+  n_passed: number
+  ontology_id: string
+  version_id: string
+}
+
+export interface FairFleet {
+  n: number
+  overall_histogram: { bucket: string; count: number }[]
+  principle_means: Record<string, number>
+  check_pass_rate: { id: string; principle: string; name: string; rate: number }[]
+}
+
 export const api = {
   entities: {
     list: (p: EntityListParams) =>
@@ -1813,6 +1856,13 @@ export const api = {
 
   reuse: {
     fleet: () => request<ReuseFleet>('/reuse/fleet'),
+  },
+
+  fair: {
+    report: (ontologyId: string, versionId?: string) =>
+      request<FairReport>(
+        `/ontologies/${ontologyId}/fair${versionId ? `?version_id=${versionId}` : ''}`),
+    fleet: () => request<FairFleet>('/fair/fleet'),
   },
 
   stats: {

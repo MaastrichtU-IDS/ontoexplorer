@@ -16,15 +16,17 @@ const Coverage = lazy(() => import('./Coverage'))
 const OwlProfile = lazy(() => import('./OwlProfile'))
 const Compare = lazy(() => import('./Compare'))
 const Reuse = lazy(() => import('./Reuse').then(m => ({ default: m.Reuse })))
+const Fair = lazy(() => import('./Fair'))
 
-type Tab = 'list' | 'coverage' | 'profiles' | 'compare' | 'reuse'
-const TAB_VALUES: Tab[] = ['list', 'coverage', 'profiles', 'compare', 'reuse']
+type Tab = 'list' | 'coverage' | 'profiles' | 'compare' | 'reuse' | 'fair'
+const TAB_VALUES: Tab[] = ['list', 'coverage', 'profiles', 'compare', 'reuse', 'fair']
 const TAB_LABELS: Record<Tab, string> = {
   list:        'List',
   coverage:    'Coverage',
   profiles:    'OWL Profile',
   compare:     'Compare',
   reuse:       'Reuse',
+  fair:        'FAIR',
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -445,6 +447,7 @@ export default function Ontologies() {
           {tab === 'profiles' && <OwlProfile />}
           {tab === 'compare' && <Compare />}
           {tab === 'reuse' && <Reuse />}
+          {tab === 'fair' && <Fair />}
         </Suspense>
       )}
       {tab === 'list' && <>
