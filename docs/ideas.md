@@ -3,7 +3,7 @@
 ## Search & Discovery
 - ~~**Full-text semantic search** — vector/embedding search across term definitions, not just labels~~ (shipped: `semantic_search()` + `term_embeddings` pgvector store + `/api/v1/search?semantic=true` + `/ols/api/v2/classes/llm_search` & `llm_similar`)
 - ~~**Cross-ontology term lookup** — find all classes matching an IRI or label across all loaded ontologies~~ (shipped: global `/api/v1/search`, `/ols/api/terms?iri=` + `/ols/api/terms/findByIdAndIsDefiningOntology`)
-- ~~**SPARQL endpoint** — expose Oxigraph directly with a UI query editor~~ (shipped: `/api/v1/sparql` (Fuseki metadata) + `/api/v1/sparql/content` (in-process Oxigraph) + frontend [Sparql page](frontend/src/pages/Sparql.tsx) + SparqlGallery)
+- ~~**SPARQL endpoint** — expose Oxigraph directly with a UI query editor~~ (shipped: `/api/v1/sparql` (metadata store) + `/api/v1/sparql/content` (in-process Oxigraph) + frontend [Sparql page](frontend/src/pages/Sparql.tsx) + SparqlGallery)
 
 ## Browsing & Visualization
 - **Class hierarchy graph view** — force-directed or tree graph alongside the current list

@@ -54,7 +54,7 @@ async def test_submit_defaults_reasoner_when_omitted(client, user_and_key, _allo
     auth = {"Authorization": f"Bearer {key}"}
     r = await client.post("/api/v1/ontologies", json={"iri": "http://x/o.owl"}, headers=auth)
     assert r.status_code == 200
-    assert _captured_delay.get("reasoner") == "whelk"   # app default
+    assert _captured_delay.get("reasoner") == "rustdl"   # app default
 
 
 @pytest.mark.anyio

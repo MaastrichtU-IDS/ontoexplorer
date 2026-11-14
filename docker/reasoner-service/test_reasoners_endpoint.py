@@ -25,7 +25,7 @@ def test_reasoners_endpoint_lists_capabilities(client):
     assert {"rustdl", "konclude", "km"} <= set(by_name)
     assert "justify" in by_name["rustdl"]["capabilities"]
     assert "justify" not in by_name["konclude"]["capabilities"]
-    assert "profile" in by_name["whelk"] and "available" in by_name["whelk"]
+    assert "profile" in by_name["rustdl"] and "available" in by_name["rustdl"]
 
 
 def test_justification_422_for_konclude(client, monkeypatch):

@@ -63,7 +63,7 @@ Turtle is therefore also the fastest-parsing choice, not just the correct one.
 |---|---|---|
 | **MinIO** | Original upload (unconverted), cached `owl:imports` | as uploaded (provenance) |
 | **Oxigraph** (embedded) | Asserted + inferred triples; SPARQL/browse | RDF triples (RocksDB) |
-| **Fuseki** | DCAT / VoID / PROV-O FAIR metadata | RDF (SPARQL endpoint) |
+| **Oxigraph (metadata)** | DCAT / VoID / PROV-O FAIR metadata | RDF (SPARQL endpoint) |
 | **Postgres** (pgvector) | Users, ontologies, versions, jobs, webhooks, API keys, profiles, term embeddings | relational |
 | **Redis** | Celery broker, app search/label index, reasoner-service cache | see below |
 
