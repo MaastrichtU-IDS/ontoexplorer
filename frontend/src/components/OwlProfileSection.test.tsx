@@ -97,6 +97,7 @@ test('tier-only payload (parser-rejected file) shows tier + note, no crash, no c
     profiles_unavailable: true,
     profiles_error: 'ValidityError("Invalid annotation found [... voaf#Vocabulary]", Unknown)',
     profiles_error_category: 'invalid_annotation',
+    profiles_error_detail: 'https://w3id.org/bot# is typed voaf:Vocabulary, which the strict OWL reader rejects as an annotation.',
     language: { tier: 'rdfs', label: 'RDFS', construct: 'rdfs:Class' },
   } as any))
   wrap(<OwlProfileSection ontologyId="o1" versionId="v1-tieronly" />)
@@ -104,9 +105,12 @@ test('tier-only payload (parser-rejected file) shows tier + note, no crash, no c
   expect(screen.getByTestId('profiles-unavailable')).toBeInTheDocument()   // explanatory note
   expect(screen.queryByTestId('profile-card-el')).not.toBeInTheDocument()  // no cards (no crash)
   expect(screen.queryByTestId('profile-card-dl')).not.toBeInTheDocument()
-  // surfaces WHY: plain-language hint + the raw parser error
-  expect(screen.getByText(/voaf:Vocabulary or adms:SemanticAsset/)).toBeInTheDocument()
-  expect(screen.getByTestId('profiles-error-detail').textContent).toMatch(/Invalid annotation found/)
+  // the specific offending element is promoted into the visible "Cause:" line
+  const hint = screen.getByTestId('profiles-error-hint').textContent || ''
+  expect(hint).toMatch(/Cause:/)
+  expect(hint).toMatch(/w3id\.org\/bot# is typed voaf:Vocabulary/)
+  expect(hint).not.toMatch(/voaf:Vocabulary or adms:SemanticAsset/)  // generic hint NOT shown when detail present
+  expect(screen.getByTestId('profiles-error-detail').textContent).toMatch(/Invalid annotation found/)  // raw still in details
 })
 
 test('expanding non-conformant profile shows violations by axiom type', async () => {

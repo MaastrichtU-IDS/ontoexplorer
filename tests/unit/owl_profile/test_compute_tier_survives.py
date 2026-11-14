@@ -38,9 +38,11 @@ def _patch_common(monkeypatch, tier="rdfs"):
 async def test_tier_persists_when_strict_parse_fails(monkeypatch):
     _patch_common(monkeypatch, tier="rdfs")
 
+    # realistic: horned-owl's Debug string backslash-escapes the inner quotes
     def _boom(content, fmt=None):
         raise ValueError('Failed to open ontology: ValidityError("Invalid annotation '
-                         'found [Iri(IRI(\\"http://ex#\\")), RDF(Type), Iri(IRI(\\"voaf#Vocabulary\\"))]", Unknown)')
+                         'found [Iri(IRI(\\"http://ex/o\\")), RDF(Type), '
+                         'Iri(IRI(\\"http://purl.org/vocommons/voaf#Vocabulary\\"))]", Unknown)')
     monkeypatch.setattr("ontoexplorer.modules.owl_profile.detector.detect_profiles", _boom)
 
     payload = await compute_owl_profile_payload(_DB(), "v1", "o1")
@@ -50,10 +52,14 @@ async def test_tier_persists_when_strict_parse_fails(monkeypatch):
     assert "indexed_at" in payload
     for p in ("el", "ql", "rl", "dl"):                     # profiles not fabricated
         assert p not in payload
-    # the error is captured + categorized, and the generic wrapper is stripped
+    # error captured, wrapper stripped, Debug quote-escaping removed
     assert payload["profiles_error"].startswith("ValidityError")
-    assert "Invalid annotation found" in payload["profiles_error"]
+    assert '\\"' not in payload["profiles_error"]
     assert payload["profiles_error_category"] == "invalid_annotation"
+    # the offending element is promoted into a readable, ontology-specific sentence
+    assert payload["profiles_error_detail"] == (
+        "http://ex/o is typed voaf:Vocabulary, which the strict OWL reader "
+        "rejects as an annotation.")
 
 
 async def test_error_category_mapping():
@@ -66,6 +72,26 @@ async def test_error_category_mapping():
     assert _error_category("Annotation properties cannot be equivalent: ...") == "annotation_property_equivalent"
     assert _error_category('ParserError(Syntax(RdfSyntaxError(...)))') == "rdf_syntax"
     assert _error_category("something else entirely") == "other"
+
+
+async def test_error_detail_extracts_offending_element():
+    from ontoexplorer.modules.owl_profile.compute import _error_detail
+    # IRIs come de-escaped by the time _error_detail runs (compute de-escapes first).
+    assert _error_detail(
+        'Invalid annotation found [Iri(IRI("http://ex/o")), RDF(Type), OWL(Thing)]'
+    ) == "http://ex/o is typed owl:Thing, which the strict OWL reader rejects as an annotation."
+    assert _error_detail(
+        'Invalid annotation found [Iri(IRI("http://ex/o")), RDF(Type), Iri(IRI("http://purl.org/vocommons/voaf#Vocabulary"))]'
+    ).endswith("is typed voaf:Vocabulary, which the strict OWL reader rejects as an annotation.")
+    assert _error_detail(
+        'Unknown entity in equivalent class statement: [Iri(IRI("http://ex/A")), OWL(EquivalentClass), BNode(BNode("x"))]'
+    ) == "http://ex/A is asserted owl:equivalentClass of an undeclared class."
+    assert _error_detail(
+        'Types of two properties do not match: IRI("http://purl.org/dc/terms/creator") and IRI("http://xmlns.com/foaf/0.1/maker")'
+    ) == "dcterms:creator and foaf:maker have conflicting property kinds (object vs. data vs. annotation)."
+    # no extractable IRI -> None (UI falls back to the category hint)
+    assert _error_detail("Unexpected property kind in restriction") is None
+    assert _error_detail('ParserError(Syntax(RdfSyntaxError(RdfXml(Msg("Unknown prefix http:")))))') is None
 
 
 async def test_success_keeps_profiles_and_tier(monkeypatch):

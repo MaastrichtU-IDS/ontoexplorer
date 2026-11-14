@@ -889,6 +889,8 @@ export interface OwlProfileRecord {
   profiles_unavailable?: boolean
   /** The parser error (why profiles couldn't be computed), when profiles_unavailable. */
   profiles_error?: string
+  /** A readable, ontology-specific sentence naming the offending element(s), when extractable. */
+  profiles_error_detail?: string
   /** Coarse category of profiles_error: invalid_annotation | equivalent_class_undeclared | property_kind | annotation_property_equivalent | rdf_syntax | other. */
   profiles_error_category?: string
   language?: LanguageResult

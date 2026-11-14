@@ -304,10 +304,12 @@ export default function OwlProfileSection({
           OWL&nbsp;2 profile (EL/QL/RL/DL) not computed for this version — the strict
           OWL parser could not load the source file. The language tier above is still
           derived from the stored triples.
-          {record.profiles_error_category && PROFILE_ERROR_HINTS[record.profiles_error_category] && (
-            <div style={{ marginTop: '0.4rem' }}>
-              {PROFILE_ERROR_HINTS[record.profiles_error_category]}
-              {record.profiles_error_category !== 'rdf_syntax' && (
+          {(record.profiles_error_detail || (record.profiles_error_category && PROFILE_ERROR_HINTS[record.profiles_error_category])) && (
+            <div data-testid="profiles-error-hint" style={{ marginTop: '0.4rem' }}>
+              {record.profiles_error_detail
+                ? <><strong>Cause:</strong> {record.profiles_error_detail}</>
+                : PROFILE_ERROR_HINTS[record.profiles_error_category!]}
+              {record.profiles_error_category && record.profiles_error_category !== 'rdf_syntax' && (
                 <> See <a href="https://github.com/phillord/horned-owl/issues/347" target="_blank" rel="noreferrer">horned-owl#347</a>.</>
               )}
             </div>
