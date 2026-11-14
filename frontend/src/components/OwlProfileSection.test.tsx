@@ -89,6 +89,21 @@ test('renders 404 placeholder when API returns 404', async () => {
   expect(await screen.findByText(/not yet computed/i)).toBeInTheDocument()
 })
 
+test('tier-only payload (parser-rejected file) shows tier + note, no crash, no cards', async () => {
+  // The ~14% of files the strict parser rejects get a tier-only payload with no
+  // el/ql/rl/dl. Before the fix this crashed (undefined.in_profile → white screen).
+  versionFn.mockImplementationOnce(() => Promise.resolve({
+    indexed_at: '2026-11-14T00:00:00Z',
+    profiles_unavailable: true,
+    language: { tier: 'rdfs', label: 'RDFS', construct: 'rdfs:Class' },
+  } as any))
+  wrap(<OwlProfileSection ontologyId="o1" versionId="v1-tieronly" />)
+  expect(await screen.findByTestId('language-tier')).toBeInTheDocument()   // tier still shown
+  expect(screen.getByTestId('profiles-unavailable')).toBeInTheDocument()   // explanatory note
+  expect(screen.queryByTestId('profile-card-el')).not.toBeInTheDocument()  // no cards (no crash)
+  expect(screen.queryByTestId('profile-card-dl')).not.toBeInTheDocument()
+})
+
 test('expanding non-conformant profile shows violations by axiom type', async () => {
   const user = userEvent.setup()
   wrap(<OwlProfileSection ontologyId="o1" versionId="v1" />)

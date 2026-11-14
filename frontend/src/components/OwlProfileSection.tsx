@@ -289,18 +289,27 @@ export default function OwlProfileSection({
         <LanguageTierBadge tier={record.language.tier} construct={record.language.construct} />
       )}
 
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '0.5rem',
-          marginBottom: '1rem',
-        }}
-      >
-        {profiles.map(p => (
-          <ProfileCard key={p} name={p} result={record[p]} />
-        ))}
-      </div>
+      {record.profiles_unavailable || !record.el ? (
+        <div data-testid="profiles-unavailable" style={{ marginBottom: '1rem', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
+          OWL&nbsp;2 profile (EL/QL/RL/DL) not computed for this version — the strict
+          OWL parser could not load the source file. The language tier above is still
+          derived from the stored triples.
+        </div>
+      ) : (
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.5rem',
+            marginBottom: '1rem',
+          }}
+        >
+          {profiles.map(p => {
+            const result = record[p]
+            return result ? <ProfileCard key={p} name={p} result={result} /> : null
+          })}
+        </div>
+      )}
 
       {canEdit && (() => {
         const tag = ver?.git_ref || ver?.version || 'latest'

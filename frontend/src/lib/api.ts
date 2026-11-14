@@ -879,10 +879,14 @@ export interface LanguageResult {
 }
 
 export interface OwlProfileRecord {
-  el: ProfileResult
-  rl: ProfileResult
-  ql: ProfileResult
-  dl: ProfileResult
+  // Optional: a file the strict OWL parser rejects (~14%) yields a tier-only
+  // payload (language + profiles_unavailable) with no EL/QL/RL/DL block.
+  el?: ProfileResult
+  rl?: ProfileResult
+  ql?: ProfileResult
+  dl?: ProfileResult
+  /** True when the EL/QL/RL/DL profiles could not be computed (parser rejected the file). */
+  profiles_unavailable?: boolean
   language?: LanguageResult
   // Older cached profile payloads were written without this; the UI formats it
   // defensively (formatTimestamp) and shows "unknown" when absent.
