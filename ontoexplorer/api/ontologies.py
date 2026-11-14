@@ -1507,6 +1507,13 @@ async def list_versions(ontology_id: str, db: AsyncSession = Depends(get_db)):
              "this almost always comes from the source file, not OntoExplorer."]
             if _cc else []
         )
+        # OWL-profile computability, so the owner dashboard can surface WHY a version's
+        # OWL 2 profile is missing. ALL causes are shown here (unlike the actionable-only
+        # email); profile_error_detail names the specific offending element when known.
+        _op = v.owl_profile or {}
+        d["profile_unavailable"] = bool(_op.get("profiles_unavailable"))
+        d["profile_error_detail"] = _op.get("profiles_error_detail")
+        d["profile_error_category"] = _op.get("profiles_error_category")
         out.append(d)
     return {"versions": out}
 

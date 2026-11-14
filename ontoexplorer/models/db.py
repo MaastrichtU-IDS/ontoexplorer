@@ -189,6 +189,10 @@ class OntologyVersion(Base):
     # distinguishable (and reactivatable) from an ordinary deprecate. NULL = never
     # entered the lifecycle.
     held_nudged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set when the owner was emailed that this version's OWL 2 profile couldn't be
+    # computed (actionable categories only). NULL = not yet notified — dedups so a
+    # re-ingest/backfill never re-emails. See modules/notifications/email.py.
+    profile_error_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reasoner: Mapped[str] = mapped_column(String, nullable=False, server_default="rustdl")
     # Reference-binding to the reasoner profile chosen at add/reindex time; each
     # (re)reason resolves the profile's current params. `reasoner` stays the

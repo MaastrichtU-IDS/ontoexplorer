@@ -11,6 +11,51 @@ from ontoexplorer.config import get_settings
 from ontoexplorer.logging_config import get_logger
 
 log = get_logger(__name__)
+
+# OWL-profile parse-failure categories an owner can actually act on; only these are
+# emailed (the rest — e.g. invalid_annotation from voaf:Vocabulary typing — are shown
+# on the dashboard/page but never emailed, to avoid noise). See _error_category.
+_ACTIONABLE_PROFILE_ERRORS = frozenset({
+    "equivalent_class_undeclared", "property_kind",
+    "annotation_property_equivalent", "rdf_syntax",
+})
+
+
+async def _maybe_notify_owner_profile_error(db, version_id, ontology_id, payload):
+    """Email the owner ONCE when a new version's OWL 2 profile failed for an
+    owner-actionable reason. Ingest-path only + dedup via profile_error_notified_at,
+    so re-ingests and the re-profile backfill never re-email. Best-effort; never
+    raised into the ingest task."""
+    if payload.get("profiles_error_category") not in _ACTIONABLE_PROFILE_ERRORS:
+        return
+    from datetime import datetime, timezone
+    from sqlalchemy import select, update
+    from ontoexplorer.models.db import OntologyVersion, Ontology, User
+    already = (await db.execute(
+        select(OntologyVersion.profile_error_notified_at).where(OntologyVersion.id == version_id)
+    )).scalar_one_or_none()
+    if already is not None:
+        return  # dedup — already notified for this version
+    owner = (await db.execute(
+        select(Ontology.title, Ontology.shortname, User.email, User.display_name)
+        .select_from(Ontology)
+        .join(User, User.id == Ontology.owner_id, isouter=True)
+        .where(Ontology.id == ontology_id)
+    )).first()
+    if owner is None:
+        return
+    label = owner.title or owner.shortname or ontology_id
+    try:
+        from ontoexplorer.modules.notifications.email import notify_owner_profile_uncomputable
+        await notify_owner_profile_uncomputable(
+            owner_email=owner.email, owner_name=owner.display_name,
+            ontology_label=label, detail=payload.get("profiles_error_detail"))
+    except Exception as exc:
+        log.warning("profile_uncomputable_email_failed", version_id=version_id, error=str(exc))
+    # Stamp regardless of send outcome (send is best-effort; don't retry-spam).
+    await db.execute(update(OntologyVersion).where(OntologyVersion.id == version_id)
+                     .values(profile_error_notified_at=datetime.now(timezone.utc)))
+    await db.commit()
 settings = get_settings()
 
 celery_app = Celery(
@@ -1365,55 +1410,44 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         try:
             import json as _json
             import time as _pt
-            from sqlalchemy import select as _sel
-            from ontoexplorer.clients.minio import download_bytes as _dl
-            from ontoexplorer.clients.oxigraph import get_store as _gstore, graph_iri as _giri
-            from ontoexplorer.config import get_settings as _gs
             from ontoexplorer.models.db import OntologyVersion as _OVp
             from ontoexplorer.modules.owl_profile.cache import owl_profile_cache_key
-            from ontoexplorer.modules.owl_profile.detector import detect_profiles
-            from ontoexplorer.modules.owl_profile.language import detect_language
+            from ontoexplorer.modules.owl_profile.compute import compute_owl_profile_payload
             from ontoexplorer.modules.search.indexer import _get_redis, _SEARCH_TTL
 
-            async def _fetch_key_fmt():
-                async with make_celery_db_session()() as db:
-                    return (
-                        await db.execute(
-                            _sel(_OVp.minio_key, _OVp.format).where(_OVp.id == version_id)
-                        )
-                    ).first()
+            _t0 = _pt.monotonic()
 
-            _row = asyncio.run(_fetch_key_fmt())
-            if _row and _row.minio_key:
-                _t0 = _pt.monotonic()
-                _content = _dl(_gs().minio_ontologies_bucket, _row.minio_key)
-                _payload = detect_profiles(_content, _row.format)
-                # Coarser language/expressivity tier (RDF/RDFS/RDFS-Plus/OWL) from a
-                # few cheap ASKs against the store, alongside the profile result.
-                _payload["language"] = detect_language(
-                    _gstore(), graph_iri=_giri(ontology_id, version_id)
-                )
-                # Stamp when the profile was computed so the UI's "Last computed"
-                # caption has a date (coverage already carries indexed_at).
-                from datetime import datetime as _pdt, timezone as _ptz
-                _payload["indexed_at"] = _pdt.now(_ptz.utc).isoformat()
+            async def _compute_persist_notify():
+                # Single source of truth for the payload (compute.py): the language tier
+                # survives a strict-parser rejection, and the error is captured +
+                # categorized. On failure it returns a tier-only payload with
+                # profiles_error* instead of skipping, so the fleet rollup and the
+                # owner dashboard see the reason.
+                async with make_celery_db_session()() as _db:
+                    payload = await compute_owl_profile_payload(_db, version_id, ontology_id)
+                    if payload is None:
+                        return None
+                    from sqlalchemy import update as _upd_prof
+                    await _db.execute(
+                        _upd_prof(_OVp).where(_OVp.id == version_id).values(owl_profile=payload))
+                    await _db.commit()
+                    # Owner email for an actionable profile failure — ingest-path only,
+                    # once per version (dedup via profile_error_notified_at), so a
+                    # re-ingest or the re-profile backfill never re-emails.
+                    if payload.get("profiles_unavailable"):
+                        await _maybe_notify_owner_profile_error(_db, version_id, ontology_id, payload)
+                    return payload
+
+            _payload = asyncio.run(_compute_persist_notify())
+            if _payload is not None:
                 _get_redis().setex(
                     owl_profile_cache_key(version_id), _SEARCH_TTL, _json.dumps(_payload)
                 )
-                # Durable mirror on the row so the fleet rollup / catalogue filters
-                # survive the Redis TTL (same reason coverage is persisted).
-                from sqlalchemy import update as _upd_prof
-                async def _persist_owl_profile():
-                    async with make_celery_db_session()() as _db:
-                        await _db.execute(
-                            _upd_prof(_OVp).where(_OVp.id == version_id).values(
-                                owl_profile=_payload))
-                        await _db.commit()
-                asyncio.run(_persist_owl_profile())
                 log.info(
                     "owl_profile_populated", version_id=version_id,
                     duration_s=round(_pt.monotonic() - _t0, 2),
                     dl=_payload.get("dl", {}).get("in_profile"),
+                    unavailable=_payload.get("profiles_unavailable", False),
                 )
         except Exception as exc:
             log.warning("owl_profile_populate_failed", version_id=version_id, error=str(exc))
