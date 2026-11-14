@@ -315,6 +315,12 @@ export interface OntologyVersion {
   /** True when the held-draft lifecycle set this version aside (auto-deprecated past
    *  the retire window); the owner can reactivate it back to needs_review. */
   auto_retired_held?: boolean
+  /** True when this version's OWL 2 profile couldn't be computed (strict parser). */
+  profile_unavailable?: boolean
+  /** Readable, ontology-specific cause of the profile failure, when extractable. */
+  profile_error_detail?: string | null
+  /** Coarse category of the profile failure (see owl_profile._error_category). */
+  profile_error_category?: string | null
 }
 
 export interface Term {

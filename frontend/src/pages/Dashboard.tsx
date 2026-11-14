@@ -622,6 +622,11 @@ export function VersionManager({ ontology, versions }: { ontology: Ontology; ver
                 </button>
               )}
             </div>
+            {v.profile_unavailable && (
+              <div data-testid="profile-uncomputable" style={{ color: 'var(--text-dim)', fontSize: 11, paddingLeft: '1.1rem' }}>
+                ⚠ OWL&nbsp;2 profile not computed{v.profile_error_detail ? ` — ${v.profile_error_detail}` : ''}
+              </div>
+            )}
             {v.status === 'needs_review' && (
               <HeldFixPanel ontologyId={ontology.id} version={v} onDone={invalidate} />
             )}

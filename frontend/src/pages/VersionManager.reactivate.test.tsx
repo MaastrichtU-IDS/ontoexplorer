@@ -73,6 +73,21 @@ describe('VersionManager reactivate', () => {
     expect(await screen.findByText(/set aside after inactivity/)).toBeInTheDocument()
   })
 
+  it('surfaces the OWL 2 profile cause when a version could not be profiled', async () => {
+    wrap([
+      retired(),  // auto-expands the version list
+      retired({ id: 'v2', status: 'ready', auto_retired_held: false,
+                profile_unavailable: true,
+                profile_error_detail: 'http://ex/o is typed voaf:Vocabulary, which the strict OWL reader rejects as an annotation.' }),
+    ])
+    await screen.findByText(/set aside after inactivity/)   // list is expanded
+    const line = await screen.findByTestId('profile-uncomputable')
+    expect(line.textContent).toMatch(/OWL.{0,3}2 profile not computed/)
+    expect(line.textContent).toMatch(/voaf:Vocabulary/)
+    // the version without profile_unavailable shows no such line (only one on the page)
+    expect(screen.getAllByTestId('profile-uncomputable')).toHaveLength(1)
+  })
+
   it('shows a collapsed "needs your attention" hint after the user collapses the list', async () => {
     wrap([retired()])
     // Auto-expanded; collapsing should still flag that attention is needed.

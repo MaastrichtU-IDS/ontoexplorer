@@ -133,6 +133,44 @@ async def notify_owner_version_held(
     ))
 
 
+async def notify_owner_profile_uncomputable(
+    *, owner_email: str | None, owner_name: str | None,
+    ontology_label: str, detail: str | None,
+) -> None:
+    """Email a contributor that their ontology's OWL 2 profile couldn't be computed
+    for a reason they can act on (an undeclared class in an equivalentClass, a
+    conflicting property kind, an RDF syntax error). Caller fires this ONLY for
+    owner-actionable error categories — strict-parser-limitation cases (e.g. a
+    voaf:Vocabulary typing) are shown on the dashboard/page but never emailed.
+    Best-effort and never raised into the ingest task; a no-op without an email."""
+    if not owner_email:
+        log.info("profile_uncomputable_no_owner_email", ontology=ontology_label)
+        return
+    who = owner_name or "there"
+    label = _header_safe(ontology_label)
+    page = get_settings().frontend_url.rstrip("/") + "/dashboard"
+    cause = detail or "see the OWL Profile tab on the ontology page for details"
+    lines = [
+        f"Hi {who},",
+        "",
+        f"The OWL 2 profile (EL/QL/RL/DL) for your ontology “{label}” could not be "
+        "computed, because of something you can correct:",
+        "",
+        f"  • {cause}",
+        "",
+        "The ontology is still indexed, searchable, and has a language tier — only the "
+        "detailed OWL 2 profile is affected. Fix the above and re-ingest, and the "
+        "profile will compute.",
+        "",
+        page,
+    ]
+    await send_email(Email(
+        to=[owner_email],
+        subject=f"[OntoExplorer] “{label}”: OWL 2 profile couldn’t be computed",
+        body="\n".join(lines),
+    ))
+
+
 async def notify_owner_held_nudge(
     *, owner_email: str | None, owner_name: str | None,
     ontology_label: str, days_held: int, retire_days: int,
