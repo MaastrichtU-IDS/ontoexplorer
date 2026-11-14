@@ -20,6 +20,7 @@ import) so tests can monkeypatch ``download_bytes`` / ``detect_language`` /
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime, timezone
 
 import structlog
@@ -50,6 +51,46 @@ def _error_category(msg: str) -> str:
     if "parsererror" in m or "syntax" in m:
         return "rdf_syntax"
     return "other"
+
+
+_PREFIXES = {
+    "http://www.w3.org/2002/07/owl#": "owl:",
+    "http://www.w3.org/2000/01/rdf-schema#": "rdfs:",
+    "http://www.w3.org/1999/02/22-rdf-syntax-ns#": "rdf:",
+    "http://www.w3.org/2004/02/skos/core#": "skos:",
+    "http://purl.org/vocommons/voaf#": "voaf:",
+    "http://www.w3.org/ns/adms#": "adms:",
+    "http://rdfs.org/ns/void#": "void:",
+    "http://purl.org/dc/terms/": "dcterms:",
+    "http://xmlns.com/foaf/0.1/": "foaf:",
+}
+
+
+def _short_iri(iri: str) -> str:
+    for ns, pre in _PREFIXES.items():
+        if iri.startswith(ns):
+            return pre + iri[len(ns):]
+    return iri
+
+
+def _error_detail(msg: str) -> str | None:
+    """Pull the specific offending element(s) out of a parse error into a readable,
+    ontology-specific sentence. Returns None when nothing extractable (the UI then
+    falls back to the per-category hint). Best-effort regex over horned-owl's
+    debug string; never raises."""
+    iris = [_short_iri(i) for i in re.findall(r'IRI\("([^"]+)"\)', msg)]
+    if "Invalid annotation found" in msg:
+        if len(iris) >= 2:
+            return f"{iris[0]} is typed {iris[-1]}, which the strict OWL reader rejects as an annotation."
+        if iris and "OWL(Thing)" in msg:
+            return f"{iris[0]} is typed owl:Thing, which the strict OWL reader rejects as an annotation."
+    elif "Unknown entity in equivalent class" in msg and iris:
+        return f"{iris[0]} is asserted owl:equivalentClass of an undeclared class."
+    elif "Types of two properties do not match" in msg and len(iris) >= 2:
+        return f"{iris[0]} and {iris[1]} have conflicting property kinds (object vs. data vs. annotation)."
+    elif "Annotation properties cannot be equivalent" in msg and len(iris) >= 2:
+        return f"annotation properties {iris[0]} and {iris[1]} are asserted equivalent."
+    return None
 
 
 async def compute_owl_profile_payload(
@@ -99,12 +140,19 @@ async def compute_owl_profile_payload(
             # tier, flag the gap, and surface WHY so an owner can act on it.
             # Downstream readers access el/ql/rl/dl via .get(), so a profile-less
             # payload is safe.
-            msg = str(exc).replace("Failed to open ontology: ", "", 1)[:500]
+            # horned-owl's Debug string backslash-escapes inner quotes; de-escape so
+            # the stored error reads cleanly and the IRI extraction below matches.
+            msg = (str(exc).replace("Failed to open ontology: ", "", 1)
+                   .replace(chr(92) + chr(34), chr(34))[:500])
             cat = _error_category(msg)
+            detail = _error_detail(msg)
             _log.warning("owl_profile_parse_failed", version_id=version_id,
                          category=cat, error=msg)
-            return {"language": lang, "indexed_at": stamp, "profiles_unavailable": True,
-                    "profiles_error": msg, "profiles_error_category": cat}
+            out = {"language": lang, "indexed_at": stamp, "profiles_unavailable": True,
+                   "profiles_error": msg, "profiles_error_category": cat}
+            if detail:
+                out["profiles_error_detail"] = detail
+            return out
         payload["language"] = lang
         payload["indexed_at"] = stamp
         return payload
