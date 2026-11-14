@@ -36,8 +36,8 @@ A next-generation FAIR ontology repository — ingest, browse, query, and reason
       └──────────────┘        └──────────────────┘       └──────────────┘
               ▼                         ▼                          ▼
       ┌──────────────┐        ┌──────────────────┐       ┌──────────────┐
-      │  Metadata store  │
-      │   (embedded)     │
+      │    MinIO     │        │  Metadata store  │       │ Celery Worker│
+      │  (port 9000) │        │   (embedded)     │       │  (ingestion, │
       │  OWL files   │        │  FAIR metadata   │       │   reasoning) │
       └──────────────┘        └──────────────────┘       └──────────────┘
                                                                    │

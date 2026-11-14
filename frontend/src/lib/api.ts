@@ -285,7 +285,7 @@ export interface OntologyVersion {
   download_url: string
   created_at: string
   /** Reasoner this version was ingested/classified with (e.g. "rustdl",
-   *  "rustdl", "konclude"). Look it up in `api.reasoners.list()` to find its
+   *  "konclude"). Look it up in `api.reasoners.list()` to find its
    *  capabilities — e.g. whether it supports `justify`. */
   reasoner?: string | null
   reasoner_profile_id?: string | null
