@@ -109,11 +109,11 @@ def test_tier_only_profile_scores_i2_partial():
 
 **Interfaces:**
 - Consumes: Task 1 scorer; a batched read of the ready-version signal columns; the Redis cache helper used by the other fleet stats.
-- Produces: `GET /fair/fleet` → `{n, overall_histogram:[{bucket,count}], principle_means:{F,A,I,R}, check_pass_rate:[{id,name,rate,n}], computed_at}`; cache key in Redis; `invalidate_*` hook consistent with the other stats.
+- Produces: `GET /fair/fleet` → `{n, overall_histogram:[{bucket,count}], principle_means:{F,A,I,R}, check_pass_rate:[{id,principle,name,rate}]}`. Computed **live from the durable `versions.*` columns** (exactly like `/reuse/fleet`), so a version aging past any cache TTL is never dropped — this is safer than a cached aggregate ([[ontoexplorer-stats-precompute]] warns about TTL'd Redis dropping aged versions). Redis memoization is an optional later optimization, not required for correctness.
 
 - [ ] **Step 1: Write failing test** — seed N versions across score bands; assert histogram buckets sum to N (ready only), principle means in [0,1], and per-check pass rates computed over N; assert a cache miss recomputes from the DB rather than returning empty (Review Focus: fleet population drift).
 - [ ] **Step 2: Run, verify fail.**
-- [ ] **Step 3: Implement** — iterate ready versions in batches, score each via Task 1, aggregate; cache the aggregate; recompute on miss. Buckets `<50 / 50–69 / 70–84 / 85–100`.
+- [ ] **Step 3: Implement** — join the latest-ready version per ontology to `Ontology` + `OntologyMetaProfile`, score each via Task 1 from the durable columns, aggregate live. Buckets `<50 / 50–69 / 70–84 / 85–100`.
 - [ ] **Step 4: Run, verify pass.**
 - [ ] **Step 5: Commit** (`feat(fair): GET /fair/fleet cached aggregate`).
 
