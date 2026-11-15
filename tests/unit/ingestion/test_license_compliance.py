@@ -69,9 +69,26 @@ class TestEffectiveLicenseOverlay:
     ("MIT", "MIT"),
     ("Apache-2.0", "Apache-2.0"),          # already SPDX → passthrough
     ("https://creativecommons.org/licenses/by-nc/4.0/", "CC-BY-NC"),  # non-commercial detected
+    # Older permissive CC versions must map too (the by/ and by-sa/ patterns were
+    # pinned to 3.0/4.0, so 1.0–2.5 fell through to None and read as "no license").
+    ("http://creativecommons.org/licenses/by/2.0/", "CC-BY-2.0"),
+    ("https://creativecommons.org/licenses/by/2.5/", "CC-BY-2.5"),
+    ("http://creativecommons.org/licenses/by/1.0/", "CC-BY-1.0"),
+    ("http://creativecommons.org/licenses/by-sa/2.0/", "CC-BY-SA-2.0"),
+    ("https://creativecommons.org/licenses/by-sa/2.5/", "CC-BY-SA-2.5"),
+    ("http://creativecommons.org/licenses/by-sa/1.0/", "CC-BY-SA-1.0"),
+    # Restrictive older versions still correctly recognized (and non-compliant).
+    ("http://creativecommons.org/licenses/by-nc-sa/2.0/", "CC-BY-NC-SA"),
 ])
 def test_canonicalize(raw, spdx):
     assert canonicalize_license(raw) == spdx
+
+
+def test_plain_by_pattern_does_not_swallow_by_sa():
+    # Order + specificity guard: a by-sa/2.0 URL must not be matched by the plain
+    # by/2.0 pattern (it would mislabel a ShareAlike license as plain CC-BY).
+    assert canonicalize_license(
+        "http://creativecommons.org/licenses/by-sa/2.0/") == "CC-BY-SA-2.0"
 
 
 def test_unknown_license_is_none():
@@ -85,8 +102,14 @@ def test_compliance_default_allowlist(monkeypatch):
     assert is_compliant("https://creativecommons.org/licenses/by/4.0/") is True
     assert is_compliant("CC0-1.0") is True
     assert is_compliant("MIT") is True
+    # Older permissive CC-BY / CC-BY-SA (2.x) are now on the default allowlist, so a
+    # version declaring CC-BY-2.0 (e.g. linked-earth) publishes instead of being held.
+    assert is_compliant("http://creativecommons.org/licenses/by/2.0/") is True
+    assert is_compliant("https://creativecommons.org/licenses/by-sa/2.5/") is True
     # NonCommercial is NOT on the default allowlist.
     assert is_compliant("https://creativecommons.org/licenses/by-nc/4.0/") is False
+    # ShareAlike-NonCommercial 2.0 also excluded (restricts reuse).
+    assert is_compliant("http://creativecommons.org/licenses/by-nc-sa/2.0/") is False
     # Unrecognized → not compliant (goes to review, not auto-published).
     assert is_compliant("All rights reserved") is False
     assert is_compliant(None) is False
