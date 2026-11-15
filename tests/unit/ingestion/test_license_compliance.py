@@ -79,6 +79,13 @@ class TestEffectiveLicenseOverlay:
     ("http://creativecommons.org/licenses/by-sa/1.0/", "CC-BY-SA-1.0"),
     # Restrictive older versions still correctly recognized (and non-compliant).
     ("http://creativecommons.org/licenses/by-nc-sa/2.0/", "CC-BY-NC-SA"),
+    # British spelling "licences" in the URL (seen on dutch/eu gov ontologies).
+    ("http://creativecommons.org/licences/by/4.0", "CC-BY-4.0"),
+    ("https://creativecommons.org/licences/by-sa/4.0/", "CC-BY-SA-4.0"),
+    # Spelled-out Creative Commons deed names (free-text license fields).
+    ("Creative Commons Attribution 4.0 International", "CC-BY-4.0"),
+    ("Creative Commons Attribution 3.0 Unported", "CC-BY-3.0"),
+    ("Creative Commons Attribution-ShareAlike 4.0 International", "CC-BY-SA-4.0"),
 ])
 def test_canonicalize(raw, spdx):
     assert canonicalize_license(raw) == spdx
