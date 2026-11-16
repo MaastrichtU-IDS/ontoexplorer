@@ -298,12 +298,28 @@ def _nearest_profile(op: dict) -> str:
 
 
 def _reusable(inp: FairInputs) -> list[FairCheck]:
+    from ontoexplorer.modules.ingestion.license import canonicalize_license, is_compliant
+
     m = inp.meta_resolved
-    has_lic = bool(inp.license_raw or inp.license_spdx)
-    if inp.license_spdx and inp.license_compliant:
-        r2s, r2sc, r2ev = PASS, 1.0, f"SPDX {inp.license_spdx}; passes the compliance allowlist."
-    elif inp.license_spdx:
-        r2s, r2sc, r2ev = PARTIAL, 0.5, f"SPDX {inp.license_spdx}; not on the compliance allowlist (NC/ND)."
+    # Effective license. When the version carries a stored license signal, trust it
+    # (its license_compliant flag is authoritative). Only when the version has NO
+    # license signal do we fall back to the license the bleed-aware meta-profile
+    # resolver found: the index task extracts license_raw by querying the exact
+    # ontology-IRI subject, which misses a license declared on a slightly different
+    # owl:Ontology subject (slash/hash) — the same subject-mismatch that caused the
+    # title gap. So a version can carry a real content license (e.g. SULO's CC0) that
+    # never reached license_raw/license, and FAIR must not under-report it.
+    if inp.license_raw or inp.license_spdx:
+        eff_raw, eff_spdx, eff_compliant = inp.license_raw, inp.license_spdx, inp.license_compliant
+    else:
+        eff_raw = m.get("license") or m.get("rights")
+        eff_spdx = canonicalize_license(m.get("license")) or canonicalize_license(m.get("rights"))
+        eff_compliant = is_compliant(eff_raw) if eff_raw else False
+    has_lic = bool(eff_raw or eff_spdx)
+    if eff_spdx and eff_compliant:
+        r2s, r2sc, r2ev = PASS, 1.0, f"SPDX {eff_spdx}; passes the compliance allowlist."
+    elif eff_spdx:
+        r2s, r2sc, r2ev = PARTIAL, 0.5, f"SPDX {eff_spdx}; not on the compliance allowlist (NC/ND)."
     else:
         r2s, r2sc, r2ev = FAIL, 0.0, "License not machine-readable (no SPDX id)."
 
@@ -317,10 +333,10 @@ def _reusable(inp: FairInputs) -> list[FairCheck]:
                   PASS if has_lic else FAIL, 1.0 if has_lic else 0.0,
                   "License asserted." if has_lic else "No license.",
                   "license", [("Predicate (any of)", "dcterms:license  dcterms:rights"),
-                              ("Found", inp.license_raw or inp.license_spdx or "— none —")]),
+                              ("Found", eff_raw or eff_spdx or "— none —")]),
         FairCheck("R2", "R", "Machine-readable & compliant license", r2s, r2sc, r2ev, "license",
-                  [("SPDX", inp.license_spdx or "— none —"),
-                   ("Compliance allowlist", "pass" if inp.license_compliant else "fail / n-a")]),
+                  [("SPDX", eff_spdx or "— none —"),
+                   ("Compliance allowlist", "pass" if eff_compliant else "fail / n-a")]),
         FairCheck("R3", "R", "Provenance metadata",
                   PASS if has_prov else FAIL, 1.0 if has_prov else 0.0,
                   "Creator/date/publisher present." if has_prov else "Insufficient provenance.",
