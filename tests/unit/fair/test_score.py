@@ -80,6 +80,58 @@ def test_license_present_but_not_compliant_r2_partial():
     assert checks["R2"].status == "partial"       # present but not compliant
 
 
+def _meta_with_license(url):
+    m = _meta(FILLED_ROLES)
+    m["license"] = url   # the resolved key for the license role
+    return m
+
+
+def test_r1_r2_fall_back_to_resolved_meta_license():
+    # license_raw-extraction gap: the index task missed the license (ontology-IRI
+    # subject mismatch), so the version columns are empty — but the meta-profile
+    # resolver found CC0. FAIR must read the resolved value, not under-report.
+    rep = compute_fair_report(_full_inputs(
+        license_raw="", license_spdx=None, license_compliant=False,
+        meta_resolved=_meta_with_license("https://creativecommons.org/publicdomain/zero/1.0")))
+    checks = _by_id(rep)
+    assert checks["R1"].status == "pass"            # resolved CC0 → license present
+    assert checks["R2"].status == "pass"            # CC0 canonicalizes + on allowlist
+    assert "CC0-1.0" in checks["R2"].evidence
+
+
+def test_r2_resolved_noncompliant_license_is_partial():
+    # Resolved license recognized but NonCommercial → present (R1) yet not compliant (R2).
+    rep = compute_fair_report(_full_inputs(
+        license_raw="", license_spdx=None, license_compliant=False,
+        meta_resolved=_meta_with_license("http://creativecommons.org/licenses/by-nc/4.0/")))
+    checks = _by_id(rep)
+    assert checks["R1"].status == "pass"
+    assert checks["R2"].status == "partial"
+
+
+def test_r1_no_license_anywhere_still_fails():
+    # Genuinely no license: version columns empty AND resolver found none → R1/R2 fail.
+    m = _meta(FILLED_ROLES)
+    m.pop("license", None)
+    rep = compute_fair_report(_full_inputs(
+        license_raw="", license_spdx=None, license_compliant=False, meta_resolved=m))
+    checks = _by_id(rep)
+    assert checks["R1"].status == "fail"
+    assert checks["R2"].status == "fail"
+
+
+def test_stored_version_license_still_wins_over_resolved():
+    # When the version has its own license signal, its compliance flag is authoritative
+    # (the resolved fallback must not override it). Stored NC flag → R2 partial even if
+    # the resolved meta happens to name an allowlisted license.
+    rep = compute_fair_report(_full_inputs(
+        license_raw="CC BY-NC 4.0", license_spdx="CC-BY-NC-4.0", license_compliant=False,
+        meta_resolved=_meta_with_license("https://creativecommons.org/licenses/by/4.0/")))
+    checks = _by_id(rep)
+    assert checks["R1"].status == "pass"
+    assert checks["R2"].status == "partial"
+
+
 def test_no_coverage_no_zero_division():
     rep = compute_fair_report(_full_inputs(coverage=None))
     checks = _by_id(rep)
