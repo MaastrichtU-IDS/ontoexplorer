@@ -150,6 +150,12 @@ def test_compliance_default_allowlist(monkeypatch):
     assert is_compliant("https://www.gnu.org/licenses/gpl-3.0.txt") is True
     assert is_compliant("GPL-3.0-only") is True
     assert is_compliant("GPL-3.0-or-later") is True
+    # Open Data Commons / public-domain data licenses are open and on the allowlist:
+    # PDDL (public domain), ODC-By (attribution), ODbL (share-alike, like GPL copyleft).
+    assert is_compliant("http://www.opendatacommons.org/licenses/pddl/1.0/") is True
+    assert is_compliant("http://opendatacommons.org/licenses/by/") is True
+    assert is_compliant("http://opendatacommons.org/licenses/odbl/1.0/") is True
+    assert is_compliant("ODbL-1.0") is True
     # NonCommercial is NOT on the default allowlist.
     assert is_compliant("https://creativecommons.org/licenses/by-nc/4.0/") is False
     # ShareAlike-NonCommercial 2.0 also excluded (restricts reuse).
