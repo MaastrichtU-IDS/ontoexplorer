@@ -208,6 +208,19 @@ async def get_or_create_user(
         existing = (await db.execute(select(User).where(User.id == oauth_account.user_id))).scalar_one()
         if email_verified and not existing.email_verified:
             existing.email_verified = True
+        # Opportunistically backfill a missing email on a returning login: a user
+        # who first signed in before we captured an address (e.g. a GitHub account
+        # whose primary email was private, now readable via /user/emails) must get
+        # it filled so notifications can reach them. Only ever fills an ABSENCE, and
+        # guards the unique-email constraint — never overwrites or steals an address.
+        if email and not existing.email:
+            taken = (
+                await db.execute(
+                    select(User).where(User.email == email, User.id != existing.id)
+                )
+            ).scalar_one_or_none()
+            if taken is None:
+                existing.email = email
         await db.commit()
         return existing
 

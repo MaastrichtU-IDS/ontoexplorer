@@ -132,7 +132,27 @@ async def fetch_userinfo(provider: str, access_token: str, orcid_id: str | None 
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(url, headers=headers)
         resp.raise_for_status()
-        return resp.json()
+        info = resp.json()
+
+        # GitHub's /user endpoint returns email=null when the user's primary email
+        # is private — which is the default. We already hold the `user:email` scope,
+        # so fetch /user/emails and adopt the primary verified address. Without this
+        # a GitHub sign-in yields a user row with no email, and every notification to
+        # them (held-version, nudge, maintainer-request) silently no-ops.
+        if provider == "github" and not info.get("email"):
+            try:
+                er = await client.get("https://api.github.com/user/emails", headers=headers)
+                er.raise_for_status()
+                emails = er.json()
+                primary = next((e for e in emails if e.get("primary") and e.get("verified")), None)
+                chosen = primary or next((e for e in emails if e.get("verified")), None)
+                if chosen and chosen.get("email"):
+                    info["email"] = chosen["email"]
+            except Exception:
+                # Best-effort: a missing email just leaves the row unreachable, same
+                # as before; it must never block the login itself.
+                pass
+        return info
 
 
 def extract_user_info(provider: str, userinfo: dict) -> tuple[str, str | None, str | None]:
