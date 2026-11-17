@@ -166,7 +166,7 @@ class Settings(BaseSettings):
         "CC0-1.0,"
         "CC-BY-4.0,CC-BY-3.0,CC-BY-2.5,CC-BY-2.0,"
         "CC-BY-SA-4.0,CC-BY-SA-3.0,CC-BY-SA-2.5,CC-BY-SA-2.0,"
-        "MIT,Apache-2.0,BSD-3-Clause"
+        "MIT,Apache-2.0,BSD-3-Clause,GPL-3.0-only,GPL-3.0-or-later"
     )
     # Pre-publish quality gate (#364): a newly-ingested version with fewer than this
     # many triples is held for review instead of auto-published. Only applies at the

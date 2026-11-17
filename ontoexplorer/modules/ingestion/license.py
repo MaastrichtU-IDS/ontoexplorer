@@ -57,6 +57,9 @@ _LABEL_TO_SPDX: dict[str, str] = {
     "apache 2.0": "Apache-2.0", "apache-2.0": "Apache-2.0", "apache license 2.0": "Apache-2.0",
     "bsd-3-clause": "BSD-3-Clause", "bsd 3 clause": "BSD-3-Clause",
     "gpl 3.0": "GPL-3.0-only", "gpl-3.0": "GPL-3.0-only",
+    "gpl-3.0-only": "GPL-3.0-only",
+    "gpl-3.0-or-later": "GPL-3.0-or-later", "gpl 3.0 or later": "GPL-3.0-or-later",
+    "gplv3+": "GPL-3.0-or-later",
 }
 
 # SPDX ids we recognize (so a value already in SPDX form passes through).

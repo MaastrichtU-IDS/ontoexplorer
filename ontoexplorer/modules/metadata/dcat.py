@@ -33,27 +33,116 @@ _DESC_PREDS = [
     "http://purl.org/dc/terms/description", "http://purl.org/dc/elements/1.1/description",
     "http://www.w3.org/2000/01/rdf-schema#comment",
 ]
-_LICENSE_PREDS = ["http://purl.org/dc/terms/license", "http://purl.org/dc/elements/1.1/rights"]
+# A real license statement, in preference order. dc:rights is a SEPARATE fallback
+# (_RIGHTS_PREDS) because it usually holds a copyright notice ("© 2021 …"), not a
+# license — surfacing it as the license would read as present-but-unmappable and
+# wrongly fail the compliance gate.
+_LICENSE_PREDS = [
+    "http://purl.org/dc/terms/license",
+    "http://purl.org/dc/elements/1.1/license",
+    "http://creativecommons.org/ns#license",
+    "http://schema.org/license", "https://schema.org/license",
+    "http://www.w3.org/1999/xhtml/vocab#license",
+]
+_RIGHTS_PREDS = ["http://purl.org/dc/terms/rights", "http://purl.org/dc/elements/1.1/rights"]
 _CREATOR_PREDS = ["http://purl.org/dc/terms/creator", "http://purl.org/dc/elements/1.1/creator"]
 # The vocabulary's own declared short prefix — the best source for a shortname (#249).
 _PREFIX_PREDS = ["http://purl.org/vocab/vann/preferredNamespacePrefix"]
+
+_OWL_ONTOLOGY = "http://www.w3.org/2002/07/owl#Ontology"
+_OWL_IMPORTS = "http://www.w3.org/2002/07/owl#imports"
+
+
+def _iri_variants(iri: str) -> list[str]:
+    """The stored ontology IRI and its trailing slash/hash variants.
+
+    A file often declares its owl:Ontology (and the annotations on it) under a
+    subject that differs from the catalogued IRI only by a trailing '/' or '#'
+    (e.g. catalogued '…/irao/' but declared on '…/irao'). Matching exactly misses
+    those. Only http(s) IRIs qualify — a broken, unexpanded entity ref ('&x;…')
+    can never match a real subject and is dropped here.
+    """
+    if not iri or not iri.startswith(("http://", "https://")):
+        return []
+    out = {iri}
+    if iri.endswith(("/", "#")):
+        out.add(iri[:-1])
+    else:
+        out.add(iri + "/")
+        out.add(iri + "#")
+    return sorted(out)
+
+
+def _resolve_ontology_subjects(sparql_query, g: str, ontology_iri: str) -> list[str]:
+    """The subject(s) that are THIS ontology's own node, for reading its annotations.
+
+    Bleed-safe: never returns an imported ontology's subject. A graph with
+    owl:imports holds several owl:Ontology nodes (BFO, OGMS, … pulled in by the
+    root); reading a license off any of them would launder an import's license as
+    the ontology's own. Resolution order:
+      1. a trailing-slash/hash variant of the catalogued IRI that is an
+         owl:Ontology subject in the graph;
+      2. otherwise, the unique non-imported root owl:Ontology (owl:Ontology
+         subjects minus every owl:imports object) — only when exactly one remains;
+      3. otherwise, the catalogued IRI and its variants (prior behaviour).
+    """
+    variants = _iri_variants(ontology_iri)
+    try:
+        onts = {
+            (r["s"].value if hasattr(r["s"], "value") else str(r["s"]))
+            for r in sparql_query(
+                f"SELECT DISTINCT ?s WHERE {{ GRAPH <{g}> {{ ?s a <{_OWL_ONTOLOGY}> }} }}"
+            )
+        }
+    except Exception:
+        onts = set()
+    # (1) a variant that is an actual owl:Ontology subject
+    hit = [u for u in variants if u in onts]
+    if hit:
+        return hit
+    # (2) the unique non-imported root
+    if onts:
+        try:
+            imported = {
+                (r["o"].value if hasattr(r["o"], "value") else str(r["o"]))
+                for r in sparql_query(
+                    f"SELECT DISTINCT ?o WHERE {{ GRAPH <{g}> {{ ?x <{_OWL_IMPORTS}> ?o }} }}"
+                )
+            }
+        except Exception:
+            imported = set()
+        roots = onts - imported
+        if len(roots) == 1:
+            return list(roots)
+    # (3) fall back to the catalogued IRI (and variants)
+    return variants or ([ontology_iri] if ontology_iri else [])
 
 
 def extract_ontology_annotations(ontology_id: str, version_id: str, ontology_iri: str) -> dict:
     """Read the ontology node's own title/description/license/creator from the
     content store, so the FAIR record reflects what the ontology declares rather
     than being a bare stats stub. Best-effort — missing values are simply omitted.
+
+    The subject is resolved via _resolve_ontology_subjects (slash/hash variants and
+    the non-imported root) rather than matched exactly, so a license declared on a
+    trailing-slash/hash variant of the catalogued IRI is no longer missed — while
+    staying bleed-safe against imported ontologies' annotations.
     """
     from ontoexplorer.clients.oxigraph import graph_iri, sparql_query
 
     g = graph_iri(ontology_id, version_id)
+    subjects = _resolve_ontology_subjects(sparql_query, g, ontology_iri)
+    if not subjects:
+        return {"title": None, "description": None, "license": None,
+                "creators": [], "preferred_prefix": None}
+    subj_values = " ".join(f"<{s}>" for s in subjects)
 
     def _query(preds: list[str], limit: int) -> list[str]:
         values = " ".join(f"<{p}>" for p in preds)
         try:
             rows = sparql_query(
-                f"SELECT DISTINCT ?o WHERE {{ GRAPH <{g}> {{ <{ontology_iri}> ?p ?o . "
-                f"VALUES ?p {{ {values} }} }} }} LIMIT {limit}"
+                f"SELECT DISTINCT ?o WHERE {{ GRAPH <{g}> {{ ?s ?p ?o . "
+                f"VALUES ?s {{ {subj_values} }} VALUES ?p {{ {values} }} }} }} LIMIT {limit}"
             )
         except Exception:
             return []
@@ -61,7 +150,7 @@ def extract_ontology_annotations(ontology_id: str, version_id: str, ontology_iri
 
     title = _query(_TITLE_PREDS, 1)
     desc = _query(_DESC_PREDS, 1)
-    lic = _query(_LICENSE_PREDS, 1)
+    lic = _query(_LICENSE_PREDS, 1) or _query(_RIGHTS_PREDS, 1)
     prefix = _query(_PREFIX_PREDS, 1)
     return {
         "title": title[0] if title else None,

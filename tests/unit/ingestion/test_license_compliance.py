@@ -113,6 +113,10 @@ def test_compliance_default_allowlist(monkeypatch):
     # version declaring CC-BY-2.0 (e.g. linked-earth) publishes instead of being held.
     assert is_compliant("http://creativecommons.org/licenses/by/2.0/") is True
     assert is_compliant("https://creativecommons.org/licenses/by-sa/2.5/") is True
+    # GPL-3.0 is on the default allowlist (copyleft is open — e.g. okh/Open Know-How).
+    assert is_compliant("https://www.gnu.org/licenses/gpl-3.0.txt") is True
+    assert is_compliant("GPL-3.0-only") is True
+    assert is_compliant("GPL-3.0-or-later") is True
     # NonCommercial is NOT on the default allowlist.
     assert is_compliant("https://creativecommons.org/licenses/by-nc/4.0/") is False
     # ShareAlike-NonCommercial 2.0 also excluded (restricts reuse).

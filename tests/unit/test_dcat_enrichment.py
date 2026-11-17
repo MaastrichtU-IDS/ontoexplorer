@@ -65,3 +65,64 @@ def test_extract_ontology_annotations(monkeypatch):
     assert ann["title"] == "T" and ann["description"] == "D"
     assert ann["license"] == "https://lic.example/1"
     assert set(ann["creators"]) == {"Alice", "Bob"}
+
+
+def _extract(monkeypatch, ttl: str, catalogued_iri: str) -> dict:
+    """Load TTL into a store and run extract_ontology_annotations against it."""
+    from ontoexplorer.modules.metadata import dcat
+    from ontoexplorer.clients import oxigraph
+    store = pyoxigraph.Store()
+    G = "urn:ontology:o1:v1"
+    store.load(ttl.encode(), pyoxigraph.RdfFormat.TURTLE, to_graph=pyoxigraph.NamedNode(G))
+    monkeypatch.setattr(oxigraph, "sparql_query", lambda q: store.query(q))
+    monkeypatch.setattr(oxigraph, "graph_iri", lambda oid, vid, inferred=False: G)
+    return dcat.extract_ontology_annotations("o1", "v1", catalogued_iri)
+
+
+_OWL_T = "http://www.w3.org/2002/07/owl#Ontology"
+_IMPORTS = "http://www.w3.org/2002/07/owl#imports"
+_LIC = "http://purl.org/dc/terms/license"
+
+
+def test_license_found_on_trailing_slash_variant(monkeypatch):
+    # Catalogued with a trailing slash, declared without one — must still resolve.
+    ttl = f'''<http://ex/o> a <{_OWL_T}> ;
+        <{_LIC}> <https://creativecommons.org/licenses/by/3.0/> .'''
+    ann = _extract(monkeypatch, ttl, "http://ex/o/")
+    assert ann["license"] == "https://creativecommons.org/licenses/by/3.0/"
+
+
+def test_license_not_laundered_from_imported_ontology(monkeypatch):
+    # The root ontology has NO license; an imported owl:Ontology does. Reading the
+    # import's license as the root's would be laundering — must return None.
+    ttl = f'''<http://ex/root> a <{_OWL_T}> ; <{_IMPORTS}> <http://ex/imp> .
+        <http://ex/imp> a <{_OWL_T}> ; <{_LIC}> <https://lic.example/imported> .'''
+    ann = _extract(monkeypatch, ttl, "http://ex/root")
+    assert ann["license"] is None
+
+
+def test_license_resolved_via_unique_root_when_iri_is_broken(monkeypatch):
+    # Catalogued IRI is an unexpanded entity ref (never a real subject); the unique
+    # non-imported root owl:Ontology carries the license.
+    ttl = f'''<http://ex/real> a <{_OWL_T}> ;
+        <{_LIC}> <https://creativecommons.org/licenses/by/3.0/> .'''
+    ann = _extract(monkeypatch, ttl, "&oboe-base;oboe.owl")
+    assert ann["license"] == "https://creativecommons.org/licenses/by/3.0/"
+
+
+def test_real_license_wins_over_copyright_rights(monkeypatch):
+    # dc:rights holds a copyright notice; dcterms:license holds the real license.
+    # The license must win, not the copyright string.
+    ttl = f'''<http://ex/o> a <{_OWL_T}> ;
+        <{_LIC}> <https://creativecommons.org/licenses/by/4.0/> ;
+        <http://purl.org/dc/terms/rights> "Copyright (c) 2021 Someone" .'''
+    ann = _extract(monkeypatch, ttl, "http://ex/o")
+    assert ann["license"] == "https://creativecommons.org/licenses/by/4.0/"
+
+
+def test_rights_used_only_as_fallback(monkeypatch):
+    # No dcterms:license, but dc:rights names a license URL — surfaced as a fallback.
+    ttl = '''<http://ex/o> a <http://www.w3.org/2002/07/owl#Ontology> ;
+        <http://purl.org/dc/terms/rights> <https://creativecommons.org/licenses/by/4.0/> .'''
+    ann = _extract(monkeypatch, ttl, "http://ex/o")
+    assert ann["license"] == "https://creativecommons.org/licenses/by/4.0/"
