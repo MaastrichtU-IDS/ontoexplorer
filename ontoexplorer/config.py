@@ -166,7 +166,11 @@ class Settings(BaseSettings):
         "CC0-1.0,"
         "CC-BY-4.0,CC-BY-3.0,CC-BY-2.5,CC-BY-2.0,"
         "CC-BY-SA-4.0,CC-BY-SA-3.0,CC-BY-SA-2.5,CC-BY-SA-2.0,"
-        "MIT,Apache-2.0,BSD-3-Clause,GPL-3.0-only,GPL-3.0-or-later"
+        "MIT,Apache-2.0,BSD-3-Clause,GPL-3.0-only,GPL-3.0-or-later,"
+        # Open Data Commons / public-domain data licenses: PDDL is public domain,
+        # ODC-By is attribution, ODbL is share-alike (open, like the GPL-3.0 copyleft
+        # already on this list). All three are open; the NC/ND CC variants stay off.
+        "ODC-By-1.0,ODbL-1.0,PDDL-1.0"
     )
     # Pre-publish quality gate (#364): a newly-ingested version with fewer than this
     # many triples is held for review instead of auto-published. Only applies at the
