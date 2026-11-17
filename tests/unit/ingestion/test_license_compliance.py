@@ -68,7 +68,7 @@ class TestEffectiveLicenseOverlay:
     ("cc0", "CC0-1.0"),
     ("MIT", "MIT"),
     ("Apache-2.0", "Apache-2.0"),          # already SPDX → passthrough
-    ("https://creativecommons.org/licenses/by-nc/4.0/", "CC-BY-NC"),  # non-commercial detected
+    ("https://creativecommons.org/licenses/by-nc/4.0/", "CC-BY-NC-4.0"),  # non-commercial, versioned
     # Older permissive CC versions must map too (the by/ and by-sa/ patterns were
     # pinned to 3.0/4.0, so 1.0–2.5 fell through to None and read as "no license").
     ("http://creativecommons.org/licenses/by/2.0/", "CC-BY-2.0"),
@@ -78,7 +78,7 @@ class TestEffectiveLicenseOverlay:
     ("https://creativecommons.org/licenses/by-sa/2.5/", "CC-BY-SA-2.5"),
     ("http://creativecommons.org/licenses/by-sa/1.0/", "CC-BY-SA-1.0"),
     # Restrictive older versions still correctly recognized (and non-compliant).
-    ("http://creativecommons.org/licenses/by-nc-sa/2.0/", "CC-BY-NC-SA"),
+    ("http://creativecommons.org/licenses/by-nc-sa/2.0/", "CC-BY-NC-SA-2.0"),
     # British spelling "licences" in the URL (seen on dutch/eu gov ontologies).
     ("http://creativecommons.org/licences/by/4.0", "CC-BY-4.0"),
     ("https://creativecommons.org/licences/by-sa/4.0/", "CC-BY-SA-4.0"),
@@ -86,9 +86,42 @@ class TestEffectiveLicenseOverlay:
     ("Creative Commons Attribution 4.0 International", "CC-BY-4.0"),
     ("Creative Commons Attribution 3.0 Unported", "CC-BY-3.0"),
     ("Creative Commons Attribution-ShareAlike 4.0 International", "CC-BY-SA-4.0"),
+    # NC/ND now carry their VERSION (SPDX ids are versioned; the old table dropped it).
+    ("http://creativecommons.org/licenses/by-nc-sa/4.0/", "CC-BY-NC-SA-4.0"),
+    ("http://creativecommons.org/licenses/by-nc-nd/3.0/", "CC-BY-NC-ND-3.0"),
+    ("http://creativecommons.org/licenses/by-nd/3.0/", "CC-BY-ND-3.0"),
+    ("CC-BY-NC-SA-4.0", "CC-BY-NC-SA-4.0"),          # versioned SPDX id → passthrough
+    # Singular "/license/" (not just plural "/licenses/").
+    ("http://creativecommons.org/license/by/3.0/", "CC-BY-3.0"),
+    # Alternate public-domain spelling for CC0.
+    ("https://creativecommons.org/public-domain/cc0/", "CC0-1.0"),
+    # RDFLicense dataset URIs (purl.org/NET/rdflicense/<name>).
+    ("http://purl.org/NET/rdflicense/APACHE2.0", "Apache-2.0"),
+    ("http://purl.org/NET/rdflicense/MIT1.0", "MIT"),
+    ("http://purl.org/NET/rdflicense/cc-by4.0", "CC-BY-4.0"),
+    ("http://purl.org/NET/rdflicense/cc-by-sa3.0", "CC-BY-SA-3.0"),
+    # Open Data Commons (SPDX ids exist for all three; mapped regardless of allowlist).
+    ("http://opendatacommons.org/licenses/by/", "ODC-By-1.0"),
+    ("http://opendatacommons.org/licenses/odbl/1.0/", "ODbL-1.0"),
+    ("http://www.opendatacommons.org/licenses/pddl/1.0/", "PDDL-1.0"),
+    # License-catalogue URLs that carry the SPDX id verbatim.
+    ("http://spdx.org/licenses/CC-BY-4.0", "CC-BY-4.0"),
+    ("https://spdx.org/licenses/BSD-4-Clause", "BSD-4-Clause"),
+    ("https://spdx.org/licenses/MIT.html", "MIT"),
+    ("http://dalicc.net/licenselibrary/MIT", "MIT"),
+    # A CC deed named in free prose, as a last resort.
+    ("Attribution 4.0 International (CC BY 4.0)", "CC-BY-4.0"),
+    ("Attribution-NoDerivatives 4.0 International (CC BY-ND 4.0)", "CC-BY-ND-4.0"),
 ])
 def test_canonicalize(raw, spdx):
     assert canonicalize_license(raw) == spdx
+
+
+def test_canonicalization_is_permission_neutral():
+    # The canonicalizer standardizes NC/ND/SA licenses too; the allowlist, not the
+    # mapper, is where the host/redistribute policy lives.
+    assert canonicalize_license("http://creativecommons.org/licenses/by-nc/4.0/") == "CC-BY-NC-4.0"
+    assert is_compliant("http://creativecommons.org/licenses/by-nc/4.0/") is False  # mapped, yet off-allowlist
 
 
 def test_plain_by_pattern_does_not_swallow_by_sa():

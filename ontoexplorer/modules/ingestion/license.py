@@ -14,28 +14,52 @@ import re
 from ontoexplorer.config import get_settings
 
 # URL-fragment → SPDX. Checked in order; first match wins (so by-nc/by-nd are
-# caught before the plain by-* patterns they'd otherwise substring-match).
+# caught before the plain by-* patterns they'd otherwise substring-match). A value
+# containing "{v}" is a template: the matched group (a version like "4.0", or a
+# verbatim SPDX token for the spdx.org/dalicc catalogues) is substituted in.
+# Canonicalization is version- and permission-COMPLETE: a NonCommercial/NoDerivatives
+# or ShareAlike license still maps to its real SPDX id. Whether that id is on the
+# platform's host/redistribute allowlist is a SEPARATE policy decision (is_compliant).
 _URL_TO_SPDX: tuple[tuple[re.Pattern, str], ...] = (
     (re.compile(r"creativecommons\.org/publicdomain/zero/1\.0"), "CC0-1.0"),
-    # `licen[sc]es` accepts both American ("licenses") and British ("licences") URLs.
-    (re.compile(r"creativecommons\.org/licen[sc]es/by-nc-nd/(\d)\.0"), "CC-BY-NC-ND"),
-    (re.compile(r"creativecommons\.org/licen[sc]es/by-nc-sa/(\d)\.0"), "CC-BY-NC-SA"),
-    (re.compile(r"creativecommons\.org/licen[sc]es/by-nc/(\d)\.0"), "CC-BY-NC"),
-    (re.compile(r"creativecommons\.org/licen[sc]es/by-nd/(\d)\.0"), "CC-BY-ND"),
-    (re.compile(r"creativecommons\.org/licen[sc]es/by-sa/4\.0"), "CC-BY-SA-4.0"),
-    (re.compile(r"creativecommons\.org/licen[sc]es/by-sa/3\.0"), "CC-BY-SA-3.0"),
-    (re.compile(r"creativecommons\.org/licen[sc]es/by-sa/2\.5"), "CC-BY-SA-2.5"),
-    (re.compile(r"creativecommons\.org/licen[sc]es/by-sa/2\.0"), "CC-BY-SA-2.0"),
-    (re.compile(r"creativecommons\.org/licen[sc]es/by-sa/1\.0"), "CC-BY-SA-1.0"),
-    (re.compile(r"creativecommons\.org/licen[sc]es/by/4\.0"), "CC-BY-4.0"),
-    (re.compile(r"creativecommons\.org/licen[sc]es/by/3\.0"), "CC-BY-3.0"),
-    (re.compile(r"creativecommons\.org/licen[sc]es/by/2\.5"), "CC-BY-2.5"),
-    (re.compile(r"creativecommons\.org/licen[sc]es/by/2\.0"), "CC-BY-2.0"),
-    (re.compile(r"creativecommons\.org/licen[sc]es/by/1\.0"), "CC-BY-1.0"),
+    (re.compile(r"creativecommons\.org/public-?domain/(?:zero|cc0)"), "CC0-1.0"),
+    # `licen[sc]es?` accepts American/British and singular/plural: license(s), licence(s).
+    # Restrictive variants first, carrying the version straight from the URL ({v}).
+    (re.compile(r"creativecommons\.org/licen[sc]es?/by-nc-nd/(\d\.\d)"), "CC-BY-NC-ND-{v}"),
+    (re.compile(r"creativecommons\.org/licen[sc]es?/by-nc-sa/(\d\.\d)"), "CC-BY-NC-SA-{v}"),
+    (re.compile(r"creativecommons\.org/licen[sc]es?/by-nc/(\d\.\d)"), "CC-BY-NC-{v}"),
+    (re.compile(r"creativecommons\.org/licen[sc]es?/by-nd/(\d\.\d)"), "CC-BY-ND-{v}"),
+    (re.compile(r"creativecommons\.org/licen[sc]es?/by-sa/(\d\.\d)"), "CC-BY-SA-{v}"),
+    (re.compile(r"creativecommons\.org/licen[sc]es?/by/(\d\.\d)"), "CC-BY-{v}"),
     (re.compile(r"apache\.org/licenses/LICENSE-2\.0"), "Apache-2.0"),
     (re.compile(r"opensource\.org/licenses/MIT"), "MIT"),
     (re.compile(r"opensource\.org/licenses/BSD-3-Clause"), "BSD-3-Clause"),
     (re.compile(r"gnu\.org/licenses/gpl-3\.0"), "GPL-3.0-only"),
+    # Open Data Commons (data licenses; SPDX ids exist for all three).
+    (re.compile(r"opendatacommons\.org/licenses/odbl"), "ODbL-1.0"),
+    (re.compile(r"opendatacommons\.org/licenses/pddl"), "PDDL-1.0"),
+    (re.compile(r"opendatacommons\.org/licenses/by"), "ODC-By-1.0"),
+    # RDFLicense dataset URIs (purl.org/NET/rdflicense/<name>) — restrictive first.
+    (re.compile(r"rdflicense/cc-by-nc-nd(\d\.\d)", re.I), "CC-BY-NC-ND-{v}"),
+    (re.compile(r"rdflicense/cc-by-nc-sa(\d\.\d)", re.I), "CC-BY-NC-SA-{v}"),
+    (re.compile(r"rdflicense/cc-by-nc(\d\.\d)", re.I), "CC-BY-NC-{v}"),
+    (re.compile(r"rdflicense/cc-by-nd(\d\.\d)", re.I), "CC-BY-ND-{v}"),
+    (re.compile(r"rdflicense/cc-by-sa(\d\.\d)", re.I), "CC-BY-SA-{v}"),
+    (re.compile(r"rdflicense/cc-by(\d\.\d)", re.I), "CC-BY-{v}"),
+    (re.compile(r"rdflicense/(?:cc-?zero|cc0)", re.I), "CC0-1.0"),
+    (re.compile(r"rdflicense/apache2\.0", re.I), "Apache-2.0"),
+    (re.compile(r"rdflicense/mit1\.0", re.I), "MIT"),
+    (re.compile(r"rdflicense/gpl3\.0", re.I), "GPL-3.0-only"),
+    (re.compile(r"rdflicense/odbl1\.0", re.I), "ODbL-1.0"),
+    # License-catalogue URLs that carry the SPDX id (or a close token) verbatim.
+    (re.compile(r"spdx\.org/licenses/([A-Za-z0-9+.\-]+?)(?:\.html|\.json|/|\Z)"), "{v}"),
+    (re.compile(r"dalicc\.net/licenselibrary/([A-Za-z0-9+.\-]+)"), "{v}"),
+)
+
+# A Creative Commons deed named in free text ("… (CC BY-NC-SA 3.0)", "CC-BY 4.0"),
+# used as a last resort when no URL/label matched. Captures the modifier and version.
+_CC_TEXT = re.compile(
+    r"\bcc[ \-]?by(?P<mod>(?:[ \-](?:nc|nd|sa)){0,2})[ \-]?(?P<ver>\d\.\d)\b", re.I
 )
 
 # Free-text label (lowercased, punctuation-normalized) → SPDX.
@@ -62,16 +86,36 @@ _LABEL_TO_SPDX: dict[str, str] = {
     "gplv3+": "GPL-3.0-or-later",
 }
 
-# SPDX ids we recognize (so a value already in SPDX form passes through).
+# Versioned/less-common SPDX ids the URL table emits only via a {v} template, listed
+# here so a value already in that SPDX form still passes through.
+_EXTRA_SPDX: frozenset[str] = frozenset(
+    f"CC-BY-{mod}{v}"
+    for mod in ("", "SA-", "NC-", "NC-SA-", "NC-ND-", "ND-")
+    for v in ("1.0", "2.0", "2.5", "3.0", "4.0")
+) | frozenset({"ODC-By-1.0", "ODbL-1.0", "PDDL-1.0", "BSD-4-Clause"})
+
+# SPDX ids we recognize (so a value already in SPDX form passes through). Templated
+# ({v}) URL entries are excluded here and covered by _EXTRA_SPDX instead.
 _KNOWN_SPDX: frozenset[str] = frozenset(
     list(_LABEL_TO_SPDX.values())
-    + [s for _, s in _URL_TO_SPDX]
-)
+    + [s for _, s in _URL_TO_SPDX if "{v}" not in s]
+) | _EXTRA_SPDX
+
+
+def _cc_from_text(s: str) -> str | None:
+    """A CC deed named in free prose → its SPDX id, or None."""
+    m = _CC_TEXT.search(s)
+    if not m:
+        return None
+    mods = [p.upper() for p in re.split(r"[ \-]+", m.group("mod")) if p]
+    suffix = "".join(f"-{p}" for p in mods)
+    return f"CC-BY{suffix}-{m.group('ver')}"
 
 
 def canonicalize_license(raw: str | None) -> str | None:
     """Map a declared license (URL, label, or SPDX id) to a canonical SPDX id, or
-    None if unrecognized."""
+    None if unrecognized. Permission-neutral: an NC/ND/SA license maps to its real
+    SPDX id just like a permissive one — the allowlist decision is separate."""
     if not raw:
         return None
     s = raw.strip()
@@ -81,10 +125,14 @@ def canonicalize_license(raw: str | None) -> str | None:
     if s in _KNOWN_SPDX:
         return s
     for pat, spdx in _URL_TO_SPDX:
-        if pat.search(s):
-            return spdx
+        m = pat.search(s)
+        if m:
+            return spdx.format(v=m.group(1)) if "{v}" in spdx else spdx
     key = re.sub(r"\s+", " ", s.lower().replace("_", " ").replace("/", " ")).strip()
-    return _LABEL_TO_SPDX.get(key)
+    if key in _LABEL_TO_SPDX:
+        return _LABEL_TO_SPDX[key]
+    # Last resort: a CC deed named inside free text ("… (CC BY 3.0)").
+    return _cc_from_text(s)
 
 
 def compliant_license_set() -> set[str]:
