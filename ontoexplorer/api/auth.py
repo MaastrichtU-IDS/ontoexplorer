@@ -264,7 +264,7 @@ async def oauth_callback(
 
     # ── LOGIN MODE ───────────────────────────────────────────────────────────
     # Carry the provider's email-verification assertion through to the user row.
-    # Keycloak (the ids3 realm) and Google set the OIDC email_verified claim; the
+    # Keycloak (the ontoexplorer realm) and Google set the OIDC email_verified claim; the
     # others don't assert it (→ False). get_or_create_user only ever UPGRADES this
     # flag (never clears a previously-verified user), so a provider that omits the
     # claim can't downgrade a verified account.

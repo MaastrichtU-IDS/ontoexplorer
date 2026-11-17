@@ -1,6 +1,6 @@
 import { loginWithProvider } from '../lib/auth'
 
-// Keycloak (the platform ids3 realm) is the preferred path (#368): it owns
+// Keycloak (the platform `ontoexplorer` realm) is the preferred path (#368): it owns
 // registration + email verification and brokers ORCID/GitHub/Google, so it
 // covers users who have no academic email or ORCID iD. The direct ORCID/GitHub
 // buttons remain during the migration for existing accounts.

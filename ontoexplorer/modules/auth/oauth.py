@@ -38,7 +38,7 @@ _PROVIDERS: dict[str, dict] = {
 
 
 def _keycloak_cfg() -> dict:
-    """Resolve the ids3-realm OIDC endpoints from the configured issuer (#368).
+    """Resolve the ontoexplorer-realm OIDC endpoints from the configured issuer (#368).
 
     Standard OIDC discovery paths off the issuer; no network discovery call so
     the config stays self-contained and testable.
@@ -178,7 +178,7 @@ def extract_user_info(provider: str, userinfo: dict) -> tuple[str, str | None, s
         return userinfo["sub"], userinfo.get("email"), userinfo.get("name")
 
     if provider == "keycloak":
-        # OIDC userinfo / id-token claims from the ids3 realm (#368). A brokered
+        # OIDC userinfo / id-token claims from the ontoexplorer realm (#368). A brokered
         # ORCID login surfaces the iD as a mapped claim (see claim_orcid).
         sub = userinfo.get("sub")
         name = userinfo.get("name") or userinfo.get("preferred_username")
