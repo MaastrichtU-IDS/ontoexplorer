@@ -1561,6 +1561,11 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
                     _vals["graph_counts"] = _gc
                 if _cov is not None:
                     _vals["coverage"] = _cov
+                # Invalidate the derived FAIR cache — its inputs (license, owl
+                # profile, coverage, meta) just changed, so the fleet endpoint
+                # recomputes from this fresh row on next read (self-heal).
+                _vals.update(fair_overall=None, fair_f=None, fair_a=None,
+                             fair_i=None, fair_r=None, fair_checks=None)
                 await db.execute(
                     _sa_update(_OV)
                     .where(_OV.id == version_id, _OV.status != "deprecated")
@@ -2380,7 +2385,11 @@ def refresh_owl_profile(version_id: str, ontology_id: str) -> dict:
             if payload is None:
                 return None
             await db.execute(
-                _upd(_OV).where(_OV.id == version_id).values(owl_profile=payload))
+                _upd(_OV).where(_OV.id == version_id).values(
+                    owl_profile=payload,
+                    # Invalidate the derived FAIR cache — owl_profile feeds I1/I2.
+                    fair_overall=None, fair_f=None, fair_a=None,
+                    fair_i=None, fair_r=None, fair_checks=None))
             await db.commit()
             return payload
 
@@ -2502,7 +2511,11 @@ def refresh_reuse(version_id: str, ontology_id: str) -> dict:
             if payload is None:
                 return None
             await db.execute(
-                _upd(_OV).where(_OV.id == version_id).values(reuse=payload))
+                _upd(_OV).where(_OV.id == version_id).values(
+                    reuse=payload,
+                    # Invalidate the derived FAIR cache — reuse feeds I3/I4/R5.
+                    fair_overall=None, fair_f=None, fair_a=None,
+                    fair_i=None, fair_r=None, fair_checks=None))
             await db.commit()
             return payload
 

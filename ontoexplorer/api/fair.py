@@ -1,61 +1,39 @@
 """FAIR assessment endpoints.
 
-A per-ontology FAIR report and a fleet rollup, both derived on read from the
-signals already persisted on ``versions.*`` and ``ontology_meta_profiles`` — no
-new ingest computation and no new storage. Scores are computed live from those
-durable columns (as ``/reuse/fleet`` is), so a version aging past any cache TTL
-is never dropped from the rollup.
+A per-ontology FAIR report and a fleet rollup. Per-version scores are a derived
+cache on ``versions.fair_*`` (filled at index time from the durable signals, and
+self-healed here on read when NULL), so the fleet rollup aggregates column reads
+instead of recomputing ~1,900 reports per request. The signals themselves
+(owl_profile/reuse/coverage/license*/meta profile) remain the source of truth, so
+a version aging past any cache TTL is never dropped.
 """
 from __future__ import annotations
 
 from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ontoexplorer.database import get_db
-from ontoexplorer.models.db import Ontology, OntologyMetaProfile, OntologyVersion
-from ontoexplorer.modules.fair.fleet import aggregate_fleet
-from ontoexplorer.modules.fair.score import build_fair_inputs, compute_fair_report
+from ontoexplorer.logging_config import get_logger
+from ontoexplorer.models.db import Ontology, OntologyVersion
+from ontoexplorer.modules.fair.fleet import FairScores, aggregate_fair_scores, scores_from_report
+from ontoexplorer.modules.fair.precompute import (
+    column_values,
+    inputs_from_row,
+    signal_query,
+)
+from ontoexplorer.modules.fair.score import compute_fair_report
 
 router = APIRouter(prefix="/api/v1", tags=["fair"])
+log = get_logger(__name__)
 
-_SIGNAL_COLS = (
-    OntologyVersion.id,
-    OntologyVersion.ontology_id,
-    OntologyVersion.version_iri,
-    OntologyVersion.license,
-    OntologyVersion.license_compliant,
-    OntologyVersion.license_raw,
-    OntologyVersion.owl_profile,
-    OntologyVersion.reuse,
-    OntologyVersion.coverage,
-    Ontology.iri,
-    Ontology.shortname,
-    Ontology.groups,
-    Ontology.resolvable,
-    Ontology.resolve_detail,
-    OntologyMetaProfile.resolved,
-)
-
-
-def _inputs_from_row(row):
-    return build_fair_inputs(
-        ontology_iri=row.iri,
-        resolvable=row.resolvable,
-        resolve_detail=row.resolve_detail,
-        version_iri=row.version_iri,
-        shortname=row.shortname,
-        groups=row.groups,
-        license_raw=row.license_raw,
-        license_spdx=row.license,
-        license_compliant=row.license_compliant,
-        owl_profile=row.owl_profile,
-        reuse=row.reuse,
-        coverage=row.coverage,
-        meta_resolved=row.resolved,
-    )
+# Cap the FAIR cache rows written back during a single fleet request's self-heal,
+# so a cold cache (e.g. just after the migration, before the backfill) fills
+# incrementally over a few requests instead of one giant transaction. The
+# aggregate still includes every row — only the write-back is bounded.
+_SELFHEAL_WRITE_CAP = 400
 
 
 def _report_to_dict(report) -> dict:
@@ -97,23 +75,18 @@ async def get_fair_report(
     vid = await _resolve_version_id(db, ontology_id, version_id)
     if not vid:
         raise HTTPException(status_code=404, detail="No version to assess")
-    row = (await db.execute(
-        select(*_SIGNAL_COLS)
-        .join(Ontology, Ontology.id == OntologyVersion.ontology_id)
-        .outerjoin(OntologyMetaProfile, OntologyMetaProfile.version_id == OntologyVersion.id)
-        .where(OntologyVersion.id == vid)
-    )).first()
+    row = (await db.execute(signal_query().where(OntologyVersion.id == vid))).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Version not found")
-    report = compute_fair_report(_inputs_from_row(row))
+    report = compute_fair_report(inputs_from_row(row))
     out = _report_to_dict(report)
     out["ontology_id"] = ontology_id
     out["version_id"] = str(vid)
     return out
 
 
-@router.get("/fair/fleet", summary="Fleet FAIR rollup (no auth)")
-async def get_fleet_fair(db: AsyncSession = Depends(get_db)):
+def _latest_ready_subquery():
+    """Latest ready version per ontology (by created_at)."""
     subq = (
         select(
             OntologyVersion.ontology_id,
@@ -123,15 +96,53 @@ async def get_fleet_fair(db: AsyncSession = Depends(get_db)):
         .group_by(OntologyVersion.ontology_id)
         .subquery()
     )
-    rows = (await db.execute(
-        select(*_SIGNAL_COLS)
-        .join(
-            subq,
-            (OntologyVersion.ontology_id == subq.c.ontology_id)
-            & (OntologyVersion.created_at == subq.c.max_created),
-        )
-        .join(Ontology, Ontology.id == OntologyVersion.ontology_id)
-        .outerjoin(OntologyMetaProfile, OntologyMetaProfile.version_id == OntologyVersion.id)
+    join_on = (OntologyVersion.ontology_id == subq.c.ontology_id) & (
+        OntologyVersion.created_at == subq.c.max_created
+    )
+    return subq, join_on
+
+
+@router.get("/fair/fleet", summary="Fleet FAIR rollup (no auth)")
+async def get_fleet_fair(db: AsyncSession = Depends(get_db)):
+    subq, join_on = _latest_ready_subquery()
+
+    # Phase 1 — read the precomputed FAIR cache (5 floats + a small JSON per row).
+    cache_rows = (await db.execute(
+        select(
+            OntologyVersion.id,
+            OntologyVersion.fair_overall, OntologyVersion.fair_f, OntologyVersion.fair_a,
+            OntologyVersion.fair_i, OntologyVersion.fair_r, OntologyVersion.fair_checks,
+        ).join(subq, join_on)
     )).all()
-    reports = [compute_fair_report(_inputs_from_row(r)) for r in rows]
-    return aggregate_fleet(reports)
+
+    scores: list[FairScores] = []
+    missing: list[str] = []
+    for r in cache_rows:
+        if r.fair_overall is None:
+            missing.append(r.id)
+        else:
+            scores.append(FairScores(
+                overall=r.fair_overall, f=r.fair_f or 0.0, a=r.fair_a or 0.0,
+                i=r.fair_i or 0.0, r=r.fair_r or 0.0, checks=r.fair_checks or {},
+            ))
+
+    # Phase 2 — self-heal NULL rows from the durable signals, and persist the cache
+    # (best-effort: a write failure must never break the read).
+    if missing:
+        srows = (await db.execute(signal_query().where(OntologyVersion.id.in_(missing)))).all()
+        heal: list[tuple[str, FairScores]] = []
+        for sr in srows:
+            sc = scores_from_report(compute_fair_report(inputs_from_row(sr)))
+            scores.append(sc)
+            heal.append((sr.id, sc))
+        try:
+            for vid, sc in heal[:_SELFHEAL_WRITE_CAP]:
+                await db.execute(
+                    update(OntologyVersion).where(OntologyVersion.id == vid).values(**column_values(sc))
+                )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            log.warning("fair_fleet_selfheal_write_failed", n=len(heal))
+
+    return aggregate_fair_scores(scores)

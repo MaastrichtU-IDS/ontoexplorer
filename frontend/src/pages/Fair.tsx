@@ -30,6 +30,15 @@ export default function FairOverview() {
         scored from signals computed at ingest.
       </p>
 
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 28, fontWeight: 700, color: scoreColor(Math.round((data.overall_mean ?? 0) * 100)) }}>
+          {Math.round((data.overall_mean ?? 0) * 100)}
+        </span>
+        <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+          mean overall FAIR score <span style={{ fontFamily: 'monospace' }}>± {Math.round((data.overall_stddev ?? 0) * 100)}</span> SD
+        </span>
+      </div>
+
       <section>
         <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 10px' }}>Overall score distribution</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -46,17 +55,21 @@ export default function FairOverview() {
       </section>
 
       <section>
-        <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 10px' }}>Mean score by principle</h3>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 10px' }}>Mean ± SD by principle</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {['F', 'A', 'I', 'R'].map(k => {
             const pct = Math.round((data.principle_means[k] ?? 0) * 100)
+            const sd = Math.round((data.principle_stddevs?.[k] ?? 0) * 100)
             return (
-              <div key={k} style={{ display: 'grid', gridTemplateColumns: '120px 1fr 40px', gap: 10, alignItems: 'center' }}>
+              <div key={k} style={{ display: 'grid', gridTemplateColumns: '120px 1fr 76px', gap: 10, alignItems: 'center' }}>
                 <span style={{ fontSize: 12.5, color: 'var(--text-dim)' }}><b style={{ color: 'var(--text)' }}>{k}</b> {PRINCIPLE_NAMES[k]}</span>
                 <span style={{ height: 8, borderRadius: 5, background: 'var(--bg-tertiary)', overflow: 'hidden' }}>
                   <span style={{ display: 'block', height: '100%', width: `${pct}%`, background: scoreColor(pct) }} />
                 </span>
-                <span style={{ fontFamily: 'monospace', fontSize: 12.5, fontWeight: 600, textAlign: 'right', color: scoreColor(pct) }}>{pct}</span>
+                <span style={{ fontFamily: 'monospace', fontSize: 12.5, fontWeight: 600, textAlign: 'right' }}>
+                  <span style={{ color: scoreColor(pct) }}>{pct}</span>
+                  <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}> ±{sd}</span>
+                </span>
               </div>
             )
           })}

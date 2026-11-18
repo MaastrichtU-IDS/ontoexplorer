@@ -1452,8 +1452,11 @@ export interface FairReport {
 
 export interface FairFleet {
   n: number
+  overall_mean: number
+  overall_stddev: number
   overall_histogram: { bucket: string; count: number }[]
   principle_means: Record<string, number>
+  principle_stddevs: Record<string, number>
   check_pass_rate: { id: string; principle: string; name: string; rate: number }[]
 }
 
