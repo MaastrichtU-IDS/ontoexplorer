@@ -3,8 +3,7 @@
 A source that loads no triples — an HTML landing page, an empty SPARQL
 ``describe``, a dead mirror — must be refused, not persisted as a ``needs_review``
 draft the quality gate holds and update polling keeps recreating. These pin the
-total-graph count helper (main document + imports) and the terminal (no-retry)
-task wiring.
+terminal (no-retry) task wiring for the guard.
 """
 import pytest
 
@@ -13,26 +12,6 @@ from ontoexplorer.modules.ingestion.pipeline import EmptyIngest
 
 def test_empty_ingest_is_a_terminal_exception():
     assert issubclass(EmptyIngest, Exception)
-
-
-def test_graph_triple_count_reads_the_whole_named_graph(monkeypatch):
-    """The guard counts main document + imports, so it reads the version's whole
-    named graph rather than the main-document triple_count — an owl:imports shell
-    that carries all its content via imports must not read as empty."""
-    from ontoexplorer.clients import oxigraph
-
-    seen = {}
-
-    def fake_count(iri):
-        seen["iri"] = iri
-        return 7
-
-    monkeypatch.setattr(oxigraph, "graph_iri",
-                        lambda oid, vid, inferred=False: f"urn:{oid}:{vid}")
-    monkeypatch.setattr(oxigraph, "_graph_triple_count", fake_count)
-
-    assert oxigraph.graph_triple_count("ont1", "ver1") == 7
-    assert seen["iri"] == "urn:ont1:ver1"
 
 
 def test_ingest_task_treats_empty_as_terminal_no_retry(monkeypatch):

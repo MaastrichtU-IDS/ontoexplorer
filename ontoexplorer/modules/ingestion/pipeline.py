@@ -279,16 +279,16 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
         )
         raise LossyOwlXmlIngest(_lossy["message"])
 
-    # ── Guard: refuse an empty parse (0 triples, main + imports) ───────────────
-    # A source that loads zero triples is a failed fetch, not an ontology — an
-    # HTML landing page, an empty SPARQL `describe`, a dead mirror. Counting the
-    # whole named graph (not just the main document) so a legitimate owl:imports
-    # shell that carries all its content via imports is NOT rejected. Reject here
+    # ── Guard: refuse an empty parse (0 triples) ───────────────────────────────
+    # A source that parses to zero triples is a failed fetch, not an ontology — an
+    # HTML landing page, an empty SPARQL `describe`, a dead mirror. `triple_count`
+    # is the main document's size; an empty main document declares no owl:imports
+    # (those are triples too), so the import closure is necessarily empty as well
+    # and this count is a complete signal — no extra graph scan needed. Reject here
     # like the lossy guard — purge the MinIO object + Oxigraph graph already
     # written, then raise terminally — so no empty draft is ever persisted (the
     # provisional Ontology row is only flushed, so it rolls back on raise).
-    from ontoexplorer.clients.oxigraph import graph_triple_count
-    if graph_triple_count(ontology_id, version_id) == 0:
+    if triple_count == 0:
         from ontoexplorer.modules.jobs.tasks import purge_version_artifacts
         purge_version_artifacts.delay(ontology_id, version_id, minio_key)
         log.warning(
