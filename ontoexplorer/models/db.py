@@ -5,6 +5,7 @@ from sqlalchemy import (
     Boolean,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -249,6 +250,24 @@ class OntologyVersion(Base):
     # versions (only 4 of 2013 keys survived). NULL = not yet computed → endpoints
     # fall back to Redis. See modules/reuse/compute.py::compute_reuse_payload.
     reuse: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True)
+    # Materialized FAIR assessment (#423 scoring) for this version: the four
+    # principle sub-scores + overall, each a 0..1 fraction, plus fair_checks =
+    # {check_id: score} for the 19 FOOPS!-aligned checks. compute_fair_report is a
+    # pure function of already-durable signals (owl_profile/reuse/coverage/license*/
+    # version_iri + the ontology row + the meta profile), so these are a derived
+    # cache: written at index time, set NULL when any input changes (license
+    # declare/backfill, owl_profile/reuse refresh), and self-healed on read by the
+    # fleet endpoint. Storing them turns /fair/fleet from ~1,900 live
+    # compute_fair_report calls per request into a column read (fast mean/stddev/
+    # histogram), and feeds the fairness-over-time snapshots. NULL = not yet
+    # computed. See modules/fair/score.py and api/fair.py.
+    fair_overall: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fair_f: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fair_a: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fair_i: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fair_r: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fair_checks: Mapped[dict | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=True)
     # Input repairs the reasoner applied to this version's graph so horned-owl's
     # strict reader could parse it (work-arounds for non-conformant published

@@ -141,6 +141,8 @@ async def admin_bulk_reevaluate(
         )
         v.license = content_spdx
         v.license_compliant = lic_ok
+        # License changed → invalidate the derived FAIR cache (self-heals on read).
+        v.fair_overall = v.fair_f = v.fair_a = v.fair_i = v.fair_r = v.fair_checks = None
         if new_status == "ready":
             v.status = "ready"
             published += 1

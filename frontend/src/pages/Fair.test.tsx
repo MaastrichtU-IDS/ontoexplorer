@@ -4,6 +4,8 @@ import FairOverview from './Fair'
 
 const FLEET = {
   n: 2015,
+  overall_mean: 0.74,
+  overall_stddev: 0.12,
   overall_histogram: [
     { bucket: '<50', count: 72 },
     { bucket: '50-69', count: 318 },
@@ -11,6 +13,7 @@ const FLEET = {
     { bucket: '85-100', count: 835 },
   ],
   principle_means: { F: 0.79, A: 0.74, I: 0.86, R: 0.63 },
+  principle_stddevs: { F: 0.10, A: 0.15, I: 0.08, R: 0.20 },
   check_pass_rate: [
     { id: 'I1', principle: 'I', name: 'Formal language tier', rate: 1.0 },
     { id: 'R6', principle: 'R', name: 'Terms carry definitions', rate: 0.61 },
@@ -36,6 +39,9 @@ test('renders fleet size, principle means, and per-check rates', async () => {
   wrap(<FairOverview />)
   const root = await screen.findByTestId('fair-overview')
   expect(within(root).getByText('2015')).toBeInTheDocument()
+  // overall mean ± SD headline present
+  expect(within(root).getByText(/mean overall FAIR score/i)).toBeInTheDocument()
+  expect(within(root).getByText(/± 12/)).toBeInTheDocument()
   // I1 pass rate 100%
   const i1 = screen.getByTestId('fair-rate-I1')
   expect(within(i1).getByText('100%')).toBeInTheDocument()
