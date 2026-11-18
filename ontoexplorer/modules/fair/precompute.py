@@ -9,12 +9,20 @@ identical inputs.
 """
 from __future__ import annotations
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ontoexplorer.logging_config import get_logger
 from ontoexplorer.models.db import Ontology, OntologyMetaProfile, OntologyVersion
 from ontoexplorer.modules.fair.fleet import FairScores, scores_from_report
 from ontoexplorer.modules.fair.score import build_fair_inputs, compute_fair_report
+
+log = get_logger(__name__)
+
+# Cap the FAIR cache rows written back during a single fleet load's self-heal, so
+# a cold cache fills incrementally rather than in one giant transaction. The
+# returned scores still cover every row — only the write-back is bounded.
+SELFHEAL_WRITE_CAP = 400
 
 SIGNAL_COLS = (
     OntologyVersion.id,
@@ -85,6 +93,69 @@ async def compute_and_store_fair(db: AsyncSession, version_id: str) -> FairScore
     await db.execute(
         update(OntologyVersion).where(OntologyVersion.id == version_id).values(**column_values(scores))
     )
+    return scores
+
+
+def _latest_ready_subquery():
+    """Latest ready version per ontology (by created_at)."""
+    subq = (
+        select(
+            OntologyVersion.ontology_id,
+            func.max(OntologyVersion.created_at).label("max_created"),
+        )
+        .where(OntologyVersion.status == "ready")
+        .group_by(OntologyVersion.ontology_id)
+        .subquery()
+    )
+    join_on = (OntologyVersion.ontology_id == subq.c.ontology_id) & (
+        OntologyVersion.created_at == subq.c.max_created
+    )
+    return subq, join_on
+
+
+async def load_fleet_scores(db: AsyncSession, write_cap: int = SELFHEAL_WRITE_CAP) -> list[FairScores]:
+    """The FAIR scores for every ontology's latest ready version: read the
+    precomputed ``fair_*`` cache and self-heal (compute + write back) any NULL
+    rows from the durable signals. Shared by the fleet endpoint and the daily
+    snapshot so both see identical numbers."""
+    subq, join_on = _latest_ready_subquery()
+
+    cache_rows = (await db.execute(
+        select(
+            OntologyVersion.id,
+            OntologyVersion.fair_overall, OntologyVersion.fair_f, OntologyVersion.fair_a,
+            OntologyVersion.fair_i, OntologyVersion.fair_r, OntologyVersion.fair_checks,
+        ).join(subq, join_on)
+    )).all()
+
+    scores: list[FairScores] = []
+    missing: list[str] = []
+    for r in cache_rows:
+        if r.fair_overall is None:
+            missing.append(r.id)
+        else:
+            scores.append(FairScores(
+                overall=r.fair_overall, f=r.fair_f or 0.0, a=r.fair_a or 0.0,
+                i=r.fair_i or 0.0, r=r.fair_r or 0.0, checks=r.fair_checks or {},
+            ))
+
+    if missing:
+        srows = (await db.execute(signal_query().where(OntologyVersion.id.in_(missing)))).all()
+        heal: list[tuple[str, FairScores]] = []
+        for sr in srows:
+            sc = scores_from_report(compute_fair_report(inputs_from_row(sr)))
+            scores.append(sc)
+            heal.append((sr.id, sc))
+        try:
+            for vid, sc in heal[:write_cap]:
+                await db.execute(
+                    update(OntologyVersion).where(OntologyVersion.id == vid).values(**column_values(sc))
+                )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            log.warning("fair_fleet_selfheal_write_failed", n=len(heal))
+
     return scores
 
 

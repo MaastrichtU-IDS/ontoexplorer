@@ -169,6 +169,12 @@ celery_app.conf.update(
             "task": "ontoexplorer.sweep_held_drafts",
             "schedule": crontab(hour=4, minute=0),
         },
+        # Daily fleet-wide FAIR snapshot for fairness-over-time. One row per UTC
+        # day (idempotent); reads the precomputed per-version fair_* cache.
+        "snapshot-fair-fleet-daily": {
+            "task": "ontoexplorer.snapshot_fair_fleet",
+            "schedule": crontab(hour=4, minute=15),
+        },
     },
 )
 
@@ -2332,6 +2338,22 @@ def recheck_resolvability(limit: int = 60, min_host_interval_s: float = 2.0) -> 
     n = asyncio.run(_run())
     log.info("recheck_resolvability", rechecked=n)
     return {"rechecked": n}
+
+
+@celery_app.task(name="ontoexplorer.snapshot_fair_fleet", time_limit=300)
+def snapshot_fair_fleet() -> dict:
+    """Daily: capture the fleet-wide FAIR aggregate into fair_snapshots for
+    fairness-over-time. Idempotent per UTC day. Reads the precomputed per-version
+    fair_* cache (self-healing any NULL rows), so this is cheap."""
+    async def _run():
+        from ontoexplorer.database import AsyncSessionLocal
+        from ontoexplorer.modules.fair.snapshot import capture_fair_snapshot
+        async with AsyncSessionLocal() as db:
+            return await capture_fair_snapshot(db)
+
+    result = asyncio.run(_run())
+    log.info("snapshot_fair_fleet", **result)
+    return result
 
 
 @celery_app.task(name="ontoexplorer.check_ontology_resolvable", time_limit=60)

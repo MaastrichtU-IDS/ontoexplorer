@@ -1460,6 +1460,16 @@ export interface FairFleet {
   check_pass_rate: { id: string; principle: string; name: string; rate: number }[]
 }
 
+export interface FairHistoryPoint {
+  day: string
+  n: number
+  overall_mean: number
+  overall_stddev: number
+  principle_means: Record<string, number>
+  principle_stddevs: Record<string, number>
+}
+export interface FairHistory { series: FairHistoryPoint[] }
+
 export const api = {
   entities: {
     list: (p: EntityListParams) =>
@@ -1866,6 +1876,7 @@ export const api = {
       request<FairReport>(
         `/ontologies/${ontologyId}/fair${versionId ? `?version_id=${versionId}` : ''}`),
     fleet: () => request<FairFleet>('/fair/fleet'),
+    history: (days = 365) => request<FairHistory>(`/fair/fleet/history?days=${days}`),
   },
 
   stats: {
