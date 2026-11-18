@@ -15,7 +15,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 // Providers offered for linking — mirror the enabled providers on the Login page
 // (Google is disabled for now; the backend still supports it if re-enabled there).
-// Keycloak (the platform ids3-era realm, #368) is linkable so existing direct
+// Keycloak (the platform `ontoexplorer` realm, #368) is linkable so existing direct
 // ORCID/GitHub accounts can attach their platform identity and consolidate.
 const LINKABLE_PROVIDERS = ['orcid', 'github', 'keycloak'] as const
 

@@ -1,6 +1,6 @@
 """Shared Signals Framework (SSF) receiver for Keycloak security events (#372).
 
-Keycloak (the ids3-era realms, 26.8+) acts as an SSF transmitter: when an admin
+Keycloak (the ontoexplorer realm, 26.8+) acts as an SSF transmitter: when an admin
 deletes a user it emits a RISC ``account-purged`` Security Event Token (SET) — a
 signed JWT, ``Content-Type: application/secevent+jwt`` — to a registered push
 stream. Without this, OntoExplorer's local ``users`` row lingers after the
