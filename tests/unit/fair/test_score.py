@@ -164,3 +164,63 @@ def test_r4_excludes_optional_roles_and_lists_all_29():
 def test_r4_role_count_matches_registry():
     assert len(ALL_META_ROLES) == 29
     assert R4_EXCLUDED_ROLES <= set(ALL_META_ROLES)
+
+
+# ── A1: content negotiation + RDF-extension fallback ────────────────────────────
+
+def test_a1_passes_on_rdf_media_type():
+    rep = compute_fair_report(_full_inputs(
+        resolve_detail={"content_type": "text/turtle; charset=utf-8"}))
+    a1 = _by_id(rep)["A1"]
+    assert a1.status == "pass" and a1.score == 1.0
+    assert "Accept" in a1.evidence
+
+
+def test_a1_rescues_text_plain_when_url_ends_in_rdf_extension():
+    # raw.githubusercontent.com serves .ttl as text/plain — the extension rescues it.
+    rep = compute_fair_report(_full_inputs(resolve_detail={
+        "content_type": "text/plain; charset=utf-8",
+        "final_url": "https://raw.githubusercontent.com/AIDAVA-DEV/sulo/refs/heads/main/versions/latest/sulo.ttl",
+    }))
+    a1 = _by_id(rep)["A1"]
+    assert a1.status == "pass" and a1.score == 1.0
+    assert ".ttl" in a1.evidence
+
+
+def test_a1_falls_back_to_ontology_iri_extension_when_no_final_url():
+    rep = compute_fair_report(_full_inputs(
+        ontology_iri="http://example.org/vocab/thing.owl",
+        resolve_detail={"content_type": "application/octet-stream"}))
+    a1 = _by_id(rep)["A1"]
+    assert a1.status == "pass" and a1.score == 1.0
+    assert ".owl" in a1.evidence
+
+
+def test_a1_partial_when_generic_type_and_ambiguous_extension():
+    # text/plain with a non-RDF (or ambiguous) extension stays partial: resolves,
+    # but RDF is unconfirmed. .xml/.json are deliberately not rescued.
+    rep = compute_fair_report(_full_inputs(resolve_detail={
+        "content_type": "text/plain",
+        "final_url": "https://example.org/ontology/data.xml",
+    }))
+    a1 = _by_id(rep)["A1"]
+    assert a1.status == "partial" and a1.score == 0.5
+    assert "unconfirmed" in a1.evidence
+
+
+def test_a1_partial_when_resolves_as_html_page():
+    rep = compute_fair_report(_full_inputs(resolve_detail={
+        "content_type": "text/html; charset=utf-8",
+        "final_url": "https://example.org/ontology/index.html",
+    }))
+    a1 = _by_id(rep)["A1"]
+    assert a1.status == "partial" and a1.score == 0.5
+
+
+def test_a1_fails_when_not_resolvable_even_with_rdf_extension():
+    rep = compute_fair_report(_full_inputs(
+        resolvable=False,
+        resolve_detail={"final_url": "https://example.org/ontology/vocab.ttl"}))
+    a1 = _by_id(rep)["A1"]
+    assert a1.status == "fail" and a1.score == 0.0
+    assert a1.evidence == "Not retrievable."
