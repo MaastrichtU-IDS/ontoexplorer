@@ -297,6 +297,11 @@ def _graph_triple_count(iri: str) -> int:
     return sum(1 for _ in get_store().quads_for_pattern(None, None, None, ng))
 
 
+def graph_triple_count(ontology_id: str, version_id: str, inferred: bool = False) -> int:
+    """Total triples loaded into a version's named graph (main document + imports)."""
+    return _graph_triple_count(graph_iri(ontology_id, version_id, inferred))
+
+
 def _http_write_endpoint() -> str | None:
     """The oxigraph server to write through (sole owner in oxigraph-as-a-service
     mode). Reads/writes both go via HTTP then, so the volume is opened by nobody
