@@ -333,6 +333,7 @@ export default function Ontologies() {
   const isMobile = useIsMobile()
   const [query, setQuery] = useState('')
   const [group, setGroup] = useState('')
+  const [license, setLicense] = useState('')   // '' = any, 'none' = no license, else an SPDX id
   const [profile, setProfile] = useState<'' | ProfileName>('')
   const [language, setLanguage] = useState<'' | LanguageTier>('')
   const [langs, setLangs] = useState<Set<string>>(new Set())
@@ -351,6 +352,7 @@ export default function Ontologies() {
     // 'skos' is a derived filter, not a group tag → send skos=true, not group=skos.
     group: group === 'skos' ? undefined : (group || undefined),
     skos: group === 'skos',
+    license: license || undefined,
     profile: profile || undefined,
     reuses,
     language: language || undefined,
@@ -358,6 +360,16 @@ export default function Ontologies() {
     sort: sortCol,
     dir: sortDir,
   })
+  const { data: licenseFacetData } = useQuery({
+    queryKey: ['license-facets'],
+    queryFn: () => api.ontologies.licenseFacets(),
+    staleTime: 60_000,
+  })
+  // License filter chips: an "All" / "No license" pair plus the most common
+  // SPDX licenses in the catalogue (data-driven, so the chips track reality).
+  const licenseFacets = licenseFacetData?.facets ?? []
+  const noneLicenseCount = licenseFacets.find(f => f.license === 'none')?.count ?? 0
+  const topLicenses = licenseFacets.filter(f => f.license !== 'none').slice(0, 7)
   const repoLangs = useRepositoryLanguages()
   const { data: profileFleet } = useQuery({
     queryKey: ['owl-profile', 'fleet'],
@@ -480,6 +492,40 @@ export default function Ontologies() {
           )
         })}
       </div>
+
+      {/* License filter chips — data-driven from the catalogue's license mix:
+          "All" / "No license" plus the most common SPDX licenses. */}
+      {licenseFacets.length > 0 && (
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.6rem' }}>
+        <span style={{ fontSize: 11, color: 'var(--text-dim)', marginRight: 2 }}>License:</span>
+        {[{ value: '', label: 'All', count: undefined as number | undefined },
+          { value: 'none', label: 'No license', count: noneLicenseCount },
+          ...topLicenses.map(f => ({ value: f.license, label: f.label, count: f.count }))].map(chip => {
+          const active = license === chip.value
+          return (
+            <button
+              key={chip.value || 'all'}
+              onClick={() => setLicense(chip.value)}
+              title={chip.value === '' ? 'Show all licenses'
+                : chip.value === 'none' ? 'Ontologies with no detected license'
+                : `Ontologies licensed ${chip.label}`}
+              style={{
+                fontSize: 12, padding: '4px 12px', borderRadius: 20, border: '1px solid',
+                borderColor: active ? 'var(--accent)' : 'var(--border)', cursor: 'pointer',
+                background: active ? 'var(--accent)' : 'var(--bg-secondary)',
+                color: active ? 'var(--on-accent)' : 'var(--text-dim)',
+                fontWeight: active ? 700 : 500,
+              }}
+            >
+              {chip.label}
+              {chip.count !== undefined && (
+                <span style={{ opacity: 0.7, marginLeft: 5, fontWeight: 400 }}>{chip.count}</span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+      )}
 
       {/* Expressivity filter chips — language tiers with the OWL 2 profiles
           nested under OWL. Tiers set `language`; profiles set `profile`; the two

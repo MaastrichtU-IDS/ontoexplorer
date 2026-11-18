@@ -611,7 +611,7 @@ _SHORTNAME_RE = _re.compile(r'^[a-z0-9][a-z0-9_-]{0,62}[a-z0-9]$')
 # Literal first-segment routes under /ontologies/ — a shortname equal to one of
 # these is matched by the literal route (registered first), making that ontology
 # unreachable by shortname. Reserve them so the PATCH can't create the collision.
-_RESERVED_SHORTNAMES = {"submissions", "compliant-licenses", "attention-count"}
+_RESERVED_SHORTNAMES = {"submissions", "compliant-licenses", "attention-count", "license-facets"}
 
 
 @router.patch("/{ontology_id}", summary="Update ontology metadata (shortname)")
@@ -827,6 +827,7 @@ async def list_ontologies(
     profile: str | None = Query(None, description="Filter by OWL 2 profile: el | rl | ql | dl"),
     language: str | None = Query(None, description="Filter by language tier: rdf | rdfs | rdfs-plus | owl"),
     reuses: str | None = Query(None, description="Filter: latest version reuses this prefix"),
+    license: str | None = Query(None, description="Filter by the latest ready version's SPDX license id (e.g. CC-BY-4.0), or 'none' for no detected license"),
     mine: bool = Query(False, description="Only ontologies the caller owns or maintains"),
     attention: bool = Query(False, description="Only the caller's ontologies with a version held for review (status needs_review) — the set behind the dashboard 'needs your attention' badge. Implies owner/maintainer scope."),
     skos: bool = Query(False, description="Only SKOS vocabularies (latest version has skos:Concept terms indexed). Derived, not a group tag."),
@@ -902,6 +903,25 @@ async def list_ontologies(
             conditions.append(func.jsonb_array_length(Ontology.groups) == 0)
         else:
             conditions.append(text("groups @> cast(:grp as jsonb)").bindparams(grp=_json_grp.dumps([group])))
+    if license is not None:
+        # Filter by the latest ready version's SPDX license. "none" = no detected
+        # license. A plain SQL subquery (dialect-agnostic, so unit tests pass).
+        _lic_latest = (
+            select(OntologyVersion.ontology_id, func.max(OntologyVersion.created_at).label("mc"))
+            .where(OntologyVersion.status == "ready")
+            .group_by(OntologyVersion.ontology_id)
+            .subquery()
+        )
+        _lic_q = select(OntologyVersion.ontology_id).join(
+            _lic_latest,
+            (OntologyVersion.ontology_id == _lic_latest.c.ontology_id)
+            & (OntologyVersion.created_at == _lic_latest.c.mc),
+        )
+        if license == "none":
+            _lic_q = _lic_q.where(OntologyVersion.license.is_(None))
+        else:
+            _lic_q = _lic_q.where(OntologyVersion.license == license)
+        conditions.append(Ontology.id.in_(_lic_q))
     if skos:
         # Derived "is a SKOS vocabulary" filter: the ontology has concept-type
         # entity_index rows (skos:Concept terms indexed on 0.4.109+). Not a group
@@ -1353,6 +1373,36 @@ async def compliant_licenses():
     from ontoexplorer.modules.ingestion.license import compliant_license_set
     allow = compliant_license_set()
     return {"licenses": [{"spdx": s, "label": _SPDX_LABELS.get(s, s)} for s in sorted(allow)]}
+
+
+@router.get("/license-facets", summary="License distribution across the catalogue (filter chips)")
+async def license_facets(db: AsyncSession = Depends(get_db)):
+    """Count of each SPDX license across ontologies' latest ready versions, plus a
+    ``none`` bucket (no detected license), most common first — powers the browse
+    license filter chips. ``license`` is the value to pass back to ``?license=``."""
+    from sqlalchemy import func
+    _latest = (
+        select(OntologyVersion.ontology_id, func.max(OntologyVersion.created_at).label("mc"))
+        .where(OntologyVersion.status == "ready")
+        .group_by(OntologyVersion.ontology_id)
+        .subquery()
+    )
+    rows = (await db.execute(
+        select(OntologyVersion.license, func.count().label("c"))
+        .join(_latest, (OntologyVersion.ontology_id == _latest.c.ontology_id)
+              & (OntologyVersion.created_at == _latest.c.mc))
+        .group_by(OntologyVersion.license)
+        .order_by(func.count().desc())
+    )).all()
+    facets = [
+        {
+            "license": lic if lic else "none",
+            "label": (_SPDX_LABELS.get(lic, lic) if lic else "No license"),
+            "count": c,
+        }
+        for lic, c in rows
+    ]
+    return {"facets": facets}
 
 
 @router.get(
