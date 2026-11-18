@@ -153,7 +153,7 @@ const OntologyRow = memo(function OntologyRow({ o, profileEntry }: { o: Ontology
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-          <span style={{ color: 'var(--accent)', fontWeight: 500 }}>{displayName(o)}</span>
+          <span style={{ color: 'var(--accent)', fontWeight: 500, wordBreak: 'break-word', minWidth: 0 }}>{displayName(o)}</span>
           <IriChip iri={o.iri} />
           <ResolvableBadge resolvable={o.resolvable} checkedAt={o.resolve_checked_at} />
           <TierChip tier={o.language_tier} />
@@ -338,6 +338,9 @@ export default function Ontologies() {
   const [language, setLanguage] = useState<'' | LanguageTier>('')
   const [langs, setLangs] = useState<Set<string>>(new Set())
   const [langsExpanded, setLangsExpanded] = useState(false)
+  // On phones the four filter rows crowd out the list, so collapse them behind a
+  // toggle (open on desktop, where there is room). Desktop never sees the toggle.
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [sortCol, setSortCol] = useState<SortCol>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const reuses = searchParams.get('reuses') ?? undefined
@@ -370,6 +373,9 @@ export default function Ontologies() {
   const licenseFacets = licenseFacetData?.facets ?? []
   const noneLicenseCount = licenseFacets.find(f => f.license === 'none')?.count ?? 0
   const topLicenses = licenseFacets.filter(f => f.license !== 'none').slice(0, 7)
+  const activeFilterCount =
+    (group ? 1 : 0) + (license ? 1 : 0) + (profile ? 1 : 0) + (language ? 1 : 0) + langs.size
+  const filtersVisible = !isMobile || filtersOpen
   const repoLangs = useRepositoryLanguages()
   const { data: profileFleet } = useQuery({
     queryKey: ['owl-profile', 'fleet'],
@@ -424,11 +430,13 @@ export default function Ontologies() {
         Ontologies
       </h1>
 
-      {/* Tab strip */}
+      {/* Tab strip — one swipeable row on phones, wrapping on wider screens */}
       <div style={{
         display: 'flex', gap: 0, borderBottom: '1px solid var(--border)',
         marginBottom: '1.25rem',
-        flexWrap: 'wrap',
+        flexWrap: isMobile ? 'nowrap' : 'wrap',
+        overflowX: isMobile ? 'auto' : undefined,
+        WebkitOverflowScrolling: 'touch',
       }}>
         {TAB_VALUES.map(t => {
           const active = tab === t
@@ -463,6 +471,21 @@ export default function Ontologies() {
         </Suspense>
       )}
       {tab === 'list' && <>
+      {isMobile && (
+        <button
+          onClick={() => setFiltersOpen(v => !v)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6, marginBottom: '0.6rem',
+            fontSize: 13, padding: '6px 12px', borderRadius: 'var(--radius)',
+            border: '1px solid var(--border)', background: 'var(--bg-secondary)',
+            color: 'var(--text)', cursor: 'pointer', width: '100%', justifyContent: 'space-between',
+          }}
+        >
+          <span>Filters{activeFilterCount > 0 ? ` · ${activeFilterCount} active` : ''}</span>
+          <span style={{ color: 'var(--text-dim)' }}>{filtersOpen ? '▲' : '▼'}</span>
+        </button>
+      )}
+      {filtersVisible && <>
       {/* Group filter chips */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: '0.6rem' }}>
         <span style={{ fontSize: 11, color: 'var(--text-dim)', marginRight: 2 }}>Group:</span>
@@ -628,6 +651,7 @@ export default function Ontologies() {
           </div>
         )
       })()}
+      </>}
 
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
