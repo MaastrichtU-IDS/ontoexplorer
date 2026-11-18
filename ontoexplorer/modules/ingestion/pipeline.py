@@ -279,6 +279,30 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
         )
         raise LossyOwlXmlIngest(_lossy["message"])
 
+    # ── Guard: refuse an empty parse (0 triples) ───────────────────────────────
+    # A source that parses to zero triples is a failed fetch, not an ontology — an
+    # HTML landing page, an empty SPARQL `describe`, a dead mirror. `triple_count`
+    # is the main document's size; an empty main document declares no owl:imports
+    # (those are triples too), so the import closure is necessarily empty as well
+    # and this count is a complete signal — no extra graph scan needed. Reject here
+    # like the lossy guard — purge the MinIO object + Oxigraph graph already
+    # written, then raise terminally — so no empty draft is ever persisted (the
+    # provisional Ontology row is only flushed, so it rolls back on raise).
+    if triple_count == 0:
+        from ontoexplorer.modules.jobs.tasks import purge_version_artifacts
+        purge_version_artifacts.delay(ontology_id, version_id, minio_key)
+        log.warning(
+            "ingest_rejected_empty",
+            ontology_id=ontology_id,
+            version_id=version_id,
+            source_url=source.final_url or request.url or request.iri,
+        )
+        raise EmptyIngest(
+            "The source parsed to zero RDF triples — it is empty or not an "
+            "ontology (an HTML landing page, an empty SPARQL result, or a dead "
+            "mirror). Check that the source URL serves RDF."
+        )
+
     # ── Refine ontology IRI from loaded triples (safety net) ──────────────────
     # _extract_ontology_iri_fast already runs an in-memory parse before any DB
     # writes, so this normally agrees with provisional_iri. The SPARQL re-check
@@ -511,6 +535,19 @@ async def _supersede_stale_held_versions(
         log.info("superseded_held_versions", ontology_id=ontology_id,
                  version_iri=version_iri, superseded=superseded, kept=keep_version_id)
     return superseded
+
+
+class EmptyIngest(Exception):
+    """The fetched source parsed to zero RDF triples (main document + import
+    closure). It is not an ontology — a landing page, an empty SPARQL result, a
+    dead mirror — so it is rejected rather than persisted. Terminal: a retry
+    re-fetches the same empty content, so callers treat it like
+    :class:`OntologyAccessDenied` (fail, don't retry). Without this the quality
+    gate would hold the empty draft at ``needs_review`` (below the triple floor),
+    and because such re-fetches usually carry no ``version_iri`` the supersede
+    path can't replace them — they stack as un-cleanable drafts that update
+    polling keeps recreating.
+    """
 
 
 class OntologyAccessDenied(Exception):
