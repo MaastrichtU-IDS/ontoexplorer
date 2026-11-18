@@ -57,6 +57,22 @@ ROLE_LABELS: dict[str, str] = {
 
 _RDF_HINTS = ("rdf", "turtle", "ttl", "n-triples", "ntriples", "n3", "json-ld", "ld+json", "owl")
 
+# Unambiguous RDF file extensions. Many hosts mislabel the media type — e.g.
+# raw.githubusercontent.com serves every file as text/plain regardless of
+# extension — so a resolved URL ending in one of these is a reliable RDF signal
+# even when the Content-Type header is generic. Plain .xml/.json are excluded as
+# ambiguous (they are routinely non-RDF).
+_RDF_EXTENSIONS = frozenset({"ttl", "rdf", "owl", "nt", "n3", "nq", "trig", "jsonld"})
+
+
+def _url_ext(url: str | None) -> str:
+    """Lowercased file extension of a URL's last path segment, ignoring any
+    query string or fragment. Empty string when there is no extension."""
+    if not url:
+        return ""
+    tail = url.split("?", 1)[0].split("#", 1)[0].rstrip("/").rsplit("/", 1)[-1]
+    return tail.rsplit(".", 1)[-1].lower() if "." in tail else ""
+
 
 def _short(iri: str) -> str:
     for base, pfx in _PREFIXES:
@@ -71,6 +87,7 @@ class FairInputs:
     ontology_iri: str | None = None
     resolvable: bool | None = None
     resolve_content_type: str | None = None
+    resolve_final_url: str | None = None
     version_iri: str | None = None
     shortname: str | None = None
     groups: list[str] = field(default_factory=list)
@@ -121,12 +138,15 @@ def build_fair_inputs(
 ) -> FairInputs:
     """Assemble :class:`FairInputs` from already-loaded ORM values. Pure; no I/O."""
     ct = None
+    final_url = None
     if isinstance(resolve_detail, dict):
         ct = resolve_detail.get("content_type") or resolve_detail.get("rdf_content_type")
+        final_url = resolve_detail.get("final_url")
     return FairInputs(
         ontology_iri=ontology_iri,
         resolvable=resolvable,
         resolve_content_type=ct,
+        resolve_final_url=final_url,
         version_iri=version_iri,
         shortname=shortname,
         groups=list(groups or []),
@@ -223,16 +243,32 @@ def _title_desc(m: dict) -> FairCheck:
 
 def _accessible(inp: FairInputs) -> list[FairCheck]:
     ct = (inp.resolve_content_type or "").lower()
-    rdf_conneg = bool(inp.resolvable) and any(h in ct for h in _RDF_HINTS)
-    a1_status = PASS if rdf_conneg else PARTIAL if inp.resolvable else FAIL
-    a1_score = 1.0 if rdf_conneg else 0.5 if inp.resolvable else 0.0
+    rdf_media = any(h in ct for h in _RDF_HINTS)
+    # Fallback for hosts that mislabel the media type (raw.githubusercontent.com
+    # serves .ttl as text/plain): an unambiguous RDF extension on the resolved URL
+    # — or the ontology IRI, when the resolver recorded no final URL — is accepted
+    # as RDF. The ontology having parsed to triples on ingest corroborates it.
+    ext = _url_ext(inp.resolve_final_url) or _url_ext(inp.ontology_iri)
+    rdf_ext = ext in _RDF_EXTENSIONS
+    rdf_served = bool(inp.resolvable) and (rdf_media or rdf_ext)
+    a1_status = PASS if rdf_served else PARTIAL if inp.resolvable else FAIL
+    a1_score = 1.0 if rdf_served else 0.5 if inp.resolvable else 0.0
+    if not inp.resolvable:
+        a1_ev = "Not retrievable."
+    elif rdf_media:
+        a1_ev = "Serves RDF on Accept."
+    elif rdf_ext:
+        a1_ev = f"Resolves to an RDF document (.{ext}); host returns a generic media type."
+    else:
+        a1_ev = "Resolves; RDF content type unconfirmed."
     open_proto = bool(inp.ontology_iri and inp.ontology_iri.lower().startswith(("http://", "https://")))
     return [
         FairCheck("A1", "A", "Content negotiation to RDF", a1_status, a1_score,
-                  "Serves RDF on Accept." if rdf_conneg else "Resolves; RDF content type unconfirmed." if inp.resolvable else "Not retrievable.",
+                  a1_ev,
                   "resolvable",
                   [("Accept requested", "text/turtle, application/rdf+xml, application/n-triples, application/ld+json"),
-                   ("Served", inp.resolve_content_type or "— unknown —")]),
+                   ("Served", inp.resolve_content_type or "— unknown —"),
+                   ("Resolved URL", inp.resolve_final_url or inp.ontology_iri or "—")]),
         FairCheck("A2", "A", "Open protocol",
                   PASS if open_proto else FAIL, 1.0 if open_proto else 0.0,
                   "Retrievable over HTTP(S)." if open_proto else "No HTTP(S) identifier.",
