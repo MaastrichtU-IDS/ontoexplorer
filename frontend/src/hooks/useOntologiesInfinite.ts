@@ -30,23 +30,24 @@ export function useOntologiesInfinite(opts: {
   sort: 'name' | 'date'
   dir: 'asc' | 'desc'
   skos?: boolean            // derived filter: only SKOS vocabularies (concept terms indexed)
+  license?: string          // latest version's SPDX license id, or 'none' for no license
   mine?: boolean            // scope to the caller's owned/maintained set (dashboard)
   attention?: boolean       // only the caller's ontologies with a held (needs_review) version
   // Poll while a just-submitted ontology is still ingesting (dashboard). Static
   // false for the catalogue — no polling there.
   refetchInterval?: number | false | (() => number | false)
 }) {
-  const { group, profile, reuses, language, langs, sort, dir, skos = false, mine = false, attention = false, refetchInterval = false } = opts
+  const { group, profile, reuses, language, langs, sort, dir, skos = false, license, mine = false, attention = false, refetchInterval = false } = opts
   const q = useDebounce(opts.query.trim(), 250)
   const langKey = [...langs].sort().join(',')
 
   const query = useInfiniteQuery({
-    queryKey: ['ontologies', 'infinite', mine ? 'mine' : 'all', q, group ?? '', profile ?? '', reuses ?? '', language ?? '', langKey, sort, dir, skos ? 'skos' : '', attention ? 'attention' : ''],
+    queryKey: ['ontologies', 'infinite', mine ? 'mine' : 'all', q, group ?? '', profile ?? '', reuses ?? '', language ?? '', langKey, sort, dir, skos ? 'skos' : '', attention ? 'attention' : '', license ?? ''],
     queryFn: ({ pageParam }) =>
       api.ontologies.list(
         pageParam as number, PAGE_SIZE,
         q || undefined, group || undefined, profile, reuses, mine, language, 'list',
-        { sort, dir, langs, skos, attention },
+        { sort, dir, langs, skos, attention, license },
       ),
     // Prefer the server `total` to know when to stop; fall back to short-page
     // detection (a page shorter than PAGE_SIZE is the last one).
