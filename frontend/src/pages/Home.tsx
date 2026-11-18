@@ -12,7 +12,10 @@ import { ResultList, TypeBadge } from '../components/ResultList'
 export { normalizeMos, isNamedClassQuery } from '../components/MOSQuery'
 
 const EXAMPLES = ['cell death', 'apoptosis', 'protein binding', 'nucleus', 'membrane']
-const ONTOLOGY_EXAMPLES = ['gene', 'disease', 'chemical', 'anatomy', 'protein']
+// Suggested ontologies for the catalogue search — each term is an exact
+// shortname that ranks its ontology first (SULO, PRO, the SULO pizza tutorial,
+// the Gene Ontology, and SIO as a flagship FAIR example).
+const ONTOLOGY_EXAMPLES = ['sulo', 'pro', 'sulo-pizza', 'go', 'sio']
 
 type Mode = 'ontology' | 'search' | 'query'
 
