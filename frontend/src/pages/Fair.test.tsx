@@ -23,7 +23,12 @@ const FLEET = {
 const fleetFn = vi.fn(() => Promise.resolve(FLEET))
 
 vi.mock('../lib/api', () => ({
-  api: { fair: { fleet: (...args: unknown[]) => (fleetFn as any)(...args) } },
+  api: {
+    fair: {
+      fleet: (...args: unknown[]) => (fleetFn as any)(...args),
+      history: () => Promise.resolve({ series: [] }),
+    },
+  },
 }))
 
 function wrap(ui: React.ReactElement) {

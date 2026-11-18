@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { api, FairFleet } from '../lib/api'
+import FairTrend from '../components/FairTrend'
 
 const PRINCIPLE_NAMES: Record<string, string> = {
   F: 'Findable', A: 'Accessible', I: 'Interoperable', R: 'Reusable',
@@ -38,6 +39,11 @@ export default function FairOverview() {
           mean overall FAIR score <span style={{ fontFamily: 'monospace' }}>± {Math.round((data.overall_stddev ?? 0) * 100)}</span> SD
         </span>
       </div>
+
+      <section>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 10px' }}>FAIR over time</h3>
+        <FairTrend />
+      </section>
 
       <section>
         <h3 style={{ fontSize: 14, fontWeight: 600, margin: '0 0 10px' }}>Overall score distribution</h3>

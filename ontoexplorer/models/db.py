@@ -698,3 +698,29 @@ class ReasonerProfile(Base):
     created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class FairSnapshot(Base):
+    """One daily snapshot of the fleet-wide FAIR aggregate, for fairness-over-time.
+
+    Written once per UTC day by the ``snapshot_fair_fleet`` beat task from the
+    same aggregate the /fair/fleet endpoint serves (the precomputed per-version
+    ``fair_*`` cache). ``day`` is unique so the task is idempotent — a re-run
+    updates the day's row rather than stacking duplicates. The scalar means are
+    columns for cheap charting; ``data`` carries the rest (per-principle means +
+    stddevs, histogram, per-check rates) for drill-down without a schema change.
+    """
+    __tablename__ = "fair_snapshots"
+    __table_args__ = (
+        UniqueConstraint("day", name="uq_fair_snapshot_day"),
+        Index("ix_fair_snapshot_day", "day"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    day: Mapped[date] = mapped_column(Date, nullable=False)  # UTC calendar day
+    n: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    overall_mean: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    overall_stddev: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    data: Mapped[dict] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
