@@ -34,7 +34,7 @@ minimum personal data needed to run accounts and notify maintainers.
 | Data | When | Why (purpose) |
 |---|---|---|
 | **Identity from your sign-in provider** — your provider (ORCID, GitHub, or email), your stable account id at that provider, your display name, and your verified email where the provider supplies it | When you sign in | To create and recognise your account, and to attribute the ontologies you submit |
-| **Email address** | From your sign-in provider | To send you ontology-related notifications (for example, when a submission is held for review or an upstream update is detected) |
+| **Email address** | From your sign-in provider | To send you account- and submission-related notifications (see [When we email you](#when-we-email-you) below) — never marketing |
 | **Account activity** — the ontologies you submit, own, or maintain; your API keys (stored only as a hash); your webhook subscriptions | As you use the service | To provide the submission, maintenance, and programmatic-access features |
 | **Technical logs** — standard server logs, which may include IP address, request metadata, and timestamps | Automatically, on each request | To operate, secure, and debug the service |
 
@@ -50,6 +50,31 @@ account is identified **only** by your provider plus your stable id at that
 provider — **never** by email address. Accounts are deliberately **never merged by
 email**, which prevents an account-takeover where someone signs in via a different
 provider that happens to share your email.
+
+### When we email you
+
+We use your email address only for **transactional, account- and submission-related
+messages** — never marketing, and we never share it for advertising. You receive an
+email when:
+
+- a version you submitted is **held for review** by the quality gate, with the
+  specific reasons to correct;
+- a submitted version's **OWL 2 profile could not be computed**;
+- a **reminder** that one of your versions is still held awaiting correction;
+- a long-held version is **set aside** after it has gone uncorrected for a while;
+- your **uploader or maintainer request** is approved or declined.
+
+Administrators additionally receive a notice when someone submits an uploader or
+maintainer request, so the team can review it.
+
+Detection of a **new upstream release** of an ontology is surfaced as an in-app
+badge and an optional webhook — it does **not** email you unless you have configured
+a webhook yourself.
+
+Email is sent on a best-effort basis from the platform's background workers. If your
+sign-in provider supplied no email address, these notices appear in-app instead.
+Sign-in **email verification** is handled by the identity broker (Keycloak) as part
+of account setup.
 
 ## Public content
 

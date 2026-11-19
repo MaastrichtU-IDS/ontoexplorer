@@ -173,9 +173,14 @@ stable account id at that provider. Accounts are **never** linked by email addre
 (that would be an account-takeover vector), so signing in with a different
 provider that happens to share your email creates a distinct account.
 
-Your verified email (when your provider supplies one) is used to send you
-ontology-related notifications — for example, when one of your submissions is held
-for review, or when an upstream update is detected.
+Your verified email (when your provider supplies one) is used only for
+**transactional notifications about your own content** — never marketing. The
+platform emails you when a version you submitted is **held for review**, when its
+**OWL 2 profile can't be computed**, as a **reminder** that a version is still held,
+when a long-held version is **set aside**, and when your **uploader/maintainer
+request** is decided. Detection of a new **upstream release** shows as an in-app
+badge (and an optional webhook), not an email. If your provider supplies no email,
+these notices appear in-app instead.
 
 ### Submitting an ontology
 
