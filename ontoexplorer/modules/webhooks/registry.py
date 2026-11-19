@@ -9,6 +9,7 @@ from ontoexplorer.models.db import Webhook, WebhookDelivery
 
 VALID_EVENTS = frozenset({
     "ontology.ingested",
+    "ontology.update_available",
     "version.deprecated",
     "reasoning.completed",
     "reasoning.failed",
