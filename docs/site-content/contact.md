@@ -16,8 +16,7 @@ ontology or page involved.
 ## Email
 
 For questions, collaboration, or anything that isn't a public issue, email the
-team at **ontoexplorer@maastrichtuniversity.nl** *(suggested project inbox —
-create this address or substitute the preferred one before publishing)*.
+team at **info-ids@maastrichtuniversity.nl**.
 
 Please don't send privacy or data-protection requests here — use the dedicated
 channels below.
@@ -54,6 +53,5 @@ You may also lodge a complaint with the Dutch supervisory authority, the
 
 ---
 
-> To confirm before publishing: the project email (create `ontoexplorer@…` or
-> substitute), the IDS institute URL, and the GDPR-form URL (shared with the
-> privacy notice).
+> To confirm before publishing: the IDS institute URL, and the GDPR-form URL
+> (shared with the privacy notice).

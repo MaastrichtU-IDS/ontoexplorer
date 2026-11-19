@@ -18,9 +18,9 @@ University's public privacy pages: controller = **Maastricht University**, DPO
 `fg@maastrichtuniversity.nl`, GDPR team `privacy@maastrichtuniversity.nl`,
 supervisory authority **Autoriteit Persoonsgegevens**. A handful of items are
 marked *(verify)* / *(confirm)* — exact statement/form URLs, the DPO postal
-addressee, retention periods, the notification mail path, the project contact
-email (`ontoexplorer@…` suggested), and the IDS URL. Collected lists are at the
-foot of `privacy.md` and `contact.md`.
+addressee, retention periods, the notification mail path, and the IDS URL.
+The project contact email is **info-ids@maastrichtuniversity.nl**. Collected
+lists are at the foot of `privacy.md` and `contact.md`.
 
 ## How to review
 
