@@ -231,15 +231,45 @@ OntoExplorer detects new upstream releases for you:
 - **Update polling** — a scheduled sweep re-checks each ontology's canonical IRI
   for a newer release, comparing against the version-aware default and using
   conditional requests (ETag / Last-Modified) to stay cheap. When a newer,
-  **versioned** release is found it flags an **update available** badge; a change
-  that carries no parseable version (for instance, an IRI that has started serving
-  a landing page) is flagged for your review rather than ingested automatically.
+  **versioned** release is found it flags an **update available** badge (and fires
+  the `ontology.update_available` [webhook](#webhooks)); a change that carries no
+  parseable version (for instance, an IRI that has started serving a landing page)
+  is flagged for your review rather than ingested automatically.
 - **Auto-sync** (opt-in, per ontology) — when enabled, a confirmed versioned
   update is ingested automatically; the new version still passes the quality gate
   before it goes live.
-- **GitHub push** — for ontologies hosted on GitHub, a push webhook can trigger
-  re-ingestion of the changed file immediately.
+- **GitHub push** — for an ontology whose source is a GitHub-hosted file, a commit
+  can trigger re-ingestion **immediately**, without waiting for the next poll (see
+  below).
 - **Check now** — you can trigger an update check on demand.
+
+#### Re-ingesting on a GitHub commit
+
+If your ontology's source file lives in a GitHub repository, you can have a push
+re-ingest it the moment you commit, by adding a **repository webhook** that points
+at OntoExplorer's inbound receiver:
+
+1. In your repo, go to **Settings → Webhooks → Add webhook**.
+2. **Payload URL:** `https://<ontoexplorer-host>/api/v1/inbound/github`
+3. **Content type:** `application/json`.
+4. **Secret:** the value the OntoExplorer operator gives you — deliveries are
+   rejected unless their HMAC signature matches, so an unsigned or wrong-secret
+   push is refused.
+5. Choose **Just the push event** and save.
+
+On each push, OntoExplorer looks at the files your commits **added or modified** and
+matches them, by URL, against the source of every registered ontology — trying both
+the `raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}` form and the repo's
+**GitHub Pages** URL where it publishes one. Every ontology whose registered source
+matches a changed file is re-ingested through the normal pipeline and quality gate,
+so the push only needs to touch the file an ontology was actually registered from.
+
+A few practical notes: the ontology must already be registered with a source URL
+that matches one of those forms (a commit can refresh an existing ontology, not add
+a brand-new one); the push must be on the branch or tag that URL refers to; and
+inbound GitHub sync is only active when the operator has configured the shared
+secret — otherwise the receiver returns *501 Not configured*. If you'd rather not
+run a webhook, update polling will still pick the change up on its next sweep.
 
 ### Your dashboard
 
@@ -298,6 +328,7 @@ Programmatically the same operations are `POST`/`GET`/`DELETE /api/v1/webhooks`,
 **Events you can subscribe to:**
 
 - `ontology.ingested` — a new version finished ingesting.
+- `ontology.update_available` — a newer upstream release of an ontology was detected.
 - `version.deprecated` — a version was deprecated.
 - `reasoning.completed` / `reasoning.failed` — OWL reasoning finished / failed.
 - `indexing.completed` — the entity index finished building.
@@ -315,9 +346,6 @@ these headers:
 
 A delivery that doesn't return a `2xx` response is marked **failed** and recorded in
 the webhook's delivery history.
-
-> **Note:** detection of a new **upstream release** is currently surfaced as an
-> in-app badge only; a subscribable webhook event for it is not yet available.
 
 ---
 
