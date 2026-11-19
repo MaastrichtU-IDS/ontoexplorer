@@ -1,7 +1,7 @@
 import { loginWithProvider } from '../lib/auth'
 
 // The platform `ontoexplorer` realm is the only sign-in path (#368): it owns
-// registration + email verification and brokers ORCID/GitHub/Google, so one
+// registration + email verification and brokers ORCID/GitHub, so one
 // account covers everyone regardless of the identity they bring. We route
 // solely through it because the realm guarantees a verified email on every
 // login (needed for held-version/nudge/maintainer notifications); the old
@@ -23,7 +23,7 @@ export default function Login() {
         Sign in to OntoExplorer
       </h1>
       <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginBottom: '1.5rem', maxWidth: 320, textAlign: 'center' }}>
-        Your platform account signs you in with ORCID, GitHub, Google, or email.
+        Your platform account signs you in with ORCID, GitHub, or email.
       </p>
       <button
         key={primaryProvider.id}
