@@ -11,12 +11,16 @@ second pass. Nothing here is live yet.
 | [`privacy.md`](privacy.md) | `/privacy` — minimal privacy & data notice (GDPR-aware) | draft, **needs legal review** |
 | [`contact.md`](contact.md) | `/contact` — GitHub issues, email, team, data requests | draft |
 
-## Placeholders to confirm
+## Items to confirm
 
-Text in `«guillemets»` is a value I could not invent and you must confirm. The
-privacy notice carries most of them (controller legal entity, DPO contact,
-retention periods, hosting/sub-processors, analytics). A collected list is at the
-bottom of `privacy.md`.
+The legal/contact details are filled with a thoughtful first pass from Maastricht
+University's public privacy pages: controller = **Maastricht University**, DPO
+`fg@maastrichtuniversity.nl`, GDPR team `privacy@maastrichtuniversity.nl`,
+supervisory authority **Autoriteit Persoonsgegevens**. A handful of items are
+marked *(verify)* / *(confirm)* — exact statement/form URLs, the DPO postal
+addressee, retention periods, the notification mail path, the project contact
+email (`ontoexplorer@…` suggested), and the IDS URL. Collected lists are at the
+foot of `privacy.md` and `contact.md`.
 
 ## How to review
 

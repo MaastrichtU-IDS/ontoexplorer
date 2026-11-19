@@ -58,9 +58,9 @@ for new upstream releases.
 
 ## Project & governance
 
-OntoExplorer is developed by **«Maastricht University — Institute of Data Science
-(IDS)»**. The source code is open and public under the Apache 2.0 licence:
-<https://github.com/MaastrichtU-IDS/ontoexplorer>.
+OntoExplorer is developed and operated by the **Institute of Data Science (IDS)**
+at **Maastricht University**. The source code is open and public under the
+Apache 2.0 licence: <https://github.com/MaastrichtU-IDS/ontoexplorer>.
 
 Catalogue content is aggregated from third-party registries and from direct
 submissions; each ontology retains its own upstream licence, shown on its page.
