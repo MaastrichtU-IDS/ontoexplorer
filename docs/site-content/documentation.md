@@ -165,8 +165,8 @@ graphs for speed.
 ### Accounts & sign-in
 
 Sign in with your **platform account** (`/login`). One platform account signs you
-in through **ORCID, GitHub, Google, or email**, brokered by Keycloak — you don't
-manage a separate OntoExplorer password.
+in through **ORCID, GitHub, or email**, brokered by Keycloak — you don't manage a
+separate OntoExplorer password.
 
 For security, identities are matched **only** by the identity provider plus your
 stable account id at that provider. Accounts are **never** linked by email address
@@ -179,17 +179,31 @@ for review, or when an upstream update is detected.
 
 ### Submitting an ontology
 
-From your dashboard, **Add ontology** (`/dashboard/add`) submits an ontology for
-ingestion. You can provide a resolvable **IRI** (content-negotiated) or a direct
-**URL** to the RDF document; an upload size cap applies. Submission enqueues an
-ingestion job you can follow under **Submissions** (`/dashboard/submissions`),
-which shows each job's stage and outcome, with a detail view per job
-(`/dashboard/submissions/{taskId}`).
+Adding a **new** ontology to the catalogue requires **uploader rights**, which are
+granted by the OntoExplorer team. Sign in, then request them from your dashboard
+with a short rationale; an admin approves or declines. (Admins, and anyone on the
+operator's upload allowlist, already have them.) Until you are granted uploader
+rights, the submit action returns a clear "not allowed to add ontologies" message
+rather than ingesting.
+
+Once you have uploader rights, **Add ontology** (`/dashboard/add`) submits an
+ontology for ingestion. You can provide a resolvable **IRI** (content-negotiated)
+or a direct **URL** to the RDF document; an upload size cap applies. Submission
+enqueues an ingestion job you can follow under **Submissions**
+(`/dashboard/submissions`), which shows each job's stage and outcome, with a detail
+view per job (`/dashboard/submissions/{taskId}`).
 
 Ingestion is fully automated: fetch → parse → resolve the import closure → store →
 run the quality gate → build the index, embeddings, hierarchy, profiles, and FAIR
 report. Failures are reported with a clear reason (for example, an unparseable
 document or an IRI that does not return RDF).
+
+**Maintaining an existing ontology.** To claim or correct an ontology that is
+already in the catalogue, request **maintainer rights** over it (a per-ontology
+request, again with a rationale). An admin approves it, after which you can edit
+that ontology's metadata and trigger re-checks. Uploader and maintainer requests
+are both reviewed by the OntoExplorer team; you can see a request's status from
+your dashboard.
 
 ### The quality gate
 

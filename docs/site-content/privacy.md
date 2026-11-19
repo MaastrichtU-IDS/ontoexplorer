@@ -33,7 +33,7 @@ minimum personal data needed to run accounts and notify maintainers.
 
 | Data | When | Why (purpose) |
 |---|---|---|
-| **Identity from your sign-in provider** — your provider (ORCID, GitHub, Google, or email), your stable account id at that provider, your display name, and your verified email where the provider supplies it | When you sign in | To create and recognise your account, and to attribute the ontologies you submit |
+| **Identity from your sign-in provider** — your provider (ORCID, GitHub, or email), your stable account id at that provider, your display name, and your verified email where the provider supplies it | When you sign in | To create and recognise your account, and to attribute the ontologies you submit |
 | **Email address** | From your sign-in provider | To send you ontology-related notifications (for example, when a submission is held for review or an upstream update is detected) |
 | **Account activity** — the ontologies you submit, own, or maintain; your API keys (stored only as a hash); your webhook subscriptions | As you use the service | To provide the submission, maintenance, and programmatic-access features |
 | **Technical logs** — standard server logs, which may include IP address, request metadata, and timestamps | Automatically, on each request | To operate, secure, and debug the service |
@@ -45,7 +45,7 @@ for advertising.
 
 ### How sign-in works (and a security note)
 
-Sign-in is brokered by Keycloak across ORCID, GitHub, Google, and email. Your
+Sign-in is brokered by Keycloak across ORCID, GitHub, and email. Your
 account is identified **only** by your provider plus your stable id at that
 provider — **never** by email address. Accounts are deliberately **never merged by
 email**, which prevents an account-takeover where someone signs in via a different
@@ -101,9 +101,9 @@ You have the right to lodge a complaint with the Dutch supervisory authority, th
 OntoExplorer is hosted on **Maastricht University / Institute of Data Science
 infrastructure** in the Netherlands (EU). Processing involves:
 
-- **Identity providers** — ORCID, GitHub (GitHub, Inc.), and Google (Google LLC)
-  when you choose them to sign in, each under its own privacy policy and
-  applicable international-transfer safeguards.
+- **Identity providers** — ORCID and GitHub (GitHub, Inc.) when you choose them to
+  sign in, each under its own privacy policy and applicable international-transfer
+  safeguards.
 - **Email delivery** — ontology notifications are sent via UM's mail
   infrastructure *(confirm the mail provider/path)*.
 

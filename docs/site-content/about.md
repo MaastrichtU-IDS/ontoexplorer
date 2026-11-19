@@ -17,9 +17,10 @@ alerts maintainers, and an update poller detects new upstream releases.
 - **Ontology users** — find the right vocabulary, search across terms from every
   ontology at once, compare versions, and judge fitness with transparent FAIR and
   OWL-profile signals.
-- **Ontology authors & maintainers** — publish an ontology, keep it current, and
-  see concrete, actionable quality feedback (missing licences, absent labels,
-  profile violations) instead of a single opaque score.
+- **Ontology authors & maintainers** — once granted uploader or maintainer rights
+  by the team, publish an ontology, keep it current, and see concrete, actionable
+  quality feedback (missing licences, absent labels, profile violations) instead of
+  a single opaque score.
 - **Researchers & tool builders** — a public REST API and SPARQL endpoint over a
   large, normalised, richly-indexed corpus.
 

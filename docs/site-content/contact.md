@@ -31,11 +31,13 @@ institute URL)*.
 
 ## Adding or maintaining an ontology
 
-You don't need to contact us to add an ontology — **sign in** and submit it
-yourself from **Dashboard → Add ontology**. See the
-[documentation](documentation.md#submitting-an-ontology) for how submission and
-the quality gate work. If an ontology you maintain is already in the catalogue and
-you'd like to claim or correct it, reach us by email.
+Adding a new ontology, or becoming the maintainer of one already in the catalogue,
+is **approved by the OntoExplorer team**. **Sign in**, then request the role from
+your dashboard — *uploader* rights to add new ontologies, or *maintainer* rights
+over a specific ontology — with a short rationale; an admin approves or declines.
+See the [documentation](documentation.md#submitting-an-ontology) for how the
+request, submission, and quality gate work. For anything the request flow doesn't
+cover, reach us by email.
 
 ## Privacy & data-protection requests
 
