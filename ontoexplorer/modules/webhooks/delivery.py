@@ -10,7 +10,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ontoexplorer.models.db import Webhook, WebhookDelivery
+from ontoexplorer.models.db import Ontology, OntologyMaintainer, Webhook, WebhookDelivery
 from ontoexplorer.logging_config import get_logger
 from ontoexplorer import metrics
 
@@ -74,12 +74,38 @@ async def deliver_webhook(
     return delivery
 
 
-async def broadcast_event(db: AsyncSession, event: str, payload: dict) -> None:
-    """Deliver an event to all active webhooks subscribed to it."""
-    result = await db.execute(
-        select(Webhook).where(Webhook.active.is_(True))
-    )
-    webhooks = result.scalars().all()
+async def _authorized_user_ids(db: AsyncSession, ontology_id: str) -> set[str]:
+    """The users entitled to events about one ontology: its owner plus every
+    approved maintainer (a row in ontology_maintainers is itself the grant)."""
+    owner_id = (
+        await db.execute(select(Ontology.owner_id).where(Ontology.id == ontology_id))
+    ).scalar_one_or_none()
+    maintainers = (
+        await db.execute(
+            select(OntologyMaintainer.user_id).where(OntologyMaintainer.ontology_id == ontology_id)
+        )
+    ).scalars().all()
+    return {uid for uid in (owner_id, *maintainers) if uid}
+
+
+async def broadcast_event(
+    db: AsyncSession, event: str, payload: dict, *, ontology_id: str | None = None
+) -> None:
+    """Deliver an event to active webhooks subscribed to it.
+
+    When ``ontology_id`` is given the event is **ontology-scoped**: it reaches only
+    the webhooks of that ontology's owner and approved maintainers, so a webhook
+    never fires for an ontology its owner doesn't own or maintain. With
+    ``ontology_id=None`` the event is global and reaches every subscribed webhook;
+    no current event uses that path.
+    """
+    stmt = select(Webhook).where(Webhook.active.is_(True))
+    if ontology_id is not None:
+        authorized = await _authorized_user_ids(db, ontology_id)
+        if not authorized:
+            return
+        stmt = stmt.where(Webhook.user_id.in_(authorized))
+    webhooks = (await db.execute(stmt)).scalars().all()
     for webhook in webhooks:
         if event in webhook.events:
             try:

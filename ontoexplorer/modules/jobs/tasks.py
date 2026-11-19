@@ -1200,7 +1200,7 @@ async def _reason_and_persist(db, version, version_id: str, ontology_id: str, jo
         "version_id": version_id,
         "ontology_id": ontology_id,
         "inferred_axiom_count": inferred_count,
-    })
+    }, ontology_id=ontology_id)
 
     # Re-queue any diffs whose inferred half is stale for this version.
     try:
@@ -1712,7 +1712,7 @@ def compute_justification(
                     "sub": sub,
                     "sup": sup,
                     "justifications_found": result.get("justifications_found", 0),
-                })
+                }, ontology_id=ontology_id)
                 return result
             except Exception as exc:
                 await tracker.mark_failed(db, job.id, str(exc))
@@ -1722,7 +1722,7 @@ def compute_justification(
                     "sub": sub,
                     "sup": sup,
                     "error": str(exc),
-                })
+                }, ontology_id=ontology_id)
                 raise
 
     try:
@@ -1814,7 +1814,8 @@ async def _poll_one(db, ont) -> str:
                  detected=result.get("fetched_version"), kind=status)
         try:
             await broadcast_event(db, "ontology.update_available",
-                                  {"ontology_id": str(ont.id), **detail})
+                                  {"ontology_id": str(ont.id), **detail},
+                                  ontology_id=str(ont.id))
         except Exception as exc:  # noqa: BLE001 — a webhook failure must not fail the poll
             log.warning("poll_broadcast_failed", ontology_id=ont.id, error=str(exc))
     return status
