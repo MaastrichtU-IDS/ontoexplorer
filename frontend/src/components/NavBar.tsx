@@ -9,6 +9,7 @@ import ThemeToggle from './ThemeToggle'
 
 const navLinks = [
   { to: '/ontologies',  label: 'Ontologies' },
+  { to: '/docs',        label: 'Docs' },
 ]
 
 // A pill-style link (Admin / Dashboard / Sign in) — same look in the desktop bar
