@@ -271,6 +271,15 @@ inbound GitHub sync is only active when the operator has configured the shared
 secret — otherwise the receiver returns *501 Not configured*. If you'd rather not
 run a webhook, update polling will still pick the change up on its next sweep.
 
+> **Building with OntoStart?** Collections generated from the
+> [OntoStart template](https://github.com/micheldumontier/ontostart-template) can
+> register and refresh their ontologies here directly from **CI** — no repository
+> webhook needed. Add an OntoExplorer **API key** (write scope) as the
+> `ONTOEXPLORER_TOKEN` secret of the repo's `ontostart-secrets` environment, and
+> every push to `main` submits the freshly published versions. This path
+> authenticates as *your* account, so it both **refreshes** existing ontologies and
+> **registers** new ones you publish.
+
 ### Your dashboard
 
 The **Dashboard** (`/dashboard`) is your workspace:
