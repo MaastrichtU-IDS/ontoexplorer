@@ -1776,12 +1776,18 @@ async def _poll_one(db, ont) -> str:
         ont.update_detail = None
         return status
 
-    # update_available
+    # update_available | unversioned_change — something changed upstream.
     detail = {"detected_version": result.get("fetched_version"),
               "current_version": result.get("current_version"),
               "fetch_url": result["fetch_url"],
               "detected_at": datetime.now(timezone.utc).isoformat()}
-    if ont.auto_sync:
+
+    # Opt-in auto-ingest fires ONLY for a confirmed, VERSIONED newer release. An
+    # unversioned byte change is never auto-materialised: it can't be confirmed as a
+    # real update and is the shape a junk re-fetch takes (HTML landing page, empty
+    # SPARQL result), so pre-#433 it piled up empty/stub held drafts. Hold it for the
+    # owner to review instead, regardless of auto_sync.
+    if status == "update_available" and ont.auto_sync:
         # Opt-in auto-ingest: pull it now; the flag stays off (we're handling it).
         log.info("poll_auto_ingest", ontology_id=ont.id, detected=result.get("fetched_version"))
         ingest_ontology.delay(
@@ -1792,18 +1798,26 @@ async def _poll_one(db, ont) -> str:
         ont.update_detail = {**detail, "action": "auto_ingesting"}
         return "auto_ingesting"
 
+    if status == "unversioned_change":
+        detail = {**detail, "unversioned": True,
+                  "fetched_triple_count": result.get("fetched_triple_count"),
+                  "current_triple_count": result.get("current_triple_count"),
+                  "note": "upstream changed but declares no version; held from "
+                          "auto-sync — review before ingesting"}
+
     # Notify: record the available update; announce on the false->true transition.
     was = bool(ont.update_available)
     ont.update_available = True
     ont.update_detail = detail
     if not was:
-        log.info("poll_update_available", ontology_id=ont.id, detected=result.get("fetched_version"))
+        log.info("poll_update_available", ontology_id=ont.id,
+                 detected=result.get("fetched_version"), kind=status)
         try:
             await broadcast_event(db, "ontology.update_available",
                                   {"ontology_id": str(ont.id), **detail})
         except Exception as exc:  # noqa: BLE001 — a webhook failure must not fail the poll
             log.warning("poll_broadcast_failed", ontology_id=ont.id, error=str(exc))
-    return "update_available"
+    return status
 
 
 async def _poll_catalogue_batch(db, *, limit, min_host_interval_s, sleep, clock=None) -> int:

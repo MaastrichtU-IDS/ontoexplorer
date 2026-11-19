@@ -21,9 +21,11 @@ upstream republishes an OLDER file under the same IRI.
 from __future__ import annotations
 
 import hashlib
+import io
 import re
 
 import httpx
+import pyoxigraph
 
 # Content negotiation for an IRI fetch — ask for the common RDF syntaxes.
 RDF_ACCEPT = ("text/turtle, application/rdf+xml;q=0.9, application/n-triples;q=0.8, "
@@ -91,6 +93,33 @@ def extract_upstream_version(body: bytes | str) -> str | None:
     return None
 
 
+# Syntaxes we try when counting triples of a fetched body. pyoxigraph parses from a
+# media-type string; the Content-Type header (when RDF) is tried first, then the rest.
+_COUNT_MIMES = ("text/turtle", "application/rdf+xml", "application/n-triples",
+                "application/ld+json")
+
+
+def count_triples(body: bytes, content_type: str | None = None) -> int | None:
+    """Best-effort triple count of a fetched body via a throwaway in-memory parse.
+
+    Returns the count when the bytes parse as RDF in some common syntax, and
+    ``None`` when they do not parse at all — a strong "this is not an ontology"
+    signal (an HTML landing page, a 404 body, an empty SPARQL result page). Only
+    the poll's regression guard uses it, so it must never raise and never touch
+    the real store. The `bulk_load` blank-node renaming is irrelevant here: we
+    only want the quad count."""
+    hint = (content_type or "").split(";")[0].strip().lower()
+    ordered = ([hint] if hint in _COUNT_MIMES else []) + [m for m in _COUNT_MIMES if m != hint]
+    for mime in ordered:
+        try:
+            store = pyoxigraph.Store()
+            store.bulk_load(io.BytesIO(body), mime)
+            return len(store)
+        except Exception:  # noqa: BLE001 — unparseable in this syntax; try the next
+            continue
+    return None
+
+
 async def check_for_update(ont, version, *, timeout: float = 120.0,
                            etag: str | None = None, last_modified: str | None = None) -> dict:
     """Poll *ont*'s canonical location and classify the result against *version*
@@ -100,9 +129,16 @@ async def check_for_update(ont, version, *, timeout: float = 120.0,
     * ``fetch_error``     — the poll request failed (``detail`` carries why)
     * ``up_to_date``      — unchanged: a 304 (conditional GET) or identical sha-256
     * ``older_skipped``   — content changed but its version is strictly OLDER
-    * ``update_available``— changed and not older (``fetch_url``/``use_conneg``
-                            say where/how to ingest it; ``fetched_version`` the
-                            detected upstream version string if any)
+    * ``unversioned_change`` — changed, but the fetched body declares NO parseable
+                            version, so we can't confirm it is a genuine newer
+                            release. This is the shape a degraded IRI takes (now
+                            serving an HTML landing page or an empty SPARQL result)
+                            and must never be auto-ingested — the caller notifies
+                            the owner instead. Carries ``fetched_triple_count`` /
+                            ``current_triple_count`` so the regression is visible.
+    * ``update_available``— changed, carries a version, and that version is not
+                            older (``fetch_url``/``use_conneg`` say where/how to
+                            ingest it; ``fetched_version`` the detected version)
 
     ``etag`` / ``last_modified`` (from a previous poll) are sent as
     ``If-None-Match`` / ``If-Modified-Since`` so an unchanged upstream answers 304
@@ -127,6 +163,7 @@ async def check_for_update(ont, version, *, timeout: float = 120.0,
             body = resp.content
             resp_etag = resp.headers.get("etag")
             resp_last_modified = resp.headers.get("last-modified")
+            resp_content_type = resp.headers.get("content-type")
     except httpx.HTTPStatusError as exc:
         return {"status": "fetch_error", "http_status": exc.response.status_code,
                 "detail": f"HTTP {exc.response.status_code}", "fetch_url": url}
@@ -145,6 +182,20 @@ async def check_for_update(ont, version, *, timeout: float = 120.0,
     if fk and ck and fk < ck:
         return {"status": "older_skipped", "fetch_url": url, "use_conneg": use_conneg,
                 "fetched_version": fetched_version, "current_version": cur_version_iri, **validators}
+
+    if not fk:
+        # Content changed but carries no parseable version. We cannot confirm this is
+        # a real newer release, and this is exactly how a degraded IRI reads (an HTML
+        # landing page, an empty SPARQL `describe`): the sha trips every sweep. Flag it
+        # as an unversioned change so the caller only NOTIFIES — never auto-ingests —
+        # and surface the triple delta (None = didn't parse as RDF at all) so the owner
+        # can see the regression at a glance.
+        cur_tc = getattr(version, "triple_count", None) if version is not None else None
+        return {"status": "unversioned_change", "fetch_url": url, "use_conneg": use_conneg,
+                "new_sha256": new_sha, "fetched_version": fetched_version,
+                "current_version": cur_version_iri,
+                "fetched_triple_count": count_triples(body, resp_content_type),
+                "current_triple_count": cur_tc, **validators}
 
     return {"status": "update_available", "fetch_url": url, "use_conneg": use_conneg,
             "new_sha256": new_sha, "fetched_version": fetched_version,

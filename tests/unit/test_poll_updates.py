@@ -95,6 +95,29 @@ async def test_auto_sync_ingests_and_does_not_flag(monkeypatch):
     assert calls["broadcast"] == 0
 
 
+_UNVERSIONED = {"status": "unversioned_change", "fetch_url": "http://ex.org/o.owl",
+                "use_conneg": True, "fetched_version": None,
+                "current_version": "http://ex.org/o/v1.0/o.owl",
+                "fetched_triple_count": 3, "current_triple_count": 71,
+                "etag": None, "last_modified": None}
+
+
+async def test_unversioned_change_notifies_never_auto_ingests(monkeypatch):
+    # Even with auto_sync ON, an unversioned byte change (junk re-fetch shape) must
+    # be held for review, not auto-materialised into a stub/empty draft.
+    calls = _wire(monkeypatch, _UNVERSIONED)
+    ont = _Ont(auto_sync=True, update_available=False)
+    status = await tasks._poll_one(_FakeDB(), ont)
+    assert status == "unversioned_change"
+    assert calls["ingest"] == 0                 # the guard: no auto-ingest
+    assert ont.update_available is True          # owner is still notified
+    assert ont.update_detail["unversioned"] is True
+    assert ont.update_detail["fetched_triple_count"] == 3
+    assert ont.update_detail["current_triple_count"] == 71
+    assert "review" in ont.update_detail["note"]
+    assert calls["broadcast"] == 1               # announced once on the edge
+
+
 async def test_up_to_date_clears_flag(monkeypatch):
     calls = _wire(monkeypatch, {"status": "up_to_date", "fetch_url": "http://ex.org/o.owl",
                                 "use_conneg": True, "etag": '"v1"', "last_modified": None})

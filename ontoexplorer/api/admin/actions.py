@@ -68,6 +68,14 @@ async def admin_check_update(
     if result["status"] in ("up_to_date", "older_skipped"):
         return {"status": "up_to_date", "detail": result.get("fetched_version")
                 if result["status"] == "older_skipped" else None}
+    if result["status"] == "unversioned_change":
+        # Upstream changed but declares no version — we can't confirm a genuine newer
+        # release, and this is the shape a degraded IRI takes (HTML landing page,
+        # empty SPARQL result). Don't auto-queue junk; report it so the admin can
+        # force a re-ingest via POST .../ingest if they really want it.
+        return {"status": "unversioned_change",
+                "fetched_triple_count": result.get("fetched_triple_count"),
+                "current_triple_count": result.get("current_triple_count")}
 
     # update_available -> queue ingestion from the same (canonical) location.
     task = ingest_ontology.delay(

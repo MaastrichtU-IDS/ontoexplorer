@@ -16,10 +16,11 @@ class _Ont:
 
 
 class _Ver:
-    def __init__(self, sha256=None, version_iri=None, source_url=None):
+    def __init__(self, sha256=None, version_iri=None, source_url=None, triple_count=None):
         self.sha256 = sha256
         self.version_iri = version_iri
         self.source_url = source_url
+        self.triple_count = triple_count
 
 
 # ── fetch_target: IRI first, source_url fallback ────────────────────────────────
@@ -185,3 +186,44 @@ def test_extract_rejects_digitless_versioninfo():
 
 def test_extract_accepts_versioninfo_with_digit():
     assert uc.extract_upstream_version(b'<http://x/o> owl:versionInfo "1.62" .') == "1.62"
+
+
+# ── count_triples (in-memory parse) ─────────────────────────────────────────────
+
+def test_count_triples_counts_rdf():
+    body = b'@prefix ex: <http://ex/> . ex:a ex:b ex:c . ex:a ex:d ex:e .'
+    assert uc.count_triples(body, "text/turtle") == 2
+
+
+def test_count_triples_none_for_non_rdf():
+    # an HTML landing page / empty SPARQL page is not RDF in any syntax
+    assert uc.count_triples(b"<html><body>Not found</body></html>", "text/html") is None
+
+
+def test_count_triples_tries_other_syntaxes_when_hint_wrong():
+    # a turtle body mislabelled text/plain still counts (hint falls through)
+    body = b'<http://x/a> <http://x/b> <http://x/c> .'
+    assert uc.count_triples(body, "text/plain") == 1
+
+
+# ── unversioned change (no parseable version => notify-only, never auto-ingest) ──
+
+async def test_unversioned_change_when_no_version(monkeypatch):
+    # IRI now serves a tiny RDF stub with NO versionIRI/versionInfo: changed bytes,
+    # but we can't confirm it's a real newer release -> unversioned_change + counts.
+    stub = b'<http://x/o> <http://x/p> <http://x/v> .'
+    _stub_httpx(monkeypatch, stub, headers={"Content-Type": "text/turtle"})
+    cur = _Ver(sha256="different", version_iri="http://x/sio/v1.61/sio.owl", triple_count=71)
+    r = await uc.check_for_update(_Ont(iri="http://x/o.owl"), cur)
+    assert r["status"] == "unversioned_change"
+    assert r["fetched_triple_count"] == 1 and r["current_triple_count"] == 71
+
+
+async def test_unversioned_change_when_html_landing_page(monkeypatch):
+    # the classic junk re-fetch: the IRI started serving HTML -> didn't parse -> None
+    _stub_httpx(monkeypatch, b"<html><body>Moved</body></html>",
+                headers={"Content-Type": "text/html"})
+    cur = _Ver(sha256="different", version_iri="http://x/sio/v1.61/sio.owl", triple_count=71)
+    r = await uc.check_for_update(_Ont(iri="http://x/o.owl"), cur)
+    assert r["status"] == "unversioned_change"
+    assert r["fetched_triple_count"] is None   # not RDF at all
