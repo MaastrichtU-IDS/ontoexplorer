@@ -1958,7 +1958,9 @@ export const api = {
         method: 'POST', body: JSON.stringify({ note: note ?? null }),
       }),
     checkUpdate: (ontologyId: string) =>
-      request<{ status: 'up_to_date' | 'update_queued' | 'no_source_url'; task_id?: string }>(
+      request<{ status: 'up_to_date' | 'update_queued' | 'no_source_url' | 'unversioned_change'
+                fetched_triple_count?: number | null; current_triple_count?: number | null
+                task_id?: string }>(
         `/admin/ontologies/${ontologyId}/check-update`,
         { method: 'POST' }
       ),

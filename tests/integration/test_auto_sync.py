@@ -132,97 +132,119 @@ async def test_patch_auto_sync_wrong_user(client, db_session):
     assert resp.status_code == 403
 
 
+def _stub_async_httpx(monkeypatch, body: bytes, status: int = 200, headers: dict | None = None):
+    """Replace the async httpx.AsyncClient used by check_for_update with a fake
+    returning *body* at *status* (mirrors the unit test's sync stub)."""
+    from ontoexplorer.modules.ingestion import update_check as uc
+
+    class _Resp:
+        status_code = status
+        content = body
+        def __init__(self):
+            self.headers = uc.httpx.Headers(headers or {})
+        def raise_for_status(self):
+            if status >= 400:
+                import httpx
+                import types as _t
+                raise httpx.HTTPStatusError("err", request=None,
+                                            response=_t.SimpleNamespace(status_code=status))
+
+    class _Client:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, headers=None, **k): return _Resp()
+    monkeypatch.setattr(uc.httpx, "AsyncClient", _Client)
+
+
+# A genuine, versioned upstream release (turtle with owl:versionIRI).
+_VERSIONED = (b'@prefix owl: <http://www.w3.org/2002/07/owl#> .\n'
+              b'<http://example.org/poll-test.owl> a owl:Ontology ;\n'
+              b'  owl:versionIRI <http://example.org/poll-test.owl/v2.0/o.owl> .\n')
+
+
 @pytest.mark.anyio
-async def test_poll_queues_ingest_when_content_changes(db_session):
-    """poll_for_updates queues ingest when fetched SHA-256 differs from stored."""
-    from sqlalchemy import update as _update
-    from unittest.mock import MagicMock, patch
-    from ontoexplorer.modules.jobs.tasks import _run_poll
-
-    # Disable auto_sync on all prior ontologies to isolate this test
-    await db_session.execute(_update(Ontology).values(auto_sync=False))
-    await db_session.flush()
-
-    _NEW_CONTENT = b"new-content-bytes"
-    _OLD_SHA256 = "aaaa1111"
+async def test_poll_auto_ingests_versioned_update(db_session, monkeypatch):
+    """_poll_one auto-ingests when auto_sync is on and the fetch is a confirmed,
+    VERSIONED newer release (content changed + a parseable version)."""
+    from unittest.mock import MagicMock
+    from ontoexplorer.modules.jobs import tasks
 
     ont = Ontology(iri="http://example.org/poll-test.owl", auto_sync=True)
     db_session.add(ont)
     await db_session.flush()
-    ver = OntologyVersion(
-        ontology_id=ont.id,
-        minio_key="test/key.ttl",
-        sha256=_OLD_SHA256,
-        format="turtle",
-        status="ready",
+    db_session.add(OntologyVersion(
+        ontology_id=ont.id, minio_key="test/key.ttl", sha256="aaaa1111",
+        format="turtle", status="ready", triple_count=1,
         source_url="https://raw.githubusercontent.com/owner/repo/main/onto.ttl",
-    )
-    db_session.add(ver)
+    ))
     await db_session.commit()
 
-    mock_ingest = MagicMock()
-    mock_ingest.delay = MagicMock()
+    _stub_async_httpx(monkeypatch, _VERSIONED, headers={"Content-Type": "text/turtle"})
+    mock_ingest = MagicMock(delay=MagicMock())
+    monkeypatch.setattr(tasks, "ingest_ontology", mock_ingest)
 
-    mock_resp = MagicMock()
-    mock_resp.content = _NEW_CONTENT
-    mock_resp.raise_for_status = MagicMock()
-
-    with (
-        patch("ontoexplorer.modules.jobs.tasks.ingest_ontology", mock_ingest),
-        patch("httpx.Client") as mock_client_cls,
-    ):
-        mock_client_cls.return_value.__enter__.return_value.get.return_value = mock_resp
-        await _run_poll(db_session)
-
+    status = await tasks._poll_one(db_session, ont)
+    assert status == "auto_ingesting"
     mock_ingest.delay.assert_called_once_with(
-        url="https://raw.githubusercontent.com/owner/repo/main/onto.ttl",
-        owner_id=None,
-    )
+        iri="http://example.org/poll-test.owl", url=None, owner_id=ont.owner_id, groups=[])
 
 
 @pytest.mark.anyio
-async def test_poll_skips_when_content_unchanged(db_session):
-    """poll_for_updates does NOT queue ingest when SHA-256 matches."""
-    import hashlib
-    from sqlalchemy import update as _update
-    from unittest.mock import MagicMock, patch
-    from ontoexplorer.modules.jobs.tasks import _run_poll
+async def test_poll_holds_unversioned_change_without_ingest(db_session, monkeypatch):
+    """A content change with NO parseable version (junk re-fetch shape) is NEVER
+    auto-ingested even with auto_sync on — it is flagged for review instead."""
+    from unittest.mock import MagicMock
+    from ontoexplorer.modules.jobs import tasks
 
-    # Disable auto_sync on all prior ontologies to isolate this test
-    await db_session.execute(_update(Ontology).values(auto_sync=False))
+    ont = Ontology(iri="http://example.org/poll-junk.owl", auto_sync=True)
+    db_session.add(ont)
     await db_session.flush()
+    db_session.add(OntologyVersion(
+        ontology_id=ont.id, minio_key="test/junk.ttl", sha256="bbbb2222",
+        format="turtle", status="ready", triple_count=71,
+        source_url="https://raw.githubusercontent.com/owner/repo/main/onto.ttl",
+    ))
+    await db_session.commit()
 
-    _CONTENT = b"unchanged-content"
-    _SHA256 = hashlib.sha256(_CONTENT).hexdigest()
+    # The IRI now serves an HTML landing page: changed bytes, no version, not RDF.
+    _stub_async_httpx(monkeypatch, b"<html><body>Moved</body></html>",
+                      headers={"Content-Type": "text/html"})
+    mock_ingest = MagicMock(delay=MagicMock())
+    monkeypatch.setattr(tasks, "ingest_ontology", mock_ingest)
 
+    status = await tasks._poll_one(db_session, ont)
+    assert status == "unversioned_change"
+    mock_ingest.delay.assert_not_called()
+    assert ont.update_available is True
+    assert ont.update_detail["unversioned"] is True
+
+
+@pytest.mark.anyio
+async def test_poll_skips_when_content_unchanged(db_session, monkeypatch):
+    """_poll_one does NOT queue ingest when the fetched SHA-256 matches the stored one."""
+    import hashlib
+    from unittest.mock import MagicMock
+    from ontoexplorer.modules.jobs import tasks
+
+    _CONTENT = _VERSIONED
     ont = Ontology(iri="http://example.org/poll-noop.owl", auto_sync=True)
     db_session.add(ont)
     await db_session.flush()
-    ver = OntologyVersion(
-        ontology_id=ont.id,
-        minio_key="test/key2.ttl",
-        sha256=_SHA256,
-        format="turtle",
-        status="ready",
+    db_session.add(OntologyVersion(
+        ontology_id=ont.id, minio_key="test/key2.ttl",
+        sha256=hashlib.sha256(_CONTENT).hexdigest(),
+        format="turtle", status="ready", triple_count=1,
         source_url="https://raw.githubusercontent.com/owner/repo/main/onto2.ttl",
-    )
-    db_session.add(ver)
+    ))
     await db_session.commit()
 
-    mock_ingest = MagicMock()
-    mock_ingest.delay = MagicMock()
+    _stub_async_httpx(monkeypatch, _CONTENT, headers={"Content-Type": "text/turtle"})
+    mock_ingest = MagicMock(delay=MagicMock())
+    monkeypatch.setattr(tasks, "ingest_ontology", mock_ingest)
 
-    mock_resp = MagicMock()
-    mock_resp.content = _CONTENT
-    mock_resp.raise_for_status = MagicMock()
-
-    with (
-        patch("ontoexplorer.modules.jobs.tasks.ingest_ontology", mock_ingest),
-        patch("httpx.Client") as mock_client_cls,
-    ):
-        mock_client_cls.return_value.__enter__.return_value.get.return_value = mock_resp
-        await _run_poll(db_session)
-
+    status = await tasks._poll_one(db_session, ont)
+    assert status == "up_to_date"
     mock_ingest.delay.assert_not_called()
 
 

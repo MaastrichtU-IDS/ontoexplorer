@@ -312,7 +312,7 @@ const FIELD_LABEL: React.CSSProperties = {
   paddingTop: '0.05rem',
 }
 
-type CheckState = 'idle' | 'checking' | 'up_to_date' | 'update_queued' | 'no_source_url' | 'error'
+type CheckState = 'idle' | 'checking' | 'up_to_date' | 'update_queued' | 'no_source_url' | 'unversioned_change' | 'error'
 
 // `versionLabel` now lives in ../lib/versions (shared with the admin table and
 // cross-compare pickers) so a versionless IRI like `…/sio-release.owl` no longer
@@ -863,6 +863,11 @@ function OntologyRow({ ontology }: { ontology: Ontology }) {
                 <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--orange)' }}>↑ update queued</span>
               ) : checkState === 'no_source_url' ? (
                 <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-dim)' }}>no source URL</span>
+              ) : checkState === 'unversioned_change' ? (
+                <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--orange)' }}
+                  title="Upstream changed but declares no version — not auto-queued; review before re-ingesting">
+                  ⚠ changed, no version
+                </span>
               ) : null
             )}
             {deleteError && (
