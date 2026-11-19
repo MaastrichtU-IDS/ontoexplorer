@@ -68,8 +68,7 @@ Administrators additionally receive a notice when someone submits an uploader or
 maintainer request, so the team can review it.
 
 Detection of a **new upstream release** of an ontology is surfaced as an in-app
-badge and an optional webhook — it does **not** email you unless you have configured
-a webhook yourself.
+badge — it does **not** email you.
 
 Email is sent on a best-effort basis from the platform's background workers. If your
 sign-in provider supplied no email address, these notices appear in-app instead.

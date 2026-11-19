@@ -179,8 +179,8 @@ platform emails you when a version you submitted is **held for review**, when it
 **OWL 2 profile can't be computed**, as a **reminder** that a version is still held,
 when a long-held version is **set aside**, and when your **uploader/maintainer
 request** is decided. Detection of a new **upstream release** shows as an in-app
-badge (and an optional webhook), not an email. If your provider supplies no email,
-these notices appear in-app instead.
+badge, not an email. If your provider supplies no email, these notices appear
+in-app instead.
 
 ### Submitting an ontology
 
@@ -279,10 +279,45 @@ model and answer common questions.
 
 ### Webhooks
 
-**Webhooks** (`/dashboard/webhooks`) let you subscribe to catalogue events — for
-example, when an upstream **update is available** for one of your ontologies —
-and receive an HTTP callback, so you can wire OntoExplorer into your own
-automation.
+**Webhooks** (`/dashboard/webhooks`) deliver an HTTP `POST` to a URL you choose
+whenever one of your subscribed events happens, so you can wire OntoExplorer into
+your own automation.
+
+**Setting one up.** From **Dashboard → Webhooks**, register a webhook with:
+
+- **Payload URL** — the HTTPS endpoint we `POST` to.
+- **Events** — one or more of the event types listed below.
+- **Secret** (optional, recommended) — a shared string we use to sign each delivery
+  so you can verify it really came from OntoExplorer.
+
+From the same page you can send a **test event**, view a webhook's **delivery
+history** (status, HTTP response code, attempt count), and delete it.
+Programmatically the same operations are `POST`/`GET`/`DELETE /api/v1/webhooks`,
+`POST /api/v1/webhooks/{id}/test`, and `GET /api/v1/webhooks/{id}/deliveries`.
+
+**Events you can subscribe to:**
+
+- `ontology.ingested` — a new version finished ingesting.
+- `version.deprecated` — a version was deprecated.
+- `reasoning.completed` / `reasoning.failed` — OWL reasoning finished / failed.
+- `indexing.completed` — the entity index finished building.
+- `justification.completed` / `justification.failed` — an entailment justification
+  finished / failed.
+
+**Delivery format.** Each delivery is a JSON `POST` of the event payload, with
+these headers:
+
+- `X-OntoExplorer-Event` — the event type.
+- `X-OntoExplorer-Delivery` — a unique id for this delivery.
+- `X-OntoExplorer-Signature` — present when you set a secret: `sha256=<hex>`, the
+  HMAC-SHA256 of the raw request body keyed by your secret. Recompute it on your
+  side and compare to authenticate the request before trusting the payload.
+
+A delivery that doesn't return a `2xx` response is marked **failed** and recorded in
+the webhook's delivery history.
+
+> **Note:** detection of a new **upstream release** is currently surfaced as an
+> in-app badge only; a subscribable webhook event for it is not yet available.
 
 ---
 
