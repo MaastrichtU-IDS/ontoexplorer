@@ -26,8 +26,7 @@ channels below.
 OntoExplorer is developed and operated by the **Institute of Data Science (IDS)**
 at **Maastricht University** — a research institute working on data science,
 knowledge engineering, and FAIR data and services. Learn more about IDS:
-<https://www.maastrichtuniversity.nl/research/institute-data-science> *(verify the
-institute URL)*.
+<https://www.maastrichtuniversity.nl/research/institute-data-science>.
 
 ## Adding or maintaining an ontology
 
@@ -46,14 +45,10 @@ data-protection rights (access, correction, deletion, and the others in the
 [privacy notice](privacy.md#your-rights-gdpr)):
 
 - Use UM's **GDPR request form**:
-  <https://www.maastrichtuniversity.nl/form-gdpr-request> *(verify URL)*, or
+  <https://www.maastrichtuniversity.nl/form-gdpr-request>, or
 - email UM's **GDPR Team** at **privacy@maastrichtuniversity.nl**, or
 - email the **Data Protection Officer** at **fg@maastrichtuniversity.nl**.
 
 You may also lodge a complaint with the Dutch supervisory authority, the
 **Autoriteit Persoonsgegevens** (<https://www.autoriteitpersoonsgegevens.nl/en>).
 
----
-
-> To confirm before publishing: the IDS institute URL, and the GDPR-form URL
-> (shared with the privacy notice).

@@ -26,6 +26,10 @@ const AuthCallback = lazy(() => import('./pages/AuthCallback'))
 const AdminPage = lazy(() => import('./pages/AdminPage'))
 const Sparql = lazy(() => import('./pages/Sparql'))
 const SparqlGallery = lazy(() => import('./pages/SparqlGallery'))
+const About = lazy(() => import('./pages/About'))
+const Documentation = lazy(() => import('./pages/Documentation'))
+const Privacy = lazy(() => import('./pages/Privacy'))
+const Contact = lazy(() => import('./pages/Contact'))
 
 interface VersionInfo { version: string; git_ref: string | null; git_sha: string | null }
 
@@ -51,37 +55,18 @@ export function Footer() {
       padding: '0.6rem 1.5rem',
       display: 'flex',
       alignItems: 'center',
-      gap: '1.25rem',
+      flexWrap: 'wrap',
+      gap: '0.5rem 1.25rem',
     }}>
+      <FooterLink to="/about">About</FooterLink>
+      <FooterLink to="/docs">Docs</FooterLink>
+      <FooterLink to="/privacy">Privacy</FooterLink>
+      <FooterLink to="/contact">Contact</FooterLink>
+      <span aria-hidden style={{ color: 'var(--border)', fontSize: 12 }}>|</span>
       <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>APIs</span>
-      <Link
-        to="/sparql"
-        style={{ color: 'var(--text-dim)', fontSize: 12, textDecoration: 'none' }}
-        onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
-        onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-dim)')}
-      >
-        SPARQL
-      </Link>
-      <a
-        href="/api/docs"
-        target="_blank"
-        rel="noreferrer"
-        style={{ color: 'var(--text-dim)', fontSize: 12, textDecoration: 'none' }}
-        onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
-        onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-dim)')}
-      >
-        REST API
-      </a>
-      <a
-        href="/mod/"
-        target="_blank"
-        rel="noreferrer"
-        style={{ color: 'var(--text-dim)', fontSize: 12, textDecoration: 'none' }}
-        onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
-        onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-dim)')}
-      >
-        MOD API
-      </a>
+      <FooterLink to="/sparql">SPARQL</FooterLink>
+      <FooterLink to="/api/docs" external>REST API</FooterLink>
+      <FooterLink to="/mod/" external>MOD API</FooterLink>
       {label && (
         <span
           title={sha ? `commit ${sha}` : undefined}
@@ -92,6 +77,17 @@ export function Footer() {
       )}
     </footer>
   )
+}
+
+// A dimmed footer link that brightens on hover; internal links route via the SPA,
+// external ones (REST/MOD API docs) open in a new tab.
+function FooterLink({ to, children, external }: { to: string; children: React.ReactNode; external?: boolean }) {
+  const style: React.CSSProperties = { color: 'var(--text-dim)', fontSize: 12, textDecoration: 'none' }
+  const onMouseEnter = (e: React.MouseEvent<HTMLAnchorElement>) => (e.currentTarget.style.color = 'var(--text)')
+  const onMouseLeave = (e: React.MouseEvent<HTMLAnchorElement>) => (e.currentTarget.style.color = 'var(--text-dim)')
+  return external
+    ? <a href={to} target="_blank" rel="noreferrer" style={style} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>{children}</a>
+    : <Link to={to} style={style} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>{children}</Link>
 }
 
 function CompareRedirect() {
@@ -136,6 +132,10 @@ export default function App() {
       <Route path="/search" element={<Shell><Search /></Shell>} />
       <Route path="/sparql" element={<Shell><Sparql /></Shell>} />
       <Route path="/sparql/gallery" element={<Shell><SparqlGallery /></Shell>} />
+      <Route path="/about" element={<Shell><About /></Shell>} />
+      <Route path="/docs" element={<Shell><Documentation /></Shell>} />
+      <Route path="/privacy" element={<Shell><Privacy /></Shell>} />
+      <Route path="/contact" element={<Shell><Contact /></Shell>} />
       <Route path="/login" element={<Shell><Login /></Shell>} />
       <Route path="/auth/:provider/callback" element={<Suspense fallback={<PageFallback />}><AuthCallback /></Suspense>} />
       <Route element={<Shell><AuthGuard /></Shell>}>

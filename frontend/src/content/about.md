@@ -26,9 +26,9 @@ alerts maintainers, and an update poller detects new upstream releases.
 
 ## What it does, at a glance
 
-- **Catalogue & browse** — {{nOnt}} ontologies in {{nVer}} versions, aggregated
-  from LOV, the OBO Foundry, and BioPortal, plus a curated upper-level set. Filter
-  by source, expressivity tier, licence, and language.
+- **Catalogue & browse** — {{nOnt}} ontologies, aggregated from LOV, the OBO
+  Foundry, and BioPortal, plus a curated upper-level set. Filter by source,
+  expressivity tier, licence, and language.
 - **Search** — lexical *and* semantic search across millions of indexed entities
   (classes, properties, individuals) from across the catalogue, with labels,
   synonyms, and definitions.
@@ -66,5 +66,3 @@ Apache 2.0 licence: <https://github.com/MaastrichtU-IDS/ontoexplorer>.
 Catalogue content is aggregated from third-party registries and from direct
 submissions; each ontology retains its own upstream licence, shown on its page.
 
-> Figures such as {{nOnt}}/{{nVer}} are rendered live from the deployment at wire-in
-> time; here they are template placeholders.

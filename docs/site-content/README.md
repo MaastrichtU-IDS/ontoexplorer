@@ -1,29 +1,32 @@
-# OntoExplorer site content — review drafts
+# OntoExplorer site content
 
-These are **draft copy** for four public pages, written for review and editing
-before we wire the approved text into the frontend (`frontend/src/pages/…`) in a
-second pass. Nothing here is live yet.
+The four public information pages — **About**, **Documentation**, **Privacy**, and
+**Contact** — are live in the app and rendered from markdown.
 
-| File | Becomes | Status |
+**Live source (edit here):** [`frontend/src/content/`](../../frontend/src/content/)
+
+| File | Route | Page |
 |---|---|---|
-| [`about.md`](about.md) | `/about` — what OntoExplorer is + feature overview | draft |
-| [`documentation.md`](documentation.md) | `/docs` — detailed documentation on every feature | draft |
-| [`privacy.md`](privacy.md) | `/privacy` — minimal privacy & data notice (GDPR-aware) | draft, **needs legal review** |
-| [`contact.md`](contact.md) | `/contact` — GitHub issues, email, team, data requests | draft |
+| `about.md` | `/about` | What OntoExplorer is + feature overview |
+| `documentation.md` | `/docs` | Detailed documentation on every feature |
+| `privacy.md` | `/privacy` | Privacy & data notice (GDPR-aware) |
+| `contact.md` | `/contact` | GitHub issues, email, team, data requests |
 
-## Items to confirm
+The pages are rendered by `frontend/src/components/MarkdownPage.tsx`
+(react-markdown + remark-gfm + rehype-slug), which themes the prose, wires the
+in-document table of contents and cross-page links into SPA navigation, and fills
+`{{nOnt}}` on the About page with the live catalogue count. To change copy, edit the
+markdown under `frontend/src/content/` and ship a frontend release.
 
-The legal/contact details are filled with a thoughtful first pass from Maastricht
-University's public privacy pages: controller = **Maastricht University**, DPO
-`fg@maastrichtuniversity.nl`, GDPR team `privacy@maastrichtuniversity.nl`,
-supervisory authority **Autoriteit Persoonsgegevens**. A handful of items are
-marked *(verify)* / *(confirm)* — exact statement/form URLs, the DPO postal
-addressee, retention periods, the notification mail path, and the IDS URL.
-The project contact email is **info-ids@maastrichtuniversity.nl**. Collected
-lists are at the foot of `privacy.md` and `contact.md`.
+## Still worth a human confirm on the Privacy/Contact pages
 
-## How to review
+The legal details were filled from Maastricht University's public privacy pages
+(controller = Maastricht University; DPO `fg@maastrichtuniversity.nl`; GDPR Team
+`privacy@maastrichtuniversity.nl`; supervisory authority Autoriteit
+Persoonsgegevens). Before wide promotion, have UM Legal / the DPO confirm:
 
-Edit the markdown directly (or leave inline comments on the PR). Once the copy is
-settled, the second pass turns each file into a themed React page on the existing
-router + nav, matching the app's look — no new content decisions at that point.
+- the exact UM General Privacy Statement and GDPR-request-form URLs,
+- the DPO postal addressee,
+- retention periods and the notification mail path,
+- that no analytics / non-essential cookies are in use,
+- the IDS institute URL on the Contact page.

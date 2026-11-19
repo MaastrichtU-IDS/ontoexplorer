@@ -1,0 +1,163 @@
+/* Themed long-form prose for the About / Documentation / Privacy / Contact pages.
+ * Everything keys off the app's CSS variables (index.css), so these pages follow
+ * the theme toggle with no per-theme rules here. */
+
+.markdown-page {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 5rem;
+  color: var(--text);
+  font-size: var(--font-size-base);
+  line-height: 1.65;
+}
+
+.markdown-page h1 {
+  font-size: 2rem;
+  line-height: 1.15;
+  font-weight: 700;
+  color: var(--text-bright);
+  letter-spacing: -0.01em;
+  margin: 0 0 1rem;
+}
+
+.markdown-page h2 {
+  font-size: 1.4rem;
+  font-weight: 650;
+  color: var(--text-bright);
+  margin: 2.2rem 0 0.75rem;
+  padding-top: 1.4rem;
+  border-top: 1px solid var(--border);
+}
+
+.markdown-page h1 + h2,
+.markdown-page h2:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.markdown-page h3 {
+  font-size: 1.1rem;
+  font-weight: 650;
+  color: var(--text-bright);
+  margin: 1.6rem 0 0.5rem;
+}
+
+.markdown-page h4 {
+  font-size: 1rem;
+  font-weight: 650;
+  color: var(--text);
+  margin: 1.3rem 0 0.4rem;
+}
+
+.markdown-page p {
+  margin: 0.75rem 0;
+  color: var(--text);
+}
+
+.markdown-page a {
+  color: var(--accent-blue);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-blue) 35%, transparent);
+}
+.markdown-page a:hover {
+  border-bottom-color: var(--accent-blue);
+}
+
+.markdown-page ul,
+.markdown-page ol {
+  margin: 0.75rem 0;
+  padding-left: 1.4rem;
+}
+.markdown-page li {
+  margin: 0.35rem 0;
+}
+.markdown-page li::marker {
+  color: var(--text-dim);
+}
+
+.markdown-page strong {
+  color: var(--text-bright);
+  font-weight: 650;
+}
+
+.markdown-page code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.86em;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.1em 0.38em;
+}
+
+.markdown-page pre {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.9rem 1.1rem;
+  overflow-x: auto;
+  margin: 1rem 0;
+}
+.markdown-page pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.markdown-page blockquote {
+  margin: 1.1rem 0;
+  padding: 0.7rem 1rem;
+  background: var(--bg-secondary);
+  border-left: 3px solid var(--accent-purple, var(--accent));
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--text-muted);
+}
+.markdown-page blockquote p {
+  margin: 0.3rem 0;
+  color: var(--text-muted);
+}
+.markdown-page blockquote strong {
+  color: var(--text);
+}
+
+.markdown-page hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2rem 0;
+}
+
+.md-tablewrap {
+  overflow-x: auto;
+  margin: 1.2rem 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.markdown-page table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.92rem;
+}
+.markdown-page th,
+.markdown-page td {
+  text-align: left;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.markdown-page th {
+  background: var(--bg-secondary);
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.markdown-page tr:last-child td {
+  border-bottom: none;
+}
+
+/* Headings land clear of the fixed nav when reached via an anchor link. */
+.markdown-page :is(h1, h2, h3, h4)[id] {
+  scroll-margin-top: calc(var(--nav-height) + 1rem);
+}
