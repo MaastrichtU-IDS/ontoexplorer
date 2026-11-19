@@ -48,7 +48,7 @@ def _wire(monkeypatch, result):
     monkeypatch.setattr("ontoexplorer.modules.ingestion.update_check.check_for_update", fake_check)
     monkeypatch.setattr("ontoexplorer.modules.search.versions._choose", lambda v, c: None)
 
-    async def fake_broadcast(db, event, payload):
+    async def fake_broadcast(db, event, payload, *, ontology_id=None):
         calls["broadcast"] += 1
         calls["broadcast_payloads"].append((event, payload))
     monkeypatch.setattr("ontoexplorer.modules.webhooks.delivery.broadcast_event", fake_broadcast)
