@@ -58,6 +58,7 @@ def detect_mireot(
     host_prefix: str | None,
     host_namespaces: list[str],
     import_prefix_set: set[str],
+    host_tokens: frozenset[str] | set[str] = frozenset(),
 ) -> list[MireotTerm]:
     """Find foreign-namespace terms with minimal axiomatization and no covering import.
 
@@ -87,14 +88,16 @@ def detect_mireot(
     for sol in store.query(preds_all_q):
         counts_by_subject.setdefault(sol["s"].value, {})[sol["p"].value] = int(sol["n"].value)
 
+    from ontoexplorer.modules.search.indexer import short_namespace_token
     for s, pred_counts in counts_by_subject.items():
         if any(s.startswith(ns) for ns in host_namespaces):
             continue  # native — host's own namespace
         prefix, _ = iri_to_prefix(s)
         if prefix is None:
             continue
-        if prefix == host_prefix:
-            continue  # also native (mixed-namespace forms of the host prefix)
+        if prefix == host_prefix or prefix in host_tokens or \
+                short_namespace_token(prefix) in host_tokens:
+            continue  # native (host prefix / divergent-namespace own term)
         if prefix in import_prefix_set:
             continue  # source IS imported → not MIREOT
 

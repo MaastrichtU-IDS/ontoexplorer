@@ -71,3 +71,18 @@ def test_report_has_indexed_at_iso_timestamp():
     # ISO-8601 with TZ
     assert "T" in report.indexed_at
     assert report.indexed_at.endswith("+00:00") or report.indexed_at.endswith("Z")
+
+
+def test_trailing_slash_host_terms_not_reported_as_reuse():
+    # Host IRI ends in "/"; its own terms must be native, not "reused from pizza".
+    store = _make_store("""
+        @prefix owl: <http://www.w3.org/2002/07/owl#> .
+        <https://w3id.org/ontostart/pizza/Margherita> a owl:Class .
+    """)
+    report = detect_reuse(
+        store, graph_iri=GRAPH, version_id="v1",
+        host_iri="https://w3id.org/ontostart/pizza/",
+        host_namespaces=[], db_imports=[],
+        entities=[("https://w3id.org/ontostart/pizza/Margherita", "class")],
+    )
+    assert report.term_iri_reuse == {}

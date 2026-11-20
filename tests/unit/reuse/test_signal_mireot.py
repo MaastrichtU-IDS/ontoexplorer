@@ -78,3 +78,17 @@ def test_native_terms_never_flagged():
         import_prefix_set=set(),
     )
     assert found == []
+
+
+def test_mireot_skips_host_token_terms():
+    # A term whose prefix is a host identity token is native, never MIREOT.
+    from ontoexplorer.modules.reuse.signals.mireot import detect_mireot
+    store = _make_store("""
+        @prefix owl: <http://www.w3.org/2002/07/owl#> .
+        @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+        <http://purl.obolibrary.org/obo/MONDO_0000001> a owl:Class ; rdfs:label "x" .
+    """)
+    found = detect_mireot(store, graph_iri=GRAPH, host_prefix=None,
+                          host_namespaces=[], import_prefix_set=set(),
+                          host_tokens=frozenset({"mondo"}))
+    assert found == []

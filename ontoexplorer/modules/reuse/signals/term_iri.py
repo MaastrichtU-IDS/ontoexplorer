@@ -28,6 +28,7 @@ def classify_terms(
     entities: Iterable[tuple[str, str]],
     host_prefix: str | None,
     host_namespaces: list[str],
+    host_tokens: frozenset[str] | set[str] = frozenset(),
 ) -> dict[str, TermIRIReuseEntry]:
     """Bucket entity IRIs by reused-from prefix.
 
@@ -37,11 +38,17 @@ def classify_terms(
             "individual".
         host_prefix: bioregistry prefix of the host ontology (for skip-self).
         host_namespaces: raw namespaces declared as the host's own (skip-native).
+        host_tokens: the host's identity tokens — bioregistry prefix / short
+            token of its self-IRI(s). Recognises own terms that live in a
+            namespace that diverges from the host IRI (e.g. an OBO product whose
+            IRI resolves to the generic "obo" while its terms resolve to the
+            specific "mondo"/"ogg"), which prefix==host_prefix alone misses.
 
     Returns:
         dict keyed by source bioregistry prefix → TermIRIReuseEntry. Native
         terms are dropped (we report reuse, not totals).
     """
+    from ontoexplorer.modules.search.indexer import short_namespace_token
     out: dict[str, TermIRIReuseEntry] = {}
     for iri, etype in entities:
         if any(iri.startswith(ns) for ns in host_namespaces):
@@ -49,8 +56,9 @@ def classify_terms(
         prefix, resolved = iri_to_prefix(iri)
         if prefix is None:
             continue
-        if prefix == host_prefix:
-            continue  # also native (host's own prefix used in mixed-namespace form)
+        if prefix == host_prefix or prefix in host_tokens or \
+                short_namespace_token(prefix) in host_tokens:
+            continue  # native (host's own prefix / divergent-namespace own term)
         entry = out.setdefault(prefix, TermIRIReuseEntry(resolved=resolved))
         if etype in ("class", "concept"):
             entry.class_count += 1

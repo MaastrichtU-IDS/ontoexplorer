@@ -28,6 +28,20 @@ class ReuseReport:
     indexed_at: str = ""
 
 
+def _detect_store_host(store: pyoxigraph.Store, graph_iri: str) -> str:
+    """The owl:Ontology IRI declared in the graph, or "" — a second host-identity
+    signal alongside the registered IRI (covers ontologies whose registered IRI
+    is absent/stale)."""
+    q = (f"SELECT ?o WHERE {{ GRAPH <{graph_iri}> {{ ?o a "
+         f"<http://www.w3.org/2002/07/owl#Ontology> . FILTER(isIRI(?o)) }} }} LIMIT 1")
+    try:
+        for sol in store.query(q):
+            return sol["o"].value
+    except Exception:
+        pass
+    return ""
+
+
 def detect_reuse(
     store: pyoxigraph.Store,
     *,
@@ -56,12 +70,25 @@ def detect_reuse(
     imports = build_closure(db_imports)
     import_prefix_set = {e.target_prefix for e in imports if e.target_prefix}
 
+    # Derive the full host identity (repaired trailing-slash namespaces + the
+    # identity tokens that recognise own terms in a divergent namespace, e.g. an
+    # OBO product IRI resolving to the generic "obo" while its terms resolve to
+    # the specific prefix). Mirrors the coverage/native-term detector so the
+    # Reuse report and FAIR R5/R6 agree on what is native. The caller-supplied
+    # host_namespaces are merged in as extras for backward compatibility.
+    from ontoexplorer.modules.search.indexer import host_identity
+    store_host = _detect_store_host(store, graph_iri)
+    host_tokens, derived_ns = host_identity([host_iri, store_host])
+    all_namespaces = list(dict.fromkeys(derived_ns + list(host_namespaces)))
+
     term_iri_reuse = classify_terms(entities, host_prefix=host_prefix,
-                                    host_namespaces=host_namespaces)
+                                    host_namespaces=all_namespaces,
+                                    host_tokens=host_tokens)
     mireot_terms = detect_mireot(store, graph_iri=graph_iri,
                                  host_prefix=host_prefix,
-                                 host_namespaces=host_namespaces,
-                                 import_prefix_set=import_prefix_set)
+                                 host_namespaces=all_namespaces,
+                                 import_prefix_set=import_prefix_set,
+                                 host_tokens=host_tokens)
     mappings = extract_mappings(store, graph_iri=graph_iri, host_prefix=host_prefix)
 
     return ReuseReport(
