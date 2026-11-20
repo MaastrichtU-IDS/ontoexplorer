@@ -90,6 +90,104 @@ def short_namespace_token(namespace: str) -> str:
     return parts[-1] if parts else ""
 
 
+# Umbrella registries that are never a single ontology's own identity — a term
+# resolving here says only "this is an OBO IRI", not "this is THIS ontology". So
+# a generic token like "obo" must not be allowed to mark foreign (imported) OBO
+# terms as native.
+_GENERIC_HOST_TOKENS = frozenset({"obo"})
+# The OBO product/base segment of an ontology IRI: ".../obo/<seg>" where <seg>
+# ends at a '-', '.', '/', '#' or the string end. Recovers the real term prefix
+# when the IRI diverges from where terms are minted — e.g. ".../obo/mondo/
+# mondo-simple.owl" and ".../obo/ogg-mm.owl" both minting terms under "mondo"/
+# "ogg" (iri_to_prefix returns the generic "obo" for both).
+_OBO_SEGMENT_RE = re.compile(r"/obo/([a-z0-9]+)(?:[-./#]|$)", re.I)
+
+
+def host_identity(iris: list[str | None]) -> tuple[set[str], list[str]]:
+    """Derive the set of identity tokens and own-term namespaces for a host.
+
+    Given the ontology's candidate self-IRIs (typically the registered IRI and
+    the store-detected owl:Ontology IRI, most-trusted first), returns:
+
+      - ``tokens``: bioregistry prefixes / short tokens that mean "this ontology
+        itself", used to recognise own terms that live in a *different* namespace
+        than the ontology IRI (OBO divergence); generic umbrella tokens removed.
+      - ``namespaces``: the ``#``/``/`` own-term namespaces, with any trailing
+        ``/`` or ``#`` on the IRI stripped first so a slash-terminated IRI no
+        longer builds an unmatchable ``…//`` / ``…/#``.
+
+    Pure: depends only on the offline bioregistry map. See
+    :func:`classify_source` for how the two are consumed.
+    """
+    from ontoexplorer.modules.reuse.bioregistry import iri_to_prefix
+    tokens: set[str] = set()
+    namespaces: list[str] = []
+    seen_ns: set[str] = set()
+    for cand in iris:
+        if not cand:
+            continue
+        base = cand.rstrip("/#")
+        if base:
+            for ns in (base + "#", base + "/"):
+                if ns not in seen_ns:
+                    seen_ns.add(ns)
+                    namespaces.append(ns)
+        try:
+            prefix, resolved = iri_to_prefix(cand)
+        except Exception:
+            prefix, resolved = None, False
+        if prefix and resolved:
+            tokens.add(prefix)
+        m = _OBO_SEGMENT_RE.search(cand)
+        if m:
+            tokens.add(m.group(1).lower())
+        tok = short_namespace_token(cand)
+        if tok:
+            tokens.add(tok)
+    return tokens - _GENERIC_HOST_TOKENS, namespaces
+
+
+def classify_source(
+    iri: str,
+    import_source_map: dict[str, str],
+    host_tokens: set[str],
+    host_namespaces: list[str],
+) -> str:
+    """Classify a term IRI as native ("") or foreign (a source token).
+
+    Order matters:
+      1. A formal ``owl:imports`` base wins — an imported ontology's terms are
+         foreign even if they share a token with the host.
+      2. A term in the host's own ``#``/``/`` namespace is native.
+      3. Otherwise resolve the term's bioregistry prefix; if it (or its short
+         token) is one of the host's identity tokens the term is native despite
+         living in a divergent namespace (OBO case). Else it is reused: tag it
+         with the resolved prefix, or a short readable token for an unresolved
+         namespace URL.
+    """
+    from ontoexplorer.modules.reuse.bioregistry import iri_to_prefix
+    # 1) Formal owl:imports — clean import names (e.g. "sulo", "pro").
+    for base, name in import_source_map.items():
+        if iri.startswith(base):
+            return name
+    # 2) Host-native namespace.
+    if any(iri.startswith(ns) for ns in host_namespaces):
+        return ""
+    # 3) Reuse vs native-in-divergent-namespace.
+    try:
+        prefix, resolved = iri_to_prefix(iri)
+    except Exception:
+        prefix, resolved = None, False
+    if not prefix:
+        return ""
+    if prefix in host_tokens or short_namespace_token(prefix) in host_tokens:
+        return ""
+    if resolved:
+        return prefix
+    # Unresolved: `prefix` is the raw namespace URL — show a short readable token.
+    return short_namespace_token(prefix)
+
+
 def _prefix_key(version_id: str) -> str:
     return f"search:entities:{version_id}:prefix"
 
@@ -211,8 +309,15 @@ def _run_queries(queries: dict[str, str]) -> dict[str, list]:
         return {k: f.result() for k, f in futures.items()}
 
 
-def build_index(version_id: str, ontology_id: str = "", profile: dict | None = None) -> IndexStats:
-    """Extract all entities and labels from Oxigraph and write the Redis entity index."""
+def build_index(version_id: str, ontology_id: str = "", profile: dict | None = None,
+                registered_iri: str = "") -> IndexStats:
+    """Extract all entities and labels from Oxigraph and write the Redis entity index.
+
+    ``registered_iri`` is the ontology's registered self-IRI (from the DB). It is
+    the most-trusted host-identity signal and the fallback when the store carries
+    no ``owl:Ontology`` IRI triple (or the ``LIMIT 1`` pick lands on an imported
+    module's declaration).
+    """
     from datetime import datetime, timezone
 
     if profile is None:
@@ -260,11 +365,12 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
         pass
 
     # Host identity, so the reuse arm below can exclude the ontology's own terms.
-    # HTO-style ontologies aren't in the bioregistry, so their own IRIs and the
-    # host IRI both resolve to the generic "obo" prefix — which is exactly what
-    # makes `prefix == host_prefix` a clean native/reused separator.
-    from ontoexplorer.modules.reuse.bioregistry import iri_to_prefix
-    host_iri = ""
+    # Two candidate self-IRIs, most-trusted first: the registered IRI (from the
+    # DB) and the store-detected owl:Ontology IRI. Both feed host_identity(),
+    # which repairs trailing-slash namespaces and recovers the real own-term
+    # prefix when the IRI and the term namespace diverge (OBO products resolve to
+    # the generic "obo" while their terms resolve to "mondo"/"ogg"/…).
+    store_host_iri = ""
     try:
         for row in sparql_query(f"""
             SELECT ?ont WHERE {{
@@ -274,39 +380,14 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
             }} LIMIT 1
         """):
             v = row["ont"]
-            host_iri = v.value if hasattr(v, "value") else str(v)
+            store_host_iri = v.value if hasattr(v, "value") else str(v)
             break
     except Exception:
-        host_iri = ""
-    try:
-        host_prefix = iri_to_prefix(host_iri)[0] if host_iri else None
-    except Exception:
-        host_prefix = None
-    host_namespaces = [host_iri + "#", host_iri + "/"] if host_iri else []
+        store_host_iri = ""
+    host_tokens, host_namespaces = host_identity([registered_iri, store_host_iri])
 
     def _get_source(iri: str) -> str:
-        # 1) Formal owl:imports — clean import names (e.g. "sulo", "pro").
-        for base, name in import_source_map.items():
-            if iri.startswith(base):
-                return name
-        # 2) Reuse — a term referenced from an external namespace without an
-        #    owl:imports (e.g. HTO reusing ChEBI / FoodOn / UBERON terms). Mirror
-        #    the reuse detector: skip host-native terms, then tag with the term's
-        #    bioregistry prefix. Keeps term chips consistent with the Reuse report.
-        if any(iri.startswith(ns) for ns in host_namespaces):
-            return ""
-        try:
-            prefix, resolved = iri_to_prefix(iri)
-        except Exception:
-            prefix, resolved = None, False
-        if not prefix or prefix == host_prefix:
-            return ""
-        if resolved:
-            return prefix
-        # Unresolved: `prefix` is the raw namespace URL. Show a short readable
-        # token on the chip instead of the full URL. (This shortening is
-        # display-only — the reuse report groups on iri_to_prefix directly.)
-        return short_namespace_token(prefix)
+        return classify_source(iri, import_source_map, host_tokens, host_namespaces)
 
     # Collect entity IRIs with their types.
     # OWL types are checked first; RDFS fallbacks only fill gaps for non-OWL
