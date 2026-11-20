@@ -3,7 +3,8 @@ from ontoexplorer.modules.search.coverage import compute_coverage, ENTITY_TYPES
 
 
 def _empty_by_type():
-    return {t: {"total": 0, "with_label": 0, "with_definition": 0, "multilingual": 0, "by_lang": {}}
+    return {t: {"total": 0, "with_label": 0, "with_definition": 0, "multilingual": 0, "by_lang": {},
+                "native_total": 0, "native_with_label": 0, "native_with_definition": 0}
             for t in ENTITY_TYPES}
 
 
@@ -81,3 +82,52 @@ def test_unknown_entity_type_is_ignored():
     result = compute_coverage(entities, set(), {"C1": [{"value": "C", "lang": "en"}]}, {})
     assert result["by_type"]["class"]["total"] == 1
     assert "weird_type" not in result["by_type"]
+
+
+def test_native_counts_only_own_namespace_terms():
+    # Mirrors SULO: native classes/props are fully labelled+defined, while reused
+    # external predicates (non-empty source) have neither. native_* must count only
+    # the own-namespace terms, so documentation coverage reads 100%, not pooled.
+    entities = {
+        "https://w3id.org/sulo/Role": "class",
+        "https://w3id.org/sulo/participatesIn": "object_property",
+        "http://purl.org/dc/terms/title": "annotation_property",
+        "http://xmlns.com/foaf/0.1/homepage": "annotation_property",
+    }
+    labels = {
+        "https://w3id.org/sulo/Role": [{"value": "Role", "lang": "en"}],
+        "https://w3id.org/sulo/participatesIn": [{"value": "participates in", "lang": "en"}],
+        # reused predicates carry no local label/definition
+    }
+    defs = {
+        "https://w3id.org/sulo/Role": [{"value": "A role.", "lang": "en"}],
+        "https://w3id.org/sulo/participatesIn": [{"value": "...", "lang": "en"}],
+    }
+    sources = {
+        "https://w3id.org/sulo/Role": "",            # native
+        "https://w3id.org/sulo/participatesIn": "",  # native
+        "http://purl.org/dc/terms/title": "dcterms",       # reused
+        "http://xmlns.com/foaf/0.1/homepage": "foaf",      # reused
+    }
+    result = compute_coverage(entities, set(), labels, defs, sources)
+    bt = result["by_type"]
+
+    # Pooled counts still see every entity (for the complementary metric).
+    assert bt["annotation_property"]["total"] == 2
+    assert bt["annotation_property"]["with_label"] == 0
+
+    # Native counts exclude the reused predicates entirely.
+    native_total = sum(b["native_total"] for b in bt.values())
+    native_label = sum(b["native_with_label"] for b in bt.values())
+    native_def = sum(b["native_with_definition"] for b in bt.values())
+    assert (native_total, native_label, native_def) == (2, 2, 2)
+    assert bt["annotation_property"]["native_total"] == 0
+
+
+def test_native_counts_stay_zero_without_sources():
+    # A caller with no source info (sources_by_iri omitted) leaves native_* at 0;
+    # the FAIR scorer treats such a payload as pre-native and falls back to pooled.
+    entities = {"C1": "class"}
+    result = compute_coverage(entities, set(), {"C1": [{"value": "C", "lang": "en"}]}, {})
+    assert result["by_type"]["class"]["native_total"] == 0
+    assert result["by_type"]["class"]["native_with_label"] == 0

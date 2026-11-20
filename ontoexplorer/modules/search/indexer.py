@@ -762,7 +762,8 @@ def build_index(version_id: str, ontology_id: str = "", profile: dict | None = N
     _build_tree_cache(version_id, ontology_id, entities, labels_by_iri, r)
     _populate_stats_cache(version_id, ontology_id, entities, r)
     _populate_coverage_cache(
-        version_id, entities, deprecated_iris, labels_by_iri, defs_by_iri, r
+        version_id, entities, deprecated_iris, labels_by_iri, defs_by_iri, r,
+        {iri: _get_source(iri) for iri in entities},
     )
     # OWL 2 profile detection is populated separately by the index_ontology task
     # (native horned-profile over the stored file — see #149), not here.
@@ -1063,12 +1064,13 @@ def _populate_coverage_cache(
     labels_by_iri: dict[str, list[dict]],
     defs_by_iri: dict[str, list[dict]],
     r: redis.Redis,
+    sources_by_iri: dict[str, str] | None = None,
 ) -> None:
     """Compute per-version coverage and write to Redis with the same TTL as stats."""
     from datetime import datetime, timezone
     from ontoexplorer.modules.search.coverage import compute_coverage, coverage_cache_key
 
-    payload = compute_coverage(entities, deprecated_iris, labels_by_iri, defs_by_iri)
+    payload = compute_coverage(entities, deprecated_iris, labels_by_iri, defs_by_iri, sources_by_iri)
     payload["version_id"] = version_id
     payload["indexed_at"] = datetime.now(timezone.utc).isoformat()
     r.setex(coverage_cache_key(version_id), _SEARCH_TTL, json.dumps(payload))
