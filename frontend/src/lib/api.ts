@@ -1029,6 +1029,26 @@ export interface CoverageRecord {
   by_type: Record<CoverageEntityType, CoverageBucket>
 }
 
+export interface DocCoverageBucket {
+  total: number
+  with_label: number
+  with_definition: number
+}
+
+export interface DocCoverageSource extends DocCoverageBucket {
+  source: string
+}
+
+// Display-only documentation-coverage breakdown by provenance (own vs reused
+// vocabularies); companion to the FAIR R5/R6 native metric, not scored.
+export interface DocumentationBreakdown {
+  version_id: string
+  native: DocCoverageBucket
+  external: DocCoverageBucket
+  all: DocCoverageBucket
+  by_source: DocCoverageSource[]
+}
+
 export interface CoverageFleetEntry {
   ontology_id: string
   version_id: string
@@ -1864,6 +1884,9 @@ export const api = {
     fleet: () => request<CoverageFleet>('/coverage/public'),
     version: (ontologyId: string, versionId: string) =>
       request<CoverageRecord>(`/ontologies/${ontologyId}/${versionId}/coverage`),
+    documentation: (ontologyId: string, versionId: string) =>
+      request<DocumentationBreakdown>(
+        `/ontologies/${ontologyId}/${versionId}/documentation`),
   },
 
   owl_profile: {

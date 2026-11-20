@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { api, FairCheck, FairReport } from '../lib/api'
+import { api, DocCoverageBucket, DocumentationBreakdown, FairCheck, FairReport } from '../lib/api'
 
 const PRINCIPLE_NAMES: Record<string, string> = {
   F: 'Findable', A: 'Accessible', I: 'Interoperable', R: 'Reusable',
@@ -139,6 +139,67 @@ function PrincipleGroup({ principle }: { principle: FairReport['principles'][num
   )
 }
 
+function pct(b: DocCoverageBucket, field: 'with_label' | 'with_definition'): number {
+  return b.total ? Math.round((b[field] / b.total) * 100) : 0
+}
+
+function DocRow({ label, bucket, muted }: {
+  label: string; bucket: DocCoverageBucket; muted?: boolean
+}) {
+  const lp = pct(bucket, 'with_label')
+  const dp = pct(bucket, 'with_definition')
+  const col = muted ? 'var(--text-dim)' : 'var(--text)'
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: 10,
+      alignItems: 'center', fontSize: 12.5, padding: '3px 0' }}>
+      <span style={{ color: col, fontWeight: muted ? 400 : 600 }}>
+        {label} <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>({bucket.total})</span>
+      </span>
+      <span style={{ fontFamily: 'monospace', color: scoreColor(lp) }}>{lp}% labelled</span>
+      <span style={{ fontFamily: 'monospace', color: scoreColor(dp) }}>{dp}% defined</span>
+    </div>
+  )
+}
+
+function DocumentationCoverage({ ontologyId, versionId }: {
+  ontologyId: string; versionId: string
+}) {
+  const { data } = useQuery({
+    queryKey: ['documentation', ontologyId, versionId],
+    queryFn: () => api.coverage.documentation(ontologyId, versionId),
+    retry: false,
+  })
+  const doc = data as DocumentationBreakdown | undefined
+  if (!doc || doc.all.total === 0) return null
+
+  const top = doc.by_source.slice(0, 8)
+  return (
+    <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+      borderRadius: 'var(--radius)', padding: '12px 14px', marginTop: 16 }}>
+      <h3 style={{ fontSize: 13, fontWeight: 600, margin: '0 0 2px' }}>Documentation coverage</h3>
+      <p style={{ color: 'var(--text-dim)', fontSize: 11.5, margin: '0 0 10px' }}>
+        Label &amp; definition coverage across every entity, by provenance. The FAIR
+        R5/R6 scores above count <em>own</em> terms only; this view adds the reused and
+        imported vocabularies for context and is not scored.
+      </p>
+      <DocRow label="Own terms" bucket={doc.native} />
+      <DocRow label="Reused &amp; imported" bucket={doc.external} muted />
+      <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0' }} />
+      <DocRow label="All entities" bucket={doc.all} />
+      {top.length > 0 && (
+        <details style={{ marginTop: 8 }}>
+          <summary style={{ cursor: 'pointer', fontSize: 12, color: 'var(--text-dim)' }}>
+            Top reused vocabularies ({doc.by_source.length})
+          </summary>
+          <div style={{ marginTop: 6 }}>
+            {top.map(s => <DocRow key={s.source} label={s.source} bucket={s} muted />)}
+          </div>
+        </details>
+      )}
+    </div>
+  )
+}
+
 export default function FairReportSection({ ontologyId, versionId }: {
   ontologyId: string; versionId: string
 }) {
@@ -200,6 +261,8 @@ export default function FairReportSection({ ontologyId, versionId }: {
       </div>
 
       {report.principles.map(p => <PrincipleGroup key={p.principle} principle={p} />)}
+
+      <DocumentationCoverage ontologyId={ontologyId} versionId={versionId} />
 
       <p style={{ color: 'var(--text-dim)', fontSize: 11.5, marginTop: 10 }}>
         Scored from signals computed at ingest (resolvability, licence, OWL profile, reuse,
