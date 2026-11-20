@@ -20,6 +20,7 @@ from ontoexplorer.models.db import Ontology, OntologyVersion
 from ontoexplorer.modules.search.coverage import (
     ENTITY_TYPES,
     compute_coverage_from_index,
+    compute_documentation_sources,
     coverage_cache_key,
 )
 from ontoexplorer.modules.search.indexer import _get_redis
@@ -74,6 +75,29 @@ async def get_version_coverage(
         await db.commit()
     except Exception:
         await db.rollback()
+    return payload
+
+
+@router.get("/ontologies/{ontology_id}/{version_id}/documentation",
+            summary="Documentation coverage by provenance (own vs reused vocabularies)")
+async def get_version_documentation(
+    ontology_id: str,
+    version_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Display-only companion to the FAIR R5/R6 native metric: label & definition
+    coverage for the ontology's own terms, every reused/imported vocabulary, and
+    the whole set. Computed live from entity_index; never feeds the FAIR score."""
+    exists = (await db.execute(
+        select(OntologyVersion.id).where(
+            OntologyVersion.id == version_id,
+            OntologyVersion.ontology_id == ontology_id,
+        )
+    )).first()
+    if exists is None:
+        raise HTTPException(status_code=404, detail="Version not found")
+    payload = await compute_documentation_sources(db, version_id)
+    payload["version_id"] = version_id
     return payload
 
 

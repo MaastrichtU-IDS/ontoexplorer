@@ -172,6 +172,66 @@ _COVERAGE_LANG_SQL = """
 """
 
 
+# Documentation-coverage breakdown by provenance. Unlike the FAIR R5/R6 metric
+# (native terms only), this is a DISPLAY-ONLY view of how well EVERY entity is
+# documented — own terms plus everything reused/imported — so a maintainer can
+# see, e.g., that an ontology's own terms are fully labelled while a reused
+# vocabulary's predicates are not. `source` tags each term by its vocabulary
+# (bioregistry prefix), so "external" is grouped by vocabulary; owl:imports vs
+# MIREOT is NOT separable here (the import closure is resolved and terms are
+# tagged by vocabulary, not by arrival mechanism). Never feeds the FAIR score.
+_DOC_SOURCES_SQL = """
+    SELECT coalesce(source, '') AS src,
+           count(*) AS total,
+           count(*) FILTER (WHERE labels <> '{}'::jsonb) AS with_label,
+           count(*) FILTER (
+               WHERE jsonb_typeof(definitions) = 'array'
+                 AND jsonb_array_length(definitions) > 0) AS with_definition
+    FROM entity_index
+    WHERE version_id = :vid AND deprecated = false
+    GROUP BY coalesce(source, '')
+"""
+
+
+def _assemble_documentation(rows: Iterable) -> dict:
+    """Build the documentation breakdown from per-source aggregate rows.
+
+    Pure (no DB). Each row is (src, total, with_label, with_definition); the
+    empty src ("") bucket is the ontology's own (native) terms, every other row
+    is a reused/imported vocabulary. Returns own/external/all totals plus a
+    by_source list sorted by term count (largest vocabularies first).
+    """
+    native = {"total": 0, "with_label": 0, "with_definition": 0}
+    external = {"total": 0, "with_label": 0, "with_definition": 0}
+    by_source: list[dict] = []
+    for r in rows:
+        bucket = {"total": int(r.total), "with_label": int(r.with_label),
+                  "with_definition": int(r.with_definition)}
+        if (r.src or "") == "":
+            native = bucket
+        else:
+            by_source.append({"source": r.src, **bucket})
+            for k in external:
+                external[k] += bucket[k]
+    by_source.sort(key=lambda d: d["total"], reverse=True)
+    all_terms = {k: native[k] + external[k] for k in native}
+    return {"native": native, "external": external, "all": all_terms,
+            "by_source": by_source}
+
+
+async def compute_documentation_sources(db: "AsyncSession", version_id: str) -> dict:
+    """Documentation coverage grouped by provenance for a version (Postgres).
+
+    Display-only companion to the FAIR R5/R6 native metric — see
+    ``_DOC_SOURCES_SQL``. Returns own/external/all label+definition counts and a
+    per-vocabulary external list.
+    """
+    from sqlalchemy import text
+
+    rows = (await db.execute(text(_DOC_SOURCES_SQL), {"vid": version_id})).all()
+    return _assemble_documentation(rows)
+
+
 async def compute_coverage_from_index(
     db: "AsyncSession",
     version_id: str,

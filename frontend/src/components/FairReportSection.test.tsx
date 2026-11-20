@@ -43,10 +43,25 @@ const REPORT = {
   ],
 }
 
+const DOC = {
+  version_id: 'v1',
+  native: { total: 36, with_label: 36, with_definition: 36 },
+  external: { total: 14, with_label: 14, with_definition: 2 },
+  all: { total: 50, with_label: 50, with_definition: 38 },
+  by_source: [
+    { source: 'dcterms', total: 10, with_label: 10, with_definition: 2 },
+    { source: 'foaf', total: 4, with_label: 4, with_definition: 0 },
+  ],
+}
+
 const reportFn = vi.fn(() => Promise.resolve(REPORT))
+const docFn = vi.fn(() => Promise.resolve(DOC))
 
 vi.mock('../lib/api', () => ({
-  api: { fair: { report: (...args: unknown[]) => (reportFn as any)(...args) } },
+  api: {
+    fair: { report: (...args: unknown[]) => (reportFn as any)(...args) },
+    coverage: { documentation: (...args: unknown[]) => (docFn as any)(...args) },
+  },
 }))
 
 function wrap(ui: React.ReactElement) {
@@ -56,6 +71,16 @@ function wrap(ui: React.ReactElement) {
 
 beforeEach(() => {
   reportFn.mockImplementation(() => Promise.resolve(REPORT))
+  docFn.mockImplementation(() => Promise.resolve(DOC))
+})
+
+test('renders the documentation-coverage breakdown (own vs all vs reused)', async () => {
+  wrap(<FairReportSection ontologyId="o1" versionId="v1" />)
+  expect(await screen.findByText('Documentation coverage')).toBeInTheDocument()
+  expect(screen.getByText('Own terms')).toBeInTheDocument()
+  expect(screen.getByText('All entities')).toBeInTheDocument()
+  // reused vocabulary surfaced in the expandable list
+  expect(screen.getByText('dcterms')).toBeInTheDocument()
 })
 
 test('renders overall score and verdict', async () => {
