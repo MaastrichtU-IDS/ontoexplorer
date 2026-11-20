@@ -189,8 +189,18 @@ def _coverage_fraction(coverage: dict | None, key: str) -> tuple[float, int, int
     if not coverage:
         return 0.0, 0, 0
     buckets = list((coverage.get("by_type") or {}).values())
-    native = any("native_total" in b for b in buckets)
-    total_key, matched_key = ("native_total", "native_" + key) if native else ("total", key)
+    has_native = any("native_total" in b for b in buckets)
+    native_total = sum(int(b.get("native_total", 0)) for b in buckets)
+    # Prefer native (own-namespace) counts — but only when we actually identified
+    # own-namespace terms. ``native_total == 0`` means either the ontology mints
+    # nothing of its own, or (more often) namespace detection failed to tag its
+    # terms as native — e.g. an ontology IRI ending in '/' or OBO PURLs where the
+    # term namespace differs from the ontology IRI. In that case fall back to the
+    # pooled all-entity counts rather than report a misleading 0%.
+    if has_native and native_total > 0:
+        total_key, matched_key = "native_total", "native_" + key
+    else:
+        total_key, matched_key = "total", key
     total = matched = 0
     for bucket in buckets:
         total += int(bucket.get(total_key, 0))

@@ -167,6 +167,19 @@ def test_r5_r6_fall_back_to_pooled_for_prenative_payload():
     assert "36 / 60" in checks["R5"].tests[-1][1]
 
 
+def test_r5_r6_fall_back_to_pooled_when_no_native_terms_identified():
+    # Native counts are present but zero — namespace detection tagged none of the
+    # ontology's terms as native (e.g. an ontology IRI ending in '/' or OBO PURLs
+    # where the term namespace differs from the ontology IRI). Reporting 0% would be
+    # misleading, so fall back to pooled rather than zero out a documented ontology.
+    coverage = {"by_type": {"class": {
+        "total": 100, "with_label": 90, "with_definition": 80,
+        "native_total": 0, "native_with_label": 0, "native_with_definition": 0}}}
+    checks = _by_id(compute_fair_report(_full_inputs(coverage=coverage)))
+    assert round(checks["R5"].score, 2) == 0.9 and round(checks["R6"].score, 2) == 0.8
+    assert "90 / 100" in checks["R5"].tests[-1][1]
+
+
 def test_all_null_renders_without_raising():
     rep = compute_fair_report(FairInputs())
     checks = _by_id(rep)
