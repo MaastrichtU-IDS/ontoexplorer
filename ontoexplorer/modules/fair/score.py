@@ -176,13 +176,25 @@ def _tier(owl_profile: dict | None) -> str | None:
 
 
 def _coverage_fraction(coverage: dict | None, key: str) -> tuple[float, int, int]:
-    """(fraction, matched, total) over all entity types for ``with_label`` / ``with_definition``."""
+    """(fraction, matched, total) for ``with_label`` / ``with_definition``.
+
+    Counts only **native** terms — those minted in the ontology's own namespace
+    (``native_total`` / ``native_<key>`` in each bucket) — so reused external
+    predicates (``dcterms:title`` …) and ``owl:imports``-ed terms, which the
+    ontology is not responsible for documenting, don't drag the score down. Payloads
+    written before native counts existed carry no ``native_total`` key; for those we
+    fall back to the pooled all-entity counts (the pre-native behaviour) until the
+    version's coverage is recomputed.
+    """
     if not coverage:
         return 0.0, 0, 0
+    buckets = list((coverage.get("by_type") or {}).values())
+    native = any("native_total" in b for b in buckets)
+    total_key, matched_key = ("native_total", "native_" + key) if native else ("total", key)
     total = matched = 0
-    for bucket in (coverage.get("by_type") or {}).values():
-        total += int(bucket.get("total", 0))
-        matched += int(bucket.get(key, 0))
+    for bucket in buckets:
+        total += int(bucket.get(total_key, 0))
+        matched += int(bucket.get(matched_key, 0))
     return (matched / total if total else 0.0), matched, total
 
 
@@ -381,13 +393,15 @@ def _reusable(inp: FairInputs) -> list[FairCheck]:
                    ("Created", "ok" if m.get("created") else "none"),
                    ("Publisher", "ok" if m.get("publishers") else "none")]),
         _r4(m),
-        FairCheck("R5", "R", "Terms carry labels", _graded_status(lbl_frac), lbl_frac,
-                  f"{round(lbl_frac * 100)}% have rdfs:label." if lbl_t else "No indexed terms.",
+        FairCheck("R5", "R", "Own terms carry labels", _graded_status(lbl_frac), lbl_frac,
+                  f"{round(lbl_frac * 100)}% of own terms have rdfs:label." if lbl_t else "No own-namespace terms.",
                   "coverage", [("Predicate", "rdfs:label on classes & properties"),
+                               ("Scope", "terms minted in this ontology's namespace (reused & imported terms excluded)"),
                                ("Coverage", f"{lbl_m} / {lbl_t} = {round(lbl_frac * 100)}%" if lbl_t else "n/a")]),
-        FairCheck("R6", "R", "Terms carry definitions", _graded_status(def_frac), def_frac,
-                  f"{round(def_frac * 100)}% have a definition." if def_t else "No indexed terms.",
+        FairCheck("R6", "R", "Own terms carry definitions", _graded_status(def_frac), def_frac,
+                  f"{round(def_frac * 100)}% of own terms have a definition." if def_t else "No own-namespace terms.",
                   "coverage", [("Predicates (any of)", "skos:definition  obo:IAO_0000115  rdfs:comment"),
+                               ("Scope", "terms minted in this ontology's namespace (reused & imported terms excluded)"),
                                ("Coverage", f"{def_m} / {def_t} = {round(def_frac * 100)}%" if def_t else "n/a")]),
     ]
 

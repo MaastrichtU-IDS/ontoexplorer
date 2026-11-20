@@ -28,7 +28,11 @@ def test_assembles_by_type_and_by_lang():
 
     # A type with no rows stays zeroed, not absent.
     prop = out["by_type"]["object_property"]
-    assert prop == {"total": 0, "with_label": 0, "with_definition": 0, "multilingual": 0, "by_lang": {}}
+    assert prop == {"total": 0, "with_label": 0, "with_definition": 0, "multilingual": 0, "by_lang": {},
+                    "native_total": 0, "native_with_label": 0, "native_with_definition": 0}
+
+    # A 5-tuple agg row (pre-native) leaves native_* at 0.
+    assert cls["native_total"] == 0 and cls["native_with_label"] == 0
 
 
 def test_unknown_types_are_ignored():
@@ -48,6 +52,26 @@ def test_indexed_at_omitted_when_none():
     assert out["version_id"] == "v"
     # Every coverage type present and zeroed.
     assert all(out["by_type"][t]["total"] == 0 for t in ENTITY_TYPES)
+
+
+def test_native_columns_carried_when_present():
+    # The 8-column agg row (type, total, with_label, with_definition, multilingual,
+    # native_total, native_with_label, native_with_definition) populates native_*.
+    agg = [("class", 60, 36, 36, 0, 36, 36, 36),
+           ("annotation_property", 24, 0, 0, 0, 0, 0, 0)]
+    out = _assemble_coverage(agg, [], "v", None)
+    cls = out["by_type"]["class"]
+    assert (cls["total"], cls["with_label"], cls["with_definition"]) == (60, 36, 36)
+    assert (cls["native_total"], cls["native_with_label"], cls["native_with_definition"]) == (36, 36, 36)
+    ap = out["by_type"]["annotation_property"]
+    assert ap["total"] == 24 and ap["native_total"] == 0
+
+
+def test_native_columns_coerced_to_int():
+    agg = [("class", "60", "36", "36", "0", "36", "36", "36")]
+    out = _assemble_coverage(agg, [], "v", None)
+    cls = out["by_type"]["class"]
+    assert cls["native_total"] == 36 and isinstance(cls["native_total"], int)
 
 
 def test_values_coerced_to_int():

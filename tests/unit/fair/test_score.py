@@ -139,6 +139,34 @@ def test_no_coverage_no_zero_division():
     assert checks["R5"].status == "fail"
 
 
+def test_r5_r6_count_native_terms_only():
+    # SULO shape: 36 own-namespace terms, all labelled+defined, plus 24 reused
+    # external predicates with neither. R5/R6 must read 100% (native), not the 60%
+    # that pooling the reused predicates into the denominator would give.
+    coverage = {"by_type": {
+        "class": {"total": 17, "with_label": 17, "with_definition": 17,
+                  "native_total": 17, "native_with_label": 17, "native_with_definition": 17},
+        "object_property": {"total": 18, "with_label": 18, "with_definition": 18,
+                            "native_total": 18, "native_with_label": 18, "native_with_definition": 18},
+        "data_property": {"total": 1, "with_label": 1, "with_definition": 1,
+                          "native_total": 1, "native_with_label": 1, "native_with_definition": 1},
+        "annotation_property": {"total": 24, "with_label": 0, "with_definition": 0,
+                                "native_total": 0, "native_with_label": 0, "native_with_definition": 0},
+    }}
+    checks = _by_id(compute_fair_report(_full_inputs(coverage=coverage)))
+    assert checks["R5"].score == 1.0 and checks["R6"].score == 1.0
+    assert "36 / 36" in checks["R5"].tests[-1][1]
+
+
+def test_r5_r6_fall_back_to_pooled_for_prenative_payload():
+    # A payload with no native_* keys (written before the native change) must keep
+    # the old pooled behaviour rather than reading 0, until its coverage is recomputed.
+    coverage = {"by_type": {"class": {"total": 60, "with_label": 36, "with_definition": 36}}}
+    checks = _by_id(compute_fair_report(_full_inputs(coverage=coverage)))
+    assert round(checks["R5"].score, 2) == 0.6
+    assert "36 / 60" in checks["R5"].tests[-1][1]
+
+
 def test_all_null_renders_without_raising():
     rep = compute_fair_report(FairInputs())
     checks = _by_id(rep)
