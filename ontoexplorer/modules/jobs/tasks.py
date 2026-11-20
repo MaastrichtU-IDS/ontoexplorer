@@ -1330,23 +1330,34 @@ def index_ontology(self, version_id: str, ontology_id: str = "") -> dict:
         async def _fetch_profile_and_oid():
             async with make_celery_db_session()() as db:
                 prof = await load_profile(db, version_id)
+                from sqlalchemy import select as _sel
+                from ontoexplorer.models.db import OntologyVersion as _OV
                 oid = ontology_id
                 if not oid:
-                    from sqlalchemy import select as _sel
-                    from ontoexplorer.models.db import OntologyVersion as _OV
                     _row = (
                         await db.execute(_sel(_OV.ontology_id).where(_OV.id == version_id))
                     ).first()
                     oid = _row.ontology_id if _row else ""
-                return prof, oid
+                # Registered self-IRI → the most-trusted host-identity signal for
+                # native-term detection (coverage R5/R6). Falls back cleanly to ""
+                # when absent, leaving the store-detected IRI as the only signal.
+                reg_iri = ""
+                if oid:
+                    from ontoexplorer.models.db import Ontology as _O
+                    _orow = (
+                        await db.execute(_sel(_O.iri).where(_O.id == oid))
+                    ).first()
+                    reg_iri = (_orow.iri if _orow else "") or ""
+                return prof, oid, reg_iri
 
-        profile, ontology_id = asyncio.run(_fetch_profile_and_oid())
+        profile, ontology_id, registered_iri = asyncio.run(_fetch_profile_and_oid())
         if not ontology_id:
             log.warning("index_ontology_missing_ontology_id", version_id=version_id)
         import time as _phase_t
         from ontoexplorer.modules.search.indexer import build_index
         _bt = _phase_t.monotonic()
-        stats = build_index(version_id, ontology_id, profile=profile)
+        stats = build_index(version_id, ontology_id, profile=profile,
+                            registered_iri=registered_iri)
         # Per-phase timing so a slow re-index shows where it goes (build_index vs
         # entity_index vs hierarchy vs owl-profile) without guessing (#185).
         log.info("build_index_done", version_id=version_id,
