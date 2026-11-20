@@ -43,3 +43,20 @@ def test_term_iri_reuse_entry_is_serializable():
     from dataclasses import asdict
     entry = TermIRIReuseEntry(class_count=1, property_count=0, sample_iris=["foo"])
     assert asdict(entry)["class_count"] == 1
+
+
+def test_host_token_divergent_namespace_is_native():
+    # An own term in a namespace that diverges from the host IRI (OBO case):
+    # the host's identity token recognises it as native and drops it from reuse.
+    out = classify_terms(
+        [("http://purl.obolibrary.org/obo/MONDO_0000001", "class")],
+        host_prefix=None, host_namespaces=[], host_tokens=frozenset({"mondo"}))
+    assert out == {}
+
+
+def test_host_token_does_not_absorb_genuine_imports():
+    # IAO is imported, not the host — it must still be bucketed as reused.
+    out = classify_terms(
+        [("http://purl.obolibrary.org/obo/IAO_0000115", "annotation_property")],
+        host_prefix=None, host_namespaces=[], host_tokens=frozenset({"mondo"}))
+    assert "iao" in out
