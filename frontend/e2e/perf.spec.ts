@@ -74,17 +74,28 @@ for (const o of ONTOLOGIES) {
 }
 
 test('search latency (keyword)', async ({ page }, testInfo) => {
+  // The real keyword search is the HOME global search box (useGlobalSearch →
+  // GET /api/v1/search over entity_index). Typing is debounced ~200ms; results
+  // stream in without pressing Enter. (The old version drove the /search MOS page
+  // without selecting an ontology, so no query ever fired — it measured nothing.)
   const api = new ApiRecorder(page)
-  await page.goto(ROUTES.search, { waitUntil: 'domcontentloaded' })
-  const box = page.getByPlaceholder(/expression or entity label/i).first()
+  await page.goto(ROUTES.home, { waitUntil: 'domcontentloaded' })
+  // The home mode toggle defaults to "Ontologies" (catalogue search); switch to
+  // "Entities" for the global keyword search over entity_index.
+  const entitiesTab = page.getByRole('button', { name: /^entities$/i })
+  if (!(await entitiesTab.count())) test.skip(true, 'no Entities search mode on home')
+  await entitiesTab.click()
+  const box = page.getByPlaceholder(/Search classes, properties/i).first()
   await expect(box).toBeVisible({ timeout: 20_000 })
+  // A non-semantic /api/v1/search response is the keyword result we're timing;
+  // the page fires a second `semantic=true` request that we ignore here.
+  const isKeywordSearch = (url: string) => /\/api\/v1\/search\?/.test(url) && !/[?&]semantic=true/.test(url)
   for (const [label, term] of [['common', SEARCH_TERMS.common], ['rare', SEARCH_TERMS.rare]] as const) {
     api.reset()
-    await box.fill(term)
+    await box.fill('')
     const t0 = Date.now()
-    await box.press('Enter')
-    // Results list, empty-state, or a stable "no results" — whichever settles.
-    await page.waitForLoadState('networkidle').catch(() => {})
+    await box.fill(term)
+    await page.waitForResponse((r) => isKeywordSearch(r.url()) && r.status() === 200, { timeout: 15_000 }).catch(() => {})
     const ms = Date.now() - t0
     const a = api.summary()
     await record(testInfo, { kind: 'search', term: label, ms, api: { p95: a.p95, count: a.count, errors: a.errors.length }, verdict: verdict(ms, BUDGETS.searchResults) })
