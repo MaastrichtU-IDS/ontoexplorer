@@ -21,12 +21,18 @@ from sqlalchemy.orm import defer
 
 from ontoexplorer.models.db import Ontology, OntologyVersion
 
-# Heavy per-version JSON payloads (materialized stats/metrics). `latest_versions_for`
-# loads one version per ontology across the WHOLE catalogue (~2k rows) only to pick
-# defaults — it never needs these, and loading them widened the row by ~5× (1.8s vs
-# 0.36s for 2088 rows). Deferred here so every caller (global search, OLS, catalogue
-# listing, entities/browse) pays only for the light columns it actually reads; the
-# stats themselves are served from their own endpoints / Redis, not these rows.
+# Heavy per-version JSON payloads (materialized stats/metrics). The whole-catalogue
+# default-picking path (`latest_ready_versions`, ~2k rows for global search / OLS /
+# scope) never reads these, and loading them widened the row by ~5× (1.8s vs 0.36s
+# for 2088 rows), so that path defers them (opt-in via `defer_heavy=True`).
+#
+# Deferral is OPT-IN, not the default: callers that DO serialize these columns —
+# e.g. the catalogue listing's `_version_dict` reads `reason_repairs`, and
+# `list_ontologies` reads `graph_counts` — would otherwise trigger a lazy reload of
+# a deferred attribute, which raises `MissingGreenlet` under the async session and
+# 500s the whole endpoint. Those callers use the default (load everything); only the
+# big, read-light `latest_ready_versions` path opts in. (Regression from #455, which
+# deferred unconditionally and took down the catalogue listing.)
 _HEAVY_VERSION_COLUMNS = (
     OntologyVersion.lang_counts,
     OntologyVersion.graph_counts,
@@ -105,9 +111,17 @@ def version_predecessor(versions: list[OntologyVersion], version_id: str) -> Ont
     return max(earlier, key=_version_key)
 
 
-async def latest_versions_for(db: AsyncSession, ontology_ids: list[str]) -> dict[str, OntologyVersion]:
+async def latest_versions_for(
+    db: AsyncSession, ontology_ids: list[str], *, defer_heavy: bool = False
+) -> dict[str, OntologyVersion]:
     """Default version per ontology id, honouring pins + version-aware ordering.
-    Ontologies with no ready version are simply absent from the result."""
+    Ontologies with no ready version are simply absent from the result.
+
+    `defer_heavy=True` omits the heavy JSON columns (see `_HEAVY_VERSION_COLUMNS`)
+    from the load. Only pass it when the caller reads nothing but the light columns
+    off the returned versions — otherwise accessing a deferred column triggers a
+    lazy reload that raises `MissingGreenlet` under the async session (#455 fix).
+    """
     if not ontology_ids:
         return {}
     ids = list(ontology_ids)
@@ -115,11 +129,10 @@ async def latest_versions_for(db: AsyncSession, ontology_ids: list[str]) -> dict
         select(Ontology.id, Ontology.current_version_id).where(Ontology.id.in_(ids))
     )).all()
     pins = {oid: cvid for oid, cvid in pin_rows}
-    vers = (await db.execute(
-        select(OntologyVersion)
-        .where(OntologyVersion.ontology_id.in_(ids))
-        .options(*[defer(c) for c in _HEAVY_VERSION_COLUMNS])
-    )).scalars().all()
+    q = select(OntologyVersion).where(OntologyVersion.ontology_id.in_(ids))
+    if defer_heavy:
+        q = q.options(*[defer(c) for c in _HEAVY_VERSION_COLUMNS])
+    vers = (await db.execute(q)).scalars().all()
     by_ont: dict[str, list[OntologyVersion]] = defaultdict(list)
     for v in vers:
         by_ont[v.ontology_id].append(v)
@@ -155,7 +168,11 @@ async def latest_ready_versions(db: AsyncSession) -> list[OntologyVersion]:
         return _latest_cache[1]
 
     all_ids = [oid for (oid,) in (await db.execute(select(Ontology.id))).all()]
-    chosen = await latest_versions_for(db, all_ids)
+    # Whole-catalogue load, ~2k rows, read-light: we only inspect the light columns
+    # to pick defaults and then expunge, so defer the heavy JSON payloads for the ~5×
+    # speed-up. (The cached rows are expunged below, so a heavy column could not be
+    # lazily loaded off them later anyway.)
+    chosen = await latest_versions_for(db, all_ids, defer_heavy=True)
     latest = list(chosen.values())
     # Detach from the SQLAlchemy session so cached rows survive after the session closes.
     db.expunge_all()
