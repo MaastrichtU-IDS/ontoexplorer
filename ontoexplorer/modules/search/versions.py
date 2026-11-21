@@ -17,8 +17,25 @@ from collections import defaultdict
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from ontoexplorer.models.db import Ontology, OntologyVersion
+
+# Heavy per-version JSON payloads (materialized stats/metrics). `latest_versions_for`
+# loads one version per ontology across the WHOLE catalogue (~2k rows) only to pick
+# defaults — it never needs these, and loading them widened the row by ~5× (1.8s vs
+# 0.36s for 2088 rows). Deferred here so every caller (global search, OLS, catalogue
+# listing, entities/browse) pays only for the light columns it actually reads; the
+# stats themselves are served from their own endpoints / Redis, not these rows.
+_HEAVY_VERSION_COLUMNS = (
+    OntologyVersion.lang_counts,
+    OntologyVersion.graph_counts,
+    OntologyVersion.coverage,
+    OntologyVersion.owl_profile,
+    OntologyVersion.reuse,
+    OntologyVersion.fair_checks,
+    OntologyVersion.reason_repairs,
+)
 
 # In-process cache for the latest-ready-versions list. Invalidated implicitly by TTL;
 # new ingests become visible within _LATEST_TTL seconds.
@@ -99,7 +116,9 @@ async def latest_versions_for(db: AsyncSession, ontology_ids: list[str]) -> dict
     )).all()
     pins = {oid: cvid for oid, cvid in pin_rows}
     vers = (await db.execute(
-        select(OntologyVersion).where(OntologyVersion.ontology_id.in_(ids))
+        select(OntologyVersion)
+        .where(OntologyVersion.ontology_id.in_(ids))
+        .options(*[defer(c) for c in _HEAVY_VERSION_COLUMNS])
     )).scalars().all()
     by_ont: dict[str, list[OntologyVersion]] = defaultdict(list)
     for v in vers:
