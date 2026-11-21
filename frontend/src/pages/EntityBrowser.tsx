@@ -142,7 +142,11 @@ export default function EntityBrowser() {
               return (
                 <button key={t.key} role="tab" aria-selected={t.key === type}
                   style={pill(t.key === type)} onClick={() => switchType(t.key)}>
-                  {t.label}{n != null && <> <span style={{ opacity: 0.8 }}>{n.toLocaleString()}</span></>}
+                  {/* Count de-emphasised by opacity only on the inactive pill.
+                      On the active pill the base is white-on-accent (~4.7:1),
+                      already near the AA edge, so 0.8 opacity pushed it under
+                      (3.95:1) — keep it full there (#454). */}
+                  {t.label}{n != null && <> <span style={{ opacity: t.key === type ? 1 : 0.8 }}>{n.toLocaleString()}</span></>}
                 </button>
               )
             })}

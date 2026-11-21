@@ -54,13 +54,17 @@
   color: var(--text);
 }
 
+/* Body-text links use --accent, not the lighter --accent-blue: on the light
+   themes' page surfaces --accent-blue (#5ba4d9) is only ~2.6:1, below WCAG AA
+   for body text, while --accent (#1c6fb8) clears 4.5:1 (~5.0) and stays legible
+   on the dark themes too (#454). The underline stays a tinted accent. */
 .markdown-page a {
-  color: var(--accent-blue);
+  color: var(--accent);
   text-decoration: none;
-  border-bottom: 1px solid color-mix(in srgb, var(--accent-blue) 35%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .markdown-page a:hover {
-  border-bottom-color: var(--accent-blue);
+  border-bottom-color: var(--accent);
 }
 
 .markdown-page ul,
