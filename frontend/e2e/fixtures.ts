@@ -32,6 +32,61 @@ export const ROUTES = {
 // Common vs rare search terms — recall + latency differ.
 export const SEARCH_TERMS = { common: 'cell', rare: 'apoptotic process', empty: 'zzqxnope' }
 
+// ── Whole-site route coverage ─────────────────────────────────────────────────
+// Static/markdown content pages — rendered by MarkdownPage, where the leading
+// `#` heading in the source .md becomes the page <h1>. `heading` is that H1.
+export const CONTENT_PAGES = [
+  { name: 'about', url: '/about', heading: /About OntoExplorer/i },
+  { name: 'docs', url: '/docs', heading: /OntoExplorer documentation/i },
+  { name: 'privacy', url: '/privacy', heading: /Privacy & data notice/i },
+  { name: 'contact', url: '/contact', heading: /^Contact/i },
+] as const
+
+// Login page — the single platform-account sign-in path (#368).
+export const LOGIN = { url: '/login', heading: /Sign in to OntoExplorer/i } as const
+
+// Entity browser and the SPARQL query gallery — public, previously untested.
+export const BROWSE = { url: '/browse', heading: /Browse entities/i } as const
+export const SPARQL_GALLERY = { url: '/sparql/gallery', heading: /Query Gallery/i } as const
+
+// Pure client-side redirects: `from` must land on a URL matching `to`.
+export const REDIRECTS = [
+  { from: '/coverage', to: /\/ontologies\?tab=coverage/ },
+  { from: '/owl-profile', to: /\/ontologies\?tab=profiles/ },
+] as const
+
+// OntologyPage right-pane detail tabs. `button` is the tab control's accessible
+// name; `ready` is text that proves the tab's content actually mounted (not just
+// that the button highlighted). `api` is the endpoint fragment the tab fetches,
+// used to confirm the data call fired. History/compare is covered by compare.spec.
+export const ONTOLOGY_TABS = [
+  { key: 'coverage', button: /^coverage$/i, ready: /Coverage/i, api: /coverage/ },
+  { key: 'owl-profile', button: /^owl profile$/i, ready: /Profile & expressivity/i, api: /owl.?profile|profile/ },
+  { key: 'reuse', button: /^reuse$/i, ready: /Term-IRI reuse/i, api: /reuse/ },
+  { key: 'fair', button: /^fair$/i, ready: /FAIR report/i, api: /fair|score/ },
+] as const
+
+// A fully-profiled, reasoned, small ontology: every per-version metric (coverage,
+// owl-profile, reuse, FAIR + documentation breakdown) is computed for it, so the
+// feature tabs render real content rather than an empty/"pending" state.
+export const FEATURE_ONTOLOGY = 'sio'
+
+// Authenticated dashboard routes. AuthGuard redirects each to /login when there
+// is no session; with a session each renders its own page. `ready` is a stable
+// marker on the loaded page (heading or nav landmark).
+export const DASHBOARD_ROUTES = [
+  { name: 'dashboard', url: '/dashboard' },
+  { name: 'add', url: '/dashboard/add' },
+  { name: 'submissions', url: '/dashboard/submissions' },
+  { name: 'keys', url: '/dashboard/keys' },
+  { name: 'webhooks', url: '/dashboard/webhooks' },
+  { name: 'stats', url: '/dashboard/stats' },
+  { name: 'profile', url: '/dashboard/profile' },
+] as const
+
+// Where auth.setup.ts stores the signed-in browser state for dashboard specs.
+export const STORAGE_STATE = 'e2e-report/.auth/user.json'
+
 // Budgets. Good/needs-work borders follow Core Web Vitals; app-specific flows are
 // pragmatic targets we can tighten later. Values in ms except CLS (unitless).
 export const BUDGETS = {

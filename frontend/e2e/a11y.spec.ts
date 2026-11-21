@@ -18,6 +18,14 @@ const PAGES: Array<{ name: string; url: string; ready: string; exclude?: string[
   // forking it. Exclude its subtree so this gate enforces OUR page chrome; the
   // syntax-token colours we *do* control are themed for AA in Sparql.css. (#192)
   { name: 'sparql', url: ROUTES.sparql, ready: 'body', exclude: ['.yasgui'] },
+  // Whole-site coverage: content/static pages, sign-in, entity browser, gallery.
+  { name: 'about', url: '/about', ready: '.markdown-page h1' },
+  { name: 'docs', url: '/docs', ready: '.markdown-page h1' },
+  { name: 'privacy', url: '/privacy', ready: '.markdown-page h1' },
+  { name: 'contact', url: '/contact', ready: '.markdown-page h1' },
+  { name: 'login', url: '/login', ready: 'h1' },
+  { name: 'browse', url: '/browse', ready: 'h1' },
+  { name: 'sparql-gallery', url: '/sparql/gallery', ready: 'h1' },
 ]
 
 for (const p of PAGES) {

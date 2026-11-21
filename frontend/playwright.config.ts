@@ -31,12 +31,15 @@ export default defineConfig({
     ignoreHTTPSErrors: true,
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
-    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
-    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+    // Signs in once (if E2E_USER/E2E_PASS are set) and saves storageState for the
+    // dashboard-authenticated specs. Runs before the browser projects.
+    { name: 'setup', testMatch: /auth\.setup\.ts/ },
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] }, dependencies: ['setup'], testIgnore: /auth\.setup\.ts/ },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] }, dependencies: ['setup'], testIgnore: /auth\.setup\.ts/ },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] }, dependencies: ['setup'], testIgnore: /auth\.setup\.ts/ },
     // ~400px phone — the responsive/usability floor.
-    { name: 'mobile', use: { ...devices['Pixel 7'] } },
+    { name: 'mobile', use: { ...devices['Pixel 7'] }, dependencies: ['setup'], testIgnore: /auth\.setup\.ts/ },
     // Modest-laptop model: 4x CPU + Fast-3G-ish, applied in-spec via CDP where supported.
-    { name: 'throttled', use: { ...devices['Desktop Chrome'] } },
+    { name: 'throttled', use: { ...devices['Desktop Chrome'] }, dependencies: ['setup'], testIgnore: /auth\.setup\.ts/ },
   ],
 })

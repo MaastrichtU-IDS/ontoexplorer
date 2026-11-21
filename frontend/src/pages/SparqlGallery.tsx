@@ -95,12 +95,14 @@ export default function SparqlGallery() {
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
           <input
             type="text"
+            aria-label="Search queries"
             placeholder="🔍 Search by name, description, or tag…"
             value={searchInput}
             onChange={handleSearchChange}
             style={{ flex: 1, minWidth: 200, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '0.4rem 0.75rem', color: 'var(--text)', fontSize: 'var(--font-size-sm)', outline: 'none' }}
           />
           <select
+            aria-label="Filter by ontology"
             value={ontologyFilter}
             onChange={e => setOntologyFilter(e.target.value)}
             style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 4, padding: '0.4rem 0.75rem', color: ontologyFilter ? 'var(--text)' : 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}
@@ -109,6 +111,7 @@ export default function SparqlGallery() {
             {ontologyOptions.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
           <select
+            aria-label="Filter by author"
             value={authorFilter?.id ?? ''}
             onChange={e => {
               const found = authors.find(a => a.id === e.target.value) ?? null

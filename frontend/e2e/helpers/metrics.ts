@@ -1,6 +1,7 @@
-import type { Page, TestInfo } from '@playwright/test'
+import { expect, type Page, type TestInfo } from '@playwright/test'
 import fs from 'node:fs'
 import path from 'node:path'
+import { BUDGETS } from '../fixtures'
 
 // ── Web Vitals capture ───────────────────────────────────────────────────────
 // PerformanceObserver for LCP + CLS is Chromium-only; on firefox/webkit these
@@ -88,6 +89,40 @@ export type Verdict = 'good' | 'needs-work' | 'poor' | 'n/a'
 export function verdict(value: number | null, b: { good: number; poor: number }): Verdict {
   if (value == null) return 'n/a'
   return value <= b.good ? 'good' : value <= b.poor ? 'needs-work' : 'poor'
+}
+
+// ── Shared page-load measurement ───────────────────────────────────────────────
+// Navigate to `url`, await `ready()` (the signal the page is usable), then record
+// a 'page' metrics row identical in shape to perf.spec's — so report.mjs folds
+// these pages into the same Web-Vitals table. Timing never hard-fails (a slow run
+// shouldn't red the suite), but API errors on the route are surfaced loudly.
+// Call `installVitals(page)` in a beforeEach so LCP/CLS are captured.
+export async function measureNav(
+  page: Page,
+  testInfo: TestInfo,
+  name: string,
+  url: string,
+  ready: () => Promise<void>,
+): Promise<{ wall: number; m: PageMetrics; a: ReturnType<ApiRecorder['summary']> }> {
+  const api = new ApiRecorder(page)
+  const t0 = Date.now()
+  await page.goto(url, { waitUntil: 'commit' })
+  await ready()
+  const wall = Date.now() - t0
+  const m = await collectPageMetrics(page)
+  const a = api.summary()
+  await record(testInfo, {
+    kind: 'page', name, url, wallMs: wall, ...m,
+    api: { count: a.count, p50: a.p50, p95: a.p95, errors: a.errors.length, slowest: a.slowest },
+    verdicts: {
+      lcp: verdict(m.lcp, BUDGETS.LCP), fcp: verdict(m.fcp, BUDGETS.FCP),
+      cls: verdict(m.cls, BUDGETS.CLS), ttfb: verdict(m.ttfb, BUDGETS.TTFB),
+      apiP95: verdict(a.p95, BUDGETS.apiP95),
+    },
+  })
+  expect.soft(m.lcp ?? 0, `${name}: LCP within poor budget`).toBeLessThan(BUDGETS.LCP.poor + 1)
+  expect.soft(a.errors.length, `${name}: no API errors (${a.errors.map((e) => e.path).join(', ')})`).toBe(0)
+  return { wall, m, a }
 }
 
 // ── Result sink ──────────────────────────────────────────────────────────────

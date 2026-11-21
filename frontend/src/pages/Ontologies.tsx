@@ -586,7 +586,11 @@ export default function Ontologies() {
             >
               {chip.label}
               {chip.count !== undefined && (
-                <span style={{ opacity: 0.7, marginLeft: 5, fontWeight: 400 }}>{chip.count}</span>
+                // No text opacity: on an inactive chip it dims --text-dim below
+                // the 4.5:1 AA minimum (to ~3:1 on white). Lighter weight alone
+                // de-emphasises the count and stays AA (#454, same rule as the
+                // language chips below).
+                <span style={{ marginLeft: 5, fontWeight: 400 }}>{chip.count}</span>
               )}
             </button>
           )
