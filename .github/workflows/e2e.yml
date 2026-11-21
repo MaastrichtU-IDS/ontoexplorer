@@ -35,22 +35,31 @@ jobs:
     env:
       E2E_BASE_URL: ${{ github.event.inputs.base_url || 'https://ontoexplorer.dev.k8s.semanticscience.org' }}
       E2E_PERF: '1'
+      # Optional: set these repo secrets to exercise the authenticated dashboard.
+      # When unset, auth.setup skips and the dashboard-authenticated specs skip
+      # with it (the anonymous AuthGuard-redirect checks still run).
+      E2E_USER: ${{ secrets.E2E_USER }}
+      E2E_PASS: ${{ secrets.E2E_PASS }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install deps
         run: npm ci
 
-      # Functional gate: a11y blockers, usability, and the core flows (home →
-      # ontologies → open → tree on a small ontology, search opens a term, SPARQL
-      # editor runs). These are load-tolerant, so a failure here is a real
-      # regression and reds the nightly.
+      # Functional gate: a11y blockers, usability, the core flows, the compare
+      # surfaces, the per-version metric tabs (coverage/owl-profile/reuse/FAIR),
+      # the entity browser + query gallery, the content/redirect pages, and the
+      # dashboard access-control redirects (plus authenticated loads when creds are
+      # set). These are load-tolerant, so a failure here is a real regression and
+      # reds the nightly. The heavy giant-tree nav is excluded here and run below.
       - name: Run E2E (functional — gating)
         run: |
           PROJ=""
           for p in ${{ github.event.inputs.projects || 'chromium' }}; do PROJ="$PROJ --project=$p"; done
           npx playwright test $PROJ \
             e2e/a11y.spec.ts e2e/usability.spec.ts e2e/flows.spec.ts \
+            e2e/compare.spec.ts e2e/ontology-tabs.spec.ts e2e/browse.spec.ts \
+            e2e/content.spec.ts e2e/dashboard.spec.ts \
             --grep-invert "tree navigation selects a term"
 
       # Perf budgets and heavy big-ontology tree renders are timing-sensitive on

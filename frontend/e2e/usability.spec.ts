@@ -9,6 +9,14 @@ const FLOWS: Array<{ name: string; url: string; ready: string }> = [
   { name: 'ontology', url: ROUTES.ontology('bfo'), ready: '[data-iri]' },
   { name: 'search', url: ROUTES.search, ready: 'input' },
   { name: 'sparql', url: ROUTES.sparql, ready: 'body' },
+  // Whole-site coverage: content/static pages, sign-in, entity browser, gallery.
+  { name: 'about', url: '/about', ready: '.markdown-page h1' },
+  { name: 'docs', url: '/docs', ready: '.markdown-page h1' },
+  { name: 'privacy', url: '/privacy', ready: '.markdown-page h1' },
+  { name: 'contact', url: '/contact', ready: '.markdown-page h1' },
+  { name: 'login', url: '/login', ready: 'h1' },
+  { name: 'browse', url: '/browse', ready: 'h1' },
+  { name: 'sparql-gallery', url: '/sparql/gallery', ready: 'h1' },
 ]
 
 for (const f of FLOWS) {
