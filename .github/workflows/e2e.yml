@@ -67,6 +67,11 @@ jobs:
       # so a breach is often transient load, not a regression. Record the metrics
       # but don't red the nightly on them; watch the trend in the uploaded report.
       - name: Run E2E (perf + heavy — informational)
+        # Run even when the functional gate above fails: perf is informational and
+        # must still record metrics, otherwise one red gate (e.g. an a11y nit) hides
+        # the whole perf trend. continue-on-error keeps a perf breach from reding the
+        # nightly; `if: always()` keeps it from being skipped by an earlier failure.
+        if: always()
         continue-on-error: true
         run: |
           PROJ=""
