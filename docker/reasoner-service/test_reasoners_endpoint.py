@@ -83,3 +83,21 @@ def test_justification_returns_the_justifying_axioms(client):
     body = resp.json()
     assert body["justifications_found"] == 1, body
     assert len(body["justifications"]) == 1
+
+
+def test_failed_justification_is_not_cached(client, monkeypatch):
+    # A worker failure answers with an empty list but must not be cached, or the
+    # empty answer would be served for JUSTIFICATION_TTL after the cause is fixed.
+    import subprocess
+    import cache as cache_mod
+    from classifier import ClassificationResult
+    r = ClassificationResult("vf", "t", 0, {}, {}, {}, {}, [], {}, 1.0)
+    cache_mod.store_classification(r, "rustdl")
+    cache_mod.store_input_axioms("vf", "", "rustdl")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
+        a[0], returncode=1, stdout="", stderr="boom"))
+    resp = client.post("/classify/vf/justification",
+                       json={"sub": "http://ex/A", "sup": "http://ex/B", "reasoner": "rustdl"})
+    assert resp.status_code == 200
+    assert resp.json()["justifications_found"] == 0
+    assert cache_mod.load_justification("vf", "http://ex/A", "http://ex/B", 1, "rustdl") is None
