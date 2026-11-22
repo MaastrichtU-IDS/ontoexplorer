@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQueries } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useOntologies } from '../hooks/useOntologies'
 import { SearchResult, api } from '../lib/api'
 import SearchBar from './SearchBar'
@@ -81,18 +81,6 @@ function RelationChips({ selected, onChange, namedClass }: {
   )
 }
 
-function useMOSFanout(pairs: { oid: string; vid: string }[], query: string, direct: boolean, relation: MosRelation) {
-  return useQueries({
-    queries: pairs.map(({ oid, vid }) => ({
-      queryKey: ['mos-search', oid, vid, query, direct, relation],
-      queryFn: () => api.ontologies.search(oid, vid, query, 'expression', undefined, false, direct, relation),
-      staleTime: 10_000,
-      enabled: query.length >= 2,
-      retry: false,
-    })),
-  })
-}
-
 export function MOSQuery() {
   const [relation, onRelationChange] = useState<MosRelation>('subclasses')
   const { ontologies } = useOntologies()
@@ -110,31 +98,27 @@ export function MOSQuery() {
   const namedClass = isNamedClassQuery(normalizedQuery)
   const effectiveRelation: MosRelation = namedClass ? relation : 'subclasses'
 
-  // latest_version is now returned inline by the list endpoint — no extra calls needed
-  const allPairs: { oid: string; vid: string }[] = ontologies.flatMap(o => {
-    const vid = o.latest_version?.id
-    return vid ? [{ oid: o.id, vid }] : []
+  // ONE cross-ontology request. The server pre-filters to ontologies whose
+  // entity_index contains the query's terms and only evaluates already-reasoned
+  // versions (replacing the old per-ontology fan-out that fired one request per
+  // ontology — up to ~500, nearly all erroring). `warnings` tells us how many
+  // matching ontologies were skipped because they aren't reasoned yet.
+  const { data, isFetching, error } = useQuery({
+    queryKey: ['mos-global', normalizedQuery, effectiveRelation, direct, selectedOids],
+    queryFn: () => api.globalSearch.expression(normalizedQuery, {
+      relation: effectiveRelation, direct, ontologyIds: selectedOids, limit: 50,
+    }),
+    enabled: normalizedQuery.length >= 2,
+    staleTime: 10_000,
+    retry: false,
   })
 
-  // Scope: selected ontologies, or all if none selected
-  const scopePairs = selectedOids.length > 0
-    ? allPairs.filter(p => selectedOids.includes(p.oid))
-    : allPairs
+  const isSearching = mosQuery.length >= 2 && isFetching
+  const warnings = data?.warnings ?? []
+  const skipped = warnings.find(w => w.type === 'versions_skipped_unclassified')?.count ?? 0
 
-  // Fan-out MOS search across scoped ontologies (normalized so a bare
-  // multi-word label parses as one named class instead of erroring).
-  const searchResults = useMOSFanout(scopePairs, normalizedQuery, direct, effectiveRelation)
-  // Tag each result with the oid/vid of the ontology it came from
-  const allResults: SearchResult[] = searchResults.flatMap((r, i) =>
-    (r.data?.results ?? []).map(res => ({
-      ...res,
-      ontology_id: scopePairs[i]?.oid,
-      version_id: scopePairs[i]?.vid,
-    }))
-  )
-
-  // Re-rank merged results globally: exact label → prefix → substring, then alpha.
-  // Extract bare term from MOS syntax: "'cell'" or "'cell" (open quote) → "cell".
+  // Re-rank: exact label → prefix → substring, then alpha. Extract the bare term
+  // from MOS syntax ("'cell'" / "'cell" → "cell").
   const _bareQuery = (() => {
     const closed = mosQuery.match(/'([^']+)'/)
     if (closed) return closed[1].toLowerCase().trim()
@@ -148,49 +132,36 @@ export function MOSQuery() {
     if (l.startsWith(_bareQuery)) return [1, l]
     return [2, l]
   }
+  const dedupedResults: SearchResult[] = [...(data?.results ?? [])]
   if (_bareQuery) {
-    allResults.sort((a, b) => {
+    dedupedResults.sort((a, b) => {
       const [ra, la] = _rank(a.label ?? '')
       const [rb, lb] = _rank(b.label ?? '')
       return ra !== rb ? ra - rb : la.localeCompare(lb)
     })
   }
 
-  // Deduplicate by IRI — same class can appear in multiple ontologies. The
-  // relationship facet is chosen server-side via `relation`, so no client-side
-  // type filtering is needed here.
-  const dedupedResults: SearchResult[] = []
-  const _seenIris = new Set<string>()
-  for (const r of allResults) {
-    if (_seenIris.has(r.iri)) continue
-    _seenIris.add(r.iri)
-    dedupedResults.push(r)
-  }
+  // A real failure of the single request (parse error, bad relation, transport).
+  const errBody = (error as (Error & { body?: { error?: string; message?: string; detail?: string } }) | null)?.body
+  const errorMsg = !error ? null
+    : errBody?.error === 'parse_error' ? `Invalid expression: ${errBody.message ?? ''}`.trim()
+    : errBody?.error === 'relation_requires_named_class' ? `"${effectiveRelation}" needs a single named class.`
+    : (errBody?.detail ?? errBody?.message ?? errBody?.error ?? (error as Error).message)
 
-  const isSearching = mosQuery.length >= 2 && searchResults.some(r => r.isFetching)
-
-  // Surface error message only when all queries failed (no results at all)
-  const firstError = searchResults.find(r => r.error)?.error as (Error & { status?: number; body?: { error?: string; detail?: string } }) | undefined
-  const allNotClassified = mosQuery.length >= 2 && searchResults.length > 0 && searchResults.every(r => (r.error as (Error & { body?: { error?: string } }) | undefined)?.body?.error === 'not_classified')
-  const errorMsg = dedupedResults.length === 0 && firstError
-    ? allNotClassified
-      ? 'Ontology classification is not ready yet — reasoning is still running. Try again in a few minutes.'
-      : (firstError.body?.detail ?? firstError.body?.error ?? firstError.message)
-    : null
-
-  // Build the term link from the result itself (shortname → clean slug, else the
-  // ontology_id, which the term page resolves server-side). This works for every
-  // result regardless of catalogue size — the old lookup against the page-capped
-  // ontology list left results from ontologies past the cap un-clickable.
+  // Resolve ontology_id → shortname from the (already-loaded) catalogue so each
+  // result links to a clean slug and shows the source-ontology badge. The server
+  // returns version_id/ontology_id; ontology_id alone still resolves server-side.
+  const shortnameById = new Map<string, string>(
+    ontologies.flatMap(o => (o.shortname ? [[o.id, o.shortname] as [string, string]] : [])),
+  )
   function pathFor(r: SearchResult): string | null {
     if (!r.version_id) return null
-    const slug = r.ontology_shortname || r.ontology_id
+    const slug = (r.ontology_id && shortnameById.get(r.ontology_id)) || r.ontology_shortname || r.ontology_id
     if (!slug) return null
     return `/ontologies/${encodeURIComponent(slug)}/${r.version_id}?term=${encodeURIComponent(r.iri)}`
   }
-
   function ontologyNameFor(r: SearchResult): string | null {
-    return r.ontology_shortname || null
+    return (r.ontology_id && shortnameById.get(r.ontology_id)) || r.ontology_shortname || null
   }
 
   return (
@@ -252,6 +223,19 @@ export function MOSQuery() {
             : effectiveRelation === 'superclasses'
               ? `No superclasses for "${mosQuery}"`
               : `No results for "${mosQuery}"`}
+          {skipped > 0 && (
+            <><br /><span style={{ fontSize: 11 }}>
+              {skipped} matching ontolog{skipped > 1 ? 'ies are' : 'y is'} not reasoned yet, so {skipped > 1 ? 'they were' : 'it was'} skipped.
+            </span></>
+          )}
+        </p>
+      )}
+      {/* Honest aggregate note (replaces the old misleading per-ontology
+          "'<q>' not found in this ontology's index"): when the term matched
+          ontologies that simply aren't reasoned yet, say so. */}
+      {mosQuery && !errorMsg && !isSearching && dedupedResults.length > 0 && skipped > 0 && (
+        <p style={{ color: 'var(--text-dim)', fontSize: 11, textAlign: 'center', margin: '8px 0 0' }}>
+          {skipped} more matching ontolog{skipped > 1 ? 'ies' : 'y'} not shown — not reasoned yet.
         </p>
       )}
       <ResultList results={dedupedResults} pathFor={pathFor} ontologyNameFor={ontologyNameFor} />

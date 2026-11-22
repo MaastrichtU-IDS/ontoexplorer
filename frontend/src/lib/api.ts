@@ -1799,6 +1799,27 @@ export const api = {
       ontologyIds.forEach(id => params.append('ontology_ids', id))
       return request<AutocompleteResponse>(`/autocomplete?${params}`)
     },
+    // Cross-ontology MOS expression search. The server pre-filters to ontologies
+    // whose entity_index contains the query's terms and only evaluates already-
+    // reasoned versions — one request, no client fan-out. `warnings` reports
+    // skipped-unclassified / ambiguous-label conditions.
+    expression: (
+      q: string,
+      opts: { relation?: 'subclasses' | 'superclasses' | 'equivalent'; direct?: boolean; ontologyIds?: string[]; lang?: string | null; limit?: number } = {},
+    ) => {
+      const params = new URLSearchParams({ q, mode: 'expression', limit: String(opts.limit ?? 50) })
+      if (opts.relation && opts.relation !== 'subclasses') params.set('relation', opts.relation)
+      if (opts.direct) params.set('direct', 'true')
+      if (opts.lang) params.set('lang', opts.lang)
+      ;(opts.ontologyIds ?? []).forEach(id => params.append('ontology_ids', id))
+      return request<{
+        mode: string
+        results: SearchResult[]
+        count: number
+        truncated: boolean
+        warnings?: Array<{ type: string; count?: number; label?: string; ontology_id?: string }>
+      }>(`/search?${params}`)
+    },
   },
 
   languages: {

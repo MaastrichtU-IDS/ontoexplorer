@@ -12,7 +12,11 @@ from ontoexplorer.clients.reasoning import ReasoningNotReadyError
 from ontoexplorer.database import get_db
 from ontoexplorer.models.db import Ontology, OntologyVersion, User
 from ontoexplorer.modules.auth.dependencies import get_current_user
-from ontoexplorer.modules.search.evaluator import AmbiguousLabelError, evaluate
+from ontoexplorer.modules.search.evaluator import (
+    AmbiguousLabelError,
+    evaluate,
+    evaluate_relation,
+)
 from ontoexplorer.modules.search.label_quality import clean_display_label
 from ontoexplorer.modules.search.lang import resolve_lang
 from ontoexplorer.modules.search.mos_parser import ParseError, NamedClass, parse
@@ -31,9 +35,15 @@ _AUTOCOMPLETE_CACHE_TTL = 60  # seconds
 def _search_cache_key(
     q: str, limit: int, lang: str | None, semantic: bool, backend: str = "redis",
     types: list[str] | None = None,
+    relation: str = "subclasses", direct: bool = False,
+    ontology_ids: list[str] | None = None,
 ) -> str:
     types_part = ",".join(sorted(types)) if types else ""
-    payload = f"{q}\x1f{limit}\x1f{lang or ''}\x1f{int(semantic)}\x1f{backend}\x1f{types_part}"
+    onts_part = ",".join(sorted(ontology_ids)) if ontology_ids else ""
+    payload = (
+        f"{q}\x1f{limit}\x1f{lang or ''}\x1f{int(semantic)}\x1f{backend}\x1f{types_part}"
+        f"\x1f{relation}\x1f{int(direct)}\x1f{onts_part}"
+    )
     h = hashlib.blake2b(payload.encode(), digest_size=16).hexdigest()
     return f"search:result:{h}"
 
@@ -136,6 +146,16 @@ async def global_search(
         default=[],
         description="Filter by entity_index type: class | object_property | data_property | annotation_property | individual | concept. Empty = all.",
     ),
+    relation: str = Query(
+        "subclasses",
+        description="Expression mode only: subclasses | superclasses | equivalent. "
+        "superclasses/equivalent require a single named class.",
+    ),
+    direct: bool = Query(False, description="Expression mode only: only direct (one-hop) results."),
+    ontology_ids: list[str] = Query(
+        default=[],
+        description="Restrict the search to these ontology ids. Empty = every ingested ontology.",
+    ),
     _user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -146,7 +166,13 @@ async def global_search(
 
     # Short-TTL response cache for entity-mode queries (the hot path from the homepage).
     # MOS-expression queries are not cached — they depend on reasoning state.
-    cache_key = _search_cache_key(q, limit, effective_lang, semantic, backend, types=types)
+    # relation/direct/ontology_ids only affect expression mode (which is never
+    # cached), but fold them into the key so an entity-mode hit can never be
+    # served for a differently-parameterised request.
+    cache_key = _search_cache_key(
+        q, limit, effective_lang, semantic, backend, types=types,
+        relation=relation, direct=direct, ontology_ids=ontology_ids,
+    )
     from ontoexplorer.modules.search.indexer import _get_redis
     _r = _get_redis()
     cached = await asyncio.to_thread(_r.get, cache_key)
@@ -154,6 +180,11 @@ async def global_search(
         return _json.loads(cached)
 
     versions = await _latest_ingested_versions(db)
+    # Optional scope: restrict to the caller's selected ontologies (front-page MOS
+    # "filter ontologies" picker). Empty = search every ingested ontology.
+    if ontology_ids:
+        _wanted = {str(o) for o in ontology_ids}
+        versions = [v for v in versions if str(v.ontology_id) in _wanted]
     if not versions:
         return {"mode": "entity", "query": q, "results": [], "count": 0, "truncated": False}
 
@@ -226,6 +257,15 @@ async def global_search(
     # Expression mode — evaluate against each version separately
     warnings: list[dict] = []
 
+    # superclasses/equivalent are only defined for a single named class; reject a
+    # complex expression up-front (same contract as the per-ontology endpoint)
+    # rather than silently returning nothing from every version.
+    if relation in ("superclasses", "equivalent") and not isinstance(ast, NamedClass):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "relation_requires_named_class", "relation": relation},
+        )
+
     # Prebuild the entity_index resolvers for all versions in ONE query (#242
     # Workstream B) — the per-version evaluate() below runs under asyncio.gather on
     # the shared db session, so it must not query the DB itself. Scope the resolver
@@ -260,8 +300,9 @@ async def global_search(
     async def search_one_expression(v: OntologyVersion) -> list[dict]:
         try:
             async with _sem:
-                results = await evaluate(ast, str(v.id), str(v.ontology_id),
-                                         _resolvers[str(v.id)], lang=effective_lang, reasoner=v.reasoner)
+                results = await evaluate_relation(
+                    ast, str(v.id), str(v.ontology_id), _resolvers[str(v.id)],
+                    relation=relation, lang=effective_lang, direct=direct, reasoner=v.reasoner)
             # MOS class expressions always yield classes — tag explicitly so the
             # UI badge renders and the chip filter compares like-for-like.
             return [
