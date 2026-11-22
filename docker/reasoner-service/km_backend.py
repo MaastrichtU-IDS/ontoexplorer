@@ -74,6 +74,16 @@ class KmBackend:
         # OWL/XML fed to km so disjointness-dependent inferences survive.
         import disjoint_fix
         owx = disjoint_fix.owl_xml_with_disjointness(owx, store)
+        # Feed km only the logical content: drop the ontology/version IRI (km
+        # mangles IRIs that start with it) and all annotations (km >= v1.4.4
+        # rejects reserved annotation properties and non-OWL-2 literal types),
+        # and declare used-but-undeclared entities (km >= v1.4.4 requires it).
+        # All three are lossless for classification. See km_owx_fix.
+        import km_owx_fix
+        owx, _injected = km_owx_fix.prepare_owx_for_km(owx)
+        repairs: dict = {}
+        if _injected:
+            repairs["injected_km_declarations"] = len(_injected)
 
         tmp = tempfile.mkdtemp()
         in_owx = os.path.join(tmp, "in.owx")
@@ -173,6 +183,7 @@ class KmBackend:
             unsatisfiable=unsatisfiable,
             proof_traces={},
             duration_ms=round((time.monotonic() - t0) * 1000, 1),
+            repairs=repairs,
         )
 
     def justify(self, ntriples, sub, sup, max_justifications, version_id=None):
