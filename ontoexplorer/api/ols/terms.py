@@ -176,7 +176,7 @@ async def _inferred_parents_fetcher(db, ontology_id: str, vid: str, iri: str, re
     """
     try:
         from ontoexplorer.clients.reasoning import superclasses as _reasoner_superclasses
-        data = await _reasoner_superclasses(vid, iri, direct=True, reasoner=reasoner)
+        data = await _reasoner_superclasses(ontology_id, vid, iri, direct=True, reasoner=reasoner)
         parents = [p for p in data.get("superclasses", []) if p not in _OWL_EXCLUDED]
         if parents:
             return parents
@@ -198,7 +198,7 @@ async def _inferred_children_fetcher(db, ontology_id: str, vid: str, iri: str, r
     """Direct inferred children via targeted subclasses(direct=True); fallback: asserted."""
     try:
         from ontoexplorer.clients.reasoning import subclasses as _reasoner_subclasses
-        data = await _reasoner_subclasses(vid, iri, direct=True, reasoner=reasoner)
+        data = await _reasoner_subclasses(ontology_id, vid, iri, direct=True, reasoner=reasoner)
         children = [c for c in data.get("subclasses", []) if c not in _OWL_EXCLUDED]
         if children:
             return children
@@ -211,7 +211,7 @@ async def _inferred_ancestors_fetcher(db, ontology_id: str, vid: str, iri: str, 
     """All inferred ancestors via targeted superclasses(direct=False); fallback: asserted-BFS."""
     try:
         from ontoexplorer.clients.reasoning import superclasses as _reasoner_superclasses
-        data = await _reasoner_superclasses(vid, iri, direct=False, reasoner=reasoner)
+        data = await _reasoner_superclasses(ontology_id, vid, iri, direct=False, reasoner=reasoner)
         ancestors = [a for a in data.get("superclasses", []) if a not in _OWL_EXCLUDED]
         if ancestors:
             return ancestors
@@ -224,7 +224,7 @@ async def _inferred_descendants_fetcher(db, ontology_id: str, vid: str, iri: str
     """All inferred descendants via targeted subclasses(direct=False); fallback: asserted-BFS."""
     try:
         from ontoexplorer.clients.reasoning import subclasses as _reasoner_subclasses
-        data = await _reasoner_subclasses(vid, iri, direct=False, reasoner=reasoner)
+        data = await _reasoner_subclasses(ontology_id, vid, iri, direct=False, reasoner=reasoner)
         descendants = [d for d in data.get("subclasses", []) if d not in _OWL_EXCLUDED]
         if descendants:
             return descendants

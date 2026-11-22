@@ -99,7 +99,14 @@ async def search(
             "semantic_results": sem_results,
         }
 
-    # Expression mode
+    # Expression mode. Subsumption is read from the durable Oxigraph inferred graph,
+    # which only exists once the version has been reasoned; an unreasoned version
+    # would otherwise return a misleading empty result, so report not_classified
+    # (consistent with the prior reasoner-cache behaviour). Durable DB check.
+    from ontoexplorer.modules.pipeline.status import reasoned_version_ids
+    if not await reasoned_version_ids(db, [version_id]):
+        return JSONResponse(status_code=503, content={"error": "not_classified"})
+
     try:
         from ontoexplorer.modules.search.evaluator import build_resolver, _collect_refs
         _refs, _needs_classes = _collect_refs(ast)

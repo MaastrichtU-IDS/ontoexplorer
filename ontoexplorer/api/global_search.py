@@ -283,18 +283,17 @@ async def global_search(
     # resolvers were already prefetched above, so this filter is free.
     _candidates = [v for v in versions if resolver_can_resolve(_resolvers[str(v.id)], _refs)]
 
-    # #277: and of those, only evaluate versions that are ALREADY classified. A bare
-    # get_classification() TRIGGERS on-demand reasoning for an unreasoned version
-    # (seconds to minutes each), so a global expression query must never reason
-    # synchronously — it reports matches from already-reasoned ontologies and skips
-    # the rest (one pipelined EXISTS, no reasoner calls).
-    from ontoexplorer.clients.reasoning import filter_already_classified
-    _ready = await filter_already_classified([(str(v.id), v.reasoner) for v in _candidates])
+    # #277: and of those, only evaluate versions that have been REASONED. Subsumption
+    # is read from the durable Oxigraph inferred graph (persisted at reason time), so
+    # "reasoned" is a done reason job — a single DB query, durable, independent of the
+    # reasoner's 30-day cache TTL. Unreasoned ontologies are skipped (and counted);
+    # they never trigger synchronous reasoning.
+    from ontoexplorer.modules.pipeline.status import reasoned_version_ids
+    _ready = await reasoned_version_ids(db, [str(v.id) for v in _candidates])
     _skipped_unclassified = sum(1 for v in _candidates if str(v.id) not in _ready)
     _candidates = [v for v in _candidates if str(v.id) in _ready]
 
-    # Bound how many cached-classification fetches run at once (each can be a large
-    # payload; don't stampede the reasoner / event loop).
+    # Bound how many subsumption reads run at once against Oxigraph.
     _sem = asyncio.Semaphore(8)
 
     async def search_one_expression(v: OntologyVersion) -> list[dict]:

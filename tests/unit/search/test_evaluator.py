@@ -37,11 +37,11 @@ def _patch_reasoner(classification: dict):
     dsub = classification.get("direct_subclasses", {}) or {}
     dsup = classification.get("direct_superclasses", {}) or {}
 
-    async def _fsub(version_id, class_iri, direct=False, reasoner="rustdl"):
+    async def _fsub(ontology_id, version_id, class_iri, direct=False, reasoner="rustdl"):
         m = dsub if direct else subs
         return {"subclasses": list(m.get(class_iri, []))}
 
-    async def _fsup(version_id, class_iri, direct=False, reasoner="rustdl"):
+    async def _fsup(ontology_id, version_id, class_iri, direct=False, reasoner="rustdl"):
         return {"superclasses": list(dsup.get(class_iri, []))}
 
     with patch("ontoexplorer.modules.search.evaluator._reasoner_subclasses", new=_fsub), \

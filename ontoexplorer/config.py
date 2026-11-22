@@ -83,20 +83,6 @@ class Settings(BaseSettings):
     # Reasoner selected for an ontology when the ingest request omits one.
     default_reasoner: str = "rustdl"
 
-    # ── Classification warming ─────────────────────────────────────────────────
-    # MOS expression search needs a version's classification cached in the
-    # reasoner service (Redis DB2, 30-day TTL, only (re)written at ingest/reason).
-    # Stale/evicted classifications make MOS silently return nothing. A beat task
-    # keeps a bounded, most-recent set warm by re-classifying the missing ones a
-    # few per run (side-effect-free: cache only, no inferred-triple persistence or
-    # webhooks). OFF by default — enabling starts reasoner load, so ops turns it on
-    # deliberately and watches reasoner/Redis. The target MUST stay within the
-    # reasoner Redis budget (classifications average ~16 MB; ~250 fit in 4 GB), or
-    # volatile-lru just thrashes.
-    warm_classification_enabled: bool = False
-    warm_classification_target: int = 120   # how many recent versions to keep warm
-    warm_classification_batch: int = 3       # max (re)classifications dispatched per run
-
     # Anthropic
     anthropic_api_key: str = ""
 

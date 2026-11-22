@@ -20,10 +20,6 @@ from ontoexplorer.modules.search.versions import invalidate_latest_ready_version
 _FAKE_REDIS = fakeredis.FakeRedis(decode_responses=True)
 
 
-async def _async_empty(pairs):
-    return set()
-
-
 async def _ready_version(db, label_iris: list[tuple[str, str]]):
     uid = uuid.uuid4().hex[:8]
     o = Ontology(id=uuid.uuid4().hex, iri=f"http://ex/o-{uid}", shortname=f"o{uid}", title="O")
@@ -58,13 +54,13 @@ async def test_global_expression_superclasses_requires_named_class(client, db_se
 
 
 @pytest.mark.anyio
-async def test_global_expression_skips_unclassified_and_scopes(client, db_session):
-    """A term that resolves in an un-reasoned ontology yields no results but an
-    honest versions_skipped_unclassified warning — and ontology_ids scoping plus
-    relation/direct are accepted without error."""
+async def test_global_expression_skips_unreasoned_and_scopes(client, db_session):
+    """A term that resolves in an un-reasoned ontology (no done reason job) yields no
+    results but an honest versions_skipped_unclassified warning — and ontology_ids
+    scoping plus relation/direct are accepted without error. Reasonedness is now the
+    durable DB signal, so the version simply having no reason job makes it skipped."""
     o, _v = await _ready_version(db_session, [("cell death", "http://ex/CD")])
-    with patch("ontoexplorer.modules.search.indexer._get_redis", return_value=_FAKE_REDIS), \
-         patch("ontoexplorer.clients.reasoning.filter_already_classified", new=_async_empty):
+    with patch("ontoexplorer.modules.search.indexer._get_redis", return_value=_FAKE_REDIS):
         resp = await client.get(
             "/api/v1/search",
             params={"q": "'cell death'", "mode": "expression",

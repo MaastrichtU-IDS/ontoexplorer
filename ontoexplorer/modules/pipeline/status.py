@@ -45,6 +45,26 @@ def _iso(dt) -> str | None:
     return dt.isoformat() if hasattr(dt, "isoformat") else str(dt)
 
 
+async def reasoned_version_ids(db: AsyncSession, version_ids: list[str]) -> set[str]:
+    """Subset of `version_ids` that have been reasoned (a done `reason` job).
+
+    This is the DURABLE "is classified for MOS?" signal: a done reason job means
+    reason_ontology persisted the inferred subClassOf closure into Oxigraph, which
+    never expires — unlike the reasoner's 30-day Redis classification cache. Used
+    by cross-ontology MOS search to evaluate only reasoned versions (replacing the
+    cache-existence check that made the result depend on a TTL). One query."""
+    if not version_ids:
+        return set()
+    from ontoexplorer.models.db import Job
+    from sqlalchemy import select
+    rows = (await db.execute(
+        select(Job.version_id)
+        .where(Job.type == "reason", Job.status == "done", Job.version_id.in_(version_ids))
+        .distinct()
+    )).all()
+    return {str(vid) for (vid,) in rows}
+
+
 async def version_pipeline(db: AsyncSession, version_id: str) -> dict:
     """{stage: {done: bool, at: iso|None}} for one version. Empty dict if unknown."""
     row = (await db.execute(text(_VERSION_SQL), {"vid": version_id})).mappings().first()
