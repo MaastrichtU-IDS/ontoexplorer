@@ -1,6 +1,7 @@
 """ELK OWL-EL Reasoning Service — FastAPI application."""
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor
