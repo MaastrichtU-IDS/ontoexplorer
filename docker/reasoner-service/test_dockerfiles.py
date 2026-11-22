@@ -32,3 +32,17 @@ def test_dockerfile_copies_every_service_module(dockerfile):
     copied = _copied_py_files(HERE / dockerfile)
     assert sorted(set(MODULES) - copied) == []
     assert sorted(copied - set(MODULES)) == []  # no stale names either
+
+
+def _rustdl_pin(path: Path) -> str:
+    pins = re.findall(r"rustdl==([0-9][0-9A-Za-z.]*)", path.read_text())
+    assert len(pins) == 1, f"{path.name}: expected one rustdl pin, found {pins}"
+    return pins[0]
+
+
+def test_rustdl_pin_matches_across_images_and_ci():
+    # Dockerfile.arm64 once stayed on an older rustdl than the amd64 image; CI
+    # installs requirements-test.txt, so it must test the version that ships.
+    pins = {name: _rustdl_pin(HERE / name)
+            for name in ("Dockerfile", "Dockerfile.arm64", "requirements-test.txt")}
+    assert len(set(pins.values())) == 1, pins

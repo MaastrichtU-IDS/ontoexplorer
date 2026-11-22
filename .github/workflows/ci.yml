@@ -43,6 +43,36 @@ jobs:
         # they're really integration tests living in the wrong directory.
         run: uv run pytest tests/unit -q --maxfail=5 -m "not slow"
 
+  reasoner-service:
+    name: Reasoner service (ruff + pytest)
+    # docker/reasoner-service/ is a separate Python app (its own image, its own
+    # dependencies, not in uv.lock), so the backend job never saw it. Its tests
+    # need no services: Redis is faked, and the tests that need the km or
+    # Konclude binaries skip themselves (neither is installed here).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: docker/reasoner-service/requirements-test.txt
+
+      - name: Install service and test dependencies
+        run: |
+          uv venv --python 3.12 .venv-reasoner
+          uv pip install --python .venv-reasoner \
+            -r docker/reasoner-service/requirements-test.txt ruff
+
+      - name: Ruff
+        run: .venv-reasoner/bin/ruff check docker/reasoner-service/
+
+      - name: Pytest
+        working-directory: docker/reasoner-service
+        run: ../../.venv-reasoner/bin/python -m pytest -q --maxfail=5
+
   frontend:
     name: Frontend (tsc + vitest)
     runs-on: ubuntu-latest
