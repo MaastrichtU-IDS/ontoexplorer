@@ -28,17 +28,36 @@ def test_reasoners_endpoint_lists_capabilities(client):
     assert "profile" in by_name["rustdl"] and "available" in by_name["rustdl"]
 
 
-def test_justification_422_for_konclude(client, monkeypatch):
-    # A cached classification must exist for the endpoint to proceed to the
-    # capability check; store a minimal one under the konclude key.
+def _store_konclude_classification():
+    # A cached classification must exist for the endpoint to proceed past the
+    # existence check; store a minimal one under the konclude key.
     import cache as cache_mod
     from classifier import ClassificationResult
     r = ClassificationResult("v1", "t", 0, {}, {}, {}, {}, [], {}, 1.0)
     cache_mod.store_classification(r, "konclude")
+
+
+def test_justification_for_konclude_version_runs_on_rustdl(client):
+    # Konclude has no justify capability, but justifications are reasoner-
+    # agnostic (#91): a konclude-classified version is justified by the
+    # dedicated justifier (rustdl by default) instead of being refused.
+    pytest.importorskip("rustdl")
+    _store_konclude_classification()
+    resp = client.post("/classify/v1/justification",
+                       json={"sub": "s", "sup": "o", "reasoner": "konclude"})
+    assert resp.status_code == 200
+    assert resp.json()["reasoner"] == "konclude"
+    assert resp.json()["justifier"] == "rustdl"
+
+
+def test_justification_422_when_justifier_cannot_justify(client, monkeypatch):
+    # Configuring a reasoner without justify as the justifier is refused.
+    monkeypatch.setenv("JUSTIFY_REASONER", "konclude")
+    _store_konclude_classification()
     resp = client.post("/classify/v1/justification",
                        json={"sub": "s", "sup": "o", "reasoner": "konclude"})
     assert resp.status_code == 422
-    assert "does not support justifications" in resp.json()["detail"]
+    assert "justifier 'konclude' is unavailable" in resp.json()["detail"]
 
 
 def test_justification_returns_the_justifying_axioms(client):

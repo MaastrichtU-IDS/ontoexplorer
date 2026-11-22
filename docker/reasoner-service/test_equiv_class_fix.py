@@ -96,7 +96,7 @@ def test_noop_without_equivalent_class():
 
 
 def test_skips_blank_node_operands():
-    pyoxigraph = pytest.importorskip("pyoxigraph")
+    pytest.importorskip("pyoxigraph")
     # A ≡ [ anonymous class expression ] — the bnode operand must be skipped,
     # and A (already declared) is not re-injected.
     nt = (
@@ -132,7 +132,6 @@ def test_rustdl_classifies_after_injecting_declarations():
     class statement'); injecting the declaration lets it classify."""
     pytest.importorskip("pyoxigraph")
     pytest.importorskip("rustdl")
-    import pyoxigraph
     from rustdl_backend import RustdlBackend
 
     nt = (
