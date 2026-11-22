@@ -8,6 +8,7 @@ import { useFacets } from '../hooks/useFacets'
 import { useDebounced } from '../hooks/useDebounced'
 import { MOSQuery } from '../components/MOSQuery'
 import { TypeBadge } from '../components/ResultList'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 const TYPES = [
   { key: 'class', label: 'Classes', stat: 'total_classes' },
@@ -67,6 +68,8 @@ export default function EntityBrowser() {
   const [cursors, setCursors] = useState<string[]>([])
   const [showDefs, setShowDefs] = useState(false)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const isMobile = useIsMobile()
 
   const dq = useDebounced(q, 200).trim()
   const cursor = cursors.length ? cursors[cursors.length - 1] : undefined
@@ -115,7 +118,7 @@ export default function EntityBrowser() {
   )
 
   return (
-    <div style={{ maxWidth: 1040, margin: '0 auto', padding: '4rem 1.5rem 3rem' }}>
+    <div style={{ maxWidth: 1040, margin: '0 auto', padding: isMobile ? '1.5rem 1rem 2rem' : '4rem 1.5rem 3rem' }}>
       <h1 style={{ fontSize: 24, marginBottom: 4 }}>Browse entities</h1>
       <p style={{ color: 'var(--text-muted)', marginBottom: 16 }}>
         Every entity behind the repository-wide counts, across all ontologies.
@@ -169,31 +172,48 @@ export default function EntityBrowser() {
             )}
           </div>
 
-          <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-            <aside aria-label="Filter by ontology" style={{ width: 220, flexShrink: 0 }}>
-              <h2 style={{ fontSize: 13, marginBottom: 6 }}>Ontology</h2>
-              <input
-                aria-label="Search ontologies" type="text" value={ontQ} placeholder="Search ontologies…"
-                onChange={e => setOntQ(e.target.value)} style={{ width: '100%', padding: '6px 8px', marginBottom: 6 }}
-              />
-              <div style={{ maxHeight: 360, overflowY: 'auto' }}>
-                {visibleFacets.map((f: Facet) => (
-                  <label key={f.ontology_id} title={f.title}
-                    style={{ display: 'flex', gap: 6, fontSize: 12, padding: '2px 0', alignItems: 'center' }}>
-                    <input type="checkbox" checked={onts.includes(f.ontology_id)}
-                      onChange={() => toggleOnt(f.ontology_id)} />
-                    <span style={{ flex: 1 }}>{f.short}</span>
-                    <span style={{ color: 'var(--text-dim)' }}>{f.count.toLocaleString()}</span>
-                  </label>
-                ))}
-              </div>
-              {onts.length > 0 && (
-                <button type="button" onClick={() => { setOnts([]); setCursors([]) }}
-                  style={{ marginTop: 6, fontSize: 12 }}>Clear filter</button>
+          <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 12 : 20, alignItems: 'flex-start' }}>
+            <aside aria-label="Filter by ontology" style={{ width: isMobile ? '100%' : 220, flexShrink: 0 }}>
+              {isMobile ? (
+                <button type="button" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(v => !v)}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
+                    gap: 6, marginBottom: 8, fontSize: 13, padding: '6px 12px', cursor: 'pointer',
+                    borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)',
+                    background: 'var(--bg-secondary)', color: 'var(--text)',
+                  }}>
+                  <span>Ontology{onts.length > 0 ? ` · ${onts.length} selected` : ''}</span>
+                  <span style={{ color: 'var(--text-dim)' }}>{filtersOpen ? '▲' : '▼'}</span>
+                </button>
+              ) : (
+                <h2 style={{ fontSize: 13, marginBottom: 6 }}>Ontology</h2>
+              )}
+              {(!isMobile || filtersOpen) && (
+                <>
+                  <input
+                    aria-label="Search ontologies" type="text" value={ontQ} placeholder="Search ontologies…"
+                    onChange={e => setOntQ(e.target.value)} style={{ width: '100%', padding: '6px 8px', marginBottom: 6 }}
+                  />
+                  <div style={{ maxHeight: isMobile ? 240 : 360, overflowY: 'auto' }}>
+                    {visibleFacets.map((f: Facet) => (
+                      <label key={f.ontology_id} title={f.title}
+                        style={{ display: 'flex', gap: 6, fontSize: 12, padding: '2px 0', alignItems: 'center' }}>
+                        <input type="checkbox" checked={onts.includes(f.ontology_id)}
+                          onChange={() => toggleOnt(f.ontology_id)} />
+                        <span style={{ flex: 1 }}>{f.short}</span>
+                        <span style={{ color: 'var(--text-dim)' }}>{f.count.toLocaleString()}</span>
+                      </label>
+                    ))}
+                  </div>
+                  {onts.length > 0 && (
+                    <button type="button" onClick={() => { setOnts([]); setCursors([]) }}
+                      style={{ marginTop: 6, fontSize: 12 }}>Clear filter</button>
+                  )}
+                </>
               )}
             </aside>
 
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ flex: 1, minWidth: 0, alignSelf: isMobile ? 'stretch' : undefined }}>
               {list.isLoading && <p style={{ color: 'var(--text-dim)' }}>Loading…</p>}
               {!list.isLoading && list.entities.length === 0 && (
                 <p style={{ color: 'var(--text-dim)' }}>No entities found.</p>

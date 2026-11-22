@@ -156,3 +156,22 @@ test('mode=query renders MOSQuery', () => {
   expect(screen.getByTestId('mos-query')).toBeInTheDocument()
   expect(screen.queryByLabelText('Search')).not.toBeInTheDocument()
 })
+
+test('narrow viewport collapses the ontology filter behind a toggle', () => {
+  // useIsMobile() seeds from window.innerWidth; force a phone width before render
+  // (the jsdom matchMedia mock stays non-matching, so initial state is what counts).
+  const realWidth = window.innerWidth
+  Object.defineProperty(window, 'innerWidth', { value: 375, configurable: true, writable: true })
+  try {
+    renderAt('/browse')
+    // The facet checkboxes and their search are hidden until the toggle opens them,
+    // so they never squeeze the results column on a phone.
+    expect(screen.queryByLabelText('Search ontologies')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/GO/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Ontology/ }))
+    expect(screen.getByLabelText('Search ontologies')).toBeInTheDocument()
+    expect(screen.getByLabelText(/GO/)).toBeInTheDocument()
+  } finally {
+    Object.defineProperty(window, 'innerWidth', { value: realWidth, configurable: true, writable: true })
+  }
+})
