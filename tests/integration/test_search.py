@@ -60,6 +60,14 @@ async def _seed_entity_index(db_session, version_id: str,
             primary_label_norm=normalise_label(label),
             short=iri.split("/")[-1], source="", search_text=label,
         ))
+    # Mark the version reasoned — expression search now reads subsumption from the
+    # durable Oxigraph inferred graph and gates on a done `reason` job (the
+    # durable 'classified' signal), so an unseeded version would 503 not_classified.
+    from ontoexplorer.models.db import Job
+    from sqlalchemy import delete as _delete
+    await db_session.execute(
+        _delete(Job).where(Job.version_id == version_id, Job.type == "reason"))
+    db_session.add(Job(version_id=version_id, type="reason", status="done"))
     await db_session.commit()
 
 
@@ -96,10 +104,10 @@ def _patch_reasoner(classification: dict):
     dsub = classification.get("direct_subclasses", {}) or {}
     dsup = classification.get("direct_superclasses", {}) or {}
 
-    async def _fsub(version_id, class_iri, direct=False, reasoner="rustdl"):
+    async def _fsub(ontology_id, version_id, class_iri, direct=False, reasoner="rustdl"):
         return {"subclasses": list((dsub if direct else subs).get(class_iri, []))}
 
-    async def _fsup(version_id, class_iri, direct=False, reasoner="rustdl"):
+    async def _fsup(ontology_id, version_id, class_iri, direct=False, reasoner="rustdl"):
         return {"superclasses": list(dsup.get(class_iri, []))}
 
     with patch("ontoexplorer.modules.search.evaluator._reasoner_subclasses", new=_fsub), \

@@ -4162,7 +4162,7 @@ async def term_ancestors(
         from ontoexplorer.api.ols._entity_source import label_for, version_label_map
 
         try:
-            data = await _reasoner_superclasses(version_id, iri, direct=False, reasoner=version.reasoner)
+            data = await _reasoner_superclasses(version.ontology_id, version_id, iri, direct=False, reasoner=version.reasoner)
         except Exception:
             return {"ancestors": [], "reasoning_available": False}
 

@@ -71,44 +71,6 @@ def _get_redis_client():
     return _get_redis()
 
 
-def _classification_cache_redis():
-    """Redis DB 2, where the reasoner (rustdl) caches a full classification under
-    `classification:{vid}:{reasoner}` once a version has been reasoned. Distinct
-    from the app Redis (DB 0) used for the per-IRI super/subclass caches."""
-    import redis as _redis
-
-    from ontoexplorer.config import get_settings
-    base = get_settings().redis_url.rsplit("/", 1)[0]
-    return _redis.from_url(f"{base}/2", decode_responses=True)
-
-
-async def filter_already_classified(pairs: list[tuple[str, str]]) -> set[str]:
-    """Given (version_id, reasoner) pairs, return the subset of version_ids whose
-    classification is ALREADY cached — i.e. can be evaluated without triggering an
-    on-demand classification.
-
-    A single pipelined EXISTS batch against the reasoner's classification cache
-    (DB 2); it NEVER calls the reasoner. Used by global expression search (#277
-    follow-up) so one query can't synchronously classify dozens of large
-    ontologies — it evaluates only the versions already reasoned by the pipeline."""
-    if not pairs:
-        return set()
-
-    def _check() -> set[str]:
-        r = _classification_cache_redis()
-        pipe = r.pipeline(transaction=False)
-        for vid, reasoner in pairs:
-            pipe.exists(f"classification:{vid}:{reasoner}")
-            pipe.exists(f"classification:{vid}")  # legacy bare key
-        res = pipe.execute()
-        ready: set[str] = set()
-        for i, (vid, _reasoner) in enumerate(pairs):
-            if res[2 * i] or res[2 * i + 1]:
-                ready.add(vid)
-        return ready
-
-    return await asyncio.to_thread(_check)
-
 
 async def classify_v2(
     graph: rdflib.Graph,
@@ -241,56 +203,89 @@ async def incremental_close(session_id: str) -> dict:
         return resp.json()
 
 
-async def superclasses(version_id: str, class_iri: str, direct: bool = False, reasoner: str = "rustdl") -> dict:
-    """Return all (or direct-only) inferred superclasses of class_iri.
+# Subsumption is served from the DURABLE Oxigraph store, not the reasoner's
+# TTL'd classification cache. reason_ontology persists the full inferred closure
+# as rdfs:subClassOf triples into the version's `:inferred` named graph (and the
+# asserted graph holds the asserted-direct edges); the union of the two is the
+# complete transitive hierarchy. Reading from there means subsumption never
+# "goes cold" when the reasoner's 30-day Redis cache expires — the reasoning we
+# already computed is not lost.
+_RDFS_SUBCLASSOF = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
+_OWL_THING_IRI = "http://www.w3.org/2002/07/owl#Thing"
 
-    Cached in Redis under `elk:super:{version_id}:…` with a 24-hour TTL.
-    Per-IRI inferred sets are immutable for the lifetime of a version, so any
-    repeat lookup within a browsing session is served from cache.
+
+def _oxi_related(ontology_id: str, version_id: str, class_iri: str,
+                 want_subclasses: bool, direct: bool) -> list[str]:
+    """Sub- (or super-) classes of class_iri from Oxigraph (asserted ∪ inferred).
+
+    Scoped to this version's two EXACT content graphs (asserted + inferred) so the
+    query hits the graph index — never materialising a widely-reused class's edges
+    across the whole fleet (that was ~40× slower). direct=False returns the full
+    transitive set; direct=True only the immediate neighbours (a FILTER NOT EXISTS
+    anti-join over the same union). owl:Thing and the class itself are excluded.
+    """
+    from ontoexplorer.clients.oxigraph import sparql_query, graph_iri
+    import pyoxigraph
+
+    sub = _RDFS_SUBCLASSOF
+    ga = graph_iri(ontology_id, version_id, inferred=False)
+    gi = graph_iri(ontology_id, version_id, inferred=True)
+
+    def over_version(tp: str) -> str:
+        # The triple pattern matched in EITHER the asserted or the inferred graph.
+        return f"{{ {{ GRAPH <{ga}> {{ {tp} }} }} UNION {{ GRAPH <{gi}> {{ {tp} }} }} }}"
+
+    main = f"?x <{sub}> <{class_iri}>" if want_subclasses else f"<{class_iri}> <{sub}> ?x"
+    excl = f'FILTER(?x != <{class_iri}> && ?x != <{_OWL_THING_IRI}>)'
+    if not direct:
+        q = f"SELECT DISTINCT ?x WHERE {{ {over_version(main)} {excl} }}"
+    else:
+        if want_subclasses:
+            s1, s2 = f"?x <{sub}> ?mid", f"?mid <{sub}> <{class_iri}>"
+        else:
+            s1, s2 = f"<{class_iri}> <{sub}> ?mid", f"?mid <{sub}> ?x"
+        q = (f"SELECT DISTINCT ?x WHERE {{ {over_version(main)} {excl} "
+             f"FILTER NOT EXISTS {{ {over_version(s1)} {over_version(s2)} "
+             f"FILTER(?mid != <{class_iri}> && ?mid != ?x && ?mid != <{_OWL_THING_IRI}>) }} }}")
+    out: list[str] = []
+    for sol in sparql_query(q):
+        x = sol["x"]
+        if isinstance(x, pyoxigraph.NamedNode):
+            out.append(x.value)
+    return out
+
+
+async def superclasses(ontology_id: str, version_id: str, class_iri: str,
+                       direct: bool = False, reasoner: str = "rustdl") -> dict:
+    """All (or direct-only) inferred superclasses of class_iri, read from the durable
+    Oxigraph store (see `_oxi_related`).
+
+    A short Redis read-through cache (`elk:super:…`, 24h TTL) avoids repeating the
+    SPARQL for hot IRIs; on expiry it simply re-reads Oxigraph, so it is never
+    permanently cold. `reasoner` is accepted for signature compatibility.
     """
     r = _get_redis_client()
     key = _elk_cache_key("super", version_id, class_iri, direct, reasoner)
     cached = await asyncio.to_thread(r.get, key)
     if cached:
         return _json.loads(cached)
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(
-            _elk_url(f"/classify/{version_id}/superclasses"),
-            params={"cls": class_iri, "direct": str(direct).lower(), "reasoner": reasoner},
-        )
-        if resp.status_code == 409:
-            raise ReasoningNotReadyError(version_id)
-        if resp.status_code == 404:
-            raise ClassNotFoundError(class_iri)
-        resp.raise_for_status()
-    data = resp.json()
+    data = {"superclasses": await asyncio.to_thread(
+        _oxi_related, ontology_id, version_id, class_iri, False, direct)}
     await asyncio.to_thread(r.set, key, _json.dumps(data), _ELK_SUBSUP_TTL)
     return data
 
 
-async def subclasses(version_id: str, class_iri: str, direct: bool = False, reasoner: str = "rustdl") -> dict:
-    """Return all (or direct-only) inferred subclasses of class_iri.
-
-    Cached identically to `superclasses` — see that docstring.
-    """
+async def subclasses(ontology_id: str, version_id: str, class_iri: str,
+                     direct: bool = False, reasoner: str = "rustdl") -> dict:
+    """All (or direct-only) inferred subclasses of class_iri, from the durable
+    Oxigraph store. Cached identically to `superclasses`."""
     r = _get_redis_client()
     key = _elk_cache_key("sub", version_id, class_iri, direct, reasoner)
     cached = await asyncio.to_thread(r.get, key)
     if cached:
         return _json.loads(cached)
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(
-            _elk_url(f"/classify/{version_id}/subclasses"),
-            params={"cls": class_iri, "direct": str(direct).lower(), "reasoner": reasoner},
-        )
-        if resp.status_code == 409:
-            raise ReasoningNotReadyError(version_id)
-        if resp.status_code == 404:
-            raise ClassNotFoundError(class_iri)
-        resp.raise_for_status()
-    data = resp.json()
+    data = {"subclasses": await asyncio.to_thread(
+        _oxi_related, ontology_id, version_id, class_iri, True, direct)}
     await asyncio.to_thread(r.set, key, _json.dumps(data), _ELK_SUBSUP_TTL)
     return data
 

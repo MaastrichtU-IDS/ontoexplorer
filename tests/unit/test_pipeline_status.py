@@ -45,3 +45,32 @@ async def test_version_pipeline_and_coverage(db_session):
     # Counts aggregate every ontology in the DB; assert our contributions are present.
     assert cov["counts"]["reasoned"]["done"] >= 1
     assert cov["counts"]["indexed"]["missing"] >= 2
+
+
+async def test_reasoned_version_ids(db_session):
+    """reasoned_version_ids returns exactly the versions with a done reason job —
+    the durable 'classified for MOS' signal (inferred closure persisted in Oxigraph),
+    independent of the reasoner cache TTL."""
+    import datetime as _dt
+    from ontoexplorer.models.db import Job, Ontology, OntologyVersion
+    from ontoexplorer.modules.pipeline.status import reasoned_version_ids
+
+    o = Ontology(iri="http://x/reasoned.owl", shortname="reasoned-x")
+    db_session.add(o)
+    await db_session.flush()
+    v_reasoned = OntologyVersion(ontology_id=o.id, minio_key="r", sha256="rid-r",
+                                 format="turtle", status="ready")
+    v_unreasoned = OntologyVersion(ontology_id=o.id, minio_key="u", sha256="rid-u",
+                                   format="turtle", status="ready")
+    db_session.add_all([v_reasoned, v_unreasoned])
+    await db_session.flush()
+    db_session.add(Job(version_id=v_reasoned.id, type="reason", status="done",
+                       finished_at=_dt.datetime(2026, 1, 1, tzinfo=_dt.timezone.utc)))
+    # A reason job that is NOT done must not count.
+    db_session.add(Job(version_id=v_unreasoned.id, type="reason", status="running"))
+    await db_session.flush()
+
+    got = await reasoned_version_ids(db_session, [str(v_reasoned.id), str(v_unreasoned.id)])
+    assert str(v_reasoned.id) in got
+    assert str(v_unreasoned.id) not in got
+    assert await reasoned_version_ids(db_session, []) == set()

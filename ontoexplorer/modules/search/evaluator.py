@@ -415,7 +415,7 @@ async def evaluate(
                 if key not in _sub_cache:
                     try:
                         data = await _reasoner_subclasses(
-                            version_id, iri, direct=direct_only, reasoner=reasoner)
+                            ontology_id, version_id, iri, direct=direct_only, reasoner=reasoner)
                         _sub_cache[key] = {s for s in data.get("subclasses", []) if s != _OWL_THING}
                     except ClassNotFoundError:
                         # The reasoner doesn't know this class — no subclasses (the
@@ -574,7 +574,7 @@ async def evaluate_relation(
         if c not in _parents_cache:
             try:
                 data = await _reasoner_superclasses(
-                    version_id, c, direct=True, reasoner=reasoner)
+                    ontology_id, version_id, c, direct=True, reasoner=reasoner)
                 _parents_cache[c] = [p for p in data.get("superclasses", []) if p != _OWL_THING]
             except ClassNotFoundError:
                 # ReasoningNotReadyError propagates (per-version 503); see _subs.
