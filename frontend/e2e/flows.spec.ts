@@ -19,7 +19,10 @@ for (const slug of REPRESENTATIVE) {
     await page.goto(ROUTES.ontology(slug), { waitUntil: 'domcontentloaded' })
     await expect(page.locator('[data-iri]').first()).toBeVisible({ timeout: 30_000 })
     // Expand a node if collapsed, then click a term row and expect a detail region.
-    const toggle = page.locator('[data-iri] [data-toggle]').first()
+    // Target an *expandable* row's toggle: a leaf's caret is an empty zero-size
+    // spacer, so `[data-iri] [data-toggle]`.first() could land on it and hang the
+    // click until timeout (the inferred tree often sorts leaf roots first).
+    const toggle = page.locator('[data-iri][data-expandable="true"] [data-toggle]').first()
     if (await toggle.count()) await toggle.click().catch(() => {})
     await page.locator('[data-iri]').first().click()
     await page.waitForLoadState('networkidle').catch(() => {})

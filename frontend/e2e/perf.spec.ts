@@ -59,8 +59,10 @@ for (const o of ONTOLOGIES) {
     })
     await record(testInfo, { kind: 'treeRender', slug: o.slug, entities: o.entities, ms: wall, verdict: verdict(wall, BUDGETS.treeRender) })
 
-    // Expand the first expandable node and time children appearing.
-    const toggle = page.locator('[data-iri] [data-toggle]').first()
+    // Expand the first expandable node and time children appearing. Scope to an
+    // expandable row: a leaf's caret is an empty zero-size spacer that would hang
+    // the click (giant inferred trees often sort leaf roots first).
+    const toggle = page.locator('[data-iri][data-expandable="true"] [data-toggle]').first()
     if (await toggle.count()) {
       const before = await page.locator('[data-iri]').count()
       const t0 = Date.now()

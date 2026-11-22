@@ -127,7 +127,12 @@ function TreeNode({ ontologyId, versionId, term, depth, nodeKey, selectedIri, fo
         onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = '' }}
       >
         <span
-          data-toggle="true"
+          // Only a node that can actually expand carries data-toggle. A leaf's
+          // caret span is an empty, zero-size spacer (keeps indentation), and
+          // marking it as a toggle made it a click target that collapses to no
+          // box — which hangs anything selecting '[data-toggle]' (Playwright, AT)
+          // when the first row happens to be a leaf (common in the inferred tree).
+          data-toggle={canExpand ? 'true' : undefined}
           onClick={canExpand ? handleToggle : undefined}
           style={{ width: 14, fontSize: 10, color: 'var(--text-dim)', flexShrink: 0, userSelect: 'none',
             cursor: canExpand ? 'pointer' : 'default' }}
