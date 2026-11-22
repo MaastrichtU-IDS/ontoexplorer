@@ -14,8 +14,10 @@
 #   - km      : kobayashi-marust, compiled from source for aarch64 (km-build
 #               stage). Rust, links only libc/libgcc. Classify + consistency.
 #
-# py-horned-owl has no glibc/manylinux aarch64 wheel on PyPI, so it is compiled
-# from sdist in a Rust builder stage below.
+# py-horned-owl: the builder stage below predates aarch64 wheels on PyPI and
+# compiled it from sdist. Since 2.0.0 PyPI publishes manylinux aarch64 wheels,
+# so `pip wheel` there now just fetches the published wheel; the stage can be
+# dropped in favour of a plain pip install.
 
 # --- builder: compile py-horned-owl (Rust) into an aarch64 wheel ---
 # MUST use the same Python (3.12) as the final image: py-horned-owl builds a
@@ -27,8 +29,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl build-esse
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 ENV PATH=/root/.cargo/bin:$PATH
 RUN pip install --no-cache-dir maturin
-# Produces /wheels/py_horned_owl-1.4.*-cp312-...aarch64.whl (build backend: maturin).
-RUN pip wheel --no-cache-dir "py-horned-owl==1.4.*" -w /wheels
+# Produces /wheels/py_horned_owl-2.0.*-cp312-...aarch64.whl. 2.0 fixes the RDF
+# reader mapping unqualified min/max cardinality on a data property to the
+# Object* form (see Dockerfile).
+RUN pip wheel --no-cache-dir "py-horned-owl==2.0.*" -w /wheels
 
 # --- konclude: compile natively for aarch64 (Qt-only, no Redland) ---
 # Konclude is portable C++/Qt5; the upstream release does a heavyweight STATIC

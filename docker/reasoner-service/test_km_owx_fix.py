@@ -203,3 +203,21 @@ def test_km_fully_declared_input_reports_no_repair():
     result = backend.classify_ntriples(nt, "test-km-declared")
     assert result.superclasses.get(A) == [C]
     assert result.repairs == {}
+
+
+def test_km_classifies_unqualified_cardinality_on_data_property():
+    """IAO's shape: C ⊑ ≥1 d with d an owl:DatatypeProperty and no qualifier.
+    The OWL 2 RDF mapping makes that DataMinCardinality; py-horned-owl < 2.0
+    read it as ObjectMinCardinality(1 d owl:Thing), so km saw d as both a data
+    and an object property and rejected the ontology."""
+    backend = _km_backend()
+    d = "http://ex/d"
+    nt = (_decl(A) + _decl(B) + _decl(C)
+          + f"<{d}> <{RDF_TYPE}> <{OWL}DatatypeProperty> .\n"
+          + f"<{A}> <{RDFS_SUB}> <{B}> .\n<{B}> <{RDFS_SUB}> <{C}> .\n"
+          + f"<{A}> <{RDFS_SUB}> _:r .\n"
+          + f"_:r <{RDF_TYPE}> <{OWL}Restriction> .\n"
+          + f"_:r <{OWL}onProperty> <{d}> .\n"
+          + f'_:r <{OWL}minCardinality> "1"^^<http://www.w3.org/2001/XMLSchema#nonNegativeInteger> .\n')
+    result = backend.classify_ntriples(nt, "test-km-data-cardinality")
+    assert result.superclasses.get(A) == [C]

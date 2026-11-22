@@ -33,13 +33,16 @@ WORKDIR /app
 # whelk removed: py-whelk's reasoner.inferred_axioms() SIGSEGVs on this amd64 build
 # (both vendored 0.1.0 and PyPI 0.4.0 — it never produced a classification here).
 # py-horned-owl is kept: the km and konclude backends use open_ontology_from_string.
+# 2.0+ is required: 1.4's RDF reader turned an unqualified owl:min/maxCardinality
+# on a data property into ObjectMin/MaxCardinality, so km saw the property as
+# both kinds and rejected the ontology (IAO's has_measurement_value).
 RUN pip install --no-cache-dir \
     "fastapi==0.111.*" \
     "uvicorn[standard]" \
     "rdflib" \
     "redis>=5.0" \
     "requests>=2.31" \
-    "py-horned-owl==1.4.*" \
+    "py-horned-owl==2.0.*" \
     "pyoxigraph>=0.4" \
     "rustdl==0.4.38"
 
