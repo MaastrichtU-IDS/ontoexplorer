@@ -410,12 +410,13 @@ function OntologyDocMeta({ ontologyId, versionId, lang }: { ontologyId: string; 
     })
 
   if (isLoading) {
-    // Reserve roughly the height of a typical metadata table (~7 rows) so the
-    // real table doesn't push the Repository Metadata section down when it
-    // arrives — the single largest CLS source on ontology pages (#191).
+    // Fill the fixed-height box the caller reserves (see OntologyMeta) with a
+    // loading shimmer. Row count is cosmetic now — the container's fixed height,
+    // not this skeleton, is what keeps the Repository Metadata section below from
+    // moving when the real table arrives (previously the #1 CLS source) (#191).
     return (
       <div aria-hidden aria-busy="true">
-        {Array.from({ length: 7 }).map((_, i) => (
+        {Array.from({ length: 10 }).map((_, i) => (
           <div key={i} style={{ display: 'flex', gap: 20, padding: '5px 0' }}>
             <SkeletonBar w={110} h={14} />
             <SkeletonBar w={`${40 + ((i * 17) % 45)}%`} h={14} />
@@ -529,15 +530,20 @@ function OntologyMeta({ iri, version, lang, ownerDisplayName, ownerOrcid, resolv
       ) : null}
 
       {/* ── Document metadata ──
-          Shown above Repository Metadata (per request). It still loads
-          asynchronously and its height varies per ontology, but Repository
-          Metadata now sits below it and is synchronous + stable, so Document
-          Metadata's late arrival only nudges that last block rather than shoving
-          content above it down (#191). */}
+          Shown above Repository Metadata (per request). It loads asynchronously
+          and its height varies wildly per ontology — a few rows for most, but
+          hundreds of px for the big OBO ontologies (uberon lists ~25 creators +
+          contributors). Letting it grow in flow shoved the Repository Metadata
+          table below it down ~470px on load: the single largest CLS source on
+          the page (uberon measured 0.36). So the section lives in a fixed-height,
+          internally-scrolling box: skeleton and real content occupy the exact
+          same footprint, so nothing below ever moves. Tall metadata scrolls
+          inside the box; short metadata leaves some slack (the accepted trade for
+          keeping Document Metadata first). (#191) */}
       <h3 style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
         Document Metadata
       </h3>
-      <div style={{ marginBottom: 28 }}>
+      <div style={{ height: 300, overflowY: 'auto', marginBottom: 28 }}>
         <OntologyDocMeta ontologyId={version.ontology_id} versionId={version.id} lang={lang} />
       </div>
 
