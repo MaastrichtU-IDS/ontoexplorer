@@ -348,6 +348,37 @@ def load_graph(ontology_id: str, version_id: str, graph: rdflib.Graph) -> int:
     return count
 
 
+def fetch_asserted_graph(ontology_id: str, version_id: str) -> rdflib.Graph:
+    """Materialise a version's ASSERTED named graph into an rdflib.Graph.
+
+    The inverse of :func:`load_graph`. Used by the reasoning/classification path
+    to hand the asserted triples to the reasoner service (mirrors the inline read
+    in jobs.tasks._reason_and_persist). Blank nodes and typed/langed literals are
+    preserved.
+    """
+    store = get_store()
+    named_node = pyoxigraph.NamedNode(graph_iri(ontology_id, version_id, inferred=False))
+    g = rdflib.Graph()
+    for quad in store.quads_for_pattern(None, None, None, named_node):
+        s = (rdflib.URIRef(quad.subject.value)
+             if isinstance(quad.subject, pyoxigraph.NamedNode)
+             else rdflib.BNode(quad.subject.value))
+        p = rdflib.URIRef(quad.predicate.value)
+        o_raw = quad.object
+        if isinstance(o_raw, pyoxigraph.NamedNode):
+            o = rdflib.URIRef(o_raw.value)
+        elif isinstance(o_raw, pyoxigraph.Literal):
+            if o_raw.language:
+                o = rdflib.Literal(o_raw.value, lang=o_raw.language)
+            else:
+                dt = rdflib.URIRef(o_raw.datatype.value) if o_raw.datatype else None
+                o = rdflib.Literal(o_raw.value, datatype=dt)
+        else:
+            o = rdflib.BNode(o_raw.value)
+        g.add((s, p, o))
+    return g
+
+
 _VALID_LANG_TAG = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$")
 _MIME_TO_RDFLIB = {
     "application/rdf+xml": "xml", "text/turtle": "turtle",

@@ -99,6 +99,10 @@ export const BUDGETS = {
   treeExpand: { good: 800, poor: 2500 },
   searchResults: { good: 1000, poor: 3000 },
   autocomplete: { good: 500, poor: 1500 },
+  // MOS (Manchester OWL Syntax) expression query: wall-clock from pressing Enter
+  // to the first result row or a terminal message. The front-page surface fans
+  // out one request per in-scope ontology, so this is deliberately generous.
+  mos: { good: 2000, poor: 6000 },
   // API response p95 across a flow's XHRs.
   apiP95: { good: 500, poor: 1500 },
 } as const
