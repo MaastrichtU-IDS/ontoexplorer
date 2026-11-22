@@ -77,8 +77,9 @@ class KmBackend:
         # Feed km only the logical content: drop the ontology/version IRI (km
         # mangles IRIs that start with it) and all annotations (km >= v1.4.4
         # rejects reserved annotation properties and non-OWL-2 literal types),
-        # and declare used-but-undeclared entities (km >= v1.4.4 requires it).
-        # All three are lossless for classification. See km_owx_fix.
+        # drop declarations of built-in IRIs such as xsd:date (km >= v1.4.4
+        # rejects them), and declare used-but-undeclared entities (km >= v1.4.4
+        # requires it). All are lossless for classification. See km_owx_fix.
         import km_owx_fix
         owx, _injected = km_owx_fix.prepare_owx_for_km(owx)
         repairs: dict = {}

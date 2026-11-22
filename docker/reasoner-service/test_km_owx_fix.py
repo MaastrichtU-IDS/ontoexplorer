@@ -98,6 +98,20 @@ def test_strip_removes_header_iris_and_every_annotation():
     assert tags.count("SubClassOf") == 1  # the logical axiom itself survives
 
 
+def test_drops_declarations_of_builtin_iris_only():
+    owx = _owx(
+        f'<Declaration><Datatype IRI="{XSD_DATE}"/></Declaration>'
+        f'<Declaration><Class IRI="{OWL}Thing"/></Declaration>'
+        f'<Declaration><Class IRI="{A}"/></Declaration>'
+        f'<SubClassOf><Class IRI="{A}"/><Class IRI="{OWL}Thing"/></SubClassOf>'
+    )
+    root = _root(owx)
+    assert kof.drop_builtin_declarations(root) == 2
+    decls = [kof._resolve(next(iter(d)), {}) for d in root if kof._local(d.tag) == "Declaration"]
+    assert decls == [A]
+    assert sum(1 for e in root if kof._local(e.tag) == "SubClassOf") == 1
+
+
 def test_prepare_strips_injects_and_round_trips():
     owx = _owx(f'<SubClassOf><Class IRI="{A}"/><Class IRI="{B}"/></SubClassOf>',
                attrs=f' ontologyIRI="{ONTO}" versionIRI="{ONTO}/1.0"')
@@ -220,4 +234,18 @@ def test_km_classifies_unqualified_cardinality_on_data_property():
           + f"_:r <{OWL}onProperty> <{d}> .\n"
           + f'_:r <{OWL}minCardinality> "1"^^<http://www.w3.org/2001/XMLSchema#nonNegativeInteger> .\n')
     result = backend.classify_ntriples(nt, "test-km-data-cardinality")
+    assert result.superclasses.get(A) == [C]
+
+
+def test_km_ignores_declared_builtin_datatype():
+    """OWL API output for OBO ontologies (IAO): xsd:date declared as an
+    rdfs:Datatype because annotation literals use it. km >= v1.4.4 refuses
+    declaring a reserved IRI; the declaration has no logical meaning."""
+    backend = _km_backend()
+    nt = (f"<{XSD_DATE}> <{RDF_TYPE}> <http://www.w3.org/2000/01/rdf-schema#Datatype> .\n"
+          f"<{DC_DATE}> <{RDF_TYPE}> <{OWL}AnnotationProperty> .\n"
+          + _decl(A) + _decl(B) + _decl(C)
+          + f'<{A}> <{DC_DATE}> "2025-06-02"^^<{XSD_DATE}> .\n'
+          + f"<{A}> <{RDFS_SUB}> <{B}> .\n<{B}> <{RDFS_SUB}> <{C}> .\n")
+    result = backend.classify_ntriples(nt, "test-km-builtin-datatype")
     assert result.superclasses.get(A) == [C]
