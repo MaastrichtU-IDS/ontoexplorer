@@ -40,42 +40,45 @@ def _empty() -> dict:
     }
 
 
-def _totals_from_cache(vids: list[str]) -> dict:
+# graph_counts sub-key -> public-stats total field. graph_counts is the durable
+# VoID count payload written at index time (OntologyVersion.graph_counts).
+_TOTAL_FIELDS = {
+    "class_count":               "total_classes",
+    "object_property_count":     "total_object_properties",
+    "datatype_property_count":   "total_data_properties",
+    "annotation_property_count": "total_annotation_properties",
+    "triple_count":              "total_axioms",
+    "individual_count":          "total_individuals",
+}
+
+
+async def _totals_from_graph_counts(db: AsyncSession, version_ids: list[str]) -> dict:
     """Sum per-version totals (class/property/axiom/individual counts) from the
-    per-version stats cache. Pure Redis; runs in a worker thread.
+    DURABLE `graph_counts` column, written at index time on every version.
 
-    (The per-version counts + triple_count still live in the stats cache written at
-    index time; the UNIQUE cross-catalogue counts moved to entity_index — see
-    `_unique_counts` — in #242 Stage 2, so this no longer touches the type sets.)"""
-    from ontoexplorer.modules.search.indexer import _get_redis, _stats_cache_key
-
-    if not vids:
-        return {}
-    r = _get_redis()
-    values = r.mget([_stats_cache_key(vid) for vid in vids])
-    classes = obj_props = data_props = ann_props = axioms = individuals = 0
-    for raw in values:
-        if not raw:
+    This used to read the per-version `version_stats` Redis cache, but those keys
+    carry a 30-day TTL and don't survive a Redis restart/eviction — so aged or
+    wiped versions silently contributed 0 and the home page showed total_* = 0
+    even though the data was intact. graph_counts is the same count payload made
+    durable in #399 (the identical fix landed for coverage/owl_profile in
+    #400/#401). A version with graph_counts still NULL (not yet indexed) counts 0
+    and self-heals on its next index — strictly better than the all-or-nothing
+    Redis path. One query."""
+    out = {dst: 0 for dst in _TOTAL_FIELDS.values()}
+    if not version_ids:
+        return out
+    rows = (await db.execute(
+        select(OntologyVersion.graph_counts).where(OntologyVersion.id.in_(version_ids))
+    )).scalars().all()
+    for gc in rows:
+        if not gc:
             continue
-        try:
-            meta = json.loads(raw)
-            classes     += int(meta.get("class_count", 0))
-            obj_props   += int(meta.get("object_property_count", 0))
-            data_props  += int(meta.get("datatype_property_count", 0))
-            ann_props   += int(meta.get("annotation_property_count", 0))
-            axioms      += int(meta.get("triple_count", 0))
-            individuals += int(meta.get("individual_count", 0))
-        except (ValueError, TypeError, json.JSONDecodeError):
-            pass
-
-    return {
-        "total_classes":               classes,
-        "total_object_properties":     obj_props,
-        "total_data_properties":       data_props,
-        "total_annotation_properties": ann_props,
-        "total_axioms":                axioms,
-        "total_individuals":           individuals,
-    }
+        for src, dst in _TOTAL_FIELDS.items():
+            try:
+                out[dst] += int(gc.get(src, 0) or 0)
+            except (ValueError, TypeError):
+                pass
+    return out
 
 
 async def _unique_counts(db: AsyncSession, version_ids: list[str]) -> dict:
@@ -128,7 +131,7 @@ async def compute_public_stats(db: AsyncSession) -> dict:
 
     total_ontologies = await db.scalar(select(func.count(Ontology.id)))
 
-    totals = await asyncio.to_thread(_totals_from_cache, version_ids)
+    totals = await _totals_from_graph_counts(db, version_ids)
     uniques = await _unique_counts(db, version_ids)
     result = {**_empty(), **totals, **uniques, "total_ontologies": total_ontologies}
     return result
