@@ -14,25 +14,8 @@
 #   - km      : kobayashi-marust, compiled from source for aarch64 (km-build
 #               stage). Rust, links only libc/libgcc. Classify + consistency.
 #
-# py-horned-owl: the builder stage below predates aarch64 wheels on PyPI and
-# compiled it from sdist. Since 2.0.0 PyPI publishes manylinux aarch64 wheels,
-# so `pip wheel` there now just fetches the published wheel; the stage can be
-# dropped in favour of a plain pip install.
-
-# --- builder: compile py-horned-owl (Rust) into an aarch64 wheel ---
-# MUST use the same Python (3.12) as the final image: py-horned-owl builds a
-# version-specific extension (cp312 tag), not abi3, so a cp311 wheel from a
-# python-3.11 builder would be rejected by python:3.12-slim.
-FROM python:3.12-slim-bookworm AS builder
-RUN apt-get update && apt-get install -y --no-install-recommends curl build-essential \
- && rm -rf /var/lib/apt/lists/*
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-ENV PATH=/root/.cargo/bin:$PATH
-RUN pip install --no-cache-dir maturin
-# Produces /wheels/py_horned_owl-2.0.*-cp312-...aarch64.whl. 2.0 fixes the RDF
-# reader mapping unqualified min/max cardinality on a data property to the
-# Object* form (see Dockerfile).
-RUN pip wheel --no-cache-dir "py-horned-owl==2.0.*" -w /wheels
+# Python packages (py-horned-owl, pyoxigraph, rustdl) all install from PyPI
+# manylinux aarch64 wheels; nothing Python-side is compiled here.
 
 # --- konclude: compile natively for aarch64 (Qt-only, no Redland) ---
 # Konclude is portable C++/Qt5; the upstream release does a heavyweight STATIC
@@ -76,19 +59,18 @@ RUN cargo build --release --bin km && cp target/release/km /km
 FROM python:3.12-slim-bookworm
 WORKDIR /app
 
-# py-horned-owl compiled to an aarch64 wheel by the builder stage (km/konclude use
-# open_ontology_from_string). whelk removed — py-whelk segfaulted here.
-COPY --from=builder /wheels/py_horned_owl-*.whl /tmp/wheels/
+# py-horned-owl: the km and konclude backends use open_ontology_from_string; 2.0
+# fixes the RDF reader's cardinality mapping on data properties (see Dockerfile).
+# whelk removed — py-whelk segfaulted here.
 RUN pip install --no-cache-dir \
     "fastapi==0.111.*" \
     "uvicorn[standard]" \
     "rdflib" \
     "redis>=5.0" \
     "requests>=2.31" \
-    /tmp/wheels/py_horned_owl-*.whl \
+    "py-horned-owl==2.0.*" \
     "pyoxigraph>=0.4" \
-    "rustdl==0.4.38" \
- && rm -rf /tmp/wheels
+    "rustdl==0.4.38"
 
 # Konclude (native aarch64): the binary dynamically links the Qt5 runtime libs
 # it was built against (Core/Xml/Network/Concurrent). shutil.which finds it on
