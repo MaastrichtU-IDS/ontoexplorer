@@ -91,6 +91,70 @@ async def test_totals_come_from_durable_graph_counts_not_redis(monkeypatch, rows
     assert totals == expected
 
 
+async def test_cold_miss_serves_snapshot_and_recomputes_in_background(monkeypatch):
+    """Redis cold miss must NOT block on the ~110s recompute: serve the durable
+    last-good snapshot immediately and kick the recompute into the background."""
+    from ontoexplorer.modules.stats import public_stats as ps
+
+    mock_r = MagicMock()
+    mock_r.get.return_value = None  # cold cache
+    monkeypatch.setattr("ontoexplorer.modules.search.indexer._get_redis", lambda: mock_r)
+
+    snapshot = {"total_ontologies": 1898, "total_classes": 42}
+    monkeypatch.setattr(ps, "_read_snapshot", AsyncMock(return_value=snapshot))
+    dispatch = AsyncMock()
+    monkeypatch.setattr(ps, "_dispatch_background_refresh", dispatch)
+    # An inline recompute on this path is the bug we're preventing.
+    monkeypatch.setattr(ps, "compute_public_stats",
+                        AsyncMock(side_effect=AssertionError("cold miss must not recompute inline")))
+
+    result = await ps.read_public_stats(MagicMock())
+
+    assert result == snapshot
+    dispatch.assert_awaited_once()
+
+
+async def test_cold_miss_without_snapshot_computes_inline(monkeypatch):
+    """Only the truly first-ever miss (no snapshot yet) falls through to an inline
+    recompute — after that the snapshot always exists."""
+    from ontoexplorer.modules.stats import public_stats as ps
+
+    mock_r = MagicMock()
+    mock_r.get.return_value = None
+    monkeypatch.setattr("ontoexplorer.modules.search.indexer._get_redis", lambda: mock_r)
+    monkeypatch.setattr(ps, "_read_snapshot", AsyncMock(return_value=None))
+    refresh = AsyncMock(return_value={"total_ontologies": 3})
+    monkeypatch.setattr(ps, "refresh_public_stats_cache", refresh)
+
+    result = await ps.read_public_stats(MagicMock())
+
+    assert result == {"total_ontologies": 3}
+    refresh.assert_awaited_once()
+
+
+async def test_refresh_upserts_durable_snapshot(monkeypatch):
+    """The refresh path writes the durable StatsSnapshot (id='public') so a later
+    Redis wipe still has a last-good value to serve."""
+    from ontoexplorer.modules.stats import public_stats as ps
+
+    payload = {"total_ontologies": 7, "total_classes": 99}
+    monkeypatch.setattr(ps, "compute_public_stats", AsyncMock(return_value=payload))
+    monkeypatch.setattr("ontoexplorer.modules.search.indexer._get_redis", lambda: MagicMock())
+
+    db = MagicMock()
+    db.get = AsyncMock(return_value=None)   # no existing row → insert
+    db.add = MagicMock()
+    db.commit = AsyncMock()
+
+    result = await ps.refresh_public_stats_cache(db)
+
+    assert result == payload
+    added = db.add.call_args[0][0]
+    assert added.id == ps.PUBLIC_STATS_SNAPSHOT_ID
+    assert added.payload == payload
+    db.commit.assert_awaited()
+
+
 async def test_totals_from_graph_counts_empty_version_ids():
     from ontoexplorer.modules.stats import public_stats as ps
     db = MagicMock()

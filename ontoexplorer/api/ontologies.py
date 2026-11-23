@@ -733,7 +733,8 @@ def _version_counts(stats: dict | None, graph_counts: dict | None,
 
     property_count and concept_count are not in graph_counts: property_count is the
     sum of the three property sub-counts (matching the indexer); concept_count has no
-    durable column and stays cache-only (null when the cache has aged out).
+    graph_counts sub-key, so it stays null here and the list endpoint fills it from
+    the durable entity_index (_attach_concept_counts) when the cache has aged out.
     """
     s = stats or {}
     gc = graph_counts or {}
@@ -1135,6 +1136,26 @@ async def list_ontologies(
                 key=lambda x: x["lang"],
             ) if counts else []
 
+    async def _attach_concept_counts(rows_subset: list[dict]) -> None:
+        """Durable fallback for concept_count: for page rows whose cached count is
+        missing (the version_stats Redis key aged out / was wiped), count SKOS
+        concepts from the durable entity_index. Page-only and fallback-only, so warm
+        rows keep their cached number and the whole catalogue is never scanned —
+        mirrors how _unique_counts sources the global concept count."""
+        need = [(r, latest_by_oid.get(r["id"])) for r in rows_subset
+                if r.get("concept_count") is None and latest_by_oid.get(r["id"])]
+        vids = [v.id for _r, v in need]
+        if not vids:
+            return
+        from ontoexplorer.models.db import EntityIndex as _EI
+        counts = dict((await db.execute(
+            select(_EI.version_id, func.count())
+            .where(_EI.version_id.in_(vids), _EI.type == "concept")
+            .group_by(_EI.version_id)
+        )).all())
+        for r, v in need:
+            r["concept_count"] = int(counts.get(v.id, 0))
+
     # Batch-load resolved metadata from ontology_meta_profiles
     from ontoexplorer.models.db import OntologyMetaProfile
     meta_by_oid: dict[str, dict] = {}
@@ -1192,7 +1213,15 @@ async def list_ontologies(
             d["individual_count"] = counts["individual_count"]
             d["concept_count"] = counts["concept_count"]
             d["languages"] = langs_by_vid.get(v.id, [])
-            d["language_tier"] = tier_by_vid.get(v.id)
+            # Prefer the Redis owl_profile cache; fall back to the durable
+            # versions.owl_profile column so the tier badge doesn't blank out once
+            # the 30-day cache ages out / is wiped (same #399/#401 durable-fallback
+            # pattern the profile/language FILTERS already use). concept_count gets
+            # a durable fallback below (page-only, from entity_index).
+            d["language_tier"] = (
+                tier_by_vid.get(v.id)
+                or ((v.owl_profile or {}).get("language") or {}).get("tier")
+            )
             meta = meta_by_oid.get(o.id, {})
             d["label"] = o.title or meta.get("title") or s.get("label") or ""
             d["description"] = meta.get("description") or s.get("description") or ""
@@ -1274,6 +1303,7 @@ async def list_ontologies(
     # SQL lang filter leaves them to be attached here, page-only).
     if not (lang_set and not _lang_sql):
         await _attach_langs(rows)
+    await _attach_concept_counts(rows)
 
     if view == "list":
         rows = [_leanify_list_row(r) for r in rows]
