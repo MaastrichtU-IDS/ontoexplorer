@@ -39,10 +39,15 @@ async def test_refresh_writes_cache_with_ttl(monkeypatch):
     result = await ps.refresh_public_stats_cache(db=MagicMock())
 
     assert result == {"total_ontologies": 3}
-    key, payload = mock_r.set.call_args[0][0], mock_r.set.call_args[0][1]
-    assert key == ps.PUBLIC_STATS_CACHE_KEY
-    assert json.loads(payload) == {"total_ontologies": 3}
-    assert mock_r.set.call_args[1]["ex"] == ps.PUBLIC_STATS_TTL
+    # refresh writes two keys (the cache blob + the freshness marker); find the
+    # cache-blob write specifically rather than assuming call order.
+    cache_calls = [c for c in mock_r.set.call_args_list if c[0][0] == ps.PUBLIC_STATS_CACHE_KEY]
+    assert len(cache_calls) == 1
+    assert json.loads(cache_calls[0][0][1]) == {"total_ontologies": 3}
+    assert cache_calls[0][1]["ex"] == ps.PUBLIC_STATS_TTL
+    # the freshness marker (for the admin beat-stall check) is written too
+    marker_calls = [c for c in mock_r.set.call_args_list if c[0][0] == ps.PUBLIC_STATS_REFRESHED_AT_KEY]
+    assert len(marker_calls) == 1
 
 
 @pytest.mark.parametrize(

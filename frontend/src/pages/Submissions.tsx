@@ -70,7 +70,8 @@ export default function Submissions() {
           No submissions yet.
         </p>
       ) : (
-        <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', minWidth: 440, borderCollapse: 'collapse', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
           <thead>
             <tr style={{ textAlign: 'left', color: 'var(--text-dim)', fontSize: 'var(--font-size-sm)' }}>
               <th style={{ padding: '0.5rem 0.75rem' }}>Submitted</th>
@@ -112,6 +113,7 @@ export default function Submissions() {
             })}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   )

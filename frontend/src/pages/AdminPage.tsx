@@ -345,6 +345,11 @@ export default function AdminPage() {
           description="Celery Beat — scheduler for periodic tasks (hourly upstream-update poll, 15-min stale-diff refresh). Stale if no heartbeat for 120s."
         />
         <ServiceCard
+          name="Home Stats"
+          status={s.public_stats}
+          description="Home-page /stats/public cache refresh (every 4 min, off the request path). Stale if not refreshed for 15 min — catches a stalled refresh even when Beat itself is alive."
+        />
+        <ServiceCard
           name="Entity Index"
           status={s.entity_index}
           description={`Postgres entity_index — flat per-entity table powering /search backend=pg. ~${s.entity_index_rows.toLocaleString()} rows (planner estimate) across all ready versions.`}

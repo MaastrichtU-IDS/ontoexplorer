@@ -97,6 +97,28 @@ def _check_beat() -> str:
         return f"error: {exc}"
 
 
+def _check_public_stats() -> str:
+    """Return 'ok' if the home-page stats cache was refreshed recently, else 'error: …'.
+
+    Catches a stalled `refresh_public_stats` beat task specifically — the task could
+    be erroring (or beat dead) while the generic 60s beat heartbeat still looks fine.
+    Threshold is well above the 4-min refresh cadence so normal jitter never trips it.
+    A missing marker right after a Redis wipe self-heals on the next refresh."""
+    from datetime import UTC, datetime
+    from ontoexplorer.modules.stats.public_stats import PUBLIC_STATS_REFRESHED_AT_KEY
+    try:
+        r = redis_sync.from_url(get_settings().redis_url, decode_responses=True)
+        raw = r.get(PUBLIC_STATS_REFRESHED_AT_KEY)
+        if not raw:
+            return "error: no refresh recorded"
+        age = (datetime.now(UTC) - datetime.fromisoformat(raw)).total_seconds()
+        if age > 900:  # 15 min — ~4x the beat cadence
+            return f"error: stale ({int(age)}s)"
+        return "ok"
+    except Exception as exc:
+        return f"error: {exc}"
+
+
 _WORKERS_CACHE_KEY = "admin:health:workers"
 _WORKERS_CACHE_TTL = 15  # seconds; overview polls every 10s from each api replica
 
@@ -196,6 +218,7 @@ async def admin_overview(
         oxigraph_status,
         workers_status,
         beat_status,
+        public_stats_status,
         entity_index_result,
     ) = await asyncio.gather(
         _check_postgres(db),
@@ -206,6 +229,7 @@ async def admin_overview(
         asyncio.to_thread(_check_oxigraph),
         asyncio.to_thread(_check_workers),
         asyncio.to_thread(_check_beat),
+        asyncio.to_thread(_check_public_stats),
         _check_entity_index(db),
     )
     entity_index_status, entity_index_stats = entity_index_result
@@ -407,6 +431,7 @@ async def admin_overview(
             "oxigraph": oxigraph_status,
             "workers": workers_status,
             "beat": beat_status,
+            "public_stats": public_stats_status,
             "entity_index": entity_index_status,
             "entity_index_rows": entity_index_stats["total_rows"],
             "entity_index_drift": entity_index_stats["drift"],

@@ -37,6 +37,13 @@ PUBLIC_STATS_SNAPSHOT_ID = "public"
 _RECOMPUTE_LOCK_KEY = "stats:public:recomputing"
 _RECOMPUTE_LOCK_TTL = 300
 
+# Marker stamped on every successful refresh, so the admin health check can tell a
+# stalled stats refresh (beat dead, or the task erroring) from a healthy one even
+# while the generic beat heartbeat is fine. Age-based: a long TTL (it's the age
+# that matters, not existence) and the check trips well above the 4-min cadence.
+PUBLIC_STATS_REFRESHED_AT_KEY = "stats:public:refreshed_at"
+_REFRESHED_AT_TTL = 86400
+
 
 def _empty() -> dict:
     return {
@@ -205,8 +212,14 @@ async def refresh_public_stats_cache(db: AsyncSession) -> dict:
 
     result = await compute_public_stats(db)
     try:
+        from datetime import datetime, timezone
+        r = _get_redis()
         await asyncio.to_thread(
-            _get_redis().set, PUBLIC_STATS_CACHE_KEY, json.dumps(result), ex=PUBLIC_STATS_TTL
+            r.set, PUBLIC_STATS_CACHE_KEY, json.dumps(result), ex=PUBLIC_STATS_TTL
+        )
+        await asyncio.to_thread(
+            r.set, PUBLIC_STATS_REFRESHED_AT_KEY,
+            datetime.now(timezone.utc).isoformat(), ex=_REFRESHED_AT_TTL
         )
     except Exception:
         pass
