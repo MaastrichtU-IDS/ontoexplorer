@@ -52,6 +52,35 @@ async def test_admin_overview_returns_shape(client, user_and_key, monkeypatch):
     assert "jobs" in body
     assert "postgres" in body["services"]
     assert "celery_queue_depth" in body["services"]
+    assert "public_stats" in body["services"]
+
+
+def _fake_redis_with(value):
+    fake = MagicMock()
+    fake.get.return_value = value
+    return fake
+
+
+def test_check_public_stats_fresh_ok(monkeypatch):
+    from datetime import datetime, timezone
+    from ontoexplorer.api.admin import health
+    monkeypatch.setattr(health.redis_sync, "from_url",
+                        lambda *a, **k: _fake_redis_with(datetime.now(timezone.utc).isoformat()))
+    assert health._check_public_stats() == "ok"
+
+
+def test_check_public_stats_stale_errors(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from ontoexplorer.api.admin import health
+    old = (datetime.now(timezone.utc) - timedelta(seconds=1200)).isoformat()
+    monkeypatch.setattr(health.redis_sync, "from_url", lambda *a, **k: _fake_redis_with(old))
+    assert health._check_public_stats().startswith("error: stale")
+
+
+def test_check_public_stats_missing_errors(monkeypatch):
+    from ontoexplorer.api.admin import health
+    monkeypatch.setattr(health.redis_sync, "from_url", lambda *a, **k: _fake_redis_with(None))
+    assert health._check_public_stats() == "error: no refresh recorded"
 
 
 @pytest.mark.anyio

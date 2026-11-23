@@ -7,6 +7,7 @@ import { SearchResult, Ontology, api } from '../lib/api'
 import SourceBadge from '../components/SourceBadge'
 import { MOSQuery } from '../components/MOSQuery'
 import { ResultList, TypeBadge } from '../components/ResultList'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 // Re-exported for existing importers (Home.mos.test.tsx).
 export { normalizeMos, isNamedClassQuery } from '../components/MOSQuery'
@@ -404,6 +405,7 @@ function KeywordSearch({ typeFilters, onTypeFiltersChange }: {
 export default function Home() {
   const [mode, setMode] = useState<Mode>('ontology')
   const [typeFilters, setTypeFilters] = useState<EntityTypeFilter[]>([])
+  const isMobile = useIsMobile()
 
   const { data: publicStats } = useQuery({
     queryKey: ['public-stats'],
@@ -412,7 +414,7 @@ export default function Home() {
   })
 
   return (
-    <div style={{ maxWidth: 700, margin: '0 auto', padding: '5rem 1.5rem 3rem' }}>
+    <div style={{ maxWidth: 700, margin: '0 auto', padding: isMobile ? '2rem 1rem 2.5rem' : '5rem 1.5rem 3rem' }}>
       <h1 style={{ color: 'var(--text)', fontSize: 28, fontWeight: 700, marginBottom: '0.5rem', textAlign: 'center' }}>
         OntoExplorer
       </h1>
@@ -421,7 +423,11 @@ export default function Home() {
       </p>
 
       {publicStats && (
-        <div style={{ display: 'flex', gap: 12, marginBottom: '2rem', flexWrap: 'wrap' }}>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+          gap: 12, marginBottom: '2rem',
+        }}>
           <StatCard label="Ontologies" value={publicStats.total_ontologies} to="/ontologies" />
           <StatCard label="Classes" value={publicStats.total_classes}
             subtitle={publicStats.unique_classes != null ? `${publicStats.unique_classes.toLocaleString()} unique` : undefined}

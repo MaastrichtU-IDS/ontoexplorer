@@ -127,7 +127,8 @@ export function Reuse() {
         </div>
       )}
 
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+      <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', minWidth: 520, borderCollapse: 'collapse', fontSize: 11 }}>
         <thead>
           <tr>
             <Th onClick={() => clickHeader('name')}
@@ -164,6 +165,7 @@ export function Reuse() {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   )
 }

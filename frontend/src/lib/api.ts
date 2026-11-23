@@ -1074,6 +1074,7 @@ export interface AdminServiceStatus {
   oxigraph: string
   workers: string
   beat: string
+  public_stats: string
   entity_index: string
   entity_index_rows: number
   entity_index_drift: { version_id: string; redis: number; pg: number }[]
