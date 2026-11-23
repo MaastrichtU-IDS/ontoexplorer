@@ -85,7 +85,7 @@ def _four_cheese_ntriples() -> str:
     """Build the four-cheese ontology as N-Triples, with disjointness stated via
     owl:AllDisjointClasses (exactly as OBO tooling emits it) — the shape that
     horned-owl's RDF reader drops."""
-    rdflib = pytest.importorskip("rdflib")
+    pytest.importorskip("rdflib")
     from rdflib import Graph, BNode, Literal, URIRef
     from rdflib.namespace import RDF, RDFS, OWL, XSD
     from rdflib.collection import Collection

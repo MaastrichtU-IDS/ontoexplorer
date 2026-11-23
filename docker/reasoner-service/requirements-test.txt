@@ -1,0 +1,17 @@
+# Dependencies for running this service's pytest suite outside the image (CI's
+# "Reasoner service" job). The runtime pins mirror the pip install in
+# ./Dockerfile; test_dockerfiles.py checks the rustdl pin stays in sync with
+# both Dockerfiles. km and Konclude binaries are not installed here: the tests
+# that need them skip themselves.
+fastapi==0.111.*
+uvicorn[standard]
+rdflib
+redis>=5.0
+requests>=2.31
+py-horned-owl==1.4.*
+pyoxigraph>=0.4
+rustdl==0.4.38
+
+pytest
+fakeredis
+httpx

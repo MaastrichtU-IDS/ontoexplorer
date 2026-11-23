@@ -1,6 +1,7 @@
 """ELK OWL-EL Reasoning Service — FastAPI application."""
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -446,6 +447,7 @@ def compute_justification_endpoint(version_id: str, req: JustificationRequest):
     # that takes down a uvicorn worker mid-request.
     timeout_s = int(os.getenv("JUSTIFICATION_TIME_LIMIT_SECONDS", "300"))
     sets, fmt = [], "ntriples"
+    computed = False  # True only when the worker produced a result
     tmp_path = None
     try:
         import subprocess
@@ -479,6 +481,7 @@ def compute_justification_endpoint(version_id: str, req: JustificationRequest):
         else:
             payload = json.loads(proc.stdout.strip().splitlines()[-1])
             sets, fmt = payload["sets"], payload["format"]
+            computed = True
     except HTTPException:
         raise
     except Exception:
@@ -512,7 +515,11 @@ def compute_justification_endpoint(version_id: str, req: JustificationRequest):
         "duration_ms": elapsed_ms,
     }
 
-    store_justification(version_id, req.sub, sup, req.max_justifications, reasoner, response)
+    # Cache only real results. A failed computation also answers with an empty
+    # list; caching it would pin "no justification" for JUSTIFICATION_TTL even
+    # after the cause is fixed.
+    if computed:
+        store_justification(version_id, req.sub, sup, req.max_justifications, reasoner, response)
     return response
 
 
