@@ -6,9 +6,11 @@
 fastapi==0.111.*
 uvicorn[standard]
 rdflib
-redis>=5.0
+# Test-only cap: redis-py 8.2.0 (2026-11-23) breaks fakeredis 2.40.0
+# (AttributeError on method_descriptor.__closure__). Drop when fakeredis catches up.
+redis>=5.0,<8.2
 requests>=2.31
-py-horned-owl==1.4.*
+py-horned-owl==2.0.*
 pyoxigraph>=0.4
 rustdl==0.4.38
 

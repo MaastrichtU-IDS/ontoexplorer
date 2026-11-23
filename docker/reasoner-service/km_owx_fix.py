@@ -1,6 +1,6 @@
 """Prepare the OWL/XML fed to km so km reads exactly the logical content.
 
-Three km input problems, all fixed losslessly on the OWL/XML that horned-owl
+Four km input problems, all fixed losslessly on the OWL/XML that horned-owl
 produces (after the disjointness fix), before ``km classify`` sees it:
 
 1. **IRIs mangled against the ontology IRI (silent in km v1.3.0).** km shortens
@@ -21,13 +21,20 @@ produces (after the disjointness fix), before ``km classify`` sees it:
    axioms, and annotations nested in axioms). Annotations have no logical
    meaning in OWL 2, so classification and consistency are unchanged.
 
-3. **Undeclared entities rejected (km >= v1.4.4).** km refuses any entity used
+3. **Declarations of built-in IRIs rejected (km >= v1.4.4).** OWL API writes
+   ``xsd:date rdf:type rdfs:Datatype`` whenever annotations use ``xsd:date``
+   literals (IAO and many OBO ontologies), and km refuses declaring a reserved
+   IRI. Fix: drop every declaration of an owl:/rdf:/rdfs:/xsd: IRI. Built-ins
+   need no declaration, and dropping one never hides a genuine misuse: an
+   ``xsd:date`` used in a logical axiom is still rejected there by km.
+
+4. **Undeclared entities rejected (km >= v1.4.4).** km refuses any entity used
    without a matching declaration, and horned-owl emits no declarations for
    undeclared entities (very common, e.g. classes that appear only in axioms).
    Fix: add a ``<Declaration>`` for every (kind, IRI) that is used but not
    declared. Declarations carry no logical meaning either.
 
-Scope of (3) mirrors km's own check: individuals are not declared (km does not
+Scope of (4) mirrors km's own check: individuals are not declared (km does not
 require it); built-in owl:/rdf:/rdfs:/xsd: IRIs are implicitly declared; an IRI
 used with incompatible kinds (e.g. ObjectProperty and DataProperty) gets both
 declarations so km reports the genuine "incompatible entity types" error, which
@@ -96,6 +103,20 @@ def strip_header_and_annotations(root) -> int:
     return removed
 
 
+def drop_builtin_declarations(root) -> int:
+    """Remove top-level declarations of built-in (owl:/rdf:/rdfs:/xsd:) IRIs,
+    in place. Returns the number removed."""
+    prefixes = _prefixes(root)
+    removed = 0
+    for decl in [e for e in root if _local(e.tag) == "Declaration"]:
+        entity = next(iter(decl), None)
+        iri = _resolve(entity, prefixes) if entity is not None else None
+        if iri is not None and iri.startswith(_BUILTIN_NS):
+            root.remove(decl)
+            removed += 1
+    return removed
+
+
 def undeclared_entities(root) -> list[tuple[str, str]]:
     """Sorted ``(kind, iri)`` pairs used under ``root`` without a matching declaration."""
     prefixes = _prefixes(root)
@@ -119,7 +140,7 @@ def undeclared_entities(root) -> list[tuple[str, str]]:
 def prepare_owx_for_km(owx: str) -> tuple[str, list[tuple[str, str]]]:
     """Return ``(owx_for_km, injected_declarations)``.
 
-    Applies (1)-(3) from the module docstring. If ``owx`` is not well-formed XML
+    Applies (1)-(4) from the module docstring. If ``owx`` is not well-formed XML
     it is returned untouched (with nothing injected) so km reports the real
     problem. Safe to call unconditionally.
     """
@@ -133,6 +154,7 @@ def prepare_owx_for_km(owx: str) -> tuple[str, list[tuple[str, str]]]:
         return owx, []
 
     strip_header_and_annotations(root)
+    drop_builtin_declarations(root)
     missing = undeclared_entities(root)
     if missing:
         ns = root.tag[: root.tag.index("}") + 1] if root.tag.startswith("{") else ""
