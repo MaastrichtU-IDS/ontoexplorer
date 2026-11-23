@@ -1,19 +1,19 @@
 # Dependencies for running this service's pytest suite outside the image (CI's
 # "Reasoner service" job). The runtime pins mirror the pip install in
-# ./Dockerfile; test_dockerfiles.py checks the rustdl pin stays in sync with
-# both Dockerfiles. km and Konclude binaries are not installed here: the tests
+# ./Dockerfile; test_dockerfiles.py checks the rustdl and py-horned-owl pins stay in
+# sync with both Dockerfiles. km and Konclude binaries are not installed here: the tests
 # that need them skip themselves.
 fastapi==0.111.*
 uvicorn[standard]
 rdflib
-# Test-only cap: redis-py 8.2.0 (2026-11-23) breaks fakeredis 2.40.0
-# (AttributeError on method_descriptor.__closure__). Drop when fakeredis catches up.
-redis>=5.0,<8.2
+redis>=5.0
 requests>=2.31
 py-horned-owl==2.0.*
 pyoxigraph>=0.4
 rustdl==0.4.38
 
 pytest
-fakeredis
+# 2.41.0 is the first release that works with redis-py 8.2 (2.40.0 fails with
+# AttributeError on method_descriptor.__closure__).
+fakeredis>=2.41
 httpx
