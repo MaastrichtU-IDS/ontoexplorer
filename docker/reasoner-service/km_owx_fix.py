@@ -1,7 +1,8 @@
 """Prepare the OWL/XML fed to km so km reads exactly the logical content.
 
-Four km input problems, all fixed losslessly on the OWL/XML that horned-owl
-produces (after the disjointness fix), before ``km classify`` sees it:
+Five km input problems, all fixed losslessly on the OWL/XML that horned-owl
+produces (after the disjointness fix), before ``km classify`` sees it (the
+backend then converts the result to functional syntax, see km_backend):
 
 1. **IRIs mangled against the ontology IRI (silent in km v1.3.0).** km shortens
    any IRI that starts with the ontology IRI. For Pizza (ontology IRI
@@ -34,6 +35,16 @@ produces (after the disjointness fix), before ``km classify`` sees it:
    Fix: add a ``<Declaration>`` for every (kind, IRI) that is used but not
    declared. Declarations carry no logical meaning either.
 
+5. **Prefixed names echoed back (km #8).** When the input abbreviates IRIs
+   (OWL/XML ``<Prefix>`` + ``abbreviatedIRI``, or functional-syntax
+   ``Prefix(...)``), km reports results as ``ex:A`` rather than full IRIs, and
+   horned-owl's functional-syntax writer abbreviates every IRI it has a prefix
+   for. The pipeline emits no prefixes today; this guards against that
+   changing, which would otherwise turn every result IRI into a prefixed name
+   without any error. Fix: expand ``abbreviatedIRI`` to ``IRI`` and drop the
+   ``<Prefix>`` elements, so the input, and therefore km's output, uses full
+   IRIs only.
+
 Scope of (4) mirrors km's own check: individuals are not declared (km does not
 require it); built-in owl:/rdf:/rdfs:/xsd: IRIs are implicitly declared; an IRI
 used with incompatible kinds (e.g. ObjectProperty and DataProperty) gets both
@@ -49,6 +60,8 @@ _XSD = "http://www.w3.org/2001/XMLSchema#"
 _XML_BASE = "{http://www.w3.org/XML/1998/namespace}base"
 
 _BUILTIN_NS = (_OWL, _RDF, _RDFS, _XSD)
+_STANDARD_PREFIXES = {"owl": _OWL, "rdf": _RDF, "rdfs": _RDFS, "xsd": _XSD,
+                      "xml": "http://www.w3.org/XML/1998/namespace"}
 
 # OWL/XML entity element names km requires a declaration for (NamedIndividual
 # is deliberately absent, matching km).
@@ -103,6 +116,25 @@ def strip_header_and_annotations(root) -> int:
     return removed
 
 
+def expand_prefixes(root) -> int:
+    """Rewrite every ``abbreviatedIRI`` as a full ``IRI`` and remove the root's
+    ``<Prefix>`` elements, in place. Returns the number of IRIs expanded.
+    The OWL 2 standard prefixes are available without a declaration. An
+    abbreviation with an unknown prefix is left as is for km to report."""
+    prefixes = {**_STANDARD_PREFIXES, **_prefixes(root)}
+    expanded = 0
+    for elem in root.iter():
+        if elem.get("abbreviatedIRI") is not None:
+            iri = _resolve(elem, prefixes)
+            if iri is not None:
+                del elem.attrib["abbreviatedIRI"]
+                elem.set("IRI", iri)
+                expanded += 1
+    for p in [e for e in root if _local(e.tag) == "Prefix"]:
+        root.remove(p)
+    return expanded
+
+
 def drop_builtin_declarations(root) -> int:
     """Remove top-level declarations of built-in (owl:/rdf:/rdfs:/xsd:) IRIs,
     in place. Returns the number removed."""
@@ -140,7 +172,7 @@ def undeclared_entities(root) -> list[tuple[str, str]]:
 def prepare_owx_for_km(owx: str) -> tuple[str, list[tuple[str, str]]]:
     """Return ``(owx_for_km, injected_declarations)``.
 
-    Applies (1)-(4) from the module docstring. If ``owx`` is not well-formed XML
+    Applies (1)-(5) from the module docstring. If ``owx`` is not well-formed XML
     it is returned untouched (with nothing injected) so km reports the real
     problem. Safe to call unconditionally.
     """
@@ -154,6 +186,7 @@ def prepare_owx_for_km(owx: str) -> tuple[str, list[tuple[str, str]]]:
         return owx, []
 
     strip_header_and_annotations(root)
+    expand_prefixes(root)
     drop_builtin_declarations(root)
     missing = undeclared_entities(root)
     if missing:

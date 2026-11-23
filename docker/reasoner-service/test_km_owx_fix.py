@@ -112,6 +112,22 @@ def test_drops_declarations_of_builtin_iris_only():
     assert sum(1 for e in root if kof._local(e.tag) == "SubClassOf") == 1
 
 
+def test_expand_prefixes_rewrites_abbreviations_and_drops_prefix_elements():
+    owx = _owx(
+        '<Declaration><Class abbreviatedIRI="ex:A"/></Declaration>'
+        '<SubClassOf><Class abbreviatedIRI="ex:A"/><Class abbreviatedIRI="owl:Thing"/></SubClassOf>'
+        '<SubClassOf><Class abbreviatedIRI="nope:X"/><Class IRI="http://ex/B"/></SubClassOf>',
+        head=f'<Prefix name="ex" IRI="{ONTO}/"/>',
+    )
+    root = _root(owx)
+    assert kof.expand_prefixes(root) == 3  # ex:A twice, owl:Thing via the standard prefix
+    assert not [e for e in root if kof._local(e.tag) == "Prefix"]
+    iris = [e.get("IRI") for e in root.iter() if e.get("IRI")]
+    assert iris == [A, A, f"{OWL}Thing", "http://ex/B"]
+    # An unknown prefix is left for km to report rather than guessed.
+    assert [e.get("abbreviatedIRI") for e in root.iter() if e.get("abbreviatedIRI")] == ["nope:X"]
+
+
 def test_prepare_strips_injects_and_round_trips():
     owx = _owx(f'<SubClassOf><Class IRI="{A}"/><Class IRI="{B}"/></SubClassOf>',
                attrs=f' ontologyIRI="{ONTO}" versionIRI="{ONTO}/1.0"')
@@ -248,4 +264,42 @@ def test_km_ignores_declared_builtin_datatype():
           + f'<{A}> <{DC_DATE}> "2025-06-02"^^<{XSD_DATE}> .\n'
           + f"<{A}> <{RDFS_SUB}> <{B}> .\n<{B}> <{RDFS_SUB}> <{C}> .\n")
     result = backend.classify_ntriples(nt, "test-km-builtin-datatype")
+    assert result.superclasses.get(A) == [C]
+
+
+def test_backend_feeds_km_functional_syntax_with_full_iris(monkeypatch):
+    """km <= v1.6.5 routes OWL/XML with DL-safe rules to a slow route (IAO:
+    1,238 s vs ~1 s as functional syntax, km #7), and echoes prefixed names
+    back (km #8). The backend must hand km prefix-free functional syntax.
+    Runs without the km binary: subprocess.run is replaced."""
+    pytest.importorskip("pyoxigraph")
+    pytest.importorskip("pyhornedowl")
+    import json
+    import subprocess
+
+    from km_backend import KmBackend
+
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        with open(cmd[-1]) as fh:
+            seen["input"] = fh.read()
+        out = {"consistent": True, "subsumptions": [[A, B], [A, C], [B, C]],
+               "unsatisfiable": [], "dropped": 0}
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(out), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    nt = (f"<{ONTO}> <{RDF_TYPE}> <{OWL}Ontology> .\n"
+          f"<{A}> <{RDFS_SUB}> <{B}> .\n<{B}> <{RDFS_SUB}> <{C}> .\n")
+    result = KmBackend().classify_ntriples(nt, "test-km-functional", {"route": "auto"})
+
+    cmd = seen["cmd"]
+    assert cmd[1:6] == ["classify", "--route", "auto", "--format", "functional"]
+    assert cmd[-1].endswith(".ofn")
+    text = seen["input"]
+    assert text.lstrip().startswith("Ontology(")
+    assert "Prefix(" not in text
+    assert f"SubClassOf(<{A}> <{B}>)" in text
+    assert ONTO + ">" not in text  # header IRI stripped (km #6)
     assert result.superclasses.get(A) == [C]

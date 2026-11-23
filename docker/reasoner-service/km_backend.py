@@ -1,7 +1,8 @@
 """kobayashi-marust (km) backend — prebuilt Rust binary subprocess.
 
-km is a sound consequence-based reasoner for SROIQ / OWL 2 DL. We feed it
-OWL/XML (same conversion Konclude uses) and run `km classify`, which emits JSON:
+km is a sound consequence-based reasoner for SROIQ / OWL 2 DL. We build
+OWL/XML (same conversion Konclude uses), prepare it for km (km_owx_fix), convert
+it to functional syntax and run `km classify`, which emits JSON:
 
     {"consistent": bool,
      "subsumptions": [[sub_iri, sup_iri], ...],   # full transitive closure
@@ -58,9 +59,10 @@ class KmBackend:
         OWL_NOTHING = "http://www.w3.org/2002/07/owl#Nothing"
         t0 = time.monotonic()
 
-        # NT -> RDF/XML -> OWL/XML (km reads OWL/XML with --format owlxml). Using
-        # the structural owx frontend matches Konclude's proven path and sidesteps
-        # km's stricter "RDF-to-OWL conversion must be complete or decline" rule.
+        # NT -> RDF/XML -> OWL/XML -> functional syntax. Converting with
+        # horned-owl rather than handing km RDF matches Konclude's proven path and
+        # sidesteps km's stricter "RDF-to-OWL conversion must be complete or
+        # decline" rule.
         store = pyoxigraph.Store()
         store.bulk_load(io.BytesIO(ntriples.encode("utf-8")),
                         format=pyoxigraph.RdfFormat.N_TRIPLES)
@@ -79,21 +81,29 @@ class KmBackend:
         # rejects reserved annotation properties and non-OWL-2 literal types),
         # drop declarations of built-in IRIs such as xsd:date (km >= v1.4.4
         # rejects them), and declare used-but-undeclared entities (km >= v1.4.4
-        # requires it). All are lossless for classification. See km_owx_fix.
+        # requires it), and expand prefixed names so km reports full IRIs (km
+        # #8). All are lossless for classification. See km_owx_fix.
         import km_owx_fix
         owx, _injected = km_owx_fix.prepare_owx_for_km(owx)
+        # Hand km functional syntax, not OWL/XML. With --route auto, km <= v1.6.5
+        # sends OWL/XML containing DL-safe rules to its slow ht_rules route, while
+        # the same content in functional syntax takes the ground-rule path: IAO
+        # took 1,238 s as OWL/XML and ~1 s as functional syntax (km #7, fixed in
+        # km v1.7.0). With no prefixes left, horned-owl writes every IRI in full.
+        ofn = pyhornedowl.open_ontology_from_string(
+            owx, serialization="owx").save_to_string(serialization="ofn")
         repairs: dict = {}
         if _injected:
             repairs["injected_km_declarations"] = len(_injected)
 
         tmp = tempfile.mkdtemp()
-        in_owx = os.path.join(tmp, "in.owx")
+        in_ofn = os.path.join(tmp, "in.ofn")
         try:
-            with open(in_owx, "w") as fh:
-                fh.write(owx)
+            with open(in_ofn, "w") as fh:
+                fh.write(ofn)
             proc = subprocess.run(
                 [os.getenv("KM_BIN", "km"), "classify", "--route", route,
-                 "--format", "owlxml", in_owx],
+                 "--format", "functional", in_ofn],
                 capture_output=True, text=True, timeout=600,
             )
         finally:
