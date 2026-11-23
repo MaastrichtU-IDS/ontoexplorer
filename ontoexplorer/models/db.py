@@ -724,3 +724,21 @@ class FairSnapshot(Base):
     data: Mapped[dict] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class StatsSnapshot(Base):
+    """Durable last-good copy of a precomputed aggregate payload (currently the
+    home-page /stats/public result, id="public").
+
+    The aggregate normally serves from a TTL'd Redis cache kept warm by a beat
+    task, but a cold miss (first boot, eviction, or a Redis wipe) would otherwise
+    force a ~110s recompute on the request path. The beat/refresh path upserts the
+    payload here so a cold read can return the last-good value instantly and kick
+    the recompute into the background. One row per aggregate, keyed by ``id``.
+    """
+    __tablename__ = "stats_snapshots"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    payload: Mapped[dict] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

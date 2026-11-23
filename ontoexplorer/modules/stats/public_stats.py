@@ -28,6 +28,15 @@ PUBLIC_STATS_CACHE_KEY = "stats:public:v1"
 # the data is at most this stale before one request pays for a cold recompute.
 PUBLIC_STATS_TTL = 1800  # 30 min
 
+# Durable last-good copy (StatsSnapshot row, survives a Redis wipe). On a Redis
+# cold miss we serve this instantly and recompute in the background, so no request
+# ever eats the ~110s cold recompute (the _unique_counts entity_index scan).
+PUBLIC_STATS_SNAPSHOT_ID = "public"
+# One background dispatch per cold window — guards against a stampede when many
+# cold requests land together. TTL comfortably exceeds the ~110s recompute.
+_RECOMPUTE_LOCK_KEY = "stats:public:recomputing"
+_RECOMPUTE_LOCK_TTL = 300
+
 
 def _empty() -> dict:
     return {
@@ -137,9 +146,61 @@ async def compute_public_stats(db: AsyncSession) -> dict:
     return result
 
 
+async def _write_snapshot(db: AsyncSession, payload: dict) -> None:
+    """Best-effort upsert of the durable last-good payload. A snapshot-write hiccup
+    must never fail a stats refresh, so swallow + rollback on error."""
+    from datetime import datetime, timezone
+
+    from ontoexplorer.models.db import StatsSnapshot
+    try:
+        snap = await db.get(StatsSnapshot, PUBLIC_STATS_SNAPSHOT_ID)
+        if snap is None:
+            db.add(StatsSnapshot(id=PUBLIC_STATS_SNAPSHOT_ID, payload=payload))
+        else:
+            snap.payload = payload
+            snap.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+
+
+async def _read_snapshot(db: AsyncSession) -> dict | None:
+    from ontoexplorer.models.db import StatsSnapshot
+    try:
+        snap = await db.get(StatsSnapshot, PUBLIC_STATS_SNAPSHOT_ID)
+    except Exception:
+        return None
+    if snap is None or not snap.payload:
+        return None
+    return snap.payload
+
+
+async def _dispatch_background_refresh() -> None:
+    """Kick the recompute onto the Celery beat task, off the request path. A Redis
+    SET NX lock means only the first cold request in a recompute window dispatches;
+    the lock's TTL lets a later window try again. Best-effort throughout."""
+    from ontoexplorer.modules.search.indexer import _get_redis
+    try:
+        got = await asyncio.to_thread(
+            _get_redis().set, _RECOMPUTE_LOCK_KEY, "1", nx=True, ex=_RECOMPUTE_LOCK_TTL
+        )
+        if not got:
+            return
+    except Exception:
+        return
+    try:
+        from ontoexplorer.modules.jobs.tasks import refresh_public_stats
+        await asyncio.to_thread(refresh_public_stats.delay)
+    except Exception:
+        pass
+
+
 async def refresh_public_stats_cache(db: AsyncSession) -> dict:
-    """Recompute and write the cache. Called by the beat task off the request path
-    (and by the endpoint on a cold miss)."""
+    """Recompute, write the Redis cache, and upsert the durable snapshot. Called by
+    the beat task off the request path (and inline only on a truly first-ever miss)."""
     from ontoexplorer.modules.search.indexer import _get_redis
 
     result = await compute_public_stats(db)
@@ -149,15 +210,23 @@ async def refresh_public_stats_cache(db: AsyncSession) -> dict:
         )
     except Exception:
         pass
+    await _write_snapshot(db, result)
     return result
 
 
 async def read_public_stats(db: AsyncSession) -> dict:
-    """Home-page stats: return the warm cache instantly; recompute+cache only on a
-    cold miss (first boot or eviction — the beat task keeps this from happening)."""
+    """Home-page stats, request path. Warm Redis cache → return instantly. Cold miss
+    → serve the durable last-good snapshot and recompute in the background, so no
+    visitor ever pays the ~110s cold recompute. Only a truly first-ever miss (no
+    snapshot yet) computes inline."""
     from ontoexplorer.modules.search.indexer import _get_redis
 
     cached = await asyncio.to_thread(_get_redis().get, PUBLIC_STATS_CACHE_KEY)
     if cached:
         return json.loads(cached)
+
+    snapshot = await _read_snapshot(db)
+    if snapshot is not None:
+        await _dispatch_background_refresh()
+        return snapshot
     return await refresh_public_stats_cache(db)
