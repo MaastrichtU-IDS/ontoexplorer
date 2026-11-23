@@ -41,7 +41,9 @@ class KmBackend:
              "label": "Route",
              "help": "km reasoning strategy (km classify --route). 'auto' picks a "
                      "route from the ontology profile; the cb_*/elc/production_all "
-                     "variants select specific consequence-based engines."},
+                     "variants select specific consequence-based engines and "
+                     "refuse ontologies they could only approximate (e.g. with "
+                     "nominals or rules): use 'auto' for those."},
         ),
     )
 
@@ -109,10 +111,11 @@ class KmBackend:
         finally:
             _sh.rmtree(tmp, ignore_errors=True)
 
-        # Exit 3 is km's honest "out of supported fragment" decline; anything
-        # else non-zero is a real failure. Surface both clearly.
+        # Exit 3 is km's honest decline: the input is outside the supported
+        # fragment, or (km >= v1.6) a forced route would drop constructs and only
+        # approximate the answer. Anything else non-zero is a real failure.
         if proc.returncode == 3:
-            raise ValueError(f"km declined (out of fragment): {proc.stderr.strip()}")
+            raise ValueError(f"km declined: {proc.stderr.strip()}")
         if proc.returncode != 0:
             raise RuntimeError(
                 f"km classify failed (exit {proc.returncode}): {proc.stderr.strip()}")

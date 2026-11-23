@@ -303,3 +303,44 @@ def test_backend_feeds_km_functional_syntax_with_full_iris(monkeypatch):
     assert f"SubClassOf(<{A}> <{B}>)" in text
     assert ONTO + ">" not in text  # header IRI stripped (km #6)
     assert result.superclasses.get(A) == [C]
+
+
+def test_km_reports_unsatisfiable_class_via_empty_property_domain():
+    """km E7 (fixed in v1.6.5): ObjectPropertyDomain(r owl:Nothing) was dropped
+    without being counted, so A ⊑ ∃r.B was not reported unsatisfiable and km
+    still said dropped 0. km v1.5.3 returned no unsatisfiable classes here."""
+    backend = _km_backend()
+    r = "http://ex/r"
+    nt = (_decl(A) + _decl(B)
+          + f"<{r}> <{RDF_TYPE}> <{OWL}ObjectProperty> .\n"
+          + f"<{r}> <http://www.w3.org/2000/01/rdf-schema#domain> <{OWL}Nothing> .\n"
+          + f"<{A}> <{RDFS_SUB}> _:x .\n"
+          + f"_:x <{RDF_TYPE}> <{OWL}Restriction> .\n"
+          + f"_:x <{OWL}onProperty> <{r}> .\n"
+          + f"_:x <{OWL}someValuesFrom> <{B}> .\n")
+    result = backend.classify_ntriples(nt, "test-km-empty-domain")
+    assert A in result.unsatisfiable
+
+
+def test_km_forced_route_declines_instead_of_approximating():
+    """A forced route that would drop a nominal must refuse (km >= v1.6: exit
+    3), not return an approximate answer; the backend surfaces it as a
+    ValueError naming the reason. 'auto' handles the same input exactly."""
+    backend = _km_backend()
+    p, a = "http://ex/p", "http://ex/a"
+    nt = (_decl(A) + _decl(B) + _decl(C)
+          + f"<{p}> <{RDF_TYPE}> <{OWL}ObjectProperty> .\n"
+          + f"<{a}> <{RDF_TYPE}> <{OWL}NamedIndividual> .\n"
+          + f"<{a}> <{RDF_TYPE}> <{C}> .\n"
+          # A ⊑ p value a ; B ≡ ∃p.C  ⇒  A ⊑ B
+          + f"<{A}> <{RDFS_SUB}> _:v .\n"
+          + f"_:v <{RDF_TYPE}> <{OWL}Restriction> .\n"
+          + f"_:v <{OWL}onProperty> <{p}> .\n"
+          + f"_:v <{OWL}hasValue> <{a}> .\n"
+          + f"<{B}> <{OWL}equivalentClass> _:e .\n"
+          + f"_:e <{RDF_TYPE}> <{OWL}Restriction> .\n"
+          + f"_:e <{OWL}onProperty> <{p}> .\n"
+          + f"_:e <{OWL}someValuesFrom> <{C}> .\n")
+    assert backend.classify_ntriples(nt, "test-km-auto").superclasses.get(A) == [B]
+    with pytest.raises(ValueError, match="km declined: .*approximate"):
+        backend.classify_ntriples(nt, "test-km-forced", {"route": "cb_absorb8"})
