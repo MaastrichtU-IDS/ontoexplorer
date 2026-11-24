@@ -1,0 +1,38 @@
+{
+  "@context": {
+    "dcterms": "http://purl.org/dc/terms/",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "mod": "https://w3id.org/mod#",
+    "foaf": "http://xmlns.com/foaf/0.1/",
+    "hydra": "http://www.w3.org/ns/hydra/core#"
+  },
+  "@id": "https://data.agroportal.lirmm.fr/mod-api/artefacts?q=plant",
+  "@type": "hydra:Collection",
+  "hydra:totalItems": 3,
+  "hydra:member": [
+    {
+      "@id": "http://purl.obolibrary.org/obo/po.owl",
+      "@type": ["mod:SemanticArtefact", "dcat:Resource"],
+      "mod:acronym": "PO",
+      "dcterms:title": [{"@language": "fr", "@value": "Ontologie des plantes"}, {"@language": "en", "@value": "Plant Ontology"}],
+      "dcterms:description": "Structures and growth stages of plants.",
+      "dcterms:publisher": {"@id": "https://agroportal.lirmm.fr/", "foaf:name": "AgroPortal"},
+      "dcterms:license": {"@id": "https://creativecommons.org/licenses/by/4.0/"},
+      "dcat:landingPage": {"@id": "https://agroportal.lirmm.fr/ontologies/PO"}
+    },
+    {
+      "@id": "http://opendata.inra.fr/EOL/eol",
+      "@type": "dcat:Dataset",
+      "dcterms:identifier": "EOL",
+      "dcterms:title": "Environment Ontology for Livestock",
+      "dcterms:description": "Livestock environment concepts.",
+      "dcterms:license": "https://creativecommons.org/licenses/by/4.0/",
+      "foaf:homepage": "https://www.eol.example.org/"
+    },
+    {
+      "@id": "http://example.org/agro/nolabel",
+      "@type": "dcat:Resource",
+      "mod:acronym": "NOLABEL"
+    }
+  ]
+}

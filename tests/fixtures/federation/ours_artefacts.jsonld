@@ -1,0 +1,44 @@
+{
+  "@context": {
+    "dcterms": "http://purl.org/dc/terms/",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "mod": "https://w3id.org/mod#",
+    "owl": "http://www.w3.org/2002/07/owl#",
+    "foaf": "http://xmlns.com/foaf/0.1/",
+    "void": "http://rdfs.org/ns/void#",
+    "hydra": "http://www.w3.org/ns/hydra/core#"
+  },
+  "@id": "https://ontoexplorer.example.org/mod/artefacts?q=cell",
+  "@type": "hydra:Collection",
+  "hydra:totalItems": 3,
+  "hydra:view": {
+    "@id": "https://ontoexplorer.example.org/mod/artefacts?q=cell&page=1",
+    "@type": "hydra:PartialCollectionView"
+  },
+  "hydra:member": [
+    {
+      "@id": "http://purl.obolibrary.org/obo/cl.owl",
+      "@type": ["mod:SemanticArtefact", "owl:Ontology"],
+      "mod:acronym": "CL",
+      "dcterms:title": "Cell Ontology",
+      "dcterms:description": "An ontology of cell types.",
+      "dcterms:publisher": {"@id": "http://www.obofoundry.org/"},
+      "dcterms:license": {"@id": "https://creativecommons.org/licenses/by/4.0/"},
+      "foaf:homepage": {"@id": "https://obophenotype.github.io/cell-ontology/"}
+    },
+    {
+      "@id": "http://purl.obolibrary.org/obo/cLO.owl",
+      "@type": ["mod:SemanticArtefact", "owl:Ontology"],
+      "mod:acronym": "CLO",
+      "dcterms:title": {"@language": "en", "@value": "Cell Line Ontology"},
+      "dcterms:description": "Cell lines.",
+      "dcterms:publisher": "OBO Foundry",
+      "dcterms:license": "https://creativecommons.org/licenses/by/3.0/"
+    },
+    {
+      "@id": "http://example.org/onto/bare",
+      "@type": ["mod:SemanticArtefact", "owl:Ontology"],
+      "dcterms:title": "Bare Ontology"
+    }
+  ]
+}

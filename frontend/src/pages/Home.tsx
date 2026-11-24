@@ -5,6 +5,7 @@ import { useGlobalSearch } from '../hooks/useSearch'
 import { useDebounced } from '../hooks/useDebounced'
 import { SearchResult, Ontology, api } from '../lib/api'
 import SourceBadge from '../components/SourceBadge'
+import FederatedResults from '../components/FederatedResults'
 import { MOSQuery } from '../components/MOSQuery'
 import { ResultList, TypeBadge } from '../components/ResultList'
 import { useIsMobile } from '../hooks/useIsMobile'
@@ -123,10 +124,14 @@ function OntologySearch() {
   // catalogue. Reuses the same `/ontologies?q=` endpoint the catalogue uses.
   const debouncedQuery = useDebounced(query.trim(), 250)
   const activeQuery = debouncedQuery.length >= 2 ? debouncedQuery : ''
+  const [federated, setFederated] = useState(false)
   const { data, isFetching } = useQuery({
-    queryKey: ['home-ontology-search', activeQuery],
+    queryKey: ['home-ontology-search', activeQuery, federated],
     queryFn: () =>
-      api.ontologies.list(0, 50, activeQuery, undefined, undefined, undefined, false, undefined, 'list'),
+      api.ontologies.list(
+        0, 50, activeQuery, undefined, undefined, undefined, false, undefined, 'list',
+        federated ? { federated: true } : undefined,
+      ),
     enabled: activeQuery.length >= 2,
     staleTime: 30_000,
   })
@@ -163,6 +168,18 @@ function OntologySearch() {
           </button>
         )}
       </div>
+
+      <label style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: '0.75rem',
+        fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer',
+      }}>
+        <input
+          type="checkbox"
+          checked={federated}
+          onChange={e => setFederated(e.target.checked)}
+        />
+        Include federated catalogues
+      </label>
 
       {!activeQuery && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -243,6 +260,7 @@ function OntologySearch() {
               <Link to="/ontologies" style={{ color: 'var(--accent)' }}>browse the catalogue</Link>.
             </p>
           )}
+          {federated && <FederatedResults federated={data?.federated} />}
         </div>
       )}
     </>

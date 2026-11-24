@@ -219,6 +219,19 @@ class Settings(BaseSettings):
     mod_rate_limit_anon: int = 1000   # requests / day — unauthenticated (per IP)
     mod_rate_limit_auth: int = 10000  # requests / day — authenticated (per API key)
 
+    # MOD-API federation: query remote MOD-API catalogues ("peers"). OFF by
+    # default. Peers are a JSON list in FEDERATION_PEERS_JSON (see
+    # ontoexplorer/modules/federation/config.py); a malformed value yields no
+    # peers rather than failing boot. Secrets are never put in the JSON: a
+    # peer's auth.secret_ref names an env var resolved at call time.
+    federation_enabled: bool = False
+    federation_peers_json: str = ""
+    federation_fanout_timeout_ms: int = 8000      # overall budget for a fan-out
+    federation_cache_ttl_s: int = 300             # per-peer response cache
+    federation_max_results_per_peer: int = 25
+    federation_max_response_bytes: int = 2 * 1024 * 1024  # per peer response
+    federation_max_redirects: int = 3
+
     # Justification is session-only and cheap to request but dispatches an OWL
     # justification job with an 11-minute hard limit on the reasoner pool, so a
     # burst of requests can starve reasoning for everyone. Two per-user limits:
