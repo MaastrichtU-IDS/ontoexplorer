@@ -179,3 +179,141 @@ def test_adapter_for_resolution():
     assert adapter_for("unknown-thing") is parse_mod
     assert adapter_for("") is parse_mod
     assert adapter_for(None) is parse_mod  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------- fix round 1
+
+
+def _doc(member: dict) -> dict:
+    return {
+        "@context": {
+            "dcterms": "http://purl.org/dc/terms/",
+            "foaf": "http://xmlns.com/foaf/0.1/",
+            "dcat": "http://www.w3.org/ns/dcat#",
+        },
+        "hydra:member": [{"@id": "http://x/a", "dcterms:title": "A", **member}],
+    }
+
+
+@pytest.mark.parametrize("parser,peer", [(parse_mod, OURS), (parse_dcat2, AGRO)])
+@pytest.mark.parametrize(
+    "bad",
+    ["javascript:alert(1)", "data:text/html,x", "ftp://x/y", "//evil/x", "not a url", "https://", ""],
+)
+def test_non_http_urls_dropped_with_fallback_landing(parser, peer, bad):
+    row = parser(_doc({"foaf:homepage": bad, "dcat:landingPage": {"@id": bad}}), peer)[0]
+    assert row.homepage is None
+    assert row.source_landing_url == f"{peer.base_url}/mod/artefacts/a"
+
+
+def test_non_http_homepage_falls_through_to_valid_landing_page():
+    row = parse_mod(
+        _doc({"foaf:homepage": "javascript:alert(1)", "dcat:landingPage": "https://ok.example/p"}),
+        OURS,
+    )[0]
+    assert row.homepage == "https://ok.example/p"
+    assert row.source_landing_url == "https://ok.example/p"
+
+
+def test_url_fields_read_iri_not_title_of_named_node():
+    row = parse_mod(
+        _doc({"foaf:homepage": {"@id": "https://real/", "dcterms:title": "Home"}}), OURS
+    )[0]
+    assert row.homepage == "https://real/"
+    row = parse_mod(_doc({"foaf:homepage": {"@value": "https://lit.example/"}}), OURS)[0]
+    assert row.homepage == "https://lit.example/"
+    # a named node with no IRI is not a URL
+    assert parse_mod(_doc({"foaf:homepage": {"dcterms:title": "Home"}}), OURS)[0].homepage is None
+
+
+def test_publisher_still_prefers_name_over_iri():
+    row = parse_mod(
+        _doc({"dcterms:publisher": {"@id": "http://org/1", "foaf:name": "Org"}}), OURS
+    )[0]
+    assert row.publisher == "Org"
+
+
+def test_real_mod_context_flattened_graph_roundtrip():
+    from rdflib import RDF, Graph, Literal, Namespace, URIRef
+
+    from ontoexplorer.modules.mod.context import MOD_CONTEXT
+
+    h = Namespace("http://www.w3.org/ns/hydra/core#")
+    d = Namespace("http://purl.org/dc/terms/")
+    m = Namespace("https://w3id.org/mod#")
+    foaf = Namespace("http://xmlns.com/foaf/0.1/")
+    g = Graph()
+    coll = URIRef("https://p.example/mod/artefacts")
+    org = URIRef("http://org.example/uni")
+    g.add((coll, RDF.type, h.Collection))
+    g.add((org, RDF.type, foaf.Organization))
+    g.add((org, d.title, Literal("A University")))
+    for i in "ab":
+        a = URIRef("http://x/" + i)
+        g.add((coll, h.member, a))
+        g.add((a, RDF.type, m.SemanticArtefact))
+        g.add((a, d.title, Literal("T" + i)))
+        g.add((a, m.acronym, Literal(i.upper())))
+        g.add((a, d.publisher, org))
+    raw = json.loads(g.serialize(format="json-ld", context=MOD_CONTEXT["@context"]))
+    # shape guard: members are bare @id refs, artefacts are sibling @graph nodes
+    assert "@graph" in raw
+
+    rows = parse_mod(raw, Peer(id="p", label="P", base_url="https://p.example"))
+    assert sorted(r.iri for r in rows) == ["http://x/a", "http://x/b"]
+    assert len(rows) == 2  # no duplicates, no bogus organization row
+    assert {r.title for r in rows} == {"Ta", "Tb"}
+    assert all(r.publisher == "A University" or r.publisher == "http://org.example/uni" for r in rows)
+
+
+def test_graph_scan_keeps_only_artefact_typed_nodes():
+    doc = {
+        "@context": {
+            "dcterms": "http://purl.org/dc/terms/",
+            "mod": "https://w3id.org/mod#",
+            "dcat": "http://www.w3.org/ns/dcat#",
+            "foaf": "http://xmlns.com/foaf/0.1/",
+        },
+        "@graph": [
+            {"@id": "http://org/1", "@type": "foaf:Organization", "dcterms:title": "Org"},
+            {"@id": "http://x/1", "@type": "mod:SemanticArtefact", "dcterms:title": "One"},
+            {"@id": "http://x/2", "@type": "dcat:Resource", "dcterms:title": "Two"},
+            {"@id": "http://x/3", "@type": ["dcat:Dataset"], "dcterms:title": "Three"},
+            {"@id": "http://x/4", "dcterms:title": "Untyped"},
+        ],
+    }
+    assert [r.iri for r in parse_mod(doc, OURS)] == ["http://x/1", "http://x/2", "http://x/3"]
+
+
+def test_toplevel_member_refs_resolve_against_sibling_graph():
+    doc = {
+        "@context": {"dcterms": "http://purl.org/dc/terms/", "mod": "https://w3id.org/mod#"},
+        "hydra:member": [{"@id": "http://x/b"}, {"@id": "http://x/a"}, {"@id": "http://x/gone"}],
+        "@graph": [
+            {"@id": "http://x/a", "@type": "mod:SemanticArtefact", "dcterms:title": "A"},
+            {"@id": "http://x/b", "@type": "mod:SemanticArtefact", "dcterms:title": "B"},
+        ],
+    }
+    # member order is preserved; unresolvable refs are skipped; no duplicates from the @graph scan
+    assert [r.iri for r in parse_mod(doc, OURS)] == ["http://x/b", "http://x/a"]
+
+
+def test_duplicate_members_deduped_by_iri():
+    doc = {
+        "@context": {"dcterms": "http://purl.org/dc/terms/"},
+        "hydra:member": [
+            {"@id": "http://x/a", "dcterms:title": "A"},
+            {"@id": "http://x/a", "dcterms:title": "A again"},
+        ],
+    }
+    rows = parse_dcat2(doc, AGRO)
+    assert len(rows) == 1 and rows[0].title == "A"
+
+
+def test_catalogue_status_literal():
+    from pydantic import ValidationError
+
+    for ok in ("ok", "timeout", "error", "empty"):
+        assert CatalogueStatus(id="p", label="P", status=ok).status == ok
+    with pytest.raises(ValidationError):
+        CatalogueStatus(id="p", label="P", status="weird")

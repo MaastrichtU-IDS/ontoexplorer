@@ -34,6 +34,6 @@ class CatalogueStatus(BaseModel):
 
     id: str
     label: str
-    status: str  # e.g. "ok" | "timeout" | "error" | "unavailable"
+    status: Literal["ok", "timeout", "error", "empty"]
     count: int = 0
     took_ms: int = 0

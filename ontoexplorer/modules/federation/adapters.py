@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from ontoexplorer.modules.federation.config import Peer
 from ontoexplorer.modules.federation.models import ArtefactRow, SourceRef
@@ -148,6 +148,34 @@ def _first(node: dict[str, Any], keys: tuple[str, ...], ctx: dict[str, str]) -> 
     return None
 
 
+def _http_url(v: Any) -> str | None:
+    """An http(s) URL from a string, ``{"@id"}`` or ``{"@value"}``; anything else is dropped.
+
+    Never reads name/title keys: a named node yields its IRI, not its label.
+    """
+    if isinstance(v, dict):
+        v = v.get("@id") if isinstance(v.get("@id"), str) else v.get("@value")
+    if not isinstance(v, str):
+        return None
+    v = v.strip()
+    try:
+        parts = urlsplit(v)
+    except ValueError:
+        return None
+    if parts.scheme.lower() in ("http", "https") and parts.netloc:
+        return v
+    return None
+
+
+def _first_url(node: dict[str, Any], keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        for v in _as_list(node.get(key)):
+            url = _http_url(v)
+            if url:
+                return url
+    return None
+
+
 def _iri_tail(iri: str) -> str:
     tail = iri.rstrip("/#").rsplit("#", 1)[-1].rsplit("/", 1)[-1]
     return tail or iri
@@ -171,7 +199,7 @@ def _row(raw: Any, ctx: dict[str, str], peer: Peer) -> ArtefactRow | None:
         return None
     iri = iri.strip()
     acronym = _first(node, _ACRONYM, ctx) or _first(node, _IDENTIFIER, ctx) or _iri_tail(iri)
-    homepage = _first(node, _HOMEPAGE, ctx)
+    homepage = _first_url(node, _HOMEPAGE)
     landing = homepage or f"{peer.base_url.rstrip('/')}/mod/artefacts/{quote(acronym, safe='')}"
     return ArtefactRow(
         iri=iri,
@@ -186,35 +214,66 @@ def _row(raw: Any, ctx: dict[str, str], peer: Peer) -> ArtefactRow | None:
     )
 
 
-def _members(doc: Any, ctx: dict[str, str]) -> list[Any]:
+_ARTEFACT_TYPES = {_MOD + "SemanticArtefact", _DCAT + "Resource", _DCAT + "Dataset"}
+
+
+def _is_ref(raw: Any) -> bool:
+    """A bare ``{"@id": ...}`` reference (no properties of its own)."""
+    return isinstance(raw, dict) and isinstance(raw.get("@id"), str) and set(raw) <= {"@id", "@type"}
+
+
+def _member_values(node: dict[str, Any]) -> list[Any]:
+    found: list[Any] = []
+    for key in _MEMBER_KEYS:
+        found.extend(_as_list(node.get(key)))
+    return found
+
+
+def _candidates(doc: Any, ctx: dict[str, str]) -> list[Any]:
+    """Raw artefact nodes in rank order: collection members first, then typed @graph nodes."""
     if isinstance(doc, list):
         return doc
     if not isinstance(doc, dict):
         return []
     # A bare "member" key is hydra's JSON-LD term for hydra:member.
-    node = _normalise({("hydra:member" if k == "member" else k): v for k, v in doc.items()}, ctx)
-    found: list[Any] = []
-    for key in _MEMBER_KEYS:
-        found.extend(_as_list(node.get(key)))
-    if found:
-        return found
-    graph = node.get("@graph")
-    if isinstance(graph, list):
-        return graph
-    return []
+    top = _normalise({("hydra:member" if k == "member" else k): v for k, v in doc.items()}, ctx)
+    graph = [g for g in _as_list(top.get("@graph")) if isinstance(g, dict)]
+    index: dict[str, dict] = {}
+    for g in graph:
+        gid = g.get("@id")
+        if isinstance(gid, str):
+            index.setdefault(gid, g)
+
+    refs = _member_values(top)
+    for g in graph:  # flattened output: the hydra:Collection is itself a @graph node
+        gn = _normalise({("hydra:member" if k == "member" else k): v for k, v in g.items()}, ctx)
+        if _types(gn, ctx) & _COLLECTION_TYPES:
+            refs.extend(_member_values(gn))
+
+    out: list[Any] = []
+    for raw in refs:
+        if _is_ref(raw) and raw["@id"] in index:
+            raw = index[raw["@id"]]
+        out.append(raw)
+    for g in graph:
+        if _types(_normalise(g, ctx), ctx) & _ARTEFACT_TYPES:
+            out.append(g)
+    return out
 
 
 def _parse(doc: Any, peer: Peer) -> list[ArtefactRow]:
     try:
         ctx = _context_map(doc)
         rows: list[ArtefactRow] = []
-        for raw in _members(doc, ctx):
+        seen: set[str] = set()
+        for raw in _candidates(doc, ctx):
             try:
                 row = _row(raw, ctx, peer)
             except Exception:  # one bad member must not drop the rest
                 logger.debug("federation: skipping malformed member from %s", peer.id, exc_info=True)
                 continue
-            if row is not None:
+            if row is not None and row.iri not in seen:
+                seen.add(row.iri)
                 rows.append(row)
         return rows
     except Exception:
