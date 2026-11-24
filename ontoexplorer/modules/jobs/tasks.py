@@ -759,6 +759,7 @@ def ingest_ontology(
     reasoner: str = "rustdl",
     reasoner_profile_id: str | None = None,
     declared_license: str | None = None,
+    source_catalogue: str | None = None,
 ) -> dict:
     """Celery task: run the full ingestion pipeline for one ontology submission."""
     from ontoexplorer.database import make_celery_db_session
@@ -784,6 +785,7 @@ def ingest_ontology(
         owner_id=owner_id, groups=groups or [],
         reasoner=reasoner, reasoner_profile_id=reasoner_profile_id,
         declared_license=declared_license,
+        source_catalogue=source_catalogue,
     )
 
     session_factory = make_celery_db_session()
@@ -1886,6 +1888,45 @@ def poll_for_updates(limit: int = 80, min_host_interval_s: float = 2.0) -> dict:
 
     n = asyncio.run(_run())
     return {"polled": n}
+
+
+@celery_app.task(bind=True, name="ontoexplorer.harvest_peer", time_limit=900)
+def harvest_peer(self, peer_id: str | None = None, limit: int | None = None,
+                 dry_run: bool = True) -> dict:
+    """Gated MOD-API harvest of one federation peer (OFF unless harvest_enabled).
+
+    Dry-run by default: reports what would be enqueued without enqueuing. Live runs
+    enqueue admitted candidates via ingest_ontology with source_catalogue provenance."""
+    from ontoexplorer.database import make_celery_db_session
+    from ontoexplorer.modules.discovery.mod_harvest import ModApiHarvestSource
+    from ontoexplorer.modules.discovery.runner import run_harvest
+    from ontoexplorer.modules.discovery.throttle import PeerRateLimiter, RunBudget
+    from ontoexplorer.modules.federation.config import get_federation_peers
+
+    settings = get_settings()
+    if not settings.harvest_enabled:
+        return {"status": "disabled"}
+
+    wanted = peer_id or settings.harvest_peer_id
+    peer = next((p for p in get_federation_peers() if p.id == wanted), None)
+    if peer is None:
+        return {"status": "unknown_peer", "peer_id": wanted}
+
+    source = ModApiHarvestSource(
+        peer, rate_limiter=PeerRateLimiter(settings.harvest_min_interval_ms))
+    budget = RunBudget(limit or settings.harvest_max_candidates)
+
+    async def _run() -> dict:
+        async with make_celery_db_session()() as db:
+            report = await run_harvest(
+                db, source, budget=budget, dry_run=dry_run,
+                source_catalogue=peer.id, groups=["mod-harvest", peer.id])
+        return report.as_dict()
+
+    result = asyncio.run(_run())
+    log.info("harvest_peer_complete", peer=peer.id, dry_run=dry_run,
+             seen=result["seen"], admitted=result["admitted"], enqueued=result["enqueued"])
+    return result
 
 
 def _filter_unchanged_records(records, existing: dict) -> list:
