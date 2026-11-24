@@ -4,10 +4,12 @@ Cheap checks that run BEFORE a candidate is enqueued for ingestion, so the
 harvest does not spend ingest work on obvious rejects. Check order (first
 failing check wins): bad_iri -> no_title -> duplicate -> license_noncompliant.
 
-License rule mirrors ``is_compliant``/``effective_license``: an absent or
-unrecognised license is an ABSENCE of proof, not a violation, so it is admitted
-and the post-ingest pipeline gate holds it later. Only a license that
-canonicalizes to a recognised SPDX id outside a non-empty allowlist is rejected.
+License rule is intentionally MORE LENIENT than the post-ingest gate
+(``is_compliant``/``effective_license``, which hold a present-but-unrecognised
+license): here an absent OR unrecognised license is an ABSENCE of proof, not a
+violation, so it is admitted and the post-ingest pipeline gate holds it later.
+Only a license that canonicalizes to a recognised SPDX id outside a non-empty
+allowlist is rejected pre-enqueue.
 """
 
 from __future__ import annotations
