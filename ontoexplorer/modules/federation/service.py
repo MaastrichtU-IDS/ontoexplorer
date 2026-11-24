@@ -28,6 +28,13 @@ from ontoexplorer.modules.federation.models import ArtefactRow, CatalogueStatus
 logger = logging.getLogger(__name__)
 
 _CACHE_PREFIX = "federation"
+# A hung Redis must degrade to a cache miss, not eat the whole fan-out budget.
+# NB: a timed-out ``to_thread`` leaves its worker thread parked until Redis
+# responds (acceptable; a socket_timeout on the shared ``_get_redis`` client
+# would affect every other caller, so it is deliberately not changed here).
+_CACHE_TIMEOUT_S = 0.25
+# Grace given to cancelled peer tasks to unwind before they are abandoned.
+_CANCEL_GRACE_S = 0.5
 
 
 def _redis():
@@ -63,11 +70,21 @@ def _cache_set(key: str, rows: list[ArtefactRow], ttl: int) -> None:
 async def _one_peer(peer: Peer, q: str, limit: int) -> list[ArtefactRow]:
     """Cache-then-live fetch for one peer. Raises on live-fetch failure."""
     key = _cache_key(peer.id, q)
-    cached = await asyncio.to_thread(_cache_get, key)
+    try:
+        cached = await asyncio.wait_for(asyncio.to_thread(_cache_get, key), _CACHE_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        logger.debug("federation cache read timed out for %s; treating as miss", key)
+        cached = None
     if cached is not None:
         return cached
     rows = await client.search_artefacts(peer, q, limit)
-    await asyncio.to_thread(_cache_set, key, rows, get_settings().federation_cache_ttl_s)
+    try:
+        await asyncio.wait_for(
+            asyncio.to_thread(_cache_set, key, rows, get_settings().federation_cache_ttl_s),
+            _CACHE_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError:
+        logger.debug("federation cache write timed out for %s; skipped", key)
     return rows
 
 
@@ -75,6 +92,12 @@ async def _timed(peer: Peer, q: str, limit: int) -> tuple[list[ArtefactRow], int
     t0 = time.monotonic()
     rows = await _one_peer(peer, q, limit)
     return rows, int((time.monotonic() - t0) * 1000)
+
+
+def _consume(task: asyncio.Future) -> None:
+    """Retrieve an abandoned task's outcome so it never logs 'never retrieved'."""
+    if not task.cancelled():
+        task.exception()
 
 
 async def federated_artefacts(
@@ -108,7 +131,12 @@ async def federated_artefacts(
         for t in pending:
             t.cancel()
         if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+            # Bounded unwind: a peer that is slow to handle CancelledError must
+            # not extend the call. Stragglers are abandoned (reported timeout).
+            await asyncio.wait(pending, timeout=_CANCEL_GRACE_S)
+            for t in pending:
+                if not t.done():
+                    t.add_done_callback(_consume)
     except asyncio.CancelledError:
         for t in tasks:
             t.cancel()
@@ -118,7 +146,7 @@ async def federated_artefacts(
     statuses: list[CatalogueStatus] = []
     overall_ms = int((time.monotonic() - started) * 1000)
     for peer, task in zip(peers, tasks):
-        if task.cancelled():
+        if task in pending or task.cancelled():
             statuses.append(
                 CatalogueStatus(id=peer.id, label=peer.label, status="timeout", took_ms=overall_ms)
             )

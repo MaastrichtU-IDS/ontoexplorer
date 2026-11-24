@@ -230,3 +230,62 @@ async def test_defaults_use_configured_peers(monkeypatch, fake_redis):
     _patch_client(monkeypatch, {"p": ok})
     rows, statuses = await service.federated_artefacts("x", set())
     assert len(rows) == 1 and statuses[0].id == "p"
+
+
+async def test_cancel_resistant_peer_cannot_extend_call(monkeypatch, fake_redis):
+    good, stubborn = _peer("good"), _peer("stubborn")
+    monkeypatch.setattr(service, "_CANCEL_GRACE_S", 0.2)
+    monkeypatch.setattr(get_settings(), "federation_fanout_timeout_ms", 200)
+
+    async def ok(peer, q, limit):
+        return [_row(peer, 1)]
+
+    async def resistant(peer, q, limit):
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            await asyncio.sleep(3)  # slow cleanup, swallows the cancel
+        return [_row(peer, 1)]  # would flip to "ok" if not guarded
+
+    _patch_client(monkeypatch, {"good": ok, "stubborn": resistant})
+    t0 = time.monotonic()
+    rows, statuses = await service.federated_artefacts("x", set(), [good, stubborn])
+    assert time.monotonic() - t0 < 0.2 + 0.2 + 0.5  # budget + grace + slack
+    by_id = {s.id: s for s in statuses}
+    assert by_id["good"].status == "ok"
+    assert by_id["stubborn"].status == "timeout" and by_id["stubborn"].count == 0
+    assert [r.source.id for r in rows] == ["good"]
+
+
+async def test_hung_redis_get_degrades_to_miss(monkeypatch):
+    class HungRedis(FakeRedis):
+        def get(self, key):
+            time.sleep(1.0)  # blocks its worker thread
+            return None
+
+    monkeypatch.setattr(service, "_CACHE_TIMEOUT_S", 0.1)
+    monkeypatch.setattr(get_settings(), "federation_fanout_timeout_ms", 2000)
+    monkeypatch.setattr(service, "_redis", lambda: HungRedis())
+    p = _peer("p")
+
+    async def ok(peer, q, limit):
+        return [_row(peer, 1)]
+
+    calls = _patch_client(monkeypatch, {"p": ok})
+    t0 = time.monotonic()
+    rows, statuses = await service.federated_artefacts("x", set(), [p])
+    assert time.monotonic() - t0 < 1.0
+    assert calls == ["p"] and len(rows) == 1 and statuses[0].status == "ok"
+
+
+async def test_cached_empty_is_served_as_empty(monkeypatch, fake_redis):
+    p = _peer("p")
+    fake_redis.store[service._cache_key("p", "x")] = "[]"
+
+    async def never(peer, q, limit):
+        raise AssertionError("client must not be called on a cache hit")
+
+    calls = _patch_client(monkeypatch, {"p": never})
+    rows, statuses = await service.federated_artefacts("X", set(), [p])
+    assert calls == [] and rows == []
+    assert statuses[0].status == "empty" and statuses[0].count == 0
