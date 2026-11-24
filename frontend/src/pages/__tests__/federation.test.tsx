@@ -66,6 +66,42 @@ describe('FederatedResults', () => {
     expect(screen.getByText(/2 of 3 catalogues responded/i)).toBeInTheDocument()
   })
 
+  const withUrl = (u: string | null): FederatedBlock => ({
+    catalogues: BLOCK.catalogues,
+    results: [{ ...BLOCK.results[0], source_landing_url: u }],
+  })
+
+  test('does not render a link for a javascript: landing URL (div fallback)', () => {
+    const { container } = render(<FederatedResults federated={withUrl('javascript:alert(1)')} />)
+    expect(screen.queryByRole('link')).toBeNull()
+    expect(container.innerHTML).not.toContain('javascript:')
+    expect(screen.getByText('Crop Ontology')).toBeInTheDocument()
+  })
+
+  test('does not render a link for a data: landing URL', () => {
+    render(<FederatedResults federated={withUrl('data:text/html,<script>1</script>')} />)
+    expect(screen.queryByRole('link')).toBeNull()
+  })
+
+  test('renders the non-link fallback when source_landing_url is null', () => {
+    render(<FederatedResults federated={withUrl(null)} />)
+    expect(screen.queryByRole('link')).toBeNull()
+    expect(screen.getByText('Crop Ontology')).toBeInTheDocument()
+    expect(screen.getByText('AgroPortal')).toBeInTheDocument()
+  })
+
+  test('outbound link announces that it opens in a new tab', () => {
+    render(<FederatedResults federated={BLOCK} />)
+    expect(screen.getByRole('link', { name: /opens in new tab/i })).toBeInTheDocument()
+  })
+
+  test('tolerates a block missing catalogues/results and duplicate IRIs', () => {
+    const dup = { ...BLOCK.results[0] }
+    render(<FederatedResults federated={{ results: [dup, dup] } as unknown as FederatedBlock} />)
+    expect(screen.getAllByRole('link')).toHaveLength(2)
+    render(<FederatedResults federated={{} as unknown as FederatedBlock} />)
+  })
+
   test('renders nothing when federated block is absent', () => {
     const { container } = render(<FederatedResults federated={undefined} />)
     expect(container).toBeEmptyDOMElement()

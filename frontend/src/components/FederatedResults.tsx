@@ -1,11 +1,23 @@
 import type { FederatedBlock } from '../lib/api'
 
+// source_landing_url is an UNTRUSTED remote value: only http(s) may become an href.
+function safeHttp(u?: string | null): string | null {
+  if (!u) return null
+  try {
+    const p = new URL(u)
+    return p.protocol === 'http:' || p.protocol === 'https:' ? u : null
+  } catch {
+    return null
+  }
+}
+
 // "Also found in other catalogues": remote MOD-API rows, kept structurally
 // separate from the local (navigable) catalogue. Each row links OUT to the
 // remote catalogue's landing page in a new tab.
 export default function FederatedResults({ federated }: { federated?: FederatedBlock }) {
   if (!federated) return null
-  const { catalogues, results } = federated
+  const catalogues = federated.catalogues ?? []
+  const results = federated.results ?? []
   const responded = catalogues.filter(c => c.status !== 'timeout' && c.status !== 'error').length
   const failed = catalogues.filter(c => c.status === 'timeout' || c.status === 'error')
 
@@ -24,7 +36,8 @@ export default function FederatedResults({ federated }: { federated?: FederatedB
         <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>No additional matches in other catalogues.</p>
       ) : (
         <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {results.map(r => {
+          {results.map((r, i) => {
+            const href = safeHttp(r.source_landing_url)
             const name = r.title?.trim() || r.acronym || r.iri
             const row = (
               <>
@@ -42,6 +55,7 @@ export default function FederatedResults({ federated }: { federated?: FederatedB
                   marginLeft: 'auto', fontSize: 10, background: 'var(--bg)', color: 'var(--accent)',
                   borderRadius: 3, padding: '1px 5px', textTransform: 'uppercase', flexShrink: 0,
                 }}>{r.source.label}</span>
+                {href && <span aria-hidden="true" style={{ color: 'var(--text-dim)', fontSize: 12, flexShrink: 0 }}>↗</span>}
               </>
             )
             const style: React.CSSProperties = {
@@ -50,9 +64,12 @@ export default function FederatedResults({ federated }: { federated?: FederatedB
               border: '1px dashed var(--border)', background: 'var(--bg-secondary)',
             }
             return (
-              <li key={`${r.source.id}:${r.iri}`}>
-                {r.source_landing_url ? (
-                  <a href={r.source_landing_url} target="_blank" rel="noopener noreferrer" style={style}>
+              <li key={`${r.source.id}:${r.iri}:${i}`}>
+                {href ? (
+                  <a
+                    href={href} target="_blank" rel="noopener noreferrer" style={style}
+                    aria-label={`${name} (${r.source.label}) — opens in new tab`}
+                  >
                     {row}
                   </a>
                 ) : (
