@@ -1565,6 +1565,11 @@ async def list_versions(ontology_id: str, db: AsyncSession = Depends(get_db)):
             .group_by(_EIdx.version_id)
         )).all()
         _corrupt_counts = {str(vid): int(n) for vid, n in _cc_rows}
+    # Effective title per version for the hold gate: ontology.title is null for most
+    # of the catalogue, so fall back to the version's resolved metadata title (same
+    # fallback the list/display path uses) — else "no title" fires spuriously.
+    from ontoexplorer.modules.search.versions import resolved_meta_titles as _rmt
+    _meta_titles = await _rmt(db, _vids)
     out = []
     for v in versions:
         d = _version_dict(v)
@@ -1574,7 +1579,7 @@ async def list_versions(ontology_id: str, db: AsyncSession = Depends(get_db)):
         # dashboard can show it and offer the fix — #364 Add-Ontology flow.
         d["review_reasons"] = (
             _held(license_compliant=v.license_compliant, triple_count=v.triple_count,
-                  title=ontology.title, min_triples=_min_tri)
+                  title=(ontology.title or _meta_titles.get(str(v.id))), min_triples=_min_tri)
             if v.status == "needs_review" else []
         )
         # An auto-retired held draft (the lifecycle set it aside past the retire
@@ -1665,9 +1670,14 @@ async def reevaluate_version(
     # ingest (`license_raw`) rather than re-reading the store — a momentarily
     # unreachable store must not read as "no license" and let the overlay publish.
     # Same honest re-check the admin bulk queue uses (reevaluate_from_signals).
+    # Effective title: ontology.title OR the version's resolved metadata title (the
+    # ontology-level title is null for most of the catalogue). Without the fallback a
+    # titled ontology whose title lives only on the version is falsely held "no title".
+    from ontoexplorer.modules.search.versions import resolved_meta_titles
+    _eff_title = ontology.title or (await resolved_meta_titles(db, [str(version.id)])).get(str(version.id))
     content_spdx, lic_ok, new_status, reasons = reevaluate_from_signals(
         license_raw=version.license_raw, declared_license=version.declared_license,
-        triple_count=version.triple_count, title=ontology.title,
+        triple_count=version.triple_count, title=_eff_title,
         min_triples=get_settings().min_triples_for_publish,
     )
     version.license = content_spdx
