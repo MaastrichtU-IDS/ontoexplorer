@@ -111,6 +111,29 @@ def version_predecessor(versions: list[OntologyVersion], version_id: str) -> Ont
     return max(earlier, key=_version_key)
 
 
+async def resolved_meta_titles(db: AsyncSession, version_ids: list[str]) -> dict[str, str]:
+    """Map version_id -> resolved metadata title (from ontology_meta_profiles).
+
+    The catalogue's display title is ``ontology.title OR <this>`` (ontologies.title
+    is null for ~97% of the catalogue; the real title lives in the version's resolved
+    metadata). The quality gate's "no title" check must use the SAME fallback, or it
+    falsely holds a titled ontology whose title only exists at the version level.
+    Reads the ``resolved`` JSON and extracts the title in Python, so it works on any
+    backend (no Postgres-only json function). One query."""
+    if not version_ids:
+        return {}
+    from ontoexplorer.models.db import OntologyMetaProfile
+    rows = (await db.execute(
+        select(OntologyMetaProfile.version_id, OntologyMetaProfile.resolved)
+        .where(OntologyMetaProfile.version_id.in_(version_ids))
+    )).all()
+    out: dict[str, str] = {}
+    for vid, resolved in rows:
+        title = resolved.get("title") if isinstance(resolved, dict) else None
+        out[str(vid)] = (title or "").strip()
+    return out
+
+
 async def latest_versions_for(
     db: AsyncSession, ontology_ids: list[str], *, defer_heavy: bool = False
 ) -> dict[str, OntologyVersion]:

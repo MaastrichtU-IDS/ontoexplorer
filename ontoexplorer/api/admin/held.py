@@ -124,6 +124,11 @@ async def admin_bulk_reevaluate(
     by_id = {v.id: (v, o) for v, o in rows}
     min_triples = get_settings().min_triples_for_publish
 
+    # Effective title per version (ontology.title OR version's resolved metadata
+    # title) — the gate must use the same fallback as the display, or it falsely
+    # holds titled ontologies whose title lives only at the version level.
+    from ontoexplorer.modules.search.versions import resolved_meta_titles
+    _meta_titles = await resolved_meta_titles(db, list(ids))
     results: list[dict] = []
     published = 0
     for vid in ids:
@@ -137,7 +142,8 @@ async def admin_bulk_reevaluate(
             continue
         content_spdx, lic_ok, new_status, reasons = reevaluate_from_signals(
             license_raw=v.license_raw, declared_license=v.declared_license,
-            triple_count=v.triple_count, title=o.title, min_triples=min_triples,
+            triple_count=v.triple_count, title=(o.title or _meta_titles.get(vid)),
+            min_triples=min_triples,
         )
         v.license = content_spdx
         v.license_compliant = lic_ok

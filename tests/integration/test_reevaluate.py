@@ -69,6 +69,25 @@ async def test_still_held_when_title_missing(client, user_and_key, db_session):
 
 
 @pytest.mark.anyio
+async def test_meta_title_fallback_lets_titled_version_publish(client, user_and_key, db_session):
+    # Regression: ontologies.title is null for ~97% of the catalogue; the real title
+    # lives in the version's resolved metadata. The hold gate must use that fallback
+    # (ontology.title OR meta title), else a titled ontology is falsely held "no
+    # title" and can never publish via reevaluate.
+    from ontoexplorer.models.db import OntologyMetaProfile
+    user, raw = user_and_key
+    o, v = await _held(db_session, user.id, title=None)  # no ontology-level title
+    db_session.add(OntologyMetaProfile(version_id=v.id, resolved={"title": "Real Title"}))
+    await db_session.commit()
+    r = await client.post(f"/api/v1/ontologies/{o.id}/{v.id}/reevaluate",
+                          json={"declared_license": "MIT"}, headers=_hdr(raw))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ready", body
+    assert body["review_reasons"] == []
+
+
+@pytest.mark.anyio
 async def test_content_noncompliant_cannot_be_laundered(client, user_and_key, db_session):
     # The CONTENT declares a recognized NC license → a declared compliant one must
     # not rescue it. reevaluate reads the stored license_raw.
