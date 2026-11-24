@@ -231,6 +231,72 @@ async def test_https_to_http_downgrade_to_non_allowlisted_refused(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_https_to_http_downgrade_to_own_peer_host_blocked_no_cleartext_secret(monkeypatch):
+    # The peer 302s https->http back to ITS OWN allowlisted host. Must still be
+    # refused: an http hop would carry the bearer token in cleartext.
+    peer = _configure(
+        monkeypatch,
+        _peer_json(auth={"kind": "bearer", "secret_ref": "PEER_KEY"}),
+        PEER_KEY="tok-xyz",
+    )
+    schemes: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        schemes.append(request.url.scheme)
+        # the http hop must never be contacted (so the secret never goes cleartext)
+        assert request.url.scheme == "https"
+        return httpx.Response(
+            302, headers={"Location": f"http://{PEER_HOST}/mod/artefacts"}, request=request
+        )
+
+    with pytest.raises(FederationFetchError) as exc:
+        await search_artefacts(peer, "x", 5, transport=httpx.MockTransport(handler))
+    assert exc.value.reason == "blocked_redirect"
+    assert "http" not in schemes
+
+
+@pytest.mark.anyio
+async def test_cross_allowlisted_peer_redirect_withholds_auth(monkeypatch):
+    # Two allowlisted peers. Peer A (with auth) 302s to peer B's host. B IS
+    # contacted (it is allowlisted), but A's secret must NOT travel to B.
+    entries = [
+        {
+            "id": "a",
+            "label": "A",
+            "base_url": "https://a.test",
+            "mod_path": "/mod",
+            "adapter": "mod",
+            "auth": {"kind": "apikey_param", "name": "apikey", "secret_ref": "PEER_KEY"},
+        },
+        {"id": "b", "label": "B", "base_url": "https://b.test", "mod_path": "/mod", "adapter": "mod"},
+    ]
+    monkeypatch.setenv("FEDERATION_PEERS_JSON", json.dumps(entries))
+    monkeypatch.setenv("PEER_KEY", "s3cret")
+    get_settings.cache_clear()
+    peer_a = get_federation_peers()[0]
+    assert peer_a.id == "a"
+
+    hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        hosts.append(request.url.host)
+        if request.url.host == "a.test":
+            assert request.url.params.get("apikey") == "s3cret"  # A's own host: auth sent
+            return httpx.Response(
+                302, headers={"Location": "https://b.test/mod/artefacts/final"}, request=request
+            )
+        # peer B: A's secret must be withheld (host != A's host)
+        assert request.url.host == "b.test"
+        assert request.url.params.get("apikey") is None
+        assert "authorization" not in {h.lower() for h in request.headers}
+        return _json_response(request, _COLLECTION)
+
+    rows = await search_artefacts(peer_a, "x", 5, transport=httpx.MockTransport(handler))
+    assert len(rows) == 1
+    assert "b.test" in hosts  # B really was contacted (the withhold branch ran)
+
+
+@pytest.mark.anyio
 async def test_guard_ssrf_block_maps_to_blocked_redirect(monkeypatch):
     peer = _configure(monkeypatch, _peer_json())
 
@@ -262,16 +328,44 @@ async def test_allowlisted_same_host_redirect_is_followed(monkeypatch):
 # --------------------------------------------------------------------- size cap
 
 
+class _CountingStream(httpx.AsyncByteStream):
+    """A multi-chunk async body that records how many chunks were actually pulled.
+
+    Lets the test prove the client aborts *mid-stream* (streaming cap), not after
+    buffering the whole body: a one-shot ``.read()`` would pull every chunk.
+    """
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+        self.pulled = 0
+
+    def __aiter__(self):
+        return self._gen()
+
+    async def _gen(self):
+        for chunk in self._chunks:
+            self.pulled += 1
+            yield chunk
+
+    async def aclose(self) -> None:
+        pass
+
+
 @pytest.mark.anyio
-async def test_oversize_body_aborted(monkeypatch):
-    peer = _configure(monkeypatch, _peer_json(), FEDERATION_MAX_RESPONSE_BYTES="128")
+async def test_oversize_body_aborted_mid_stream(monkeypatch):
+    # cap 100 bytes; ten 40-byte chunks (400 total) — the cap is crossed by the
+    # 3rd chunk, so the stream must be abandoned long before all ten are pulled.
+    peer = _configure(monkeypatch, _peer_json(), FEDERATION_MAX_RESPONSE_BYTES="100")
+    chunks = [b"x" * 40 for _ in range(10)]
+    stream = _CountingStream(chunks)
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=b"x" * 5000, request=request)
+        return httpx.Response(200, stream=stream, request=request)
 
     with pytest.raises(FederationFetchError) as exc:
         await search_artefacts(peer, "x", 5, transport=httpx.MockTransport(handler))
     assert exc.value.reason == "oversize"
+    assert 0 < stream.pulled < len(chunks), "stream was not aborted mid-transfer"
 
 
 # --------------------------------------------------------------------- timeout

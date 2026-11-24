@@ -115,9 +115,10 @@ def _apply_auth(
 def _check_redirect(current: httpx.URL, location: str, allow: frozenset[str]) -> httpx.URL:
     """Validate a redirect hop; return the next URL or raise ``blocked_redirect``.
 
-    Policy: the next host must be on the peer allowlist, and an https->http
-    downgrade to a non-allowlisted host is refused. (The SSRF guard additionally
-    blocks private/internal targets at connect time.)
+    Policy: refuse ANY https->http downgrade (even to the peer's own host — an
+    http hop would carry the auth secret in cleartext), then require the next
+    host to be on the peer allowlist. (The SSRF guard additionally blocks
+    private/internal targets at connect time.)
     """
     if not location:
         raise FederationFetchError("blocked_redirect")
@@ -125,11 +126,11 @@ def _check_redirect(current: httpx.URL, location: str, allow: frozenset[str]) ->
     host = (nxt.host or "").lower()
     if nxt.scheme not in ("http", "https"):
         raise FederationFetchError("blocked_redirect")
-    if host not in allow:
+    # Refuse the downgrade outright, before the allowlist decision: a secret must
+    # never be re-attached over cleartext, not even back to the peer's own host.
+    if current.scheme == "https" and nxt.scheme == "http":
         raise FederationFetchError("blocked_redirect")
-    if current.scheme == "https" and nxt.scheme == "http" and host not in allow:
-        # Redundant with the allowlist gate above, but kept explicit: a
-        # downgrade is only ever tolerated toward an allowlisted peer host.
+    if host not in allow:
         raise FederationFetchError("blocked_redirect")
     return nxt
 
