@@ -35,6 +35,12 @@ _URL_TO_SPDX: tuple[tuple[re.Pattern, str], ...] = (
     (re.compile(r"opensource\.org/licenses/MIT"), "MIT"),
     (re.compile(r"opensource\.org/licenses/BSD-3-Clause"), "BSD-3-Clause"),
     (re.compile(r"gnu\.org/licenses/gpl-3\.0"), "GPL-3.0-only"),
+    # Standards-body permissive licenses (permit reuse + redistribution with notices).
+    # W3C Software Notice and License (2002) — SPDX "W3C" — declared as the current
+    # /copyright/software-license-2002 URL or the classic 2002 legal URL (e.g. fresnel).
+    (re.compile(r"w3\.org/(?:copyright/software-license-2002|Consortium/Legal/2002/copyright-software)", re.I), "W3C"),
+    # OGC Software License, Version 1.0 — SPDX "OGC-1.0" — e.g. ssn.
+    (re.compile(r"(?:opengeospatial|ogc)\.org/ogc/software", re.I), "OGC-1.0"),
     # Open Data Commons (data licenses; SPDX ids exist for all three).
     (re.compile(r"opendatacommons\.org/licenses/odbl"), "ODbL-1.0"),
     (re.compile(r"opendatacommons\.org/licenses/pddl"), "PDDL-1.0"),
@@ -84,6 +90,10 @@ _LABEL_TO_SPDX: dict[str, str] = {
     "gpl-3.0-only": "GPL-3.0-only",
     "gpl-3.0-or-later": "GPL-3.0-or-later", "gpl 3.0 or later": "GPL-3.0-or-later",
     "gplv3+": "GPL-3.0-or-later",
+    "w3c software notice and license": "W3C", "w3c software license": "W3C",
+    "w3c software notice and license 2002": "W3C", "w3c": "W3C",
+    "ogc software license": "OGC-1.0", "ogc software license 1.0": "OGC-1.0",
+    "ogc software notice": "OGC-1.0",
 }
 
 # Versioned/less-common SPDX ids the URL table emits only via a {v} template, listed

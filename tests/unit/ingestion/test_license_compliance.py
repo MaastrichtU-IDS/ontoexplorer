@@ -112,9 +112,22 @@ class TestEffectiveLicenseOverlay:
     # A CC deed named in free prose, as a last resort.
     ("Attribution 4.0 International (CC BY 4.0)", "CC-BY-4.0"),
     ("Attribution-NoDerivatives 4.0 International (CC BY-ND 4.0)", "CC-BY-ND-4.0"),
+    # Standards-body permissive licenses.
+    ("https://www.w3.org/copyright/software-license-2002/", "W3C"),   # fresnel
+    ("http://www.w3.org/Consortium/Legal/2002/copyright-software-20021231", "W3C"),
+    ("W3C Software Notice and License", "W3C"),
+    ("http://www.opengeospatial.org/ogc/Software", "OGC-1.0"),        # ssn (capital S)
+    ("https://www.ogc.org/ogc/software", "OGC-1.0"),
+    ("OGC Software License", "OGC-1.0"),
 ])
 def test_canonicalize(raw, spdx):
     assert canonicalize_license(raw) == spdx
+
+
+def test_standards_body_licenses_are_compliant():
+    """W3C Software 2002 (fresnel) and OGC Software 1.0 (ssn) are on the allowlist."""
+    assert is_compliant("https://www.w3.org/copyright/software-license-2002/") is True
+    assert is_compliant("http://www.opengeospatial.org/ogc/Software") is True
 
 
 def test_canonicalization_is_permission_neutral():

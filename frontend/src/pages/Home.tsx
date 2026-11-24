@@ -67,10 +67,22 @@ function TypeChips({ selected, onChange }: {
 }
 
 function StatCard({ label, value, subtitle, to }: { label: string; value: number | string; subtitle?: string; to?: string }) {
+  const isNum = typeof value === 'number'
+  // Large aggregates (e.g. ~116M axioms) overflow the ~140px tile at this font,
+  // so compact them (115.7M); smaller counts (ontologies, ~1,900) stay exact.
+  // The full comma-grouped value is kept on hover via `title`.
+  const display = isNum
+    ? (value >= 1_000_000
+        ? value.toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 })
+        : value.toLocaleString())
+    : value
   const inner = (
     <>
-      <div style={{ fontSize: 26, fontWeight: 700, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
-        {typeof value === 'number' ? value.toLocaleString() : value}
+      <div
+        title={isNum ? value.toLocaleString() : undefined}
+        style={{ fontSize: 26, fontWeight: 700, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}
+      >
+        {display}
       </div>
       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
         {label}
