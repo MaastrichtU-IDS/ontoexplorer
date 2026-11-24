@@ -842,6 +842,68 @@ async def list_ontologies(
     db: AsyncSession = Depends(get_db),
     user: User | None = Depends(get_current_user),
 ):
+    """List ontologies (local catalogue). With ``federated=true`` (+ ``q``, first page,
+    federation enabled) also returns remote MOD-API hits in a separate ``federated``
+    block — never mixed into ``ontologies``."""
+    # Federated mode: anything but (federated AND enabled AND offset==0 AND q) is
+    # exactly the legacy path. The fan-out starts now so it overlaps the local query
+    # (no serial latency). `fed_local_iris` is a shared set, filled with the local
+    # page's IRIs before the task is awaited; the dedup is re-applied after the
+    # await in case a (cached) peer answered before the local page was known.
+    fed_task: asyncio.Task | None = None
+    fed_local_iris: set[str] = set()
+    if federated and q and offset == 0:
+        from ontoexplorer.modules.federation.config import get_settings as _fed_settings
+        if _fed_settings().federation_enabled:
+            from ontoexplorer.modules.federation import service as _fed_service
+            fed_task = asyncio.ensure_future(_fed_service.federated_artefacts(q, fed_local_iris))
+            # Never leave an unretrieved exception if the local query fails first.
+            fed_task.add_done_callback(lambda t: t.cancelled() or t.exception())
+
+    try:
+        payload = await _list_ontologies_local(
+            q=q, group=group, profile=profile, language=language, reuses=reuses,
+            license=license, mine=mine, attention=attention, skos=skos, lang=lang,
+            sort=sort, dir=dir, view=view, limit=limit, offset=offset, db=db, user=user,
+        )
+    except BaseException:
+        # Local query (or validation) failed: stop the fan-out hammering peers.
+        if fed_task is not None and not fed_task.done():
+            fed_task.cancel()
+        raise
+
+    if fed_task is not None:
+        fed_local_iris.update(r["iri"] for r in payload["ontologies"] if r.get("iri"))
+        try:
+            remote_rows, statuses = await fed_task
+        except Exception as exc:  # the service never raises on a peer; belt and braces
+            log.warning("federated search failed: %r", exc)
+        else:
+            # Re-apply local dedup and keep each catalogue's count consistent with it.
+            dropped: dict[str, int] = {}
+            kept = []
+            for rr in remote_rows:
+                if rr.iri in fed_local_iris:
+                    dropped[rr.source.id] = dropped.get(rr.source.id, 0) + 1
+                else:
+                    kept.append(rr)
+            if dropped:
+                for st in statuses:
+                    st.count = max(0, st.count - dropped.get(st.id, 0))
+            payload["federated"] = {
+                "catalogues": [st.model_dump(mode="json") for st in statuses],
+                "results": [rr.model_dump(mode="json") for rr in kept],
+            }
+
+    return payload
+
+
+async def _list_ontologies_local(
+    q: str | None, group: str | None, profile: str | None, language: str | None,
+    reuses: str | None, license: str | None, mine: bool, attention: bool, skos: bool,
+    lang: list[str], sort: str, dir: str, view: str | None, limit: int, offset: int,
+    db: AsyncSession, user: User | None,
+):
     import json as _json
     from sqlalchemy import func
 
@@ -869,22 +931,6 @@ async def list_ontologies(
                 status_code=422,
                 detail=f"Invalid language '{language}'. Must be one of: {', '.join(LANGUAGE_TIERS)}",
             )
-
-    # Federated mode (remote MOD-API peers): first page of a keyword search only, and
-    # only when federation is enabled — anything else is exactly the legacy path.
-    # The fan-out starts now so it overlaps the local query (no serial latency).
-    # `fed_local_iris` is a shared set, filled with the local page's IRIs before the
-    # task is awaited; the dedup is re-applied after the await in case a (cached)
-    # peer answered before the local page was known.
-    fed_task: asyncio.Task | None = None
-    fed_local_iris: set[str] = set()
-    if federated and q and offset == 0:
-        from ontoexplorer.modules.federation.config import get_settings as _fed_settings
-        if _fed_settings().federation_enabled:
-            from ontoexplorer.modules.federation import service as _fed_service
-            fed_task = asyncio.ensure_future(_fed_service.federated_artefacts(q, fed_local_iris))
-            # Never leave an unretrieved exception if the local query fails first.
-            fed_task.add_done_callback(lambda t: t.cancelled() or t.exception())
 
     # `profile`, `language` (tier), and `reuses` are cache-derived, so those requests
     # load every matching row and filter/sort/slice in Python. `q` (#286), the
@@ -1325,33 +1371,7 @@ async def list_ontologies(
     if view == "list":
         rows = [_leanify_list_row(r) for r in rows]
 
-    payload = {"ontologies": rows, "offset": offset, "limit": limit, "total": total}
-
-    if fed_task is not None:
-        fed_local_iris.update(r["iri"] for r in rows if r.get("iri"))
-        try:
-            remote_rows, statuses = await fed_task
-        except Exception as exc:  # the service never raises on a peer; belt and braces
-            log.warning("federated search failed: %r", exc)
-        else:
-            # Re-apply local dedup (a fast peer may have answered before the local
-            # page was known) and keep each catalogue's count consistent with it.
-            dropped: dict[str, int] = {}
-            kept = []
-            for rr in remote_rows:
-                if rr.iri in fed_local_iris:
-                    dropped[rr.source.id] = dropped.get(rr.source.id, 0) + 1
-                else:
-                    kept.append(rr)
-            if dropped:
-                for st in statuses:
-                    st.count = max(0, st.count - dropped.get(st.id, 0))
-            payload["federated"] = {
-                "catalogues": [st.model_dump(mode="json") for st in statuses],
-                "results": [rr.model_dump(mode="json") for rr in kept],
-            }
-
-    return payload
+    return {"ontologies": rows, "offset": offset, "limit": limit, "total": total}
 
 
 # ── Submissions (durable ingest-job records) ─────────────────────────────────────

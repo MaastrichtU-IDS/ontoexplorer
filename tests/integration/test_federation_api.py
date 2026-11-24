@@ -129,18 +129,20 @@ async def test_default_call_has_no_federated_key(client, fed_stub):
 
 
 @pytest.mark.anyio
-async def test_local_row_not_duplicated_by_early_fanout(client, db_session, monkeypatch, cleanup):
-    """A remote row whose IRI equals a local row's IRI is dropped, even though the
-    fan-out starts before the local page is known."""
+async def test_endpoint_late_redup_drops_local_iri_and_decrements_count(
+    client, db_session, monkeypatch, cleanup
+):
+    """The service answers immediately and IGNORES local_iris (the race: a fast/cached
+    peer replies before the local page is known). The endpoint's own post-await
+    dedup must still drop the local-IRI row and decrement the catalogue count."""
     token = f"fedtok{uuid.uuid4().hex[:10]}"
     o = await _onto(db_session, token=token, created=cleanup)
 
     async def fake(q, local_iris, peers=None, limit=None):
-        import asyncio
-        await asyncio.sleep(0.2)  # let the local query finish first
+        assert local_iris == set()  # local page not known yet when we answer
         dup = _remote_row().model_copy(update={"iri": o.iri})
-        rows = [r for r in [dup, _remote_row()] if r.iri not in local_iris]
-        return rows, [_status()]
+        st = _status().model_copy(update={"count": 2})
+        return [dup, _remote_row()], [st]
 
     monkeypatch.setattr(fed_service, "federated_artefacts", fake)
     monkeypatch.setenv("FEDERATION_ENABLED", "true")
@@ -149,4 +151,76 @@ async def test_local_row_not_duplicated_by_early_fanout(client, db_session, monk
         r = await client.get(f"/api/v1/ontologies?q={token}&federated=true")
     finally:
         get_settings.cache_clear()
-    assert [x["iri"] for x in r.json()["federated"]["results"]] == [REMOTE_IRI]
+    body = r.json()
+    assert [x["iri"] for x in body["federated"]["results"]] == [REMOTE_IRI]
+    assert body["federated"]["catalogues"][0]["count"] == 1  # 2 -> 1
+    assert {x["id"] for x in body["ontologies"]} == {o.id}
+
+
+@pytest.mark.anyio
+async def test_service_raise_degrades_to_local_only(client, db_session, monkeypatch, cleanup):
+    token = f"fedtok{uuid.uuid4().hex[:10]}"
+    o = await _onto(db_session, token=token, created=cleanup)
+
+    async def boom(q, local_iris, peers=None, limit=None):
+        raise RuntimeError("peer layer exploded")
+
+    monkeypatch.setattr(fed_service, "federated_artefacts", boom)
+    monkeypatch.setenv("FEDERATION_ENABLED", "true")
+    get_settings.cache_clear()
+    try:
+        r = await client.get(f"/api/v1/ontologies?q={token}&federated=true")
+    finally:
+        get_settings.cache_clear()
+    assert r.status_code == 200
+    body = r.json()
+    assert "federated" not in body
+    assert {x["id"] for x in body["ontologies"]} == {o.id}
+
+
+@pytest.mark.anyio
+async def test_enabled_with_zero_peers_gives_empty_block(client, monkeypatch):
+    """Real service, federation enabled, no peers configured -> block present, empty."""
+    monkeypatch.setenv("FEDERATION_ENABLED", "true")
+    monkeypatch.setenv("FEDERATION_PEERS_JSON", "")
+    get_settings.cache_clear()
+    try:
+        r = await client.get("/api/v1/ontologies?q=abc&federated=true")
+    finally:
+        get_settings.cache_clear()
+    assert r.status_code == 200
+    assert r.json()["federated"] == {"catalogues": [], "results": []}
+
+
+@pytest.mark.anyio
+async def test_local_failure_cancels_inflight_fanout(client, monkeypatch):
+    import asyncio
+
+    from ontoexplorer.api import ontologies as api_ontologies
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def slow(q, local_iris, peers=None, limit=None):
+        started.set()
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return [], []
+
+    async def local_boom(**kwargs):
+        await started.wait()
+        raise RuntimeError("local query failed")
+
+    monkeypatch.setattr(fed_service, "federated_artefacts", slow)
+    monkeypatch.setattr(api_ontologies, "_list_ontologies_local", local_boom)
+    monkeypatch.setenv("FEDERATION_ENABLED", "true")
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(RuntimeError, match="local query failed"):
+            await client.get("/api/v1/ontologies?q=abc&federated=true")
+        await asyncio.wait_for(cancelled.wait(), timeout=2)
+    finally:
+        get_settings.cache_clear()
