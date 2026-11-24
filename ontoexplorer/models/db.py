@@ -201,6 +201,9 @@ class OntologyVersion(Base):
     reasoner_profile_id: Mapped[str | None] = mapped_column(
         ForeignKey("reasoner_profiles.id", ondelete="SET NULL"), nullable=True)
     source_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Provenance: id/name of the peer MOD-API catalogue this version was harvested
+    # from (project2 harvest). NULL for upload/url/iri/webhook ingests.
+    source_catalogue: Mapped[str | None] = mapped_column(String, nullable=True)
     triple_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Denormalised count of this version's term_embeddings rows, maintained by
     # embed_ontology at completion. Lets /admin/overview read the per-version embed

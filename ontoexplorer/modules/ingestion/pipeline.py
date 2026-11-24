@@ -92,6 +92,8 @@ class IngestionRequest:
     # fill a content-license ABSENCE — it never overrides a license the content
     # declares (anti-laundering), exactly like the UI path. Attributed to owner_id.
     declared_license: str | None = None
+    # Provenance: peer MOD-API catalogue this ingest was harvested from (None otherwise).
+    source_catalogue: str | None = None
 
     def __post_init__(self):
         if self.groups is None:
@@ -392,6 +394,7 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
         status="ingested",
         triple_count=triple_count,
         source_url=source.final_url or request.url or request.iri,
+        source_catalogue=request.source_catalogue,
         reasoner=request.reasoner,
         reasoner_profile_id=request.reasoner_profile_id,
         # Automation-supplied license overlay (#364 Phase 3). Set only when the
