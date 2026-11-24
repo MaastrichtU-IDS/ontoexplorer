@@ -103,6 +103,22 @@ def test_invalid_peer_entry_skipped_others_kept(monkeypatch, caplog):
     assert caplog.records
 
 
+def test_base_url_with_credentials_is_rejected(monkeypatch, caplog):
+    bad = [{"id": "creds", "base_url": "https://u:p@foo.org"}, PEERS[0]]
+    _set_peers(monkeypatch, json.dumps(bad))
+    with caplog.at_level(logging.WARNING):
+        peers = get_federation_peers()
+    assert [p.id for p in peers] == ["agroportal"]
+
+
+def test_base_url_with_invalid_port_is_rejected(monkeypatch, caplog):
+    bad = [{"id": "badport", "base_url": "https://foo.org:abc"}, PEERS[0]]
+    _set_peers(monkeypatch, json.dumps(bad))
+    with caplog.at_level(logging.WARNING):
+        peers = get_federation_peers()
+    assert [p.id for p in peers] == ["agroportal"]
+
+
 def test_duplicate_ids_first_wins(monkeypatch):
     _set_peers(monkeypatch, json.dumps([PEERS[0], {**PEERS[1], "id": "agroportal"}]))
     peers = get_federation_peers()

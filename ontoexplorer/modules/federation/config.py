@@ -79,6 +79,12 @@ def _parse_peer(raw: object) -> Peer:
     parts = urlsplit(base_url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise ValueError("base_url must be an http(s) URL")
+    # Reject embedded credentials (keeps the "no secrets in parsed config"
+    # constraint) and force port validation (parts.port raises on a bad port).
+    if parts.username or parts.password:
+        raise ValueError("base_url must not embed credentials")
+    if parts.port is not None and not (0 < parts.port < 65536):
+        raise ValueError("base_url has an invalid port")
     timeout_ms = raw.get("timeout_ms", DEFAULT_PEER_TIMEOUT_MS)
     if isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int) or timeout_ms <= 0:
         raise ValueError("timeout_ms must be a positive integer")
@@ -101,7 +107,7 @@ def get_federation_peers() -> list[Peer]:
         return []
     try:
         data = json.loads(raw)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         logger.warning("federation: FEDERATION_PEERS_JSON is not valid JSON (%s); no peers", exc)
         return []
     if not isinstance(data, list):
