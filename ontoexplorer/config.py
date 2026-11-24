@@ -170,7 +170,11 @@ class Settings(BaseSettings):
         # Open Data Commons / public-domain data licenses: PDDL is public domain,
         # ODC-By is attribution, ODbL is share-alike (open, like the GPL-3.0 copyleft
         # already on this list). All three are open; the NC/ND CC variants stay off.
-        "ODC-By-1.0,ODbL-1.0,PDDL-1.0"
+        "ODC-By-1.0,ODbL-1.0,PDDL-1.0,"
+        # Standards-body permissive licenses (reuse + redistribution with notices):
+        # W3C Software Notice and License 2002 (e.g. fresnel), OGC Software License 1.0
+        # (e.g. ssn).
+        "W3C,OGC-1.0"
     )
     # Pre-publish quality gate (#364): a newly-ingested version with fewer than this
     # many triples is held for review instead of auto-published. Only applies at the
