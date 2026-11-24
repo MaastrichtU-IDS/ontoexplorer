@@ -15,7 +15,13 @@ from ._common import _require_admin
 
 router = APIRouter()
 
-MAX_HARVEST_LIMIT = 500
+# Bounded so one triggered run finishes within harvest_peer's 900s time_limit:
+# discover() does all page + per-artefact distribution fetches (each spaced by the
+# politeness floor, default 1s) BEFORE any enqueue, so an over-large limit would be
+# killed mid-discovery having ingested nothing. 200 fetches stay well under 900s;
+# the default run (harvest_max_candidates=50) is ~1 min. Raise the floor/interval
+# together if this ceiling ever needs to grow.
+MAX_HARVEST_LIMIT = 200
 
 
 class HarvestRequest(BaseModel):
