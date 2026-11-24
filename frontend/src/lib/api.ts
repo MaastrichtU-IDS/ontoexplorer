@@ -1491,6 +1491,36 @@ export interface FairHistoryPoint {
 }
 export interface FairHistory { series: FairHistoryPoint[] }
 
+// ── Federated (remote MOD-API) catalogue search ─────────────────────────────
+// Present on GET /ontologies only when federated search was requested and active.
+export type FederatedStatus = 'ok' | 'timeout' | 'error' | 'empty'
+
+export interface FederatedCatalogue {
+  id: string
+  label: string
+  status: FederatedStatus
+  count: number
+  took_ms: number
+}
+
+export interface FederatedResult {
+  iri: string
+  acronym: string | null
+  title: string | null
+  description: string | null
+  publisher: string | null
+  license: string | null
+  homepage: string | null
+  source_landing_url: string | null
+  source: { id: string; label: string }
+  remote: true
+}
+
+export interface FederatedBlock {
+  catalogues: FederatedCatalogue[]
+  results: FederatedResult[]
+}
+
 export const api = {
   entities: {
     list: (p: EntityListParams) =>
@@ -1543,7 +1573,7 @@ export const api = {
   },
 
   ontologies: {
-    list: (offset = 0, limit = 50, q?: string, group?: string, profile?: ProfileName, reuses?: string, mine = false, language?: LanguageTier, view?: 'list', opts?: { sort?: 'name' | 'date'; dir?: 'asc' | 'desc'; langs?: string[]; skos?: boolean; attention?: boolean; license?: string }) => {
+    list: (offset = 0, limit = 50, q?: string, group?: string, profile?: ProfileName, reuses?: string, mine = false, language?: LanguageTier, view?: 'list', opts?: { sort?: 'name' | 'date'; dir?: 'asc' | 'desc'; langs?: string[]; skos?: boolean; attention?: boolean; license?: string; federated?: boolean }) => {
       const params = new URLSearchParams({ offset: String(offset), limit: String(limit) })
       if (q) params.set('q', q)
       if (group) params.set('group', group)   // single group filter sent to API
@@ -1560,8 +1590,9 @@ export const api = {
       if (opts?.skos) params.set('skos', 'true')   // derived SKOS-vocabulary filter
       if (opts?.attention) params.set('attention', 'true')   // only held (needs_review) ontologies
       if (opts?.license) params.set('license', opts.license)  // latest version's SPDX license, or 'none'
+      if (opts?.federated) params.set('federated', 'true')   // also query configured remote MOD-API catalogues
       for (const code of opts?.langs ?? []) params.append('lang', code)
-      return request<{ ontologies: Ontology[]; offset: number; limit: number; total?: number }>(
+      return request<{ ontologies: Ontology[]; offset: number; limit: number; total?: number; federated?: FederatedBlock }>(
         `/ontologies?${params}`
       )
     },
