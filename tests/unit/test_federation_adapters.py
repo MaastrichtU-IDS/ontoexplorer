@@ -13,7 +13,7 @@ from ontoexplorer.modules.federation.models import ArtefactRow, CatalogueStatus
 
 FIX = Path(__file__).resolve().parent.parent / "fixtures" / "federation"
 
-OURS = Peer(id="ours", label="OntoExplorer", base_url="https://ontoexplorer.example.org")
+OURS = Peer(id="ours", label="OntoExplorer", base_url="https://ontoexplorer.example.org", mod_path="/mod")
 AGRO = Peer(
     id="agroportal",
     label="AgroPortal",
@@ -114,7 +114,8 @@ def test_dcat2_fallback_landing_uses_base_url():
         "hydra:member": [{"@id": "http://x/a", "mod:acronym": "A", "dcterms:title": "A title"}],
     }
     row = parse_dcat2(doc, AGRO)[0]
-    assert row.source_landing_url == "https://data.agroportal.lirmm.fr/mod/artefacts/A"
+    # mod_path-aware fallback: AgroPortal's MOD-API is at /mod-api, not /mod
+    assert row.source_landing_url == "https://data.agroportal.lirmm.fr/mod-api/artefacts/A"
 
 
 def test_dcat2_tolerates_dcat_dataset_framing_and_full_iris():
@@ -203,7 +204,7 @@ def _doc(member: dict) -> dict:
 def test_non_http_urls_dropped_with_fallback_landing(parser, peer, bad):
     row = parser(_doc({"foaf:homepage": bad, "dcat:landingPage": {"@id": bad}}), peer)[0]
     assert row.homepage is None
-    assert row.source_landing_url == f"{peer.base_url}/mod/artefacts/a"
+    assert row.source_landing_url == f"{peer.base_url}{peer.mod_path}/artefacts/a"
 
 
 def test_non_http_homepage_falls_through_to_valid_landing_page():

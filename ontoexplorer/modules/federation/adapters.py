@@ -200,7 +200,11 @@ def _row(raw: Any, ctx: dict[str, str], peer: Peer) -> ArtefactRow | None:
     iri = iri.strip()
     acronym = _first(node, _ACRONYM, ctx) or _first(node, _IDENTIFIER, ctx) or _iri_tail(iri)
     homepage = _first_url(node, _HOMEPAGE)
-    landing = homepage or f"{peer.base_url.rstrip('/')}/mod/artefacts/{quote(acronym, safe='')}"
+    # Mirror the client's URL construction ({base_url}{mod_path}/artefacts) so a
+    # homepage-less artefact's landing fallback resolves on peers whose MOD-API
+    # is not served at /mod (e.g. AgroPortal at /mod-api). The self peer sets
+    # mod_path="/mod"; a peer with no mod_path falls back to {base_url}/artefacts.
+    landing = homepage or f"{peer.base_url.rstrip('/')}{peer.mod_path}/artefacts/{quote(acronym, safe='')}"
     return ArtefactRow(
         iri=iri,
         acronym=acronym,

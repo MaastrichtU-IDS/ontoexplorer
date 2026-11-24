@@ -195,7 +195,13 @@ async def _fetch_json(
         # The guard refused an internal/private target (initial host or a hop).
         raise FederationFetchError("blocked_redirect") from exc
     except Exception as exc:  # transport error, bad JSON, etc.
-        logger.info("federation: fetch failed for peer %s: %s", peer.id, exc)
+        # Log the typed reason / exception class, NOT the raw exception str — for an
+        # apikey_param peer the key rides in the query string and some httpx errors
+        # stringify the URL, which would leak the secret into our logs.
+        logger.info(
+            "federation: fetch failed for peer %s: %s",
+            peer.id, getattr(exc, "reason", None) or type(exc).__name__,
+        )
         raise FederationFetchError("error") from exc
 
 
