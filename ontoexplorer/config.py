@@ -232,6 +232,15 @@ class Settings(BaseSettings):
     federation_max_response_bytes: int = 2 * 1024 * 1024  # per peer response
     federation_max_redirects: int = 3
 
+    # --- Gated MOD-API harvest (Project 2; OFF by default) ---
+    # When enabled, the harvest_peer task enumerates one federation peer's catalogue,
+    # gates each candidate (dedup/license/quality) and enqueues admitted ones for
+    # ingestion with source_catalogue provenance. Dry-run by default per invocation.
+    harvest_enabled: bool = False
+    harvest_peer_id: str = ""                # default federation peer id to harvest
+    harvest_max_candidates: int = 50         # per-run cap on admitted candidates
+    harvest_min_interval_ms: int = 1000      # min spacing between requests to the peer
+
     # Justification is session-only and cheap to request but dispatches an OWL
     # justification job with an 11-minute hard limit on the reasoner pool, so a
     # burst of requests can starve reasoning for everyone. Two per-user limits:
