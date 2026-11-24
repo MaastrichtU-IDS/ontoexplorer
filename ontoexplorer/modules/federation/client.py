@@ -215,6 +215,22 @@ async def _read_capped(resp: httpx.Response, max_bytes: int) -> bytes:
     return bytes(buf)
 
 
+async def fetch_mod_json(
+    peer: Peer,
+    url: httpx.URL | str,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict:
+    """Public, SSRF-guarded GET of an arbitrary peer MOD-API URL, returning parsed JSON.
+
+    Thin wrapper over :func:`_fetch_json` for callers outside this module (e.g.
+    the discovery harvest source). Raises :class:`FederationFetchError`.
+    """
+    if not isinstance(url, httpx.URL):
+        url = httpx.URL(url)
+    return await _fetch_json(peer, url, transport=transport)
+
+
 async def search_artefacts(
     peer: Peer,
     q: str,
