@@ -37,6 +37,15 @@ _TIMEOUT = httpx.Timeout(60.0)
 _MAX_REDIRECTS = 5
 
 
+class PeerAuthDownloadError(Exception):
+    """An authenticated (peer-host) download failed.
+
+    Deliberately NOT an httpx error: httpx stringifies the request URL, which
+    carries an apikey_param key. This message mentions only a redacted URL and
+    the status code. A plain Exception, so the ingest task's retry still applies.
+    """
+
+
 class SourceMode(StrEnum):
     IRI = "iri"
     URL = "url"
@@ -148,6 +157,8 @@ def _fetch_authed(
     apikey_param key rides in the query string.
     """
     current = httpx.URL(url)
+    req_url = current
+    failure: tuple[int | None, str, str] | None = None
     try:
         with httpx.Client(
             timeout=_TIMEOUT, follow_redirects=False, transport=guarded_transport()
@@ -179,11 +190,26 @@ def _fetch_authed(
                         str(resp.url),
                     )
             raise ValueError("too many redirects")
-    except Exception as exc:
-        # Host and class only: str(exc) / the URL may contain the apikey.
-        logger.warning(
-            "ingest: authenticated fetch from peer host %s failed (%s)",
-            peer_host,
-            type(exc).__name__,
-        )
-        raise
+    except httpx.HTTPError as exc:
+        # httpx stringifies the request URL (HTTPStatusError, transport errors),
+        # and an apikey_param key rides in it. Record only what is safe, and
+        # raise the scrubbed error below, OUTSIDE this block, so neither
+        # __cause__ nor __context__ carries the original exception.
+        redacted = req_url
+        if (
+            auth is not None
+            and auth.kind == "apikey_param"
+            and (auth.name or "apikey") in req_url.params
+        ):
+            redacted = req_url.copy_set_param(auth.name or "apikey", "REDACTED")
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        failure = (status, str(redacted), type(exc).__name__)
+    # ValueError (size cap, redirect policy) carries no URL and propagates as-is.
+
+    status, redacted_url, exc_name = failure
+    logger.warning(
+        "ingest: authenticated fetch from peer host %s failed (%s)", peer_host, exc_name
+    )
+    raise PeerAuthDownloadError(
+        f"peer download failed (status={status}) for {redacted_url}"
+    ) from None

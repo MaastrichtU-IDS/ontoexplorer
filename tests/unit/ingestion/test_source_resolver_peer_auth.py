@@ -248,14 +248,57 @@ def test_bearer_only_on_peer_host(monkeypatch):
     assert seen == [(PEER_HOST, f"Bearer {SECRET}"), (OTHER_HOST, None)]
 
 
-def test_authed_error_does_not_log_key(monkeypatch, caplog):
-    _configure_peer(monkeypatch, _APIKEY)
+def _chain(exc):
+    seen = []
+    while exc is not None and exc not in seen:
+        seen.append(exc)
+        exc = exc.__cause__ or exc.__context__
+    return seen
+
+
+@pytest.mark.parametrize("status", [401, 500])
+def test_authed_http_error_is_scrubbed(monkeypatch, caplog, status):
+    secret = "SUPERSECRETKEY"
+    _configure_peer(monkeypatch, _APIKEY, secret=secret)
 
     def handler(request):
-        return httpx.Response(500, content=b"boom")
+        assert request.url.params["apikey"] == secret
+        return httpx.Response(status, content=b"nope")
 
     _mock_client(monkeypatch, handler)
     with caplog.at_level("DEBUG"):
-        with pytest.raises(httpx.HTTPStatusError):
-            source_resolver.resolve_url(f"https://{PEER_HOST}/x")
-    assert SECRET not in caplog.text
+        with pytest.raises(source_resolver.PeerAuthDownloadError) as ei:
+            source_resolver.resolve_url(f"https://{PEER_HOST}/ontologies/AGRO/download")
+    exc = ei.value
+    assert secret not in str(exc)
+    assert secret not in repr(exc)
+    assert f"status={status}" in str(exc)
+    assert PEER_HOST in str(exc)
+    assert exc.__cause__ is None and exc.__context__ is None
+    for e in _chain(exc):
+        assert secret not in str(e)
+    assert secret not in caplog.text
+
+
+def test_authed_transport_error_is_scrubbed(monkeypatch):
+    secret = "SUPERSECRETKEY"
+    _configure_peer(monkeypatch, _APIKEY, secret=secret)
+
+    def handler(request):
+        raise httpx.ConnectError("boom", request=request)
+
+    _mock_client(monkeypatch, handler)
+    with pytest.raises(source_resolver.PeerAuthDownloadError) as ei:
+        source_resolver.resolve_url(f"https://{PEER_HOST}/x")
+    exc = ei.value
+    assert secret not in str(exc) and secret not in repr(exc)
+    assert exc.__cause__ is None and exc.__context__ is None
+
+
+def test_simple_path_still_raises_raw_http_error(monkeypatch):
+    def handler(request):
+        return httpx.Response(404, content=b"nope")
+
+    _mock_client(monkeypatch, handler)
+    with pytest.raises(httpx.HTTPStatusError):
+        source_resolver.resolve_url(f"https://{OTHER_HOST}/missing")
