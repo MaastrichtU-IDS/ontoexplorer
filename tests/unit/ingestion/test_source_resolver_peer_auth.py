@@ -250,9 +250,13 @@ def test_bearer_only_on_peer_host(monkeypatch):
 
 def _chain(exc):
     seen = []
-    while exc is not None and exc not in seen:
-        seen.append(exc)
-        exc = exc.__cause__ or exc.__context__
+    stack = [exc]
+    while stack:
+        e = stack.pop()
+        if e is None or e in seen:
+            continue
+        seen.append(e)
+        stack.extend([e.__cause__, e.__context__])
     return seen
 
 
@@ -280,7 +284,7 @@ def test_authed_http_error_is_scrubbed(monkeypatch, caplog, status):
     assert secret not in caplog.text
 
 
-def test_authed_transport_error_is_scrubbed(monkeypatch):
+def test_authed_transport_error_is_scrubbed(monkeypatch, caplog):
     secret = "SUPERSECRETKEY"
     _configure_peer(monkeypatch, _APIKEY, secret=secret)
 
@@ -288,11 +292,15 @@ def test_authed_transport_error_is_scrubbed(monkeypatch):
         raise httpx.ConnectError("boom", request=request)
 
     _mock_client(monkeypatch, handler)
-    with pytest.raises(source_resolver.PeerAuthDownloadError) as ei:
-        source_resolver.resolve_url(f"https://{PEER_HOST}/x")
+    with caplog.at_level("DEBUG"):
+        with pytest.raises(source_resolver.PeerAuthDownloadError) as ei:
+            source_resolver.resolve_url(f"https://{PEER_HOST}/x")
     exc = ei.value
     assert secret not in str(exc) and secret not in repr(exc)
     assert exc.__cause__ is None and exc.__context__ is None
+    for e in _chain(exc):
+        assert secret not in str(e)
+    assert secret not in caplog.text
 
 
 def test_simple_path_still_raises_raw_http_error(monkeypatch):
@@ -302,3 +310,86 @@ def test_simple_path_still_raises_raw_http_error(monkeypatch):
     _mock_client(monkeypatch, handler)
     with pytest.raises(httpx.HTTPStatusError):
         source_resolver.resolve_url(f"https://{OTHER_HOST}/missing")
+
+
+def test_successful_authed_fetch_does_not_log_key_via_httpx(monkeypatch, caplog):
+    import logging
+
+    secret = "SUPERSECRETKEY"
+    _configure_peer(monkeypatch, _APIKEY, secret=secret)
+    httpx_logger = logging.getLogger("httpx")
+    httpcore_logger = logging.getLogger("httpcore")
+    prior = (httpx_logger.level, httpcore_logger.level)
+    httpx_logger.setLevel(logging.INFO)
+    httpcore_logger.setLevel(logging.INFO)
+    try:
+        def handler(request):
+            assert request.url.params["apikey"] == secret
+            return _ok(request)
+
+        _mock_client(monkeypatch, handler)
+        with caplog.at_level(logging.DEBUG):
+            resolved = source_resolver.resolve_url(
+                f"https://{PEER_HOST}/ontologies/AGRO/download"
+            )
+        assert resolved.data == PAYLOAD
+        assert secret not in caplog.text
+        # The guard must not permanently mutate global logging state.
+        assert httpx_logger.level == logging.INFO
+        assert httpcore_logger.level == logging.INFO
+    finally:
+        httpx_logger.setLevel(prior[0])
+        httpcore_logger.setLevel(prior[1])
+
+
+def test_logger_levels_restored_after_failure(monkeypatch):
+    import logging
+
+    _configure_peer(monkeypatch, _APIKEY)
+    httpx_logger = logging.getLogger("httpx")
+    prior = httpx_logger.level
+    httpx_logger.setLevel(logging.INFO)
+    try:
+        def handler(request):
+            return httpx.Response(401)
+
+        _mock_client(monkeypatch, handler)
+        with pytest.raises(source_resolver.PeerAuthDownloadError):
+            source_resolver.resolve_url(f"https://{PEER_HOST}/x")
+        assert httpx_logger.level == logging.INFO
+    finally:
+        httpx_logger.setLevel(prior)
+
+
+@pytest.mark.parametrize("auth", [_APIKEY, _BEARER])
+def test_key_withheld_on_non_https_peer(monkeypatch, auth):
+    _configure_peer(monkeypatch, auth)
+    monkeypatch.setenv(
+        "FEDERATION_PEERS_JSON",
+        json.dumps(
+            [
+                {
+                    "id": "self",
+                    "label": "Self",
+                    "base_url": f"http://{PEER_HOST}",
+                    "mod_path": "/mod",
+                    "adapter": "mod",
+                    "timeout_ms": 2000,
+                    "auth": auth,
+                }
+            ]
+        ),
+    )
+    get_settings.cache_clear()
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        assert request.url.params.get("apikey") is None
+        assert "authorization" not in request.headers
+        return _ok(request)
+
+    _mock_client(monkeypatch, handler)
+    resolved = source_resolver.resolve_url(f"http://{PEER_HOST}/ontologies/AGRO/download")
+    assert resolved.data == PAYLOAD
+    assert len(seen) == 1

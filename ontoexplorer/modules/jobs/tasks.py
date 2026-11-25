@@ -317,6 +317,26 @@ def setup_signals(sender, **kwargs):
     worker_ready.connect(_reset_orphaned_jobs)
 
 
+def _suppress_http_client_logs(sender=None, **kwargs):
+    """Keep httpx/httpcore request-line logging off INFO on the worker.
+
+    httpx logs the full request URL at INFO, and federation peers may carry an
+    apikey_param key in it (harvest + gated ingestion downloads). Only these two
+    loggers are touched; root logging is left alone.
+    """
+    import logging
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+def _connect_worker_process_init():
+    from celery.signals import worker_process_init
+    worker_process_init.connect(_suppress_http_client_logs)
+
+
+_connect_worker_process_init()
+
+
 def _reset_orphaned_jobs(sender=None, **kwargs):
     """Mark any jobs stuck in 'running' as failed — they were interrupted by a worker restart."""
     import asyncio

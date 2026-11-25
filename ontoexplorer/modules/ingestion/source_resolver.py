@@ -159,14 +159,24 @@ def _fetch_authed(
     current = httpx.URL(url)
     req_url = current
     failure: tuple[int | None, str, str] | None = None
+    # httpx logs `HTTP Request: GET <full-url> ...` at INFO for every request,
+    # success included, and an apikey_param key is in that URL. Hold the httpx /
+    # httpcore loggers at WARNING for the duration of the authed fetch only.
+    held = {name: logging.getLogger(name) for name in ("httpx", "httpcore")}
+    prior_levels = {name: lg.level for name, lg in held.items()}
+    for lg in held.values():
+        lg.setLevel(logging.WARNING)
     try:
         with httpx.Client(
             timeout=_TIMEOUT, follow_redirects=False, transport=guarded_transport()
         ) as client:
             for _ in range(_MAX_REDIRECTS):
-                req_url, req_headers = apply_auth(
-                    current, {**(headers or {})}, auth, secret, peer_host
-                )
+                req_url, req_headers = current, {**(headers or {})}
+                if current.scheme == "https":
+                    # Never let the key ride over cleartext, even on the peer host.
+                    req_url, req_headers = apply_auth(
+                        current, req_headers, auth, secret, peer_host
+                    )
                 with client.stream("GET", req_url, headers=req_headers) as resp:
                     if resp.is_redirect:
                         loc = resp.headers.get("location")
@@ -204,6 +214,9 @@ def _fetch_authed(
             redacted = req_url.copy_set_param(auth.name or "apikey", "REDACTED")
         status = getattr(getattr(exc, "response", None), "status_code", None)
         failure = (status, str(redacted), type(exc).__name__)
+    finally:
+        for name, lg in held.items():
+            lg.setLevel(prior_levels[name])
     # ValueError (size cap, redirect policy) carries no URL and propagates as-is.
 
     status, redacted_url, exc_name = failure
