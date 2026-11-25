@@ -604,8 +604,9 @@ async def _ensure_ontology(
     """Get or create the Ontology record for the given IRI.
 
     Returns ``(ontology_id, created)``. For freshly-created rows, derive a unique
-    shortname from the IRI so the ontology has a canonical user-facing identifier
-    from the moment it lands (refined from metadata post-load — see #249).
+    shortname from the catalogue acronym (harvested ontologies) or the IRI tail, so
+    the ontology has a canonical user-facing identifier from the moment it lands
+    (refined from metadata post-load — see #249).
 
     Raises OntologyAccessDenied when the IRI matches an existing ontology the
     uploader may not edit (version-injection guard).
@@ -651,7 +652,8 @@ async def _refine_ontology_naming(
 
     The pre-load shortname is derived from the IRI tail, which collides badly for
     generic tails (`/v1`, `/vocab`). Once the content is loaded we can prefer the
-    vocabulary's declared `vann:preferredNamespacePrefix`, then its title (#249).
+    vocabulary's declared `vann:preferredNamespacePrefix`, then the source
+    catalogue's `acronym` (for harvested ontologies), then its title (#249).
     Best-effort: any failure leaves the IRI-derived name in place.
     """
     from ontoexplorer.modules.ingestion.shortname import (
