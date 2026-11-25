@@ -69,7 +69,10 @@ async def run_harvest(
         if dry_run:
             continue
         kind, value = candidate.ingest_target()
-        ingest_ontology.delay(**{kind: value}, groups=groups, source_catalogue=source_catalogue)
+        ingest_ontology.delay(
+            **{kind: value}, groups=groups,
+            source_catalogue=source_catalogue, source_acronym=candidate.acronym,
+        )
         report.enqueued += 1
 
     return report

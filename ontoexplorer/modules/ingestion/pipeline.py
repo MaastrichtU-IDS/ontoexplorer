@@ -94,6 +94,10 @@ class IngestionRequest:
     declared_license: str | None = None
     # Provenance: peer MOD-API catalogue this ingest was harvested from (None otherwise).
     source_catalogue: str | None = None
+    # Source catalogue's stable per-artefact acronym (e.g. AgroPortal CO_320 / HVDC),
+    # used as a high-priority shortname source for harvested ontologies whose content
+    # declares no self-IRI. None for non-harvested ingests. Never a secret.
+    source_acronym: str | None = None
 
     def __post_init__(self):
         if self.groups is None:
@@ -372,7 +376,8 @@ async def run_ingestion(db: AsyncSession, request: IngestionRequest) -> Ingestio
     # (the owl:Ontology node that carries title/prefix), not the identity key.
     if ontology_created:
         await _refine_ontology_naming(
-            db, ontology_id, subject_iri or provisional_iri, version_id
+            db, ontology_id, subject_iri or provisional_iri, version_id,
+            acronym=request.source_acronym,
         )
 
     # ── Persist version record ────────────────────────────────────────────────
@@ -606,8 +611,8 @@ async def _ensure_ontology(
     uploader may not edit (version-injection guard).
     """
     from ontoexplorer.modules.ingestion.shortname import (
+        derive_shortname,
         find_ontology_by_canonical_iri,
-        infer_shortname_from_iri,
         unique_shortname,
     )
 
@@ -618,7 +623,10 @@ async def _ensure_ontology(
         await _assert_can_attach(db, existing, request)
         return existing.id, False
 
-    candidate = infer_shortname_from_iri(ontology_iri)
+    # Prefer the catalogue acronym (stable, unique) over the IRI tail when the
+    # content has no usable self-IRI; derive_shortname falls back to the IRI tail
+    # when acronym is None, so non-harvested ingests are unchanged.
+    candidate = derive_shortname(ontology_iri, acronym=request.source_acronym)
     shortname = await unique_shortname(db, candidate) if candidate else None
     ontology = Ontology(
         id=str(uuid.uuid4()),
@@ -633,7 +641,11 @@ async def _ensure_ontology(
 
 
 async def _refine_ontology_naming(
-    db: AsyncSession, ontology_id: str, ontology_iri: str, version_id: str
+    db: AsyncSession,
+    ontology_id: str,
+    ontology_iri: str,
+    version_id: str,
+    acronym: str | None = None,
 ) -> None:
     """Upgrade a freshly-created ontology's shortname + title from its own metadata.
 
@@ -655,7 +667,7 @@ async def _refine_ontology_naming(
         )
         title = ann.get("title")
         desired = derive_shortname(
-            ontology_iri, prefix=ann.get("preferred_prefix"), title=title
+            ontology_iri, prefix=ann.get("preferred_prefix"), acronym=acronym, title=title
         )
         row = (await db.execute(
             select(Ontology).where(Ontology.id == ontology_id)

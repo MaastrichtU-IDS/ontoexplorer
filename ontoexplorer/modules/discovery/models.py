@@ -10,6 +10,7 @@ class Candidate(BaseModel):
 
     canonical_iri: str
     title: str
+    acronym: str | None = None  # catalogue's stable per-artefact short id (e.g. CO_320)
     license: str | None = None  # catalogue-declared, raw
     download_url: str | None = None
     landing_url: str | None = None

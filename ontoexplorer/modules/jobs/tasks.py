@@ -780,6 +780,7 @@ def ingest_ontology(
     reasoner_profile_id: str | None = None,
     declared_license: str | None = None,
     source_catalogue: str | None = None,
+    source_acronym: str | None = None,
 ) -> dict:
     """Celery task: run the full ingestion pipeline for one ontology submission."""
     from ontoexplorer.database import make_celery_db_session
@@ -806,6 +807,7 @@ def ingest_ontology(
         reasoner=reasoner, reasoner_profile_id=reasoner_profile_id,
         declared_license=declared_license,
         source_catalogue=source_catalogue,
+        source_acronym=source_acronym,
     )
 
     session_factory = make_celery_db_session()
