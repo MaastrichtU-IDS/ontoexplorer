@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from urllib.parse import urlsplit
 
 import httpx
@@ -25,9 +24,12 @@ import httpx
 from ontoexplorer.clients.fetch_guard import SsrfBlocked, async_guarded_transport
 from ontoexplorer.config import get_settings
 from ontoexplorer.modules.federation.adapters import adapter_for
+from ontoexplorer.modules.federation.auth import (
+    apply_auth as _apply_auth,
+    resolve_secret as _resolve_secret,
+)
 from ontoexplorer.modules.federation.config import (
     Peer,
-    PeerAuth,
     peer_host_allowlist,
 )
 from ontoexplorer.modules.federation.models import ArtefactRow
@@ -68,48 +70,6 @@ def _default_transport() -> httpx.AsyncBaseTransport:
 def _mod_root(peer: Peer) -> str:
     """The MOD-API root for a peer: ``base_url`` + ``mod_path`` (no trailing /)."""
     return (peer.base_url.rstrip("/") + (peer.mod_path or "")).rstrip("/")
-
-
-def _resolve_secret(auth: PeerAuth | None) -> str | None:
-    """Read the peer's secret from the environment at call time.
-
-    A missing env var is not fatal: it degrades to an unauthenticated request
-    (which a real peer will answer with 401, surfaced as ``"unauthorized"``)
-    rather than crashing the fan-out.
-    """
-    if auth is None:
-        return None
-    secret = os.environ.get(auth.secret_ref)
-    if not secret:
-        logger.warning(
-            "federation: auth secret %r for peer is unset; sending unauthenticated",
-            auth.secret_ref,
-        )
-        return None
-    return secret
-
-
-def _apply_auth(
-    url: httpx.URL,
-    headers: dict[str, str],
-    auth: PeerAuth | None,
-    secret: str | None,
-    peer_host: str,
-) -> tuple[httpx.URL, dict[str, str]]:
-    """Attach the peer's auth to this request, but only if it targets the peer host.
-
-    On any other host (i.e. after a cross-host redirect) the secret is withheld,
-    so a redirect can never exfiltrate the key.
-    """
-    if not (auth and secret):
-        return url, headers
-    if (url.host or "").lower() != peer_host:
-        return url, headers
-    if auth.kind == "apikey_param":
-        return url.copy_set_param(auth.name or "apikey", secret), headers
-    if auth.kind == "bearer":
-        return url, {**headers, "Authorization": f"Bearer {secret}"}
-    return url, headers
 
 
 def _check_redirect(current: httpx.URL, location: str, allow: frozenset[str]) -> httpx.URL:
