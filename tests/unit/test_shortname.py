@@ -99,6 +99,47 @@ def test_derive_skips_invalid_prefix_uses_next():
     assert derive_shortname("http://ex.org/x", prefix="x", title="Gene Ontology") == "gene-ontology"
 
 
+def test_derive_acronym_outranks_title():
+    # The AgroPortal "Rice ontology" collision: four distinct crop ontologies share
+    # the title but have unique acronyms. The acronym must win so they stay distinct.
+    # Underscores are valid in the shortname regex, so they survive slugification.
+    assert derive_shortname(
+        "https://data.agroportal.eu/ontologies/CO_320/download",
+        acronym="CO_320", title="Rice ontology",
+    ) == "co_320"
+
+
+def test_derive_acronym_beats_useless_url_tail():
+    # No usable self-IRI: the IRI tail is "download". The acronym rescues it.
+    assert derive_shortname(
+        "https://data.agroportal.eu/ontologies/HVDC/download", acronym="HVDC",
+    ) == "hvdc"
+
+
+def test_derive_prefix_still_outranks_acronym():
+    # A vocabulary's own declared prefix is its self-identity; it beats the acronym.
+    assert derive_shortname(
+        "http://ex.org/x", prefix="foodon", acronym="FOODON", title="Food Ontology",
+    ) == "foodon"
+
+
+def test_derive_acronym_none_is_unchanged_behaviour():
+    # Non-harvested ingest (acronym=None) behaves exactly as before: title then IRI.
+    assert derive_shortname(
+        "http://purl.obolibrary.org/obo/go.owl", acronym=None, title=None
+    ) == "go"
+    assert derive_shortname(
+        "http://purl.org/x/v1", acronym=None, title="Gene Ontology"
+    ) == "gene-ontology"
+
+
+def test_derive_skips_invalid_acronym_uses_title():
+    # A one-char acronym fails the validator → fall through to the title slug.
+    assert derive_shortname(
+        "http://ex.org/x", acronym="x", title="Gene Ontology"
+    ) == "gene-ontology"
+
+
 # ── identity_instability_reason (#250 Layer 3 instrumentation) ───────────────────
 
 def test_instability_clean_namespace_is_stable():

@@ -89,14 +89,17 @@ async def test_dry_run_enqueues_nothing(delay_calls):
 
 async def test_live_run_enqueues_admitted_with_provenance(delay_calls):
     src = _FakeSource([
-        _cand("http://ex.org/a", download_url="http://ex.org/a.owl"),
+        _cand("http://ex.org/a", download_url="http://ex.org/a.owl", acronym="CO_320"),
         _cand("http://ex.org/b"),
     ])
     report = await _run(src, dry_run=False)
     assert (report.seen, report.admitted, report.enqueued) == (2, 2, 2)
+    # The catalogue acronym is threaded into the ingest enqueue (None when absent).
     assert delay_calls == [
-        {"url": "http://ex.org/a.owl", "groups": _GROUPS, "source_catalogue": _PEER},
-        {"iri": "http://ex.org/b", "groups": _GROUPS, "source_catalogue": _PEER},
+        {"url": "http://ex.org/a.owl", "groups": _GROUPS,
+         "source_catalogue": _PEER, "source_acronym": "CO_320"},
+        {"iri": "http://ex.org/b", "groups": _GROUPS,
+         "source_catalogue": _PEER, "source_acronym": None},
     ]
     assert report.as_dict() == {
         "source": "fake", "seen": 2, "admitted": 2, "enqueued": 2,

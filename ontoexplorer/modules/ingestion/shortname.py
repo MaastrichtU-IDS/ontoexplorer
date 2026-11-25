@@ -189,16 +189,32 @@ def slugify_name(text: str) -> str | None:
 
 
 def derive_shortname(
-    iri: str, *, prefix: str | None = None, title: str | None = None
+    iri: str,
+    *,
+    prefix: str | None = None,
+    acronym: str | None = None,
+    title: str | None = None,
 ) -> str | None:
     """Best shortname from ontology metadata, falling back to the IRI (#249).
 
     Order: ``vann:preferredNamespacePrefix`` (the vocabulary's own declared short
-    name) → a slug of ``dcterms:title``/``rdfs:label`` → the IRI tail. Each candidate
-    must pass the shortname validator; the first that does wins. Returns None only
-    when nothing compliant can be produced.
+    name) → the source catalogue's ``acronym`` (a stable, unique per-artefact id,
+    e.g. AgroPortal ``CO_320``/``HVDC``) → a slug of ``dcterms:title``/``rdfs:label``
+    → the IRI tail. Each candidate must pass the shortname validator; the first that
+    does wins. Returns None only when nothing compliant can be produced.
+
+    The acronym outranks the title on purpose: a harvested artefact whose content
+    declares no self-IRI would otherwise fall to a title slug (which collides —
+    four distinct AgroPortal crop ontologies all titled "Rice ontology") or, with
+    no usable title, to the source URL's tail ("download"). The catalogue acronym
+    is unique and stable, so it fixes both. It is ``None`` for non-harvested ingests
+    (upload / IRI registration), leaving their behaviour unchanged.
     """
-    for candidate in (slugify_name(prefix or ""), slugify_name(title or "")):
+    for candidate in (
+        slugify_name(prefix or ""),
+        slugify_name(acronym or ""),
+        slugify_name(title or ""),
+    ):
         if candidate:
             return candidate
     return infer_shortname_from_iri(iri)

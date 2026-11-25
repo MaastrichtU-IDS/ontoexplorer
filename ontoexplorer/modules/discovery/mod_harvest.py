@@ -144,6 +144,7 @@ class ModApiHarvestSource:
                     Candidate(
                         canonical_iri=row.iri,
                         title=row.title,
+                        acronym=row.acronym,
                         license=row.license,
                         download_url=download_url,
                         landing_url=row.source_landing_url or row.homepage,
