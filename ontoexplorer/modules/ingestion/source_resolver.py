@@ -194,10 +194,15 @@ def _fetch_authed(
                         current = nxt
                         continue
                     resp.raise_for_status()
+                    # final_url is persisted (versions.source_url, PROV graph) and
+                    # logged: return the CLEAN url, never the one carrying the key.
+                    final = resp.url
+                    if auth is not None and auth.kind == "apikey_param":
+                        final = final.copy_remove_param(auth.name or "apikey")
                     return (
                         _stream_capped(resp, max_size),
                         resp.headers.get("content-type"),
-                        str(resp.url),
+                        str(final),
                     )
             raise ValueError("too many redirects")
     except httpx.HTTPError as exc:

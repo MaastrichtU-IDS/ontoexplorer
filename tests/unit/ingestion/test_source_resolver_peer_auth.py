@@ -393,3 +393,40 @@ def test_key_withheld_on_non_https_peer(monkeypatch, auth):
     resolved = source_resolver.resolve_url(f"http://{PEER_HOST}/ontologies/AGRO/download")
     assert resolved.data == PAYLOAD
     assert len(seen) == 1
+
+
+_SENTINEL = "FINALURLSENTINEL"
+
+
+@pytest.mark.parametrize("fn", ["resolve_url", "resolve_iri"])
+def test_final_url_is_clean_on_peer_host(monkeypatch, fn):
+    _configure_peer(monkeypatch, _APIKEY, secret=_SENTINEL)
+    sent = []
+
+    def handler(request):
+        sent.append(request.url.params.get("apikey"))
+        return _ok(request)
+
+    _mock_client(monkeypatch, handler)
+    url = f"https://{PEER_HOST}/ontologies/AGRO/download"
+    resolved = getattr(source_resolver, fn)(url)
+    assert sent == [_SENTINEL]  # auth was sent...
+    assert _SENTINEL not in resolved.final_url  # ...but not returned
+    assert "apikey=" not in resolved.final_url
+    assert resolved.final_url == url
+
+
+def test_final_url_clean_after_cross_host_redirect(monkeypatch):
+    _configure_peer(monkeypatch, _APIKEY, secret=_SENTINEL)
+
+    def handler(request):
+        if request.url.host == PEER_HOST:
+            return httpx.Response(
+                302, headers={"location": f"https://{OTHER_HOST}/files/agro.owl"}
+            )
+        return _ok(request)
+
+    _mock_client(monkeypatch, handler)
+    resolved = source_resolver.resolve_url(f"https://{PEER_HOST}/ontologies/AGRO/download")
+    assert resolved.final_url == f"https://{OTHER_HOST}/files/agro.owl"
+    assert _SENTINEL not in resolved.final_url and "apikey=" not in resolved.final_url
