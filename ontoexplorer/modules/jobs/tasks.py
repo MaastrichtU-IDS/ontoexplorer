@@ -1951,6 +1951,59 @@ def harvest_peer(self, peer_id: str | None = None, limit: int | None = None,
     return result
 
 
+def _split_csv(value: str) -> list[str]:
+    """Split a comma-separated setting into a trimmed, empty-dropped list."""
+    return [item.strip() for item in (value or "").split(",") if item.strip()]
+
+
+@celery_app.task(bind=True, name="ontoexplorer.discover_github", time_limit=900)
+def discover_github(self, limit: int | None = None, dry_run: bool = True) -> dict:
+    """Gated GitHub ontology discovery (OFF unless github_discovery_enabled).
+
+    Enumerates GitHub-hosted ontology files (curated seeds + code search), gates
+    each candidate, and — unless dry_run — enqueues admitted ones via
+    ingest_ontology with source_catalogue="github". Dry-run by default."""
+    from ontoexplorer.database import make_celery_db_session
+    from ontoexplorer.modules.discovery.github_client import GithubClient
+    from ontoexplorer.modules.discovery.github_source import (
+        DEFAULT_QUERIES,
+        GithubDiscoverySource,
+    )
+    from ontoexplorer.modules.discovery.runner import run_harvest
+    from ontoexplorer.modules.discovery.throttle import PeerRateLimiter, RunBudget
+
+    settings = get_settings()
+    if not settings.github_discovery_enabled:
+        return {"status": "disabled"}
+    if not settings.github_api_token:
+        return {"status": "no_token"}
+
+    client = GithubClient(
+        settings.github_api_token,
+        rate_limiter=PeerRateLimiter(settings.github_min_interval_ms),
+    )
+    source = GithubDiscoverySource(
+        client,
+        seed_repos=_split_csv(settings.github_seed_repos),
+        queries=_split_csv(settings.github_search_queries) or DEFAULT_QUERIES,
+        require_compliant_license=settings.github_require_compliant_license,
+        max_file_bytes=settings.github_max_file_bytes,
+    )
+    budget = RunBudget(limit or settings.harvest_max_candidates)
+
+    async def _run() -> dict:
+        async with make_celery_db_session()() as db:
+            report = await run_harvest(
+                db, source, budget=budget, dry_run=dry_run,
+                source_catalogue="github", groups=["github"])
+        return report.as_dict()
+
+    result = asyncio.run(_run())
+    log.info("github_discover_complete", dry_run=dry_run,
+             seen=result["seen"], admitted=result["admitted"], enqueued=result["enqueued"])
+    return result
+
+
 def _filter_unchanged_records(records, existing: dict) -> list:
     """Drop records whose embedding text is unchanged (same text_hash already
     stored for the entity), keeping only new or changed ones.
