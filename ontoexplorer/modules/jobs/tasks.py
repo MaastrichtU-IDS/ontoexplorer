@@ -1981,6 +1981,7 @@ def discover_github(self, limit: int | None = None, dry_run: bool = True) -> dic
     client = GithubClient(
         settings.github_api_token,
         rate_limiter=PeerRateLimiter(settings.github_min_interval_ms),
+        rest_rate_limiter=PeerRateLimiter(settings.github_rest_interval_ms),
     )
     source = GithubDiscoverySource(
         client,

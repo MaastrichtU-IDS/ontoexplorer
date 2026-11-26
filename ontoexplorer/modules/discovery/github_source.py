@@ -99,7 +99,7 @@ class GithubDiscoverySource:
                 if not sha or sha in seen:
                     continue
                 seen.add(sha)
-                html = f"https://github.com/{full_name}/blob/{branch}/{path}"
+                html = f"https://github.com/{full_name}/blob/{quote(branch)}/{quote(path)}"
                 hits.append(_Hit(full_name, path, sha, html))
 
         for query in self._queries:

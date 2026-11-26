@@ -111,6 +111,37 @@ async def test_missing_token_raises_before_request():
     assert called["n"] == 0  # no network touched
 
 
+class _RecLimiter:
+    def __init__(self, tag):
+        self.tag = tag
+        self.hits = 0
+
+    async def wait(self):
+        self.hits += 1
+
+
+@pytest.mark.anyio
+async def test_search_and_rest_use_separate_limiters():
+    # Search must throttle on the 10/min floor; repo/tree on the lighter REST floor.
+    search = _RecLimiter("search")
+    rest = _RecLimiter("rest")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/search"):
+            return httpx.Response(200, json={"items": []})
+        if request.url.path.endswith("/git/trees/main"):
+            return httpx.Response(200, json={"tree": []})
+        return httpx.Response(200, json={"default_branch": "main", "license": None})
+
+    c = GithubClient(TOKEN, transport=httpx.MockTransport(handler),
+                     rate_limiter=search, rest_rate_limiter=rest)
+    await c.search_code("q")
+    await c.get_repo("o/r")
+    await c.list_tree("o/r", default_branch="main")
+    assert search.hits == 1          # only the search call
+    assert rest.hits == 2            # repo + tree
+
+
 @pytest.mark.anyio
 async def test_token_never_logged(caplog):
     def handler(request: httpx.Request) -> httpx.Response:

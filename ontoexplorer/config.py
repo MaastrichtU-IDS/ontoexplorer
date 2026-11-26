@@ -252,6 +252,7 @@ class Settings(BaseSettings):
     github_seed_repos: str = ""          # comma-separated owner/repo (curated input)
     github_search_queries: str = ""      # comma-separated; empty => built-in defaults
     github_min_interval_ms: int = 6500   # ~10/min code-search politeness floor
+    github_rest_interval_ms: int = 750   # repo/tree REST floor (5000/hr, lighter than search)
     github_require_compliant_license: bool = True
     github_max_file_bytes: int = 8 * 1024 * 1024
 

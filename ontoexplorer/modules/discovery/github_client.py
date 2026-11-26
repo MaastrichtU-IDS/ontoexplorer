@@ -71,12 +71,18 @@ class GithubClient:
         token: str,
         *,
         rate_limiter: PeerRateLimiter | None = None,
+        rest_rate_limiter: PeerRateLimiter | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         api_base: str = _API_BASE,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._token = token or ""
+        # Search (/search/code) is capped at ~10/min; the ordinary REST endpoints
+        # (repo, tree) share the generous 5000/hr primary limit, so they get a
+        # lighter limiter. Throttling repo/tree at the search floor would let a
+        # per-repo license-lookup storm blow the task time_limit.
         self._rate_limiter = rate_limiter
+        self._rest_rate_limiter = rest_rate_limiter
         self._transport = transport
         self._api_base = api_base.rstrip("/")
         self._sleep = sleep
@@ -89,17 +95,24 @@ class GithubClient:
             "X-GitHub-Api-Version": _API_VERSION,
         }
 
-    async def _wait(self) -> None:
-        if self._rate_limiter is not None:
-            await self._rate_limiter.wait()
+    async def _wait(self, limiter: PeerRateLimiter | None) -> None:
+        if limiter is not None:
+            await limiter.wait()
 
-    async def _get(self, path: str, *, where: str, params: dict | None = None) -> Any:
+    async def _get(
+        self,
+        path: str,
+        *,
+        where: str,
+        limiter: PeerRateLimiter | None = None,
+        params: dict | None = None,
+    ) -> Any:
         """GET ``api_base + path``. ``where`` is a token-free label for logs/errors."""
         if not self._token:
             raise GithubDiscoveryError("no_token")
         url = self._api_base + path
         for attempt in range(_MAX_RETRIES + 1):
-            await self._wait()
+            await self._wait(limiter)
             try:
                 async with httpx.AsyncClient(
                     transport=self._transport, timeout=30.0
@@ -131,7 +144,10 @@ class GithubClient:
     async def search_code(self, query: str, *, per_page: int = 100) -> list[dict]:
         """Return the raw ``items`` of a code-search query (auth-mandatory, ~10/min)."""
         doc = await self._get(
-            "/search/code", where="search", params={"q": query, "per_page": str(per_page)}
+            "/search/code",
+            where="search",
+            limiter=self._rate_limiter,
+            params={"q": query, "per_page": str(per_page)},
         )
         items = doc.get("items", []) if isinstance(doc, dict) else []
         return [it for it in items if isinstance(it, dict)]
@@ -140,7 +156,9 @@ class GithubClient:
         """Return (and cache) a repo object: ``.license.spdx_id``, ``.default_branch``, ``.fork``."""
         if full_name in self._repo_cache:
             return self._repo_cache[full_name]
-        doc = await self._get(f"/repos/{full_name}", where="repo")
+        doc = await self._get(
+            f"/repos/{full_name}", where="repo", limiter=self._rest_rate_limiter
+        )
         if not isinstance(doc, dict):
             raise GithubDiscoveryError("bad_json:repo")
         self._repo_cache[full_name] = doc
@@ -151,6 +169,7 @@ class GithubClient:
         doc = await self._get(
             f"/repos/{full_name}/git/trees/{default_branch}",
             where="tree",
+            limiter=self._rest_rate_limiter,
             params={"recursive": "1"},
         )
         tree = doc.get("tree", []) if isinstance(doc, dict) else []
