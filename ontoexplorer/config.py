@@ -251,7 +251,7 @@ class Settings(BaseSettings):
     github_api_token: str = ""
     github_seed_repos: str = ""          # comma-separated owner/repo (curated input)
     # PRIMARY input: repo topics (tree-walked, reaches large files + freshness).
-    # empty => built-in defaults (owl,obofoundry,bioportal,skos).
+    # empty => built-in defaults (owl,skos — measured as the ontology-dense, distinct topics).
     github_topics: str = ""              # comma-separated GitHub topics
     github_max_repos_per_topic: int = 25
     # COMPLEMENT: file-content code search (untagged repos; <384 KB index ceiling).

@@ -32,7 +32,12 @@ DEFAULT_QUERIES = [
 # index, github.com/vemonet/shapes-of-you). Primary discovery input: topic-tagged
 # repos are intentional, and their files are tree-walked + raw-downloaded, so large
 # ontologies that code search's ~384 KB index ceiling hides are still reached.
-DEFAULT_TOPICS = ["owl", "obofoundry", "bioportal", "skos"]
+# Measured 2026-11-27 (repo-count + content-density sampling): owl (1157, dense, real
+# community OWL ontologies) and skos (223, real SKOS vocabularies) carry the distinct,
+# unregistered content; obofoundry/bioportal largely duplicate the registries we already
+# ingest (and bioportal had only ~10 repos), while the broad topics ontology/vocabulary
+# are mostly non-RDF noise (code-maps, language-learning apps). Override via github_topics.
+DEFAULT_TOPICS = ["owl", "skos"]
 _ONTOLOGY_EXTS = {"owl", "ttl", "rdf", "rdfs", "n3", "nt", "jsonld", "trig", "owx"}
 _RAW_BASE = "https://raw.githubusercontent.com"
 
