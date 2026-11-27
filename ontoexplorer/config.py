@@ -241,6 +241,26 @@ class Settings(BaseSettings):
     harvest_max_candidates: int = 50         # per-run cap on admitted candidates
     harvest_min_interval_ms: int = 1000      # min spacing between requests to the peer
 
+    # --- GitHub discovery source (Project; OFF by default) ---
+    # When enabled, the discover_github task enumerates GitHub-hosted ontology files
+    # (curated seed repos + code search), license-filters them cheaply, and enqueues
+    # admitted ones for ingestion with source_catalogue="github". The PAT is read
+    # from GITHUB_API_TOKEN (value in Vault, never logged or persisted) and rides in
+    # the Authorization header. Dry-run by default per invocation.
+    github_discovery_enabled: bool = False
+    github_api_token: str = ""
+    github_seed_repos: str = ""          # comma-separated owner/repo (curated input)
+    # PRIMARY input: repo topics (tree-walked, reaches large files + freshness).
+    # empty => built-in defaults (owl,skos — measured as the ontology-dense, distinct topics).
+    github_topics: str = ""              # comma-separated GitHub topics
+    github_max_repos_per_topic: int = 25
+    # COMPLEMENT: file-content code search (untagged repos; <384 KB index ceiling).
+    github_search_queries: str = ""      # comma-separated; empty => built-in defaults
+    github_min_interval_ms: int = 6500   # ~10/min search politeness floor (code + repo search)
+    github_rest_interval_ms: int = 750   # repo/tree REST floor (5000/hr, lighter than search)
+    github_require_compliant_license: bool = True
+    github_max_file_bytes: int = 8 * 1024 * 1024
+
     # Justification is session-only and cheap to request but dispatches an OWL
     # justification job with an 11-minute hard limit on the reasoner pool, so a
     # burst of requests can starve reasoning for everyone. Two per-user limits:

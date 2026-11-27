@@ -36,3 +36,20 @@ async def trigger_harvest(body: HarvestRequest, _: User = Depends(_require_admin
 
     result = harvest_peer.delay(peer_id=body.peer_id, limit=body.limit, dry_run=body.dry_run)
     return {"task_id": result.id, "dry_run": body.dry_run, "peer_id": body.peer_id}
+
+
+class GithubHarvestRequest(BaseModel):
+    limit: int | None = Field(default=None, gt=0, le=MAX_HARVEST_LIMIT)
+    dry_run: bool = True
+
+
+@router.post("/harvest/github")
+async def trigger_github_harvest(
+    body: GithubHarvestRequest, _: User = Depends(_require_admin)
+) -> dict:
+    """Trigger the gated GitHub discovery harvest. Dry-run by default; the task is a
+    no-op unless ``github_discovery_enabled``."""
+    from ontoexplorer.modules.jobs.tasks import discover_github
+
+    result = discover_github.delay(limit=body.limit, dry_run=body.dry_run)
+    return {"task_id": result.id, "dry_run": body.dry_run, "source": "github"}
