@@ -100,6 +100,18 @@ New `ontoexplorer/modules/discovery/github_client.py`: a thin async httpx wrappe
 2. **Seed org/repo list** (`github_seed_repos`): proposed starter set to curate — e.g. `BFO-ontology/BFO`, `obophenotype/upheno`, `Onto-Med/GFO`, `knowrob/knowrob`, `OBOFoundry/COB`, plus whatever ontology repos you want the demo to feature. Code search fills the long tail. Your call on the exact list (it's config, easily tuned).
 3. **License strictness** (`github_require_compliant_license`, default **True**): require an explicit allowlisted repo license for GitHub (stricter than the MOD gate's lenient rule), since GitHub carries no per-file license. Confirm True.
 
+## Update 2026-11-27 — discovery strategy (measured)
+
+After measuring GitHub's API against the real population (and reviewing the Shapes of You prior art, `github.com/vemonet/shapes-of-you`), the discovery design is:
+
+- **Primary input: repo-topic discovery** (`github_topics`, default `owl,obofoundry,bioportal,skos`). Search repos by topic (`search_repositories`, `sort=updated` for freshness), tree-walk each for ontology files. Why primary: the tree-walk **raw-downloads** files, so it reaches **large ontologies that code search cannot** (measured: GitHub's code index returns **0** results for `size:>384000` — every ontology over ~384 KB is invisible to code search). Topic-tagged repos are also more intentional than the code-search firehose. This is the Shapes-of-You model, which used `topic:owl/obofoundry/bioportal/skos`.
+- **Complement: code search** (`github_search_queries`) for the **untagged long tail** repos the topic path misses. Kept bounded: GitHub caps any query at **1000 results** (10 pages × 100) regardless of total, and can't sort/filter by date. Exhaustive size-sharding was considered and **rejected** — it still can't see >384 KB files and would need hundreds of shards / hours at 10/min for a mostly-noise result.
+- **Backbone stays the registries** (OBO/BioPortal/AgroPortal/LOV, already ingested). GitHub discovery is additive — its unique value is *unregistered* ontologies. Note: `topic:obofoundry`/`bioportal` repos largely **overlap** the registry holdings, so for distinct content (e.g. the federation demo) prefer `owl`/general topics + the untagged tail.
+- **Noise filter** (`_is_noise_path`): live runs showed modern OBO repos use the ODK layout, flooding the tree-walk with editor components, imports, dosdp patterns, subsets, test fixtures and historical release modules. A conservative path denylist (segments `components/imports/patterns/subsets/modules/test/archive/…`, suffixes `-module/-import/merged_import`) drops these; the `-edit` source file is kept. Applied to both tree-walk and code-search hits.
+- **Freshness / re-harvest (future):** code search can't order by date, but repo search can (`sort=updated`, `pushed:>…`), and a file's real last-modified is one `commits?path=…&per_page=1` call — the key for an incremental re-harvest (only re-ingest changed files).
+
+Config added for this: `github_topics`, `github_max_repos_per_topic` (25). `search_repositories` added to the client (search rate limiter). All still OFF + dry-run by default.
+
 ## Sequencing (out of this spec, for reference)
 
 1. Build + unit-test this source → dry-run on **current dev** (mutates nothing).

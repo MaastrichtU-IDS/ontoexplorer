@@ -1965,10 +1965,7 @@ def discover_github(self, limit: int | None = None, dry_run: bool = True) -> dic
     ingest_ontology with source_catalogue="github". Dry-run by default."""
     from ontoexplorer.database import make_celery_db_session
     from ontoexplorer.modules.discovery.github_client import GithubClient
-    from ontoexplorer.modules.discovery.github_source import (
-        DEFAULT_QUERIES,
-        GithubDiscoverySource,
-    )
+    from ontoexplorer.modules.discovery.github_source import GithubDiscoverySource
     from ontoexplorer.modules.discovery.runner import run_harvest
     from ontoexplorer.modules.discovery.throttle import PeerRateLimiter, RunBudget
 
@@ -1986,9 +1983,12 @@ def discover_github(self, limit: int | None = None, dry_run: bool = True) -> dic
     source = GithubDiscoverySource(
         client,
         seed_repos=_split_csv(settings.github_seed_repos),
-        queries=_split_csv(settings.github_search_queries) or DEFAULT_QUERIES,
+        # None => the source's built-in defaults; a set value overrides.
+        topics=_split_csv(settings.github_topics) or None,
+        queries=_split_csv(settings.github_search_queries) or None,
         require_compliant_license=settings.github_require_compliant_license,
         max_file_bytes=settings.github_max_file_bytes,
+        max_repos_per_topic=settings.github_max_repos_per_topic,
     )
     budget = RunBudget(limit or settings.harvest_max_candidates)
 

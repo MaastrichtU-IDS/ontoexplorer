@@ -31,6 +31,19 @@ async def test_search_code_parses_items():
 
 
 @pytest.mark.anyio
+async def test_search_repositories_parses_and_passes_sort():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/search/repositories"
+        assert request.url.params["q"] == "topic:owl"
+        assert request.url.params["sort"] == "updated"
+        assert request.url.params["order"] == "desc"
+        return httpx.Response(200, json={"items": [{"full_name": "o/r"}, "junk"]})
+
+    repos = await _client(handler).search_repositories("topic:owl", sort="updated", order="desc")
+    assert repos == [{"full_name": "o/r"}]  # non-dict dropped
+
+
+@pytest.mark.anyio
 async def test_get_repo_extracts_and_caches():
     calls = {"n": 0}
 

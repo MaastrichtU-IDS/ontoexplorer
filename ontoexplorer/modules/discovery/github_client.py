@@ -152,6 +152,30 @@ class GithubClient:
         items = doc.get("items", []) if isinstance(doc, dict) else []
         return [it for it in items if isinstance(it, dict)]
 
+    async def search_repositories(
+        self,
+        query: str,
+        *,
+        sort: str | None = None,
+        order: str | None = None,
+        per_page: int = 30,
+    ) -> list[dict]:
+        """Return the raw ``items`` of a repository search (e.g. ``"topic:owl"``).
+
+        Unlike code search, repo search supports ``sort`` (``updated`` = last push)
+        and date qualifiers, so callers can prefer fresh repos.
+        """
+        params = {"q": query, "per_page": str(per_page)}
+        if sort:
+            params["sort"] = sort
+        if order:
+            params["order"] = order
+        doc = await self._get(
+            "/search/repositories", where="repo_search", limiter=self._rate_limiter, params=params
+        )
+        items = doc.get("items", []) if isinstance(doc, dict) else []
+        return [it for it in items if isinstance(it, dict)]
+
     async def get_repo(self, full_name: str) -> dict:
         """Return (and cache) a repo object: ``.license.spdx_id``, ``.default_branch``, ``.fork``."""
         if full_name in self._repo_cache:

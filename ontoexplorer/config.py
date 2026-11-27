@@ -250,8 +250,13 @@ class Settings(BaseSettings):
     github_discovery_enabled: bool = False
     github_api_token: str = ""
     github_seed_repos: str = ""          # comma-separated owner/repo (curated input)
+    # PRIMARY input: repo topics (tree-walked, reaches large files + freshness).
+    # empty => built-in defaults (owl,obofoundry,bioportal,skos).
+    github_topics: str = ""              # comma-separated GitHub topics
+    github_max_repos_per_topic: int = 25
+    # COMPLEMENT: file-content code search (untagged repos; <384 KB index ceiling).
     github_search_queries: str = ""      # comma-separated; empty => built-in defaults
-    github_min_interval_ms: int = 6500   # ~10/min code-search politeness floor
+    github_min_interval_ms: int = 6500   # ~10/min search politeness floor (code + repo search)
     github_rest_interval_ms: int = 750   # repo/tree REST floor (5000/hr, lighter than search)
     github_require_compliant_license: bool = True
     github_max_file_bytes: int = 8 * 1024 * 1024

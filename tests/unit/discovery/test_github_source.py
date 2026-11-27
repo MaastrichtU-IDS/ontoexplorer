@@ -11,11 +11,13 @@ from ontoexplorer.modules.discovery.github_source import GithubDiscoverySource
 
 
 class StubClient:
-    def __init__(self, repos=None, trees=None, search=None):
-        self.repos = repos or {}      # full_name -> repo dict
-        self.trees = trees or {}      # full_name -> list[tree entries]
-        self.search = search or {}    # query -> list[items]
+    def __init__(self, repos=None, trees=None, search=None, repo_search=None):
+        self.repos = repos or {}            # full_name -> repo dict
+        self.trees = trees or {}            # full_name -> list[tree entries]
+        self.search = search or {}          # code-search query -> list[items]
+        self.repo_search = repo_search or {}  # repo-search query -> list[items]
         self.repo_calls: list[str] = []
+        self.repo_search_calls: list[str] = []
 
     async def get_repo(self, full_name):
         self.repo_calls.append(full_name)
@@ -28,6 +30,10 @@ class StubClient:
 
     async def search_code(self, query, *, per_page=100):
         return self.search.get(query, [])
+
+    async def search_repositories(self, query, *, sort=None, order=None, per_page=30):
+        self.repo_search_calls.append(query)
+        return self.repo_search.get(query, [])
 
 
 def _repo(spdx="CC0-1.0", branch="main", fork=False):
@@ -133,6 +139,71 @@ async def test_oversized_tree_blob_skipped():
     )
     src = GithubDiscoverySource(client, seed_repos=["o/r"], queries=[], max_file_bytes=1_000)
     assert await src.discover(limit=10) == []
+
+
+@pytest.mark.anyio
+async def test_noise_paths_skipped_in_tree_walk():
+    client = StubClient(
+        repos={"o/r": _repo(branch="main")},
+        trees={"o/r": [
+            {"type": "blob", "path": "foo.owl", "sha": "a", "size": 10},                       # keep
+            {"type": "blob", "path": "src/ontology/foo-edit.owl", "sha": "b", "size": 10},     # keep (-edit)
+            {"type": "blob", "path": "src/ontology/components/x.owl", "sha": "c", "size": 10}, # skip
+            {"type": "blob", "path": "imports/merged_import.owl", "sha": "d", "size": 10},     # skip
+            {"type": "blob", "path": "src/patterns/pattern.owl", "sha": "e", "size": 10},      # skip
+            {"type": "blob", "path": "releases/2018/dpo-module.owl", "sha": "f", "size": 10},  # skip
+            {"type": "blob", "path": "test/fixture.owl", "sha": "g", "size": 10},              # skip
+        ]},
+    )
+    src = GithubDiscoverySource(client, seed_repos=["o/r"], topics=[], queries=[])
+    out = await src.discover(limit=20)
+    # title is "o/r/<path>" (full_name has one slash); keep only non-noise paths.
+    assert sorted(c.title.split("/", 2)[2] for c in out) == ["foo.owl", "src/ontology/foo-edit.owl"]
+
+
+@pytest.mark.anyio
+async def test_topic_discovery_tree_walks_found_repos():
+    client = StubClient(
+        repos={"obo/thing": _repo(spdx="CC0-1.0", branch="main")},
+        trees={"obo/thing": [{"type": "blob", "path": "thing.owl", "sha": "t1", "size": 50}]},
+        repo_search={"topic:obofoundry": [{"full_name": "obo/thing", "fork": False}]},
+    )
+    src = GithubDiscoverySource(client, seed_repos=[], topics=["obofoundry"], queries=[])
+    out = await src.discover(limit=10)
+    assert len(out) == 1
+    assert out[0].download_url == "https://raw.githubusercontent.com/obo/thing/main/thing.owl"
+    assert client.repo_search_calls == ["topic:obofoundry"]
+
+
+@pytest.mark.anyio
+async def test_topic_repo_deduped_against_seed():
+    # same repo as a seed and a topic hit -> tree-walked once.
+    client = StubClient(
+        repos={"o/r": _repo()},
+        trees={"o/r": [{"type": "blob", "path": "a.owl", "sha": "a", "size": 1}]},
+        repo_search={"topic:owl": [{"full_name": "o/r", "fork": False}]},
+    )
+    src = GithubDiscoverySource(client, seed_repos=["o/r"], topics=["owl"], queries=[])
+    assert len(await src.discover(limit=10)) == 1
+
+
+@pytest.mark.anyio
+async def test_topic_fork_repo_excluded():
+    client = StubClient(repo_search={"topic:owl": [{"full_name": "o/forked", "fork": True}]})
+    src = GithubDiscoverySource(client, seed_repos=[], topics=["owl"], queries=[])
+    assert await src.discover(limit=10) == []
+
+
+@pytest.mark.anyio
+async def test_empty_topics_disables_topic_search():
+    client = StubClient(
+        repos={"o/r": _repo()},
+        trees={"o/r": [{"type": "blob", "path": "a.owl", "sha": "a", "size": 1}]},
+    )
+    src = GithubDiscoverySource(client, seed_repos=["o/r"], topics=[], queries=[])
+    out = await src.discover(limit=10)
+    assert len(out) == 1
+    assert client.repo_search_calls == []  # topics=[] disables; None would use defaults
 
 
 @pytest.mark.anyio
